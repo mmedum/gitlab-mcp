@@ -237,7 +237,7 @@ func TestSettingsNeverPrintTheHostTheApplicationOrTheToken(t *testing.T) {
 	}
 }
 
-func TestProbeReadsTheInstanceAndTheAccount(t *testing.T) {
+func TestProbeReadsTheInstanceAndTheScopes(t *testing.T) {
 	srv := gitlabtest.New(t, gitlabtest.Options{Version: "19.2.1-ee", Enterprise: true})
 	e, k := setup(t, srv.URL)
 	cfg := load(t, e)
@@ -250,8 +250,11 @@ func TestProbeReadsTheInstanceAndTheAccount(t *testing.T) {
 	if st.Metadata.Version.String() != "19.2.1-ee" || !st.Metadata.Enterprise {
 		t.Errorf("metadata %+v", st.Metadata)
 	}
-	if st.Username != "bob" {
-		t.Errorf("username %q", st.Username)
+	// Nothing reads the account at startup, so it is not asked for.
+	for _, r := range srv.Requests() {
+		if r.EscapedPath == "/api/v4/user" {
+			t.Errorf("the probe read /user")
+		}
 	}
 	// Read live, not from the stored login.
 	if strings.Join(st.Granted, " ") != "api" {
@@ -295,11 +298,11 @@ func TestAReadAPITokenCannotServeWrites(t *testing.T) {
 func stubServer(t *testing.T) func() {
 	t.Helper()
 	prev := newServer
-	newServer = func(o server.Options) (*mcp.Server, error) {
+	newServer = func(o server.Options) *mcp.Server {
 		if o.Client == nil || o.Logger == nil {
-			return nil, errors.New("assembled without a client or a logger")
+			t.Error("assembled without a client or a logger")
 		}
-		return mcp.NewServer(&mcp.Implementation{Name: "gitlab-mcp", Version: o.Version}, nil), nil
+		return mcp.NewServer(&mcp.Implementation{Name: "gitlab-mcp", Version: o.Version}, nil)
 	}
 	return func() { newServer = prev }
 }

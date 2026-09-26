@@ -109,10 +109,7 @@ func TestLoggerOnlyAttachedAtDebug(t *testing.T) {
 	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
 		var buf bytes.Buffer
 		lg := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level}))
-		s, err := New(Options{Logger: lg, Version: "test"})
-		if err != nil {
-			t.Fatal(err)
-		}
+		s := New(Options{Logger: lg, Version: "test"})
 		ct, st := mcp.NewInMemoryTransports()
 		ss, err := s.Connect(t.Context(), st, nil)
 		if err != nil {
@@ -132,10 +129,7 @@ func TestLoggerOnlyAttachedAtDebug(t *testing.T) {
 }
 
 func TestSignedOutServerAnswersAuth(t *testing.T) {
-	s, err := New(Options{Config: config.Config{Instance: "https://gitlab.example.com"}, Version: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := New(Options{Config: config.Config{Instance: "https://gitlab.example.com"}, Version: "test"})
 	ct, st := mcp.NewInMemoryTransports()
 	ss, err := s.Connect(t.Context(), st, nil)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 	"github.com/mmedum/gitlab-mcp/scripts/internal/tsv"
 )
 
@@ -93,11 +94,8 @@ func apiCoverage(out io.Writer, _ []string) error {
 	problems = append(problems, callProblems...)
 	report, more := checkCoverage(snap, rows, calls, realCoverageFloors)
 	problems = append(problems, more...)
-	if len(problems) > 0 {
-		for _, p := range problems {
-			_, _ = fmt.Fprintln(out, p)
-		}
-		return fmt.Errorf("%d API coverage problem(s)", len(problems))
+	if err := gatekit.Problems(out, "API coverage", problems); err != nil {
+		return err
 	}
 	_, _ = fmt.Fprintln(out, report)
 	return nil

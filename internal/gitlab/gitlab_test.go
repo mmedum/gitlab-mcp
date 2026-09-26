@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -117,5 +118,31 @@ func TestTokenInfoCreated(t *testing.T) {
 	}
 	if ti.ExpiresIn == nil || *ti.ExpiresIn != 7100 || ti.Scope[0] != "read_api" {
 		t.Errorf("decoded %+v", ti)
+	}
+}
+
+func TestTokenInfoScopeShapes(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+	}{
+		{"array", `{"scope":["api","read_user"]}`, []string{"api", "read_user"}},
+		{"string", `{"scope":"api read_user"}`, []string{"api", "read_user"}},
+		{"scopes key", `{"scopes":["read_api"]}`, []string{"read_api"}},
+		{"scopes string", `{"scopes":"read_api openid"}`, []string{"read_api", "openid"}},
+		{"scope wins", `{"scope":["api"],"scopes":["read_api"]}`, []string{"api"}},
+		{"another shape", `{"scope":{"api":true}}`, nil},
+		{"neither", `{"resource_owner_id":1}`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ti TokenInfo
+			if err := json.Unmarshal([]byte(tt.body), &ti); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(ti.Scope, tt.want) {
+				t.Errorf("Scope = %q, want %q", ti.Scope, tt.want)
+			}
+		})
 	}
 }

@@ -31,12 +31,6 @@ var openBrowser func(string) error
 // loginTimeout bounds the person's trip through the browser.
 var loginTimeout = 10 * time.Minute
 
-// staticToken is the token login just received, for the one read that
-// names the account.
-type staticToken string
-
-func (t staticToken) Token(context.Context) (string, error) { return string(t), nil }
-
 // noApplication is what login and doctor say when no application id is
 // known.
 const noApplication = "no OAuth application id: register an application in GitLab, then run " +
@@ -125,18 +119,11 @@ func cmdLogin(args []string, stdout, stderr io.Writer, env func(string) string) 
 
 // currentUser reads the account a fresh access token acts as.
 func currentUser(ctx context.Context, s *app.Settings, access string) (string, error) {
-	c, err := gapi.New(gapi.Options{
-		Instance: s.Instance, HTTPClient: s.HTTPClient, Tokens: staticToken(access),
-		Version: version.String(), HeaderTimeout: s.Config.HTTPTimeout,
-	})
+	c, err := s.ClientWith(gapi.Options{Tokens: gapi.StaticToken(access), Version: version.String()})
 	if err != nil {
 		return "", err
 	}
-	u, err := c.GetCurrentUser(ctx)
-	if err != nil {
-		return "", err
-	}
-	return u.Username, nil
+	return userOf(ctx, c)
 }
 
 // cmdLogout revokes the stored token at GitLab, then removes the local

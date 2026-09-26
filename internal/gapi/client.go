@@ -12,8 +12,6 @@ package gapi
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,15 +52,23 @@ const maxRetryAfter = 64 * time.Second
 // the client asks once per call.
 type TokenSource interface {
 	Token(ctx context.Context) (string, error)
-}
-
-// Invalidator is a TokenSource that can drop an access token GitLab
-// refused as invalid_token, so its next Token reads the store again or
-// refreshes. A logout and a login in another process revoke the token
-// held here long before its expiry says so.
-type Invalidator interface {
+	// Invalidate drops an access token GitLab refused as invalid_token,
+	// so the next Token reads the store again or refreshes. A logout and
+	// a login in another process revoke the token held here long before
+	// its expiry says so. A source with nothing to drop does nothing.
 	Invalidate(rejected string)
 }
+
+// StaticToken is a TokenSource that always hands out the same token,
+// for a token that was just issued and a test. Nothing replaces it, so
+// Invalidate does nothing.
+type StaticToken string
+
+// Token returns the token.
+func (t StaticToken) Token(context.Context) (string, error) { return string(t), nil }
+
+// Invalidate does nothing: there is no other token to move to.
+func (StaticToken) Invalidate(string) {}
 
 // Options configure a Client. Only Instance is required.
 type Options struct {
@@ -111,7 +118,9 @@ type Client struct {
 	maxAttempts   int
 	sleep         func(ctx context.Context, d time.Duration) error
 	rate          *rateModel
+	projects      *projectCache
 	drift         sync.Map // "Type.path" reported once per process
+	driftWalked   sync.Map // reflect.Type walked for drift once per process
 }
 
 // New builds a Client.
@@ -154,6 +163,7 @@ func New(o Options) (*Client, error) {
 		now = time.Now
 	}
 	c.rate = newRateModel(o.RequestsPerMinute, o.NotesPerMinute, o.Concurrency, now, c.sleep)
+	c.projects = newProjectCache(now)
 
 	hc := &http.Client{}
 	if o.HTTPClient != nil {
@@ -255,6 +265,76 @@ func Moves(ctx context.Context) []Move {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]Move(nil), s.moves...)
+}
+
+// ------------------------------------------------------------ per process
+
+// projectTTL is how long the process trusts a project's id and path. A
+// rename GitLab reports forgets them sooner; one it does not report is
+// believed for at most this long.
+const projectTTL = 5 * time.Minute
+
+// maxProjects bounds the cache. A server rarely touches more projects
+// than this in a few minutes, and when it does it starts over.
+const maxProjects = 256
+
+// projectCache remembers project ids and paths across calls, so a path
+// a person repeats is not read again on every call.
+type projectCache struct {
+	now   func() time.Time
+	mu    sync.Mutex
+	paths map[string]projectEntry // lowercased full path
+	ids   map[int64]projectEntry
+}
+
+type projectEntry struct {
+	p       Project
+	expires time.Time
+}
+
+func newProjectCache(now func() time.Time) *projectCache {
+	return &projectCache{now: now, paths: map[string]projectEntry{}, ids: map[int64]projectEntry{}}
+}
+
+// remember records a project carrying both its id and its path.
+func (pc *projectCache) remember(p Project) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	if len(pc.ids) >= maxProjects {
+		clear(pc.paths)
+		clear(pc.ids)
+	}
+	e := projectEntry{p: p, expires: pc.now().Add(projectTTL)}
+	pc.paths[strings.ToLower(p.Path())] = e
+	pc.ids[p.ID()] = e
+}
+
+func (pc *projectCache) byPath(lower string) (Project, bool) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	return pc.live(pc.paths[lower])
+}
+
+func (pc *projectCache) byID(id int64) (Project, bool) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	return pc.live(pc.ids[id])
+}
+
+func (pc *projectCache) live(e projectEntry) (Project, bool) {
+	if e.p.IsZero() || !pc.now().Before(e.expires) {
+		return Project{}, false
+	}
+	return e.p, true
+}
+
+// forget drops everything: a project moved, and which paths it made
+// stale is not worth working out.
+func (pc *projectCache) forget() {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	clear(pc.paths)
+	clear(pc.ids)
 }
 
 // ------------------------------------------------------------ the call
@@ -374,7 +454,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 
 		v := c.decide(ctx, p.call, p.name, p.repeatable, res, sendErr)
 		logAttempt(v.outcome())
-		if res != nil && !reauthorized && tokenRefused(res.status, res.header, res.body) {
+		if v.reauth && !reauthorized {
 			reauthorized = true
 			next, ok, err := c.reauthorize(ctx, p)
 			if err != nil {
@@ -387,7 +467,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 			}
 		}
 		if v.err == nil {
-			if err := c.decode(res, p.name, out); err != nil {
+			if err := c.decode(ctx, res, p.name, out); err != nil {
 				return nil, err
 			}
 			return &response{status: res.status, header: res.header, request: p.endpoint}, nil
@@ -409,11 +489,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 // did nothing, but a create still is not sent twice (§4.5): the next
 // call gets the new token.
 func (c *Client) reauthorize(ctx context.Context, p *prepared) (string, bool, error) {
-	inv, ok := c.tokens.(Invalidator)
-	if !ok {
-		return "", false, nil
-	}
-	inv.Invalidate(p.token)
+	c.tokens.Invalidate(p.token)
 	if !p.repeatable {
 		return "", false, nil
 	}
@@ -437,6 +513,7 @@ func (c *Client) followMove(ctx context.Context, p *prepared, res *attemptResult
 	}
 	*redirected = true
 	c.recordMove(ctx, p.endpoint, next)
+	c.projects.forget()
 	p.endpoint = next
 	return nil
 }
@@ -513,7 +590,7 @@ func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), reader)
 	if err != nil {
 		headers.Stop()
-		return nil, withoutURL(err)
+		return nil, WithoutURL(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
@@ -527,7 +604,7 @@ func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, 
 		if headersLate.Load() {
 			return nil, errHeaderTimeout
 		}
-		return nil, withoutURL(err)
+		return nil, WithoutURL(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var stalled atomic.Bool
@@ -539,7 +616,7 @@ func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, 
 		if stalled.Load() {
 			return res, errStalled
 		}
-		return res, withoutURL(err)
+		return res, WithoutURL(err)
 	}
 	if len(body) > MaxResponseBytes {
 		return res, errTooLarge
@@ -583,6 +660,11 @@ func isRedirect(status int) bool {
 // movedTo decides whether a redirect is a moved project the client may
 // re-request: a GET, under /projects/, to an address on this instance
 // under the API root. Anything else is refused by the caller.
+//
+// Only the new project is taken from the Location. The request is sent
+// again as it was, with the same resource under the project and the
+// same query: a Location naming only the new path would drop the ref
+// and the filters, and one naming another resource is not a move.
 func (c *Client) movedTo(call Call, from *url.URL, location string) (*url.URL, bool) {
 	if call.Method != http.MethodGet || call.Root != RootAPI || location == "" {
 		return nil, false
@@ -591,15 +673,26 @@ func (c *Client) movedTo(call Call, from *url.URL, location string) (*url.URL, b
 	if err != nil || !c.inst.UnderAPIRoot(loc) {
 		return nil, false
 	}
-	if projectSegment(c.apiRoot, from) == "" || projectSegment(c.apiRoot, loc) == "" {
+	project := projectSegment(c.apiRoot, loc)
+	prefix := c.projectsPrefix()
+	rest, ok := strings.CutPrefix(from.EscapedPath(), prefix)
+	if !ok || project == "" || projectSegment(c.apiRoot, from) == "" {
 		return nil, false
 	}
-	// A Location naming only the new path would drop the ref and the
-	// filters the request carried.
-	if loc.RawQuery == "" {
-		loc.RawQuery = from.RawQuery
+	suffix := ""
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		suffix = rest[i:]
 	}
-	return loc, true
+	next := *from
+	next.RawPath = prefix + url.PathEscape(project) + suffix
+	if next.Path, err = url.PathUnescape(next.RawPath); err != nil {
+		return nil, false
+	}
+	return &next, true
+}
+
+func (c *Client) projectsPrefix() string {
+	return strings.TrimSuffix(c.apiRoot.EscapedPath(), "/") + "/projects/"
 }
 
 // projectSegment is the decoded project id or path of a URL under
@@ -634,7 +727,7 @@ func (c *Client) recordMove(ctx context.Context, from, to *url.URL) {
 // decode unmarshals a successful body into out and reports fields out
 // does not model. An empty body decodes to nothing: a write that
 // answers 204 landed, and telling the caller otherwise invites a retry.
-func (c *Client) decode(res *attemptResult, name string, out any) error {
+func (c *Client) decode(ctx context.Context, res *attemptResult, name string, out any) error {
 	if out == nil || len(bytes.TrimSpace(res.body)) == 0 {
 		return nil
 	}
@@ -642,11 +735,17 @@ func (c *Client) decode(res *attemptResult, name string, out any) error {
 		return &Error{Class: ClassUnexpected, Status: res.status,
 			Message: "GitLab's answer to " + name + " was not JSON: " + describeBody(res.status, res.header, res.body)}
 	}
-	if err := decodeReporting(res.body, out, func(path string) {
-		if _, seen := c.drift.LoadOrStore(path, true); !seen {
-			c.log.Debug("gitlab_drift", "field", path)
-		}
-	}); err != nil {
+	var err error
+	if c.walkDrift(ctx, out) {
+		err = decodeReporting(res.body, out, func(path string) {
+			if _, seen := c.drift.LoadOrStore(path, true); !seen {
+				c.log.Debug("gitlab_drift", "field", path)
+			}
+		})
+	} else {
+		err = json.Unmarshal(res.body, out)
+	}
+	if err != nil {
 		return &Error{Class: ClassUnexpected, Status: res.status, err: err,
 			Message: "GitLab's answer to " + name + " did not have the shape this server expects: " + stripURL(err.Error())}
 	}
@@ -684,6 +783,18 @@ func describeBody(status int, h http.Header, body []byte) string {
 	return fmt.Sprintf("status %d, %s, starting %q", status, ct, clean)
 }
 
+// walkDrift reports whether this answer is walked for drift: only when
+// the report would be logged, and once per Go type per process. The walk
+// decodes the body a second time, which no call should pay for when
+// nobody reads the report.
+func (c *Client) walkDrift(ctx context.Context, out any) bool {
+	if !c.log.Enabled(ctx, slog.LevelDebug) {
+		return false
+	}
+	_, walked := c.driftWalked.LoadOrStore(reflect.TypeOf(out), true)
+	return !walked
+}
+
 // ------------------------------------------------------------ outcomes
 
 // verdict is what one attempt came to.
@@ -694,6 +805,9 @@ type verdict struct {
 	// throttle marks a 429 from the instance-wide throttle, as opposed to
 	// one endpoint's application limit.
 	throttle bool
+	// reauth marks a 401 that refuses the token itself, which a new token
+	// may clear.
+	reauth bool
 }
 
 func (v verdict) outcome() string {
@@ -720,7 +834,7 @@ func classifyTransport(ctx context.Context, name string, repeatable bool, err er
 		return verdict{err: Wrap(ClassBlocked, err, "%s was refused: its address is outside the configured instance", name)}
 	case errors.Is(err, errTooLarge):
 		return verdict{err: Wrap(ClassUnavailable, err, "GitLab's answer to %s was larger than %d MiB and was not read", name, MaxResponseBytes>>20)}
-	case badCertificate(err):
+	case redact.IsCertificateError(err):
 		return verdict{err: Wrap(ClassUnavailable, err,
 			"the instance's TLS certificate was not trusted for %s: %s. For a private CA, set GITLAB_MCP_CA_FILE", name, err)}
 	case ctx.Err() != nil && (repeatable || neverSent(err)):
@@ -748,15 +862,6 @@ func neverSent(err error) bool {
 	}
 	var dns *net.DNSError
 	return errors.As(err, &dns)
-}
-
-func badCertificate(err error) bool {
-	var unknown x509.UnknownAuthorityError
-	var hostname x509.HostnameError
-	var invalid x509.CertificateInvalidError
-	var verify *tls.CertificateVerificationError
-	return errors.As(err, &unknown) || errors.As(err, &hostname) ||
-		errors.As(err, &invalid) || errors.As(err, &verify)
 }
 
 // ------------------------------------------------------------ waiting
@@ -788,28 +893,35 @@ func parseRetryAfter(v string, now time.Time) time.Duration {
 
 // ------------------------------------------------------------ URLs
 
-// withoutURL strips the request URL from a transport error. net/http
-// wraps every transport failure in a *url.Error whose text renders the
-// whole URL, and a path or a search travels in it (§9.2).
-func withoutURL(err error) error {
+// WithoutURL strips the request URL, and the host names and addresses,
+// from a transport error. net/http wraps every transport failure in a
+// *url.Error whose text renders the whole URL, and a path or a search
+// travels in it (§9.2); net and crypto/x509 name hosts. The result keeps
+// the cause for errors.As and prints it with redact.NetError. nil stays
+// nil.
+func WithoutURL(err error) error {
+	if err == nil {
+		return nil
+	}
 	var ue *url.Error
-	if errors.As(err, &ue) && ue.Err != nil {
+	if errors.As(err, &ue) {
 		return &strippedError{op: ue.Op, err: ue.Err}
 	}
-	if errors.As(err, &ue) {
-		return errors.New(ue.Op + " failed")
-	}
-	return errors.New(stripURL(err.Error()))
+	return &strippedError{err: err}
 }
 
-// strippedError is a transport failure without its URL. It keeps the
-// cause for errors.As, and prints it with any URL cut out.
+// strippedError is a transport failure without its URL or its hosts.
 type strippedError struct {
 	op  string
 	err error
 }
 
-func (e *strippedError) Error() string { return e.op + ": " + stripURL(redact.NetError(e.err)) }
+func (e *strippedError) Error() string {
+	if e.op == "" {
+		return redact.NetError(e.err)
+	}
+	return e.op + ": " + redact.NetError(e.err)
+}
 
 func (e *strippedError) Unwrap() error { return e.err }
 

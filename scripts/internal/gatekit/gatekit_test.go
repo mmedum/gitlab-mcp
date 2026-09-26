@@ -33,6 +33,18 @@ func TestFloor(t *testing.T) {
 	}
 }
 
+func TestClipCutsOnARuneBoundary(t *testing.T) {
+	if got := Clip(strings.Repeat("é", 10), 5); got != "éé…" {
+		t.Errorf("Clip = %q, want %q", got, "éé…")
+	}
+	if got := Clip("short", 10); got != "short" {
+		t.Errorf("Clip changed a short string: %q", got)
+	}
+	if got := Clip("abcdef", 3); got != "abc…" {
+		t.Errorf("Clip = %q, want %q", got, "abc…")
+	}
+}
+
 func TestWriteFileAtomic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "f.json")
 	if err := WriteFileAtomic(path, []byte("one")); err != nil {

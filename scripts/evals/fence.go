@@ -63,10 +63,3 @@ func readEvent(r *Run, line []byte) error {
 	}
 	return nil
 }
-
-func clipText(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 )
 
 // The outcomes gate holds the rule that a result states what happened,
@@ -65,11 +67,8 @@ func outcomes(out io.Writer, _ []string) error {
 	}
 	report, problems := checkOutcomes(service, model, client, calls, outcomeExemptions, realOutcomesFloors)
 	problems = append(problems, callProblems...)
-	if len(problems) > 0 {
-		for _, p := range problems {
-			_, _ = fmt.Fprintln(out, p)
-		}
-		return fmt.Errorf("%d outcome problem(s)", len(problems))
+	if err := gatekit.Problems(out, "the outcomes", problems); err != nil {
+		return err
 	}
 	_, _ = fmt.Fprintln(out, report)
 	return nil

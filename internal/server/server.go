@@ -39,7 +39,6 @@ type Options struct {
 	Client   *gapi.Client
 	Metadata instance.Metadata // zero when the instance was not reachable at startup
 	Granted  []string          // scopes the token was granted
-	Username string
 	Logger   *slog.Logger
 	Version  string
 }
@@ -47,7 +46,7 @@ type Options struct {
 // New builds the MCP server with every tool the configuration registers.
 // A nil Client is allowed: every tool then answers [auth], which is what
 // a client started before `gitlab-mcp login` should see.
-func New(opts Options) (*mcp.Server, error) {
+func New(opts Options) *mcp.Server {
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -62,7 +61,7 @@ func New(opts Options) (*mcp.Server, error) {
 	s.AddReceivingMiddleware(logMethods(logger))
 	svc := service.New(service.Options{Client: opts.Client, Config: opts.Config, Metadata: opts.Metadata, Granted: opts.Granted})
 	tools.Register(s, tools.Deps{Service: svc, Config: opts.Config, Metadata: opts.Metadata, Granted: opts.Granted, Logger: logger})
-	return s, nil
+	return s
 }
 
 // logMethods logs every method but a tool call, which the tools log
@@ -102,10 +101,7 @@ type Dump struct {
 // also exactly what a client would be told.
 func DumpSchemas(w io.Writer, version string) error {
 	ctx := context.Background()
-	s, err := New(Options{Config: tools.FullSurface(config.Config{}), Version: version})
-	if err != nil {
-		return err
-	}
+	s := New(Options{Config: tools.FullSurface(config.Config{}), Version: version})
 	ct, st := mcp.NewInMemoryTransports()
 	ss, err := s.Connect(ctx, st, nil)
 	if err != nil {

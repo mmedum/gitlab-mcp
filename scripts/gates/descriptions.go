@@ -5,6 +5,8 @@ import (
 	"io"
 	"slices"
 	"strings"
+
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 )
 
 // The descriptions gate reads the schema dump — what a client is served,
@@ -33,11 +35,8 @@ func descriptions(out io.Writer, args []string) error {
 		return err
 	}
 	problems := checkDescriptions(d, surfaceFloor)
-	if len(problems) > 0 {
-		for _, p := range problems {
-			_, _ = fmt.Fprintln(out, p)
-		}
-		return fmt.Errorf("%d description problem(s) in %s", len(problems), args[0])
+	if err := gatekit.Problems(out, "the descriptions in "+args[0], problems); err != nil {
+		return err
 	}
 	inputs := 0
 	for _, t := range d.Tools {

@@ -13,9 +13,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -52,12 +52,16 @@ func Floor(what string, read, min int) []string {
 	return []string{fmt.Sprintf("read %d %s, want at least %d: the reader is not seeing its input", read, what, min)}
 }
 
-// ExeSuffix is what the platform appends to an executable's name.
-func ExeSuffix() string {
-	if runtime.GOOS == "windows" {
-		return ".exe"
+// Clip shortens s to at most n bytes plus an ellipsis, cutting on a rune
+// boundary so a quoted excerpt stays valid UTF-8.
+func Clip(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return ""
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
 }
 
 // WriteFileAtomic writes through a temporary file in the same directory

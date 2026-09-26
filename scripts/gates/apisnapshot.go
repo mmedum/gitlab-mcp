@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 )
 
 // The OpenAPI snapshot is GitLab's published REST surface at one release
@@ -147,38 +149,15 @@ func encodeSnapshot(s apiSnapshot) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// writeFileAtomic writes through a temporary file in the same directory
-// and renames it over path, so a failure part-way leaves the old file
-// whole. A half-written snapshot is worse than a stale one: the next
-// `make check` would hold the verdicts to something that is neither.
+// writeFileAtomic makes the directory a first snapshot lands in, then
+// writes the file atomically. A half-written snapshot is worse than a
+// stale one: the next `make check` would hold the verdicts to something
+// that is neither.
 func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // a directory of committed files
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // a directory of committed files
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(name)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	if err := os.Chmod(name, 0o644); err != nil { //nolint:gosec // a committed file, world-readable like its neighbors
-		_ = os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	return nil
+	return gatekit.WriteFileAtomic(path, data)
 }
 
 // ------------------------------------------------------------ fetching

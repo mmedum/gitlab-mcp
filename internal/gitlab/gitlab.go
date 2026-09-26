@@ -11,7 +11,11 @@
 // decoded cannot leak. TestNoTokenFields holds it.
 package gitlab
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 // Metadata is GET /metadata. It needs authentication.
 type Metadata struct {
@@ -44,14 +48,55 @@ type User struct {
 // TokenInfo is GET /oauth/token/info, Doorkeeper's introspection of the
 // bearer token. It lives under the web base, not the API root.
 type TokenInfo struct {
-	ResourceOwnerID int64    `json:"resource_owner_id"`
-	Scope           []string `json:"scope"`
+	ResourceOwnerID int64 `json:"resource_owner_id"`
+	// Scope is what the token was granted. Older Doorkeeper answers name
+	// the key "scopes"; either is read.
+	Scope ScopeList `json:"scope"`
 	// ExpiresIn is the seconds left, nil for a token that does not
 	// expire.
 	ExpiresIn   *int64               `json:"expires_in"`
 	Application TokenInfoApplication `json:"application"`
 	// CreatedAt is Unix seconds, as Doorkeeper writes it.
 	CreatedAt int64 `json:"created_at"`
+}
+
+// UnmarshalJSON reads the answer, taking the scopes from "scopes" when
+// "scope" carries none.
+func (t *TokenInfo) UnmarshalJSON(data []byte) error {
+	type plain TokenInfo // without this method, so the decode does not recurse
+	var raw struct {
+		plain
+		Scopes ScopeList `json:"scopes"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = TokenInfo(raw.plain)
+	if len(t.Scope) == 0 {
+		t.Scope = raw.Scopes
+	}
+	return nil
+}
+
+// ScopeList is a token's scopes, which Doorkeeper writes as an array
+// and OAuth as one space-separated string. It reads either; any other
+// shape reads as no scopes rather than failing the answer.
+type ScopeList []string
+
+// UnmarshalJSON reads an array of scopes or a space-separated string.
+func (l *ScopeList) UnmarshalJSON(data []byte) error {
+	var list []string
+	if json.Unmarshal(data, &list) == nil {
+		*l = list
+		return nil
+	}
+	var s string
+	if json.Unmarshal(data, &s) == nil {
+		*l = strings.Fields(s)
+		return nil
+	}
+	*l = nil
+	return nil
 }
 
 // TokenInfoApplication names the OAuth application the token came from.

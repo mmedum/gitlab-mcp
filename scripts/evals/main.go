@@ -95,10 +95,7 @@ func checkTask(ctx context.Context, t Task) (string, error) {
 // offered is how many tools the real server lists against the world,
 // built in-process as the binary builds it.
 func offered(ctx context.Context, w *world) (int, error) {
-	s, err := server.New(server.Options{Config: config.Config{Instance: w.srv.URL}, Client: w.client, Version: "evals"})
-	if err != nil {
-		return 0, err
-	}
+	s := server.New(server.Options{Config: config.Config{Instance: w.srv.URL}, Client: w.client, Version: "evals"})
 	ct, st := mcp.NewInMemoryTransports()
 	ss, err := s.Connect(ctx, st, nil)
 	if err != nil {

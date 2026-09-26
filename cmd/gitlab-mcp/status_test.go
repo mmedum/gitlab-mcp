@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -235,5 +241,35 @@ func TestDoctorSaysWhereWritesAreConfined(t *testing.T) {
 	r := runWith(env, nil, "doctor")
 	if r.code != 0 || !strings.Contains(r.stdout, "confined to 2 namespace(s) by "+config.EnvWriteNamespaces) {
 		t.Errorf("doctor: %+v", r)
+	}
+}
+
+// TestUnreachableNamesNoHost: net/http wraps a transport failure in a
+// *url.Error carrying the URL, a lookup names the host and the resolver,
+// and a certificate for the wrong host names both hosts. None of it may
+// reach doctor's output, which the bug form asks for.
+func TestUnreachableNamesNoHost(t *testing.T) {
+	const host = "canary-host.example.net"
+	inURL := func(err error) error {
+		return &url.Error{Op: "Get", URL: "https://" + host + "/api/v4/metadata", Err: err}
+	}
+	for name, c := range map[string]struct {
+		err  error
+		want string
+	}{
+		"lookup": {inURL(&net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Name: host, Server: "10.9.8.7:53",
+			Err: "no such host", IsNotFound: true}}), "could not be reached: lookup: no such host"},
+		"wrong host name": {inURL(&tls.CertificateVerificationError{Err: x509.HostnameError{
+			Certificate: &x509.Certificate{DNSNames: []string{"canary-cert.example.net"}}, Host: host}}), config.EnvCAFile},
+		"url error in a url error": {inURL(inURL(errors.New("proxyconnect " + host))), "could not be reached: the connection failed"},
+		"deadline":                 {inURL(context.DeadlineExceeded), "could not be reached: timed out"},
+	} {
+		got := unreachable(c.err)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q, want it to contain %q", name, got, c.want)
+		}
+		if strings.Contains(got, "canary") || strings.Contains(got, "10.9.8.7") {
+			t.Errorf("%s: %q names a host", name, got)
+		}
 	}
 }

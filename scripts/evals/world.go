@@ -56,10 +56,6 @@ type world struct {
 	facts  Facts
 }
 
-type staticToken string
-
-func (t staticToken) Token(context.Context) (string, error) { return string(t), nil }
-
 func newWorld(ctx context.Context) (*world, error) {
 	tb := &harnessTB{}
 	srv := gitlabtest.New(tb, gitlabtest.Options{})
@@ -69,7 +65,7 @@ func newWorld(ctx context.Context) (*world, error) {
 		w.close()
 		return nil, err
 	}
-	w.client, err = gapi.New(gapi.Options{Instance: inst, Tokens: staticToken(srv.Token()), Version: "evals"})
+	w.client, err = gapi.New(gapi.Options{Instance: inst, Tokens: gapi.StaticToken(srv.Token()), Version: "evals"})
 	if err != nil {
 		w.close()
 		return nil, err

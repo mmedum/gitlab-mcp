@@ -68,13 +68,3 @@ func TestSmokeReportsAMissingBinary(t *testing.T) {
 		t.Fatal("a missing binary passed")
 	}
 }
-
-func TestClipCutsOnARuneBoundary(t *testing.T) {
-	got := clip(strings.Repeat("é", 10), 5)
-	if got != "éé…" {
-		t.Errorf("clip = %q", got)
-	}
-	if clip("short", 10) != "short" {
-		t.Error("clip changed a short string")
-	}
-}

@@ -280,8 +280,8 @@ func TestFileIsOwnerOnly(t *testing.T) {
 		// A mode means nothing there; internal/fileperm reads the access
 		// list back. This holds only that the warning names the real
 		// mechanism.
-		if note := FileProtection(); !strings.Contains(note, "ACL") {
-			t.Fatalf("FileProtection = %q", note)
+		if note := fileProtection(); !strings.Contains(note, "ACL") {
+			t.Fatalf("fileProtection = %q", note)
 		}
 		return
 	}
@@ -292,8 +292,8 @@ func TestFileIsOwnerOnly(t *testing.T) {
 	if mode := fi.Mode().Perm(); mode != 0o600 {
 		t.Fatalf("token file mode %o, want 600", mode)
 	}
-	if note := FileProtection(); note != "mode 0600" {
-		t.Fatalf("FileProtection = %q", note)
+	if note := fileProtection(); note != "mode 0600" {
+		t.Fatalf("fileProtection = %q", note)
 	}
 }
 
@@ -500,5 +500,41 @@ func TestStoreThroughTheMockKeyring(t *testing.T) {
 	}
 	if _, _, err := s.Resolve(); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Resolve after Delete = %v", err)
+	}
+}
+
+// TestReadStoredTakesThePairSavedLast: with both stores holding a pair,
+// the one saved last is live, and a pair that does not decode loses to
+// one that does, whichever store holds it.
+func TestReadStoredTakesThePairSavedLast(t *testing.T) {
+	older := `{"refresh_token":"old","saved_at":"2026-09-01T00:00:00Z"}`
+	newer := `{"refresh_token":"new","saved_at":"2026-09-02T00:00:00Z"}`
+	for _, c := range []struct {
+		name, keyring, file string
+		wantRefresh         string
+		wantSource          Source
+	}{
+		{"keyring newer", newer, older, "new", SourceKeyring},
+		{"file newer", older, newer, "new", SourceFile},
+		{"same time: keyring", `{"refresh_token":"k","saved_at":"2026-09-01T00:00:00Z"}`, older, "k", SourceKeyring},
+		{"broken keyring, good file", "{not json", older, "old", SourceFile},
+		{"good keyring, broken file", older, "{not json", "old", SourceKeyring},
+		{"keyring without refresh, good file", `{"access_token":"a"}`, older, "old", SourceFile},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			kr := newFake()
+			kr.items["gitlab-mcp/default"] = c.keyring
+			s, _ := store(t, kr, false)
+			if err := os.WriteFile(s.FilePath, []byte(c.file), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, src, err := s.Resolve()
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if got.RefreshToken != c.wantRefresh || src != c.wantSource {
+				t.Errorf("Resolve = %q from %s, want %q from %s", got.RefreshToken, src, c.wantRefresh, c.wantSource)
+			}
+		})
 	}
 }

@@ -18,10 +18,6 @@ import (
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
 )
 
-type staticTokens string
-
-func (s staticTokens) Token(context.Context) (string, error) { return string(s), nil }
-
 const alphaID = 2001
 
 func newService(t *testing.T, o gitlabtest.Options, cfg config.Config) (*Service, *gitlabtest.Server) {
@@ -31,7 +27,7 @@ func newService(t *testing.T, o gitlabtest.Options, cfg config.Config) (*Service
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := gapi.New(gapi.Options{Instance: inst, Tokens: staticTokens(gl.Token()),
+	c, err := gapi.New(gapi.Options{Instance: inst, Tokens: gapi.StaticToken(gl.Token()),
 		Sleep: func(context.Context, time.Duration) error { return nil }})
 	if err != nil {
 		t.Fatal(err)

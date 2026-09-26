@@ -205,9 +205,6 @@ func (p Project) withPath(path string) Project {
 // Group addresses a group by numeric id or full path.
 type Group struct{ locator }
 
-// GroupByID addresses a group by numeric id.
-func GroupByID(id int64) Group { return Group{locator{id: id}} }
-
 // ParseGroup reads a numeric id or a full path.
 func ParseGroup(s string) (Group, error) {
 	l, err := parseLocator("group", s)

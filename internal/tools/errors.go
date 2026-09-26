@@ -58,9 +58,6 @@ func message(err error) string {
 	}
 	var e *gapi.Error
 	if errors.As(err, &e) {
-		if e.Hint != "" {
-			return e.Message + "; " + e.Hint
-		}
 		return e.Message
 	}
 	return gapi.AsError(err).Message

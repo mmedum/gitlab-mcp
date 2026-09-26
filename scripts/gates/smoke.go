@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 	"github.com/mmedum/gitlab-mcp/scripts/internal/mcpstdio"
 )
 
@@ -143,7 +144,7 @@ func exchange(binary string, env []string, frames []frame) (map[int]map[string]a
 			err, strings.Join(sess.StderrTail(20), "\n"))
 	}
 	if stray := sess.Stray(); len(stray) > 0 {
-		return nil, fmt.Errorf("stdout carried %d line(s) that are not JSON-RPC frames, the first %q", len(stray), clip(stray[0], 120))
+		return nil, fmt.Errorf("stdout carried %d line(s) that are not JSON-RPC frames, the first %q", len(stray), gatekit.Clip(stray[0], 120))
 	}
 	return replies, nil
 }
@@ -186,7 +187,7 @@ func smokeSession(binary string, env []string, proto string, floor int) (int, er
 	}
 	if isErr, _ := call["isError"].(bool); !isErr || !strings.Contains(contentText(call), "[auth]") {
 		return 0, fmt.Errorf("get_me without credentials answered %q (isError %v); it must be a tool error carrying [auth]",
-			clip(contentText(call), 160), call["isError"])
+			gatekit.Clip(contentText(call), 160), call["isError"])
 	}
 	tmpl := resultOf(replies[4])
 	if tmpl == nil {
@@ -272,7 +273,7 @@ func smokeDisconnect(binary string, env []string) error {
 			err, strings.Join(sess.StderrTail(20), "\n"))
 	}
 	if stray := sess.Stray(); len(stray) > 0 {
-		return fmt.Errorf("stdout carried %q, which is not a JSON-RPC frame", clip(stray[0], 120))
+		return fmt.Errorf("stdout carried %q, which is not a JSON-RPC frame", gatekit.Clip(stray[0], 120))
 	}
 	return nil
 }
@@ -309,15 +310,3 @@ func contentText(result map[string]any) string {
 	}
 	return b.String()
 }
-
-func clip(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8Start(s[n]) {
-		n--
-	}
-	return s[:n] + "…"
-}
-
-func utf8Start(b byte) bool { return b&0xC0 != 0x80 }

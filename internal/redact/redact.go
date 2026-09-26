@@ -13,13 +13,18 @@
 package redact
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"io"
 	"net"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
+	"syscall"
+	"unicode/utf8"
 )
 
 // The shapes this package masks, as pattern text so the maintainer
@@ -124,10 +129,8 @@ var keptPrefixes = []string{"/api/v4", "/oauth", "/-"}
 // user or namespace, which may be a path rather than a number.
 var namedSegment = regexp.MustCompile(`/(projects|groups|users|namespaces)/([^/?#]+)`)
 
-// Host masks a host unless it is gitlab.com or loopback. The port is
+// maskHost masks a host unless it is gitlab.com or loopback. The port is
 // kept: it says nothing about who runs the instance.
-func Host(h string) string { return maskHost(h, marker) }
-
 func maskHost(h string, rep replacer) string {
 	name, port := h, ""
 	if n, p, err := net.SplitHostPort(h); err == nil {
@@ -191,17 +194,19 @@ func Text(s string) string {
 	return ClientID(s)
 }
 
-// Clip masks s with Text and then truncates it to at most n bytes, on a
-// rune boundary, marking the cut with "…". In that order: truncating
-// first can cut a value short of its shape, and the rest of it then
-// survives.
-func Clip(s string, n int) string {
-	s = Text(s)
+// Clip masks s with Text and then truncates it with Truncate. In that
+// order: truncating first can cut a value short of its shape, and the
+// rest of it then survives.
+func Clip(s string, n int) string { return Truncate(Text(s), n) }
+
+// Truncate cuts s to at most n bytes, on a rune boundary, marking the
+// cut with "…". It masks nothing.
+func Truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	cut := n
-	for cut > 0 && !isRuneStart(s[cut]) {
+	cut := max(n, 0)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	return s[:cut] + "…"
@@ -218,30 +223,81 @@ func ID(id string) string {
 	return string(r[:6]) + "…"
 }
 
-// NetError renders a transport error without the host names and
-// addresses net and crypto/x509 put in it, which logs may not carry
-// (§9.2): a lookup names the host it looked up, a dial the address, and
-// a certificate for the wrong host names both hosts.
+// NetError renders a transport error without the host names, addresses
+// and URLs net, net/http and crypto/x509 put in it, which logs may not
+// carry (§9.2): a lookup names the host it looked up, a dial the
+// address, a request the URL, and a certificate for the wrong host names
+// both hosts.
+//
+// It is an allowlist. Only shapes whose text is known to be fixed are
+// rendered, each in words of its own; anything else becomes a fixed
+// phrase, because an error nobody has read may carry any of those.
 func NetError(err error) string {
+	var ue *url.Error
 	var dns *net.DNSError
-	if errors.As(err, &dns) {
-		return "lookup: " + dns.Err
-	}
 	var op *net.OpError
-	if errors.As(err, &op) && op.Err != nil {
+	var errno syscall.Errno
+	var alert tls.AlertError
+	var header tls.RecordHeaderError
+	switch {
+	case errors.As(err, &dns):
+		return "lookup: " + lookupFailure(dns)
+	case IsCertificateError(err):
+		return certificate(err)
+	case errors.As(err, &op) && op.Err != nil:
+		// Op is a fixed word: dial, read, write.
 		return op.Op + ": " + NetError(op.Err)
+	case errors.As(err, &ue) && ue.Err != nil:
+		return NetError(ue.Err)
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case isTimeout(err):
+		return "timed out"
+	case errors.As(err, &errno):
+		// The operating system's own text for the code: "connection
+		// refused", "connection reset by peer".
+		return errno.Error()
+	case errors.As(err, &alert):
+		return alert.Error()
+	case errors.As(err, &header):
+		return "tls: the server did not answer with TLS"
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		return "the connection closed before the answer was complete"
 	}
+	return "the connection failed"
+}
+
+// lookupFailure says why a name lookup failed. The DNSError's own text
+// can quote the resolver's address.
+func lookupFailure(dns *net.DNSError) string {
+	switch {
+	case dns.IsNotFound:
+		return "no such host"
+	case dns.IsTimeout:
+		return "timed out"
+	case dns.IsTemporary:
+		return "temporary failure in name resolution"
+	}
+	return "the name could not be resolved"
+}
+
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var t interface{ Timeout() bool }
+	return errors.As(err, &t) && t.Timeout()
+}
+
+// IsCertificateError reports a certificate the client refused: an
+// unknown authority, a name that does not match, one expired or unfit.
+func IsCertificateError(err error) bool {
 	var verify *tls.CertificateVerificationError
-	if errors.As(err, &verify) {
-		return "tls: failed to verify certificate: " + certificate(verify.Err)
-	}
 	var hostname x509.HostnameError
 	var unknown x509.UnknownAuthorityError
 	var invalid x509.CertificateInvalidError
-	if errors.As(err, &hostname) || errors.As(err, &unknown) || errors.As(err, &invalid) {
-		return certificate(err)
-	}
-	return err.Error()
+	return errors.As(err, &verify) || errors.As(err, &hostname) ||
+		errors.As(err, &unknown) || errors.As(err, &invalid)
 }
 
 // certificate describes why a certificate was refused in words of its
@@ -260,7 +316,7 @@ func certificate(err error) string {
 	case errors.As(err, &invalid):
 		return "x509: the certificate is not valid for this use"
 	}
-	return "the certificate was not accepted"
+	return "tls: the certificate was not accepted"
 }
 
 // mask keeps the first rune and replaces the rest with an ellipsis, so
@@ -294,5 +350,3 @@ func isDigits(s string) bool {
 	}
 	return true
 }
-
-func isRuneStart(b byte) bool { return b&0xC0 != 0x80 }

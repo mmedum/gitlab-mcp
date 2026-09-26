@@ -17,6 +17,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/credentials"
 	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 )
 
 // The live half: the model runs in `claude -p` with this server as its
@@ -140,7 +141,7 @@ func askClaude(ctx context.Context, o liveOptions, prompt string, env []string) 
 		}
 	}
 	if err := cmd.Wait(); err != nil {
-		return run, fmt.Errorf("claude: %w: %s", err, clipText(stderr.String(), 300))
+		return run, fmt.Errorf("claude: %w: %s", err, gatekit.Clip(stderr.String(), 300))
 	}
 	if fence != nil {
 		return run, fence

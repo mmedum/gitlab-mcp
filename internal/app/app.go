@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -204,10 +205,21 @@ func (s *Settings) Tokens() gapi.TokenSource { return s.tokens }
 
 // Client builds the GitLab client for these settings.
 func (s *Settings) Client(logger *slog.Logger, version string) (*gapi.Client, error) {
-	return gapi.New(gapi.Options{
-		Instance: s.Instance, HTTPClient: s.HTTPClient, Tokens: s.tokens,
-		Logger: logger, Version: version, HeaderTimeout: s.Config.HTTPTimeout,
-	})
+	return s.ClientWith(gapi.Options{Logger: logger, Version: version})
+}
+
+// ClientWith builds a GitLab client for these settings with o's tuning.
+// The instance and the transport are always these settings'; the token
+// source and the header timeout are theirs unless o sets them.
+func (s *Settings) ClientWith(o gapi.Options) (*gapi.Client, error) {
+	o.Instance, o.HTTPClient = s.Instance, s.HTTPClient
+	if o.Tokens == nil {
+		o.Tokens = s.tokens
+	}
+	if o.HeaderTimeout == 0 {
+		o.HeaderTimeout = s.Config.HTTPTimeout
+	}
+	return gapi.New(o)
 }
 
 // String keeps %v and %+v to the fields LogValue shows.
@@ -263,6 +275,9 @@ func InstanceKind(i instance.Instance) string {
 func NewHTTPClient(cfg config.Config) (*http.Client, error) {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Proxy = http.ProxyFromEnvironment
+	// Every call goes to one host, as many at once as the rate model
+	// allows; fewer idle connections would close and reopen them.
+	t.MaxIdleConnsPerHost = gapi.DefaultConcurrency
 	if cfg.CAFile != "" {
 		// The file is one the person named in their configuration.
 		pem, err := os.ReadFile(cfg.CAFile) //nolint:gosec // a path the operator supplied deliberately
@@ -292,21 +307,20 @@ type Startup struct {
 	// Granted is the token's scopes, read live or else from the last
 	// login.
 	Granted []string
-	// Username is who the token acts as; empty when unknown.
-	Username string
 }
 
 // startupBudget bounds the startup reads, so a slow instance delays the
 // server's start by at most this.
 const startupBudget = 15 * time.Second
 
-// Probe reads the token's scopes, /metadata and /user. Registration
-// needs the version before the server exists, so these are read before
-// serving; each failure is logged and left for the calls to report, so
-// an instance that is down at start still gets a server.
+// Probe reads the token's scopes and /metadata. Registration needs the
+// version before the server exists, so these are read before serving;
+// each failure is logged and left for the calls to report, so an
+// instance that is down at start still gets a server.
 //
-// The reads also warm the token: a refresh that is due happens here
-// rather than on the first tool call.
+// The token is warmed first, so a refresh that is due happens here
+// rather than on the first tool call, and once rather than in both
+// reads; the two reads then run together.
 func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version string) Startup {
 	var st Startup
 	if s.Profile != nil {
@@ -321,10 +335,7 @@ func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version strin
 	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	c, err := gapi.New(gapi.Options{
-		Instance: s.Instance, HTTPClient: s.HTTPClient, Tokens: s.tokens,
-		Logger: logger, Version: version, HeaderTimeout: budget, MaxAttempts: 1,
-	})
+	c, err := s.ClientWith(gapi.Options{Logger: logger, Version: version, HeaderTimeout: budget, MaxAttempts: 1})
 	if err != nil {
 		logger.Warn("startup read skipped", "reason", redact.Text(err.Error()))
 		return st
@@ -334,24 +345,25 @@ func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version strin
 			"reason", redact.Text(err.Error()))
 		return st
 	}
-	if info, err := c.TokenInfo(ctx); err == nil && len(info.Scope) > 0 {
-		st.Granted = info.Scope
-	} else if err != nil {
-		logger.Warn("could not read the token's scopes; using those of the last login", "reason", redact.Text(err.Error()))
-	}
-	if md, err := c.GetMetadata(ctx); err != nil {
-		logger.Warn("could not read the instance's version; version-gated tools stay registered and answer [unsupported] where the instance lacks them",
-			"reason", redact.Text(err.Error()))
-	} else if m, err := instance.NewMetadata(md.Version, md.Revision, md.Enterprise); err != nil {
-		logger.Warn("the instance reported a version this server cannot read", "reason", redact.Text(err.Error()))
-	} else {
-		st.Metadata = m
-	}
-	if u, err := c.GetCurrentUser(ctx); err != nil {
-		logger.Warn("could not read the signed-in account", "reason", redact.Text(err.Error()))
-	} else {
-		st.Username = u.Username
-	}
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		if info, err := c.TokenInfo(ctx); err != nil {
+			logger.Warn("could not read the token's scopes; using those of the last login", "reason", redact.Text(err.Error()))
+		} else if len(info.Scope) > 0 {
+			st.Granted = info.Scope
+		}
+	})
+	wg.Go(func() {
+		if md, err := c.GetMetadata(ctx); err != nil {
+			logger.Warn("could not read the instance's version; version-gated tools stay registered and answer [unsupported] where the instance lacks them",
+				"reason", redact.Text(err.Error()))
+		} else if m, err := instance.NewMetadata(md.Version, md.Revision, md.Enterprise); err != nil {
+			logger.Warn("the instance reported a version this server cannot read", "reason", redact.Text(err.Error()))
+		} else {
+			st.Metadata = m
+		}
+	})
+	wg.Wait()
 	return st
 }
 
@@ -413,13 +425,10 @@ func Assemble(ctx context.Context, cfg config.Config, o Options) (*Runtime, erro
 	if err := s.CheckScopes(st.Granted); err != nil {
 		return nil, err
 	}
-	srv, err := newServer(server.Options{
+	srv := newServer(server.Options{
 		Config: cfg, Client: client, Metadata: st.Metadata, Granted: st.Granted,
-		Username: st.Username, Logger: logger, Version: o.Version,
+		Logger: logger, Version: o.Version,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("build the server: %w", err)
-	}
 	return &Runtime{Settings: s, Client: client, Startup: st, Server: srv}, nil
 }
 

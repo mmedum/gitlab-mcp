@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"net"
 	"net/http"
@@ -449,6 +450,13 @@ func TestTransportErrorsCarryNoHostName(t *testing.T) {
 			Err: &net.DNSError{Name: "canary-host.example.net", Server: "10.9.8.7:53", Err: "no such host", IsNotFound: true}},
 		"certificate host": &tls.CertificateVerificationError{Err: x509.HostnameError{
 			Certificate: &x509.Certificate{DNSNames: []string{"canary-cert.example.net"}}, Host: "canary-host.example.net"}},
+		"lookup in a url error": &url.Error{Op: "Post", URL: "https://canary-host.example.net/oauth/token",
+			Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Name: "canary-host.example.net",
+				Server: "10.9.8.7:53", Err: "no such host", IsNotFound: true}}},
+		"certificate in a url error": &url.Error{Op: "Post", URL: "https://canary-host.example.net/oauth/token",
+			Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{
+				Cert: &x509.Certificate{Subject: pkix.Name{CommonName: "canary-ca.example.net"}}}}},
+		"an unknown shape": errors.New("proxyconnect tcp: canary-proxy.example.net 10.9.8.7:3128 refused"),
 	} {
 		app := &Application{Instance: inst, ClientID: gitlabtest.ClientID,
 			HTTPClient: &http.Client{Transport: failWith{cause}}}

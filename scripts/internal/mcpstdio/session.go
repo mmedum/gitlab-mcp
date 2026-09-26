@@ -186,10 +186,6 @@ func (s *Session) Stray() []string {
 	return slices.Clone(s.stray)
 }
 
-// CloseStdin ends the conversation from the client's side without
-// waiting for the server.
-func (s *Session) CloseStdin() error { return s.stdin.Close() }
-
 // Close closes stdin and waits for the server to exit, killing it after
 // the timeout. It returns the exit error, if any. Both pipes are read to
 // the end before Wait, as os/exec requires: Wait closes them, and a read

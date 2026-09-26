@@ -50,7 +50,7 @@ func TestDecoyKeyringIsInPlace(t *testing.T) {
 func TestOSKeyringAgainstMock(t *testing.T) {
 	useMockKeyring(t)
 	b := OSKeyring()
-	if _, err := b.Get(ServiceName, "p"); !IsKeyringNotFound(err) {
+	if _, err := b.Get(ServiceName, "p"); !isKeyringNotFound(err) {
 		t.Fatalf("empty get: %v", err)
 	}
 	if err := b.Set(ServiceName, "p", "secret"); err != nil {
@@ -62,10 +62,10 @@ func TestOSKeyringAgainstMock(t *testing.T) {
 	if err := b.Delete(ServiceName, "p"); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Delete(ServiceName, "p"); !IsKeyringNotFound(err) {
+	if err := b.Delete(ServiceName, "p"); !isKeyringNotFound(err) {
 		t.Fatalf("second delete: %v", err)
 	}
-	if IsKeyringNotFound(errors.New("something else")) {
-		t.Fatal("IsKeyringNotFound matched an unrelated error")
+	if isKeyringNotFound(errors.New("something else")) {
+		t.Fatal("isKeyringNotFound matched an unrelated error")
 	}
 }

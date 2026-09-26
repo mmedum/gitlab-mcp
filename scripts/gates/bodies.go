@@ -6,6 +6,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 )
 
 // The bodies gate holds §4.2 (CLAUDE.md rule 5): GitLab runs every
@@ -39,11 +41,8 @@ func bodies(out io.Writer, args []string) error {
 		return err
 	}
 	report, problems := checkBodies(d, plainInputs, surfaceFloor, minWriteTools)
-	if len(problems) > 0 {
-		for _, p := range problems {
-			_, _ = fmt.Fprintln(out, p)
-		}
-		return fmt.Errorf("%d body problem(s) in %s", len(problems), args[0])
+	if err := gatekit.Problems(out, "the bodies in "+args[0], problems); err != nil {
+		return err
 	}
 	_, _ = fmt.Fprintln(out, report)
 	return nil

@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 )
 
 // The classes gate holds the closed error vocabulary (docs/architecture.md
@@ -49,11 +51,8 @@ func classes(out io.Writer, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if len(problems) > 0 {
-		for _, p := range problems {
-			_, _ = fmt.Fprintln(out, p)
-		}
-		return fmt.Errorf("%d error-class problem(s)", len(problems))
+	if err := gatekit.Problems(out, "the error classes", problems); err != nil {
+		return err
 	}
 	_, _ = fmt.Fprintln(out, report)
 	return nil

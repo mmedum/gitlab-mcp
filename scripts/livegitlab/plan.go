@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 )
 
 // The pure half of the live driver: the run's name, the plan of calls,
@@ -240,23 +240,5 @@ func (r *recorder) write(path, header string) error {
 	for _, k := range slices.Sorted(maps.Keys(r.sent)) {
 		fmt.Fprintf(&b, "%s\t%d\n", k, r.sent[k])
 	}
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".live-cover-*")
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.WriteString(b.String()); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil { //nolint:gosec // a committed file
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return gatekit.WriteFileAtomic(path, []byte(b.String()))
 }

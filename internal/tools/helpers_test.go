@@ -17,10 +17,6 @@ import (
 	"github.com/mmedum/gitlab-mcp/internal/service"
 )
 
-type staticTokens string
-
-func (s staticTokens) Token(context.Context) (string, error) { return string(s), nil }
-
 // harness is a client session against the tools registered over an
 // in-memory GitLab.
 type harness struct {
@@ -49,7 +45,7 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	}
 	var client *gapi.Client
 	if !o.noClient {
-		client, err = gapi.New(gapi.Options{Instance: inst, Tokens: staticTokens(gl.Token()), Logger: o.logger,
+		client, err = gapi.New(gapi.Options{Instance: inst, Tokens: gapi.StaticToken(gl.Token()), Logger: o.logger,
 			Sleep: func(context.Context, time.Duration) error { return nil }})
 		if err != nil {
 			t.Fatalf("client: %v", err)

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mmedum/gitlab-mcp/internal/redact"
 )
 
 // envelope is what GitLab's error body said, from any of its four
@@ -101,11 +103,7 @@ func (e envelope) detail(status int) string {
 	if d == "" {
 		d = http.StatusText(status)
 	}
-	d = stripURL(strings.Join(strings.Fields(d), " "))
-	if len(d) > maxDetail {
-		d = d[:maxDetail] + "…"
-	}
-	return d
+	return redact.Truncate(stripURL(strings.Join(strings.Fields(d), " ")), maxDetail)
 }
 
 // staleFile is the Files and Commits API refusing a last_commit_id that
@@ -178,9 +176,19 @@ func (a answer) rateLimited() verdict {
 
 // refused tells a bad token and a missing scope, both [auth], from a
 // role that refuses, [forbidden] (§3.2).
+//
+// A 401 is the token only when GitLab marks it invalid_token: expired,
+// revoked or unknown, which a new token may clear, so the verdict says
+// to try one. GitLab also answers 401 for a merge the account may not
+// make (§2.15), where the token is fine and a new one changes nothing.
 func (a answer) refused() verdict {
+	if a.status == http.StatusUnauthorized && invalidToken(a.env, a.h) {
+		v := a.fail(ClassAuth, "GitLab refused the access token for %s: it may have expired or been revoked. Run `gitlab-mcp login`. GitLab said: %s", a.name, a.detail)
+		v.reauth = true
+		return v
+	}
 	if a.status == http.StatusUnauthorized {
-		return a.fail(ClassAuth, "GitLab refused the access token for %s: it may have expired or been revoked. Run `gitlab-mcp login`. GitLab said: %s", a.name, a.detail)
+		return a.fail(ClassAuth, "GitLab refused %s for this account without calling the token invalid, as it does for an action the account's role does not allow, such as a merge. If every call is refused this way, run `gitlab-mcp login`. GitLab said: %s", a.name, a.detail)
 	}
 	if !insufficientScope(a.env, a.h) {
 		return a.fail(ClassForbidden, "GitLab refused %s for this account: %s", a.name, a.detail)
@@ -250,15 +258,10 @@ func (a answer) clientError() verdict {
 	}
 }
 
-// tokenRefused reports a 401 that refuses the token itself: expired,
-// revoked or unknown, which GitLab marks invalid_token. The 401 it
-// answers for a merge the account may not make carries no such mark,
-// and a new token would not change it.
-func tokenRefused(status int, h http.Header, body []byte) bool {
-	if status != http.StatusUnauthorized {
-		return false
-	}
-	if strings.EqualFold(parseEnvelope(body).topError, "invalid_token") {
+// invalidToken reports a refusal of the token itself, which GitLab marks
+// invalid_token in the body or the challenge.
+func invalidToken(env envelope, h http.Header) bool {
+	if strings.EqualFold(env.topError, "invalid_token") {
 		return true
 	}
 	return strings.Contains(strings.ToLower(h.Get("WWW-Authenticate")), "invalid_token")

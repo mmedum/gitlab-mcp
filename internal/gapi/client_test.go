@@ -22,10 +22,6 @@ import (
 	"github.com/mmedum/gitlab-mcp/internal/instance"
 )
 
-type staticToken string
-
-func (s staticToken) Token(context.Context) (string, error) { return string(s), nil }
-
 // sleeps records the waits between attempts without waiting.
 type sleeps struct {
 	mu sync.Mutex
@@ -68,7 +64,7 @@ func newFixture(t *testing.T, opts gitlabtest.Options, mod ...func(*Options)) *f
 	f := &fixture{srv: srv, token: srv.Token(), sleeps: &sleeps{}, logs: &bytes.Buffer{}}
 	o := Options{
 		Instance: mustInstance(t, srv.URL),
-		Tokens:   staticToken(f.token),
+		Tokens:   StaticToken(f.token),
 		Version:  "1.2.3",
 		Sleep:    f.sleeps.sleep,
 		Logger:   slog.New(slog.NewTextHandler(&lockedWriter{w: f.logs}, &slog.HandlerOptions{Level: slog.LevelDebug})),
@@ -176,6 +172,7 @@ func TestTokenSourceFailureIsAuth(t *testing.T) {
 type failingToken struct{}
 
 func (failingToken) Token(context.Context) (string, error) { return "", errors.New("keyring locked") }
+func (failingToken) Invalidate(string)                     {}
 
 func errOf[T any](_ T, err error) error { return err }
 
@@ -183,7 +180,7 @@ func TestRevokedTokenIsAuth(t *testing.T) {
 	f := newFixture(t, gitlabtest.Options{})
 	tok := f.srv.TokenFor("alice", "api")
 	f.srv.Revoke(tok)
-	f.client.tokens = staticToken(tok)
+	f.client.tokens = StaticToken(tok)
 	wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassAuth)
 }
 
@@ -211,7 +208,7 @@ func TestMissingRouteIsUnsupported(t *testing.T) {
 
 func TestReadAPITokenWriteIsAuthNamingScope(t *testing.T) {
 	f := newFixture(t, gitlabtest.Options{})
-	f.client.tokens = staticToken(f.srv.TokenFor("alice", "read_api"))
+	f.client.tokens = StaticToken(f.srv.TokenFor("alice", "read_api"))
 	err := f.client.Do(context.Background(), Call{Method: "POST", Path: "projects/{}/issues/{}/notes",
 		Args: []string{"2001", "1"}, Body: map[string]string{"body": "hello"}, Name: "add_comment"}, nil)
 	e := wantClass(t, err, ClassAuth)
@@ -259,17 +256,130 @@ func TestResolveProjectOncePerCall(t *testing.T) {
 	if n := Requests(ctx); n != 1 {
 		t.Errorf("Requests = %d, want 1", n)
 	}
-	// A new call resolves again.
+	// A new call is answered from what the process remembers.
 	ctx2 := WithCall(context.Background())
-	if _, err := f.client.ResolveProject(ctx2, p); err != nil {
+	if got, err := f.client.ResolveProject(ctx2, p); err != nil || got.ID() != 2001 {
+		t.Fatalf("second call = %v, %v", got, err)
+	}
+	if n := Requests(ctx2); n != 0 {
+		t.Errorf("second call Requests = %d, want 0", n)
+	}
+	// An id is never read; its path comes along when the process knows it.
+	byID, err := f.client.ResolveProject(ctx2, ProjectByID(7))
+	if err != nil || byID.ID() != 7 || byID.Path() != "" || Requests(ctx2) != 0 {
+		t.Errorf("an id resolved with a request: %v %v %d", byID, err, Requests(ctx2))
+	}
+	known, err := f.client.ResolveProject(ctx2, ProjectByID(2001))
+	if err != nil || known.Path() != "example-group/alpha" || Requests(ctx2) != 0 {
+		t.Errorf("a known id = %v %v %d", known, err, Requests(ctx2))
+	}
+}
+
+// TestResolvedProjectsExpireAndAMoveForgetsThem: the process trusts a
+// resolved path for a few minutes, and not past a move GitLab reports.
+func TestResolvedProjectsExpireAndAMoveForgetsThem(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	f := newFixture(t, gitlabtest.Options{}, func(o *Options) { o.Now = func() time.Time { return now } })
+	p := mustProject(t, gitlabtest.ProjectAlpha)
+	resolve := func() int {
+		t.Helper()
+		ctx := WithCall(context.Background())
+		if _, err := f.client.ResolveProject(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+		return Requests(ctx)
+	}
+	if n := resolve(); n != 1 {
+		t.Fatalf("first resolve made %d requests, want 1", n)
+	}
+	if n := resolve(); n != 0 {
+		t.Errorf("a second resolve made %d requests, want 0", n)
+	}
+	// A move anywhere forgets what the process remembered.
+	if _, err := f.client.GetIssue(WithCall(context.Background()), mustProject(t, gitlabtest.ProjectMoved), 1); err != nil {
 		t.Fatal(err)
 	}
-	if n := Requests(ctx2); n != 1 {
-		t.Errorf("second call Requests = %d, want 1", n)
+	if n := resolve(); n != 1 {
+		t.Errorf("resolve after a move made %d requests, want 1", n)
 	}
-	byID, err := f.client.ResolveProject(ctx2, ProjectByID(7))
-	if err != nil || byID.ID() != 7 || Requests(ctx2) != 1 {
-		t.Errorf("an id resolved with a request: %v %v %d", byID, err, Requests(ctx2))
+	now = now.Add(projectTTL)
+	if n := resolve(); n != 1 {
+		t.Errorf("resolve after the TTL made %d requests, want 1", n)
+	}
+}
+
+// TestMovedToKeepsTheRequestButTheProject: only the project is taken
+// from the Location; the resource under it and the query are the ones
+// the request carried.
+func TestMovedToKeepsTheRequestButTheProject(t *testing.T) {
+	c, err := New(Options{Instance: mustInstance(t, "https://gitlab.example.com"), Tokens: StaticToken("t")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, err := url.Parse("https://gitlab.example.com/api/v4/projects/example-group%2Fold/repository/files/a%2Fb.go?ref=feature%2Fx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := Call{Method: "GET"}
+	for _, c2 := range []struct {
+		name, location, want string
+	}{
+		{"new path only", "/api/v4/projects/example-group%2Fnew",
+			"https://gitlab.example.com/api/v4/projects/example-group%2Fnew/repository/files/a%2Fb.go?ref=feature%2Fx"},
+		{"other resource and query", "https://gitlab.example.com/api/v4/projects/example-group%2Fnew/issues?state=all",
+			"https://gitlab.example.com/api/v4/projects/example-group%2Fnew/repository/files/a%2Fb.go?ref=feature%2Fx"},
+	} {
+		t.Run(c2.name, func(t *testing.T) {
+			next, ok := c.movedTo(get, from, c2.location)
+			if !ok {
+				t.Fatal("not followed")
+			}
+			if next.String() != c2.want {
+				t.Errorf("next = %s, want %s", next, c2.want)
+			}
+			if next.Path != "/api/v4/projects/example-group/new/repository/files/a/b.go" {
+				t.Errorf("Path = %q", next.Path)
+			}
+		})
+	}
+	if _, ok := c.movedTo(get, from, "/api/v4/user"); ok {
+		t.Error("a redirect away from /projects/ was followed")
+	}
+}
+
+// TestDriftIsWalkedOnlyAtDebugAndOncePerType: the walk decodes a body a
+// second time, so it runs only when its report would be logged, and
+// once per Go type.
+func TestDriftIsWalkedOnlyAtDebugAndOncePerType(t *testing.T) {
+	type wire struct {
+		A int `json:"a"`
+	}
+	body := func(extra string) *attemptResult {
+		return &attemptResult{status: 200, header: http.Header{"Content-Type": {"application/json"}},
+			body: []byte(`{"a":1,"` + extra + `":2}`)}
+	}
+	var logs bytes.Buffer
+	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
+		logs.Reset()
+		c, err := New(Options{Instance: mustInstance(t, "https://gitlab.example.com"), Tokens: StaticToken("t"),
+			Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: level}))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, extra := range []string{"first", "second"} {
+			var out wire
+			if err := c.decode(context.Background(), body(extra), "x", &out); err != nil || out.A != 1 {
+				t.Fatalf("decode = %+v, %v", out, err)
+			}
+		}
+		got := logs.String()
+		wantFirst := level == slog.LevelDebug
+		if strings.Contains(got, "wire.first") != wantFirst {
+			t.Errorf("level %v: first drift logged = %v, want %v:\n%s", level, !wantFirst, wantFirst, got)
+		}
+		if strings.Contains(got, "wire.second") {
+			t.Errorf("level %v: a type was walked twice:\n%s", level, got)
+		}
 	}
 }
 
@@ -736,7 +846,7 @@ func TestTransportErrorsCarryNoPathOrQuery(t *testing.T) {
 	raw := dead.URL
 	dead.Close()
 	s := &sleeps{}
-	c, err := New(Options{Instance: mustInstance(t, raw), Tokens: staticToken("t"), Sleep: s.sleep, MaxAttempts: 2})
+	c, err := New(Options{Instance: mustInstance(t, raw), Tokens: StaticToken("t"), Sleep: s.sleep, MaxAttempts: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -757,7 +867,7 @@ func TestTransportErrorsCarryNoPathOrQuery(t *testing.T) {
 
 func TestTokenInfo(t *testing.T) {
 	f := newFixture(t, gitlabtest.Options{})
-	f.client.tokens = staticToken(f.srv.TokenFor("bob", "read_api"))
+	f.client.tokens = StaticToken(f.srv.TokenFor("bob", "read_api"))
 	ti, err := f.client.TokenInfo(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -926,9 +1036,19 @@ func TestTransportErrorsCarryNoHostName(t *testing.T) {
 		"unknown authority": {&tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{
 			Cert: &x509.Certificate{Subject: pkix.Name{CommonName: "canary-ca.example.net"}}}},
 			ClassUnavailable},
+		// A proxy or a wrapping transport can hand back a *url.Error of its
+		// own, which net/http wraps once more.
+		"lookup in a url error": {&url.Error{Op: "Get", URL: "https://canary-host.example.net/api/v4/user",
+			Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Name: "canary-host.example.net",
+				Server: "10.9.8.7:53", Err: "no such host", IsNotFound: true}}}, ClassUnavailable},
+		"certificate in a url error": {&url.Error{Op: "Get", URL: "https://canary-host.example.net/api/v4/user",
+			Err: &tls.CertificateVerificationError{Err: x509.HostnameError{
+				Certificate: &x509.Certificate{DNSNames: []string{"canary-cert.example.net"}}, Host: "canary-host.example.net"}}},
+			ClassUnavailable},
+		"an unknown shape": {errors.New("proxyconnect tcp: canary-proxy.example.net 10.9.8.7:3128 refused"), ClassUnavailable},
 	} {
 		s := &sleeps{}
-		cl, err := New(Options{Instance: mustInstance(t, "https://canary-host.example.net"), Tokens: staticToken("t"),
+		cl, err := New(Options{Instance: mustInstance(t, "https://canary-host.example.net"), Tokens: StaticToken("t"),
 			HTTPClient: &http.Client{Transport: failWith{c.cause}}, Sleep: s.sleep, MaxAttempts: 1})
 		if err != nil {
 			t.Fatal(err)

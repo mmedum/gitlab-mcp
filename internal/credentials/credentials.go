@@ -88,8 +88,8 @@ func (osKeyring) Delete(service, account string) error { return keyring.Delete(s
 // OSKeyring returns the production keyring backend.
 func OSKeyring() Backend { return osKeyring{} }
 
-// IsKeyringNotFound reports whether err is the keyring's "no entry".
-func IsKeyringNotFound(err error) bool { return errors.Is(err, keyring.ErrNotFound) }
+// isKeyringNotFound reports whether err is the keyring's "no entry".
+func isKeyringNotFound(err error) bool { return errors.Is(err, keyring.ErrNotFound) }
 
 // Store resolves and saves the token for one profile.
 type Store struct {
@@ -128,10 +128,10 @@ func (r record) token() *oauth2.Token {
 	}
 }
 
-// FileProtection says what the file fallback's permissions actually
+// fileProtection says what the file fallback's permissions actually
 // achieve on this platform, so a warning never names a protection the
 // platform does not provide.
-func FileProtection() string { return fileperm.Describe() }
+func fileProtection() string { return fileperm.Describe() }
 
 func (s *Store) warn(msg string) {
 	if s.Warn != nil {
@@ -186,74 +186,91 @@ func (s *Store) ResolveStored() (*oauth2.Token, Source, error) {
 func (s *Store) warnIfFile(src Source) {
 	if src == SourceFile {
 		s.warn(fmt.Sprintf("token read from the plaintext file %s (%s); "+
-			"an OS keyring would hold it better", s.FilePath, FileProtection()))
+			"an OS keyring would hold it better", s.FilePath, fileProtection()))
 	}
 }
 
+// readStored reads the keyring entry and the file, once each, and
+// returns the pair saved last. Both exist only when a save failed half
+// way: a keyring save that could not remove the file (the file is
+// older), or a keyring that refused a save and would not delete its old
+// entry either (the file is newer). A pair that does not decode loses to
+// one that does, and is reported only when there is no other.
 func (s *Store) readStored() (record, Source, error) {
-	var keyringErr error
-	if s.Keyring != nil {
-		raw, err := s.Keyring.Get(ServiceName, s.Profile)
-		switch {
-		case err == nil && raw != "":
-			r, err := decode([]byte(raw), "the keyring entry")
-			if err == nil {
-				if f, ok := s.newerFile(r.SavedAt); ok {
-					return f, SourceFile, nil
-				}
-			}
-			return r, SourceKeyring, err
-		case err != nil && !IsKeyringNotFound(err):
-			keyringErr = err
-		}
+	kr, krOK, krErr := s.readKeyring()
+	f, fOK, fErr := s.readFile()
+	switch {
+	case krOK && fOK && f.SavedAt.After(kr.SavedAt):
+		return f, SourceFile, nil
+	case krOK:
+		return kr, SourceKeyring, nil
+	case fOK:
+		return f, SourceFile, nil
 	}
-	if s.FilePath != "" {
-		data, err := os.ReadFile(s.FilePath)
-		if err == nil {
-			r, err := decode(data, s.FilePath)
-			return r, SourceFile, err
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return record{}, "", fmt.Errorf("credentials: read %s: %w", s.FilePath, err)
-		}
-	}
-	if keyringErr != nil {
-		return record{}, "", fmt.Errorf("%w (keyring error: %w)", ErrNotFound, keyringErr)
-	}
-	if s.ExpectKeyring {
+	// Nothing usable. A store that holds something broken says so first;
+	// a keyring that could not be asked is not a missing token.
+	var decodeErr *decodeError
+	switch {
+	case errors.As(krErr, &decodeErr):
+		return record{}, "", krErr
+	case fErr != nil:
+		return record{}, "", fErr
+	case krErr != nil:
+		return record{}, "", fmt.Errorf("%w (keyring error: %w)", ErrNotFound, krErr)
+	case s.ExpectKeyring:
 		return record{}, "", ErrKeyringSilent
 	}
 	return record{}, "", ErrNotFound
 }
 
-// newerFile returns the file's pair when it was saved after the keyring
-// entry. Both exist only when a save failed half way: a keyring save
-// that could not remove the file (the file is older), or a keyring that
-// refused a save and would not delete its old entry either (the file is
-// newer). The pair saved last is the live one.
-func (s *Store) newerFile(than time.Time) (record, bool) {
+// readKeyring reads the keyring entry. An entry that is absent is
+// neither a pair nor an error.
+func (s *Store) readKeyring() (record, bool, error) {
+	if s.Keyring == nil {
+		return record{}, false, nil
+	}
+	raw, err := s.Keyring.Get(ServiceName, s.Profile)
+	switch {
+	case err != nil && isKeyringNotFound(err), err == nil && raw == "":
+		return record{}, false, nil
+	case err != nil:
+		return record{}, false, err
+	}
+	r, err := decode([]byte(raw), "the keyring entry")
+	return r, err == nil, err
+}
+
+// readFile reads the file. A file that does not exist is neither a pair
+// nor an error.
+func (s *Store) readFile() (record, bool, error) {
 	if s.FilePath == "" {
-		return record{}, false
+		return record{}, false, nil
 	}
 	data, err := os.ReadFile(s.FilePath)
-	if err != nil {
-		return record{}, false
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return record{}, false, nil
+	case err != nil:
+		return record{}, false, fmt.Errorf("credentials: read %s: %w", s.FilePath, err)
 	}
 	r, err := decode(data, s.FilePath)
-	if err != nil || !r.SavedAt.After(than) {
-		return record{}, false
-	}
-	return r, true
+	return r, err == nil, err
 }
+
+// decodeError is a stored pair that is not one. Its text never quotes
+// the input, which is a token.
+type decodeError struct{ msg string }
+
+func (e *decodeError) Error() string { return e.msg }
 
 func decode(data []byte, where string) (record, error) {
 	var r record
 	if err := json.Unmarshal(data, &r); err != nil {
 		// The parse error can quote the input, which is a token.
-		return record{}, fmt.Errorf("credentials: %s is not a stored token", where)
+		return record{}, &decodeError{"credentials: " + where + " is not a stored token"}
 	}
 	if r.RefreshToken == "" {
-		return record{}, fmt.Errorf("credentials: %s holds no refresh token", where)
+		return record{}, &decodeError{"credentials: " + where + " holds no refresh token"}
 	}
 	return r, nil
 }
@@ -308,14 +325,14 @@ func (s *Store) Save(tok *oauth2.Token) (Source, error) {
 		// An older pair left in the keyring would be read before the file.
 		// If it cannot be removed either, readStored still prefers the
 		// file, being saved later.
-		if err := s.Keyring.Delete(ServiceName, s.Profile); err != nil && !IsKeyringNotFound(err) {
+		if err := s.Keyring.Delete(ServiceName, s.Profile); err != nil && !isKeyringNotFound(err) {
 			s.warn(fmt.Sprintf("an older token remains in the keyring and could not be removed: %v", err))
 		}
 		s.warn(fmt.Sprintf("keyring unavailable (%v); token saved in plaintext at %s (%s)",
-			keyringErr, s.FilePath, FileProtection()))
+			keyringErr, s.FilePath, fileProtection()))
 	} else {
 		s.warn(fmt.Sprintf("no keyring configured; token saved in plaintext at %s (%s)",
-			s.FilePath, FileProtection()))
+			s.FilePath, fileProtection()))
 	}
 	return SourceFile, nil
 }
@@ -325,7 +342,7 @@ func (s *Store) Save(tok *oauth2.Token) (Source, error) {
 func (s *Store) Delete() error {
 	var errs []error
 	if s.Keyring != nil {
-		if err := s.Keyring.Delete(ServiceName, s.Profile); err != nil && !IsKeyringNotFound(err) {
+		if err := s.Keyring.Delete(ServiceName, s.Profile); err != nil && !isKeyringNotFound(err) {
 			errs = append(errs, fmt.Errorf("credentials: keyring delete: %w", err))
 		}
 	}

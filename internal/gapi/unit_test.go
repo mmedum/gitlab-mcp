@@ -44,10 +44,6 @@ func TestErrorText(t *testing.T) {
 	if e.Error() != "[stale] the file moved" {
 		t.Errorf("Error() = %q", e.Error())
 	}
-	e.Hint = "pass last_commit_id from get_file"
-	if e.Error() != "[stale] the file moved; pass last_commit_id from get_file" {
-		t.Errorf("Error() = %q", e.Error())
-	}
 	cause := errors.New("cause")
 	w := Wrap(ClassUnavailable, cause, "x %d", 1)
 	if !errors.Is(w, cause) || w.Message != "x 1" {
@@ -248,7 +244,7 @@ func TestParseProject(t *testing.T) {
 			t.Errorf("ParseProject(%q) = %d %q %v", c.in, p.ID(), p.Path(), err)
 		}
 	}
-	if !(Project{}).IsZero() || ProjectByID(3).IsZero() || GroupByID(3).segment() != "3" {
+	if !(Project{}).IsZero() || ProjectByID(3).IsZero() || (Group{locator{id: 3}}).segment() != "3" {
 		t.Error("zero or id locators wrong")
 	}
 }

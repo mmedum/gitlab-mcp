@@ -36,14 +36,22 @@ func (c *Client) TokenInfo(ctx context.Context) (*gitlab.TokenInfo, error) {
 	return &out, err
 }
 
-// ResolveProject returns p addressed by numeric id, with its full path,
-// reading it at most once per call context (WithCall). A proxy that
-// decodes %2F then breaks at most this one request (§6.1).
+// ResolveProject returns p addressed by numeric id, with its full path.
+// A path is read at most once per call context (WithCall), and then not
+// again for a few minutes in this process; a move GitLab reports
+// forgets what the process remembered. A proxy that decodes %2F then
+// breaks at most this one request (§6.1).
+//
+// An id is returned as given, with its path when the process knows it,
+// and is never read for it.
 func (c *Client) ResolveProject(ctx context.Context, p Project) (Project, error) {
 	if p.IsZero() {
 		return Project{}, Errf(ClassInvalid, "no project was given: pass its numeric id or full path")
 	}
 	if p.ID() != 0 {
+		if known, ok := c.projects.byID(p.ID()); ok && p.Path() == "" {
+			return known, nil
+		}
 		return p, nil
 	}
 	key := strings.ToLower(p.Path())
@@ -56,11 +64,14 @@ func (c *Client) ResolveProject(ctx context.Context, p Project) (Project, error)
 			return cached, nil
 		}
 	}
-	proj, err := c.GetProject(ctx, p)
-	if err != nil {
-		return Project{}, err
+	resolved, ok := c.projects.byPath(key)
+	if !ok {
+		proj, err := c.GetProject(ctx, p)
+		if err != nil {
+			return Project{}, err
+		}
+		resolved = ProjectByID(proj.ID).withPath(proj.PathWithNamespace)
 	}
-	resolved := ProjectByID(proj.ID).withPath(proj.PathWithNamespace)
 	if s != nil {
 		s.mu.Lock()
 		s.projects[key] = resolved
@@ -69,10 +80,13 @@ func (c *Client) ResolveProject(ctx context.Context, p Project) (Project, error)
 	return resolved, nil
 }
 
-// GetProject reads one project.
+// GetProject reads one project, and remembers its id and path.
 func (c *Client) GetProject(ctx context.Context, p Project) (*gitlab.Project, error) {
 	var out gitlab.Project
 	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}", Args: []string{p.segment()}, Name: "get_project"}, &out)
+	if err == nil && out.ID != 0 && out.PathWithNamespace != "" {
+		c.projects.remember(ProjectByID(out.ID).withPath(out.PathWithNamespace))
+	}
 	return &out, err
 }
 

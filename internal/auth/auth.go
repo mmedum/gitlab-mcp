@@ -31,6 +31,8 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/mmedum/gitlab-mcp/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/redact"
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
@@ -176,7 +178,7 @@ type oauthErrorBody struct {
 func (a *Application) post(ctx context.Context, path string, form url.Values) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint(path), strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("auth: build request: %w", withoutURL(err))
+		return nil, fmt.Errorf("auth: build request: %w", gapi.WithoutURL(err))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -186,12 +188,12 @@ func (a *Application) post(ctx context.Context, path string, form url.Values) ([
 func (a *Application) send(req *http.Request) ([]byte, error) {
 	resp, err := a.client().Do(req)
 	if err != nil {
-		return nil, &TransportError{err: withoutURL(err)}
+		return nil, &TransportError{err: gapi.WithoutURL(err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return nil, &TransportError{err: withoutURL(err)}
+		return nil, &TransportError{err: gapi.WithoutURL(err)}
 	}
 	if resp.StatusCode == http.StatusOK {
 		return body, nil
@@ -202,31 +204,14 @@ func (a *Application) send(req *http.Request) ([]byte, error) {
 }
 
 // TransportError is a failure to reach an OAuth endpoint at all. Its
-// text carries no URL (§9.2).
+// text carries no URL and no host (§9.2): the URL names the instance,
+// and on token info it once carried the token itself.
 type TransportError struct{ err error }
 
 func (e *TransportError) Error() string { return "auth: GitLab could not be reached: " + e.err.Error() }
 
 // Unwrap exposes the cause.
 func (e *TransportError) Unwrap() error { return e.err }
-
-// withoutURL drops the URL a transport error renders. The URL names the
-// instance, and on token info it once carried the token itself.
-func withoutURL(err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) && ue.Err != nil {
-		return &hostless{err: ue.Err}
-	}
-	// Not known to be free of a URL, so nothing of it is kept.
-	return errors.New("the request could not be sent")
-}
-
-// hostless prints a transport error without the host names and
-// addresses in it, and keeps the cause for errors.As.
-type hostless struct{ err error }
-
-func (e *hostless) Error() string { return redact.NetError(e.err) }
-func (e *hostless) Unwrap() error { return e.err }
 
 func (a *Application) grant(body []byte) (*Grant, error) {
 	var tr tokenResponse
@@ -319,7 +304,7 @@ func (a *Application) TokenInfo(ctx context.Context, accessToken string) (*Token
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.endpoint(pathTokenInfo), nil)
 	if err != nil {
-		return nil, fmt.Errorf("auth: build request: %w", withoutURL(err))
+		return nil, fmt.Errorf("auth: build request: %w", gapi.WithoutURL(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
@@ -327,41 +312,15 @@ func (a *Application) TokenInfo(ctx context.Context, accessToken string) (*Token
 	if err != nil {
 		return nil, err
 	}
-	var raw struct {
-		Scope           json.RawMessage `json:"scope"`
-		Scopes          json.RawMessage `json:"scopes"`
-		ExpiresIn       *int64          `json:"expires_in"`
-		ResourceOwnerID int64           `json:"resource_owner_id"`
-		Application     struct {
-			UID string `json:"uid"`
-		} `json:"application"`
-	}
+	var raw gitlab.TokenInfo
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, errors.New("auth: GitLab's token info is not JSON")
 	}
-	info := &TokenInfo{ApplicationID: raw.Application.UID, ResourceOwnerID: raw.ResourceOwnerID}
-	info.Scopes = scopeList(raw.Scope)
-	if len(info.Scopes) == 0 {
-		info.Scopes = scopeList(raw.Scopes)
-	}
+	info := &TokenInfo{Scopes: raw.Scope, ApplicationID: raw.Application.UID, ResourceOwnerID: raw.ResourceOwnerID}
 	if raw.ExpiresIn != nil && *raw.ExpiresIn > 0 {
 		info.ExpiresIn = time.Duration(*raw.ExpiresIn) * time.Second
 	}
 	return info, nil
-}
-
-// scopeList reads a scope field that Doorkeeper writes as an array and
-// OAuth as a space-separated string.
-func scopeList(raw json.RawMessage) []string {
-	var list []string
-	if json.Unmarshal(raw, &list) == nil {
-		return list
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return scopes.Parse(s)
-	}
-	return nil
 }
 
 // LoginOptions tune the interactive flow. Zero values are sensible.

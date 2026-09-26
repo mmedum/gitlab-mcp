@@ -79,18 +79,11 @@ type Error struct {
 	// Message says what happened and what to do. It never carries a
 	// request URL, a path or a query.
 	Message string
-	// Hint is optional guidance a tool adds, appended to the text.
-	Hint string
-	err  error
+	err     error
 }
 
-// Error renders "[class] message", with the hint after it when set.
-func (e *Error) Error() string {
-	if e.Hint == "" {
-		return fmt.Sprintf("[%s] %s", e.Class, e.Message)
-	}
-	return fmt.Sprintf("[%s] %s; %s", e.Class, e.Message, e.Hint)
-}
+// Error renders "[class] message".
+func (e *Error) Error() string { return fmt.Sprintf("[%s] %s", e.Class, e.Message) }
 
 // Unwrap exposes the cause.
 func (e *Error) Unwrap() error { return e.err }

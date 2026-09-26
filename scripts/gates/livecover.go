@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 	"github.com/mmedum/gitlab-mcp/scripts/internal/tsv"
 )
 
@@ -46,18 +47,15 @@ func liveCover(out io.Writer, args []string) error {
 	record, problems := readLiveRecord(liveRecordFile)
 	waivers, more := readLiveWaivers(liveCoverFile)
 	problems = append(problems, more...)
-	if len(problems) == 0 {
-		report, more := checkLiveCover(d, record, waivers, maxUndriven)
-		problems = append(problems, more...)
-		if len(problems) == 0 {
-			_, _ = fmt.Fprintln(out, report)
-			return nil
-		}
+	if err := gatekit.Problems(out, "the live-coverage inputs", problems); err != nil {
+		return err
 	}
-	for _, p := range problems {
-		_, _ = fmt.Fprintln(out, p)
+	report, problems := checkLiveCover(d, record, waivers, maxUndriven)
+	if err := gatekit.Problems(out, "live coverage", problems); err != nil {
+		return err
 	}
-	return fmt.Errorf("%d live-coverage problem(s)", len(problems))
+	_, _ = fmt.Fprintln(out, report)
+	return nil
 }
 
 // liveWaiver is one option the driver does not send, and why.

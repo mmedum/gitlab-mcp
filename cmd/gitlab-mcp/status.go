@@ -2,13 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -399,8 +395,7 @@ func (d *doctor) run(ctx context.Context, cfg config.Config, s *app.Settings) {
 		d.report(false, "sign-in", err.Error())
 		return
 	}
-	access, err := s.Tokens().Token(ctx)
-	if err != nil {
+	if _, err := s.Tokens().Token(ctx); err != nil {
 		d.report(false, "sign-in", err.Error())
 		return
 	}
@@ -421,24 +416,24 @@ func (d *doctor) run(ctx context.Context, cfg config.Config, s *app.Settings) {
 		d.report(true, "version and edition", fmt.Sprintf("GitLab %s, %s Edition", md.Version, ee))
 	}
 
-	info, err := s.Application().TokenInfo(ctx, access)
+	info, err := c.TokenInfo(ctx)
 	switch {
 	case err != nil:
 		d.report(false, "application", "the token could not be inspected: "+err.Error())
-	case info.ApplicationID != "" && info.ApplicationID != s.ClientID:
+	case info.Application.UID != "" && info.Application.UID != s.ClientID:
 		d.report(false, "application", fmt.Sprintf("the token was issued to %s, not to %s; run `gitlab-mcp login`",
-			info.ApplicationID, s.ClientID))
+			info.Application.UID, s.ClientID))
 	default:
 		d.report(true, "application", s.ClientID)
 	}
 	if err == nil {
 		needed := cfg.Scopes()
-		if missing := scopes.Missing(info.Scopes, needed); len(missing) > 0 {
+		if missing := scopes.Missing(info.Scope, needed); len(missing) > 0 {
 			d.report(false, "granted scopes", fmt.Sprintf("granted %s; not granted: %s\n"+
 				"a setting that changes scopes needs `gitlab-mcp login` again; grant every scope asked for",
-				orNone(strings.Join(info.Scopes, " ")), strings.Join(missing, " ")))
+				orNone(strings.Join(info.Scope, " ")), strings.Join(missing, " ")))
 		} else {
-			d.report(true, "granted scopes", strings.Join(info.Scopes, " "))
+			d.report(true, "granted scopes", strings.Join(info.Scope, " "))
 		}
 	}
 	d.report(true, "writes", writeScope(cfg))
@@ -489,12 +484,7 @@ func (d *doctor) reach(ctx context.Context, cfg config.Config, s *app.Settings) 
 	hc.Timeout = cfg.HTTPTimeout
 	resp, err := hc.Do(req) //nolint:gosec // the configured instance; no redirect is followed
 	if err != nil {
-		detail := "the instance could not be reached: " + reachError(err)
-		if untrusted(err) {
-			detail = "the instance's certificate is not trusted: set " + config.EnvCAFile +
-				" to the PEM bundle of the authority that signed it"
-		}
-		d.report(false, label, detail)
+		d.report(false, label, unreachable(err))
 		return false
 	}
 	_ = resp.Body.Close()
@@ -509,34 +499,14 @@ func (d *doctor) reach(ctx context.Context, cfg config.Config, s *app.Settings) 
 	return true
 }
 
-// untrusted reports a certificate the client does not trust.
-func untrusted(err error) bool {
-	var unknown x509.UnknownAuthorityError
-	var invalid x509.CertificateInvalidError
-	var host x509.HostnameError
-	var verify *tls.CertificateVerificationError
-	return errors.As(err, &unknown) || errors.As(err, &invalid) || errors.As(err, &host) || errors.As(err, &verify)
-}
-
-// reachError renders a transport failure without the URL and the
-// addresses in it.
-func reachError(err error) string {
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		err = ue.Err
+// unreachable says why the instance did not answer, without the URL,
+// the host names or the addresses the error carries.
+func unreachable(err error) string {
+	if redact.IsCertificateError(err) {
+		return "the instance's certificate is not trusted: set " + config.EnvCAFile +
+			" to the PEM bundle of the authority that signed it"
 	}
-	var dns *net.DNSError
-	if errors.As(err, &dns) {
-		return "lookup: " + dns.Err
-	}
-	var op *net.OpError
-	if errors.As(err, &op) && op.Err != nil {
-		return op.Op + ": " + op.Err.Error()
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "timed out"
-	}
-	return "the request failed"
+	return "the instance could not be reached: " + redact.NetError(err)
 }
 
 // orNil turns an unset string into JSON null, which a caller cannot

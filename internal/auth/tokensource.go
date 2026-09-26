@@ -59,22 +59,20 @@ type TokenSource struct {
 	store Store
 	opts  TokenSourceOptions
 
-	mu  sync.Mutex
+	mu sync.Mutex
+	// cur is the pair in use; nil reads the store again.
 	cur *oauth2.Token
-	// dead is the reauthorize error for the refresh token deadRefresh.
-	// It is answered without asking GitLab again until the store holds
-	// a different refresh token, which a new login writes.
-	dead        error
-	deadRefresh string
-	// rejected is the access token GitLab last refused. It is never
-	// fresh again, whatever its expiry says.
+	// The known-bad pair: what GitLab refused, never used again whatever
+	// the store or an expiry says. rejected is the access token it last
+	// refused, which a refresh replaces. spent is the refresh token it
+	// last refused, answered with spentErr without asking GitLab again
+	// until the store holds another, which a new login writes.
 	rejected string
+	spent    string
+	spentErr error
 }
 
-var (
-	_ gapi.TokenSource = (*TokenSource)(nil)
-	_ gapi.Invalidator = (*TokenSource)(nil)
-)
+var _ gapi.TokenSource = (*TokenSource)(nil)
 
 // NewTokenSource builds a token source over a store. Nothing is read
 // until the first Token call.
@@ -119,15 +117,14 @@ func (s *TokenSource) fresh(tok *oauth2.Token) bool {
 func (s *TokenSource) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cur == nil || s.dead != nil {
+	if s.cur == nil {
 		tok, err := s.load()
 		if err != nil {
 			return "", err
 		}
-		if s.dead != nil && tok.RefreshToken == s.deadRefresh {
-			return "", s.dead
+		if s.spentErr != nil && tok.RefreshToken == s.spent {
+			return "", s.spentErr
 		}
-		s.dead, s.deadRefresh = nil, ""
 		s.cur = tok
 	}
 	if s.fresh(s.cur) {
@@ -231,16 +228,18 @@ func (s *TokenSource) refresh(ctx context.Context) error {
 	}
 }
 
-// reauthorize records that the refresh token sent is dead and returns
-// the error that says to log in again.
+// reauthorize records that the refresh token sent is spent and returns
+// the error that says to log in again. The next Token reads the store,
+// where a login in another process leaves a new pair.
 func (s *TokenSource) reauthorize(sent string, cause error) error {
 	err := ErrReauthorize
 	if cause != nil {
 		err = errors.Join(ErrReauthorize, cause)
 	}
-	s.dead = gapi.Wrap(gapi.ClassAuth, err, "the sign-in was revoked or has expired: run `gitlab-mcp login`")
-	s.deadRefresh = sent
-	return s.dead
+	s.spentErr = gapi.Wrap(gapi.ClassAuth, err, "the sign-in was revoked or has expired: run `gitlab-mcp login`")
+	s.spent = sent
+	s.cur = nil
+	return s.spentErr
 }
 
 // refreshFailure classifies a refresh that failed for a reason other
@@ -277,3 +276,6 @@ func (n NoCredentials) Token(context.Context) (string, error) {
 	}
 	return "", gapi.Wrap(gapi.ClassAuth, n.Reason, "%s", redact.Text(n.Reason.Error()))
 }
+
+// Invalidate does nothing: there is no token to drop.
+func (NoCredentials) Invalidate(string) {}
