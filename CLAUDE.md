@@ -224,9 +224,10 @@ Each phase is one session, and the session is cleared between phases. On
 a fresh session: read this file, the status line and §15, §16, §17 and
 §17a of `docs/architecture.md`, `CHANGELOG.md` under `[Unreleased]`,
 `git log --oneline -20` and `git status`; run `make check`; then continue
-the phase §16 names, on a topic branch. Commit at the end of the phase,
-say what is ready to tag, and stop. A tag does not authorize the next
-phase; wait for an explicit "go".
+the phase §16 names, on a topic branch cut from the previous phase's
+branch until that one is merged. Commit at the end of the phase, say it
+is ready for review, and stop; wait for an explicit "go". Phases are not
+tagged one by one: the maintainer tags a release when they choose.
 
 ## Docs and releases
 

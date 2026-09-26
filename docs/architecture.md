@@ -1,8 +1,7 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 0 built on a topic branch and run live against
-gitlab.com, 2026-09-26; it owes nothing but the tag. Nothing is
-tagged.** This document holds the platform facts, the design bets, a
+**Status: phase 0 done and in review, 2026-09-26; phase 1 is next.
+Nothing is tagged.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
@@ -1275,10 +1274,12 @@ before doing" of `CLAUDE.md`.
 
 ## 16. Delivery phases
 
-Each phase is one session and ends ready to tag, then waits for an
-explicit "go". The next session starts from this repository alone.
+Each phase is one session and ends in a pull request, then waits for an
+explicit "go". Phases are not tagged one by one: the maintainer tags a
+release when they choose. The next session starts from this repository
+alone.
 
-**Phase 0 — scaffolding, gates, sign-in and core reads (v0.1.0).**
+**Phase 0 — scaffolding, gates, sign-in and core reads.**
 Everything of §5a: CI, release, publish, bundle, registry, every gate of
 the `check` list, pre-commit, templates, community files, `NOTICE`,
 `.editorconfig`, and the docs (`README`, `CHANGELOG`, `CONTRIBUTING`,
@@ -1305,15 +1306,15 @@ shape mask (safe, left), and two wording defects (fixed). Spikes A and B
 answered on gitlab.com, then C, D, F and L. The same day the server was
 narrowed to gitlab.com (§14), which dropped spike I and A's `[::1]` and
 `localhost` halves, the instance setting, the private CA and version
-gating. Nothing is owed before the tag.*
+gating. Nothing is owed.*
 
-**Phase 1 — the rest of reading (v0.2.0).** `list_mr_files`,
+**Phase 1 — the rest of reading.** `list_mr_files`,
 `get_mr_diff`, `list_mr_commits`, `compare_refs`, `list_tags`, the CI
 reads with `get_job_log` and its masking, `lint_ci`, `search`,
 `list_labels`, `list_milestones`, `list_members`, `find_users`,
 `list_todos`, `list_review_comments`, the three resources. Spikes H, J.
 
-**Phase 2 — the write path (v0.3.0).** The `diffpos` package and its
+**Phase 2 — the write path.** The `diffpos` package and its
 tests; `create_issue`, `update_issue` with the witness, `add_comment`,
 `resolve_discussion`, the review tools, `create_merge_request`,
 `update_merge_request`, `create_branch`, `create_commit` with the
@@ -1321,11 +1322,11 @@ protected-branch guard, `mark_todos_done`; settle-by-reading; the write
 allow-list. Spikes E, K, M. Spike E runs before any write tool is
 registered.
 
-**Phase 3 — Ship, Destructive and toolsets (v0.4.0).** The Ship tools
+**Phase 3 — Ship, Destructive and toolsets.** The Ship tools
 with `sha` witnesses; `delete_branch`, `delete_comment`; the `wiki`,
 `snippets`, `releases`, `deployments` and `activity` toolsets. Spike G.
 
-**Phase 4 — evals and 1.0 (v1.0.0).** The evals harness with the
+**Phase 4 — evals and 1.0.** The evals harness with the
 injection tasks of §13; §17.3 decided; the surface frozen into the
 schema baseline; §17 closed or each item argued open.
 
@@ -1360,7 +1361,7 @@ fixed in `637c982`, one recorded:
    fixed or recorded in §16a.
 3. The status line, §16 and `CHANGELOG.md` say what was built and what
    is owed.
-4. Commit on the topic branch; say what is ready to tag; stop.
+4. Commit on the topic branch; say it is ready for review; stop.
 
 ## 17. Open decisions
 
