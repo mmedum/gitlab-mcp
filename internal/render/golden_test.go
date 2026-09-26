@@ -57,11 +57,11 @@ func TestGoldens(t *testing.T) {
 			Token:      model.TokenInfo{Kind: "oauth", Scopes: []string{"api"}, ExpiresAt: tp(t1)},
 			Registered: model.Registration{Kinds: []string{"read"}, Tools: 14},
 			Rate:       model.RateReading{Known: true, Limit: 2000, Remaining: 1990, Reset: tp(t1), Observed: tp(t0)},
-		}),
+		}, bd),
 		"resolved": Resolved(model.Resolved{Kind: "file", Project: "example-group/alpha", Ref: "feature/login",
 			Path: "src/login.go", Line: intp(3), EndLine: intp(5), Tool: "get_file",
 			RefCandidates: []model.RefSplit{{Ref: "feature", Path: "login/src/login.go"}},
-			Arguments:     map[string]any{"project": "example-group/alpha", "ref": "feature/login", "path": "src/login.go"}}),
+			Arguments:     map[string]any{"project": "example-group/alpha", "ref": "feature/login", "path": "src/login.go"}}, bd),
 		"project_list": ProjectList(model.ProjectList{
 			Projects: []model.ProjectRow{{ID: 2001, Path: "example-group/alpha", Visibility: "public", DefaultBranch: "main",
 				LastActivityAt: tp(t0), UntrustedName: "Alpha"}},

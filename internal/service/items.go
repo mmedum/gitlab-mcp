@@ -3,11 +3,11 @@ package service
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
@@ -25,23 +25,30 @@ const maxDiscussionPages = 10
 // removed, links shown, and the part from offset that fits the budget.
 func (s *Service) description(text string, offset int) (string, model.Budget, error) {
 	clean, removed := render.Markdown(text, s.self())
-	shown, b := render.Cut(clean, offset, render.DescriptionBudget)
-	if offset > b.TotalChars {
-		return "", model.Budget{}, gapi.Errf(gapi.ClassInvalid, "offset %d is past the end of the description, which has %d characters", offset, b.TotalChars)
-	}
-	b.HiddenRemoved = removed
-	return shown, b, nil
+	return cut(clean, removed, offset, render.DescriptionBudget, "the description", "offset")
 }
 
-// GetIssue reads an issue with a summary of its threads (§7.2).
+// GetIssue reads an issue with a summary of its threads (§7.2). The two
+// reads are independent and run at once.
 func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset int) (model.Issue, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
 		return model.Issue{}, err
 	}
-	is, err := s.client.GetIssue(ctx, p, iid)
+	var (
+		wg         sync.WaitGroup
+		is         *gitlab.Issue
+		summary    model.DiscussionSummary
+		summaryErr error
+	)
+	wg.Go(func() { is, err = s.client.GetIssue(ctx, p, iid) })
+	wg.Go(func() { summary, summaryErr = s.summary(ctx, p, iid, false) })
+	wg.Wait()
 	if err != nil {
 		return model.Issue{}, err
+	}
+	if summaryErr != nil {
+		return model.Issue{}, summaryErr
 	}
 	desc, budget, err := s.description(is.Description, offset)
 	if err != nil {
@@ -52,7 +59,7 @@ func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset in
 		Project: ref, IID: is.IID, Reference: is.References.Full, WebURL: is.WebURL, State: is.State, Type: is.Type,
 		Confidential: is.Confidential, Author: user(is.Author), Assignees: users(is.Assignees), Labels: nonNil(is.Labels),
 		Milestone: milestone(is.Milestone), CreatedAt: is.CreatedAt, UpdatedAt: is.UpdatedAt, ClosedAt: is.ClosedAt,
-		UntrustedTitle: title, UntrustedDescription: desc, DescriptionBudget: budget,
+		UntrustedTitle: title, UntrustedDescription: desc, DescriptionBudget: budget, Discussions: summary,
 	}
 	if is.ClosedBy != nil {
 		u := user(*is.ClosedBy)
@@ -65,23 +72,38 @@ func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset in
 	if t := is.TaskCompletion; t != nil {
 		out.Tasks = &model.Tasks{Count: t.Count, Completed: t.CompletedCount}
 	}
-	if out.Discussions, err = s.summary(ctx, p, iid, false); err != nil {
-		return model.Issue{}, err
-	}
 	return out, nil
 }
 
 // GetMergeRequest reads a merge request with its approval state and a
-// summary of its threads (§7.2). The approval read is best effort: an
-// instance that refuses it still has a merge request to show.
+// summary of its threads (§7.2). The three reads are independent and run
+// at once. The approval read is best effort: an instance that refuses it
+// still has a merge request to show.
 func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, offset int) (model.MergeRequest, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
 		return model.MergeRequest{}, err
 	}
-	mr, err := s.client.GetMergeRequest(ctx, p, iid)
+	var (
+		wg           sync.WaitGroup
+		mr           *gitlab.MergeRequest
+		approvals    *gitlab.Approvals
+		approvalsErr error
+		summary      model.DiscussionSummary
+		summaryErr   error
+	)
+	wg.Go(func() { mr, err = s.client.GetMergeRequest(ctx, p, iid) })
+	wg.Go(func() { approvals, approvalsErr = s.client.GetMergeRequestApprovals(ctx, p, iid) })
+	wg.Go(func() { summary, summaryErr = s.summary(ctx, p, iid, true) })
+	wg.Wait()
 	if err != nil {
 		return model.MergeRequest{}, err
+	}
+	if approvalsErr != nil && !soft(approvalsErr) {
+		return model.MergeRequest{}, approvalsErr
+	}
+	if summaryErr != nil {
+		return model.MergeRequest{}, summaryErr
 	}
 	desc, budget, err := s.description(mr.Description, offset)
 	if err != nil {
@@ -95,7 +117,7 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 		SourceProjectID: mr.SourceProjectID, SHA: mr.SHA, DetailedMergeStatus: mr.DetailedMergeStatus,
 		HasConflicts: mr.HasConflicts, ChangesCount: mr.ChangesCount, CreatedAt: mr.CreatedAt, UpdatedAt: mr.UpdatedAt,
 		MergedAt: mr.MergedAt, ClosedAt: mr.ClosedAt, UntrustedTitle: title, UntrustedDescription: desc,
-		DescriptionBudget: budget,
+		DescriptionBudget: budget, Discussions: summary,
 	}
 	if mr.MergeUser != nil {
 		u := user(*mr.MergeUser)
@@ -107,19 +129,12 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 	if hp := mr.HeadPipeline; hp != nil {
 		out.HeadPipeline = &model.Pipeline{ID: hp.ID, Status: hp.Status, Ref: hp.Ref, SHA: hp.SHA}
 	}
-	a, err := s.client.GetMergeRequestApprovals(ctx, p, iid)
-	switch {
-	case err == nil:
+	if a := approvals; approvalsErr == nil {
 		out.Approvals = &model.Approvals{Approved: a.Approved, Required: a.ApprovalsRequired, Left: a.ApprovalsLeft,
 			ApprovedBy: []string{}}
 		for _, by := range a.ApprovedBy {
 			out.Approvals.ApprovedBy = append(out.Approvals.ApprovedBy, by.User.Username)
 		}
-	case !soft(err):
-		return model.MergeRequest{}, err
-	}
-	if out.Discussions, err = s.summary(ctx, p, iid, true); err != nil {
-		return model.MergeRequest{}, err
 	}
 	return out, nil
 }
@@ -127,27 +142,12 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 // discussions reads every thread of an issue or merge request, up to
 // maxDiscussionPages; complete is false when there were more.
 func (s *Service) discussions(ctx context.Context, p gapi.Project, iid int64, mr bool) ([]gitlab.Discussion, bool, error) {
-	var all []gitlab.Discussion
-	opts := gapi.ListOptions{PerPage: gapi.MaxPerPage}
-	for range maxDiscussionPages {
-		var rows []gitlab.Discussion
-		var page gapi.Page
-		var err error
+	return readPages(maxDiscussionPages, func(opts gapi.ListOptions) ([]gitlab.Discussion, gapi.Page, error) {
 		if mr {
-			rows, page, err = s.client.ListMergeRequestDiscussions(ctx, p, iid, opts)
-		} else {
-			rows, page, err = s.client.ListIssueDiscussions(ctx, p, iid, opts)
+			return s.client.ListMergeRequestDiscussions(ctx, p, iid, opts)
 		}
-		if err != nil {
-			return nil, false, err
-		}
-		all = append(all, rows...)
-		if page.Complete() {
-			return all, true, nil
-		}
-		opts.PageToken = page.NextToken
-	}
-	return all, false, nil
+		return s.client.ListIssueDiscussions(ctx, p, iid, opts)
+	})
 }
 
 // summary counts threads for get_issue and get_merge_request. It is
@@ -204,9 +204,10 @@ func lastTime(n gitlab.Note) time.Time {
 
 // DiscussionQuery is list_discussions' query.
 type DiscussionQuery struct {
-	Project        string
-	IID            int64
-	MergeRequest   bool
+	Project string
+	IID     int64
+	// Type is issue or merge_request: which IID names.
+	Type           string
 	IncludeSystem  bool
 	UnresolvedOnly bool
 	Max            int
@@ -217,16 +218,13 @@ type DiscussionQuery struct {
 	Offset int
 }
 
-// threadToken is list_discussions' own page token: GitLab returns
-// threads oldest first, and they are shown newest first, so the
-// position is this server's rather than GitLab's.
-type threadToken struct {
-	B string `json:"b"`
-	O int    `json:"o"`
-}
+func (q DiscussionQuery) mergeRequest() bool { return q.Type == "merge_request" }
 
+// binding names the query a list_discussions page token belongs to. The
+// token is this server's own rather than GitLab's: GitLab returns
+// threads oldest first, and they are shown newest first.
 func (q DiscussionQuery) binding(projectID int64) string {
-	sum := sha256.Sum256(fmt.Appendf(nil, "%d/%d/%t/%t/%t", projectID, q.IID, q.MergeRequest, q.IncludeSystem, q.UnresolvedOnly))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%d/%d/%s/%t/%t", projectID, q.IID, q.Type, q.IncludeSystem, q.UnresolvedOnly))
 	return hex.EncodeToString(sum[:12])
 }
 
@@ -238,15 +236,12 @@ func (s *Service) ListDiscussions(ctx context.Context, q DiscussionQuery) (model
 	if err != nil {
 		return model.Discussions{}, err
 	}
-	all, complete, err := s.discussions(ctx, p, q.IID, q.MergeRequest)
+	all, complete, err := s.discussions(ctx, p, q.IID, q.mergeRequest())
 	if err != nil {
 		return model.Discussions{}, err
 	}
-	out := model.Discussions{Project: ref, IID: q.IID, Type: "issue", Threads: []model.Thread{},
+	out := model.Discussions{Project: ref, IID: q.IID, Type: q.Type, Threads: []model.Thread{},
 		NotShown: []model.ThreadStub{}, Budget: render.DiscussionBudget}
-	if q.MergeRequest {
-		out.Type = "merge_request"
-	}
 	if q.NoteID != 0 {
 		return s.oneNote(out, all, q)
 	}
@@ -254,9 +249,12 @@ func (s *Service) ListDiscussions(ctx context.Context, q DiscussionQuery) (model
 	threads := s.filterThreads(all, q)
 	start := 0
 	if q.PageToken != "" {
-		start, err = decodeThreadToken(q.PageToken, q.binding(p.ID()))
-		if err != nil {
+		if err := gapi.DecodeToken(q.PageToken, q.binding(p.ID()), &start); err != nil {
 			return model.Discussions{}, err
+		}
+		if start < 0 {
+			return model.Discussions{}, gapi.Errf(gapi.ClassInvalid,
+				"page_token is not one this server issued: pass it exactly as returned, or start again without it")
 		}
 	}
 	perPage := q.Max
@@ -292,8 +290,7 @@ func (s *Service) ListDiscussions(ctx context.Context, q DiscussionQuery) (model
 	// read, the listing is incomplete and there is no token to offer:
 	// one would return nothing new.
 	if next < len(threads) {
-		raw, _ := json.Marshal(threadToken{B: q.binding(p.ID()), O: next})
-		tok := base64.RawURLEncoding.EncodeToString(raw)
+		tok := gapi.EncodeToken(q.binding(p.ID()), next)
 		out.Listing.NextPageToken = &tok
 	}
 	return out, nil
@@ -320,7 +317,8 @@ func (s *Service) filterThreads(all []gitlab.Discussion, q DiscussionQuery) []mo
 				t.Position = &model.DiffPosition{OldPath: pos.OldPath, NewPath: pos.NewPath, OldLine: pos.OldLine,
 					NewLine: pos.NewLine, HeadSHA: pos.HeadSHA}
 			}
-			t.Notes = append(t.Notes, s.note(n, 0, render.NoteBudget))
+			nm, _ := s.note(n, 0, render.NoteBudget) // offset 0 is never past the end
+			t.Notes = append(t.Notes, nm)
 		}
 		if len(t.Notes) > 0 {
 			threads = append(threads, t)
@@ -330,28 +328,20 @@ func (s *Service) filterThreads(all []gitlab.Discussion, q DiscussionQuery) []mo
 		if c := b.LastActivity.Compare(a.LastActivity); c != 0 {
 			return c
 		}
-		return compareStrings(a.ID, b.ID)
+		return strings.Compare(a.ID, b.ID)
 	})
 	return threads
 }
 
-func compareStrings(a, b string) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
-}
-
-// note prepares one comment.
-func (s *Service) note(n gitlab.Note, offset, budget int) model.Note {
+// note prepares one comment from offset.
+func (s *Service) note(n gitlab.Note, offset, budget int) (model.Note, error) {
 	clean, removed := render.Markdown(n.Body, s.self())
-	body, b := render.Cut(clean, offset, budget)
-	b.HiddenRemoved = removed
+	body, b, err := cut(clean, removed, offset, budget, fmt.Sprintf("comment %d", n.ID), "offset")
+	if err != nil {
+		return model.Note{}, err
+	}
 	return model.Note{ID: n.ID, Author: user(n.Author), CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt, System: n.System,
-		Internal: n.Internal, UntrustedBody: body, Budget: b}
+		Internal: n.Internal, UntrustedBody: body, Budget: b}, nil
 }
 
 // oneNote answers a read of one comment from an offset.
@@ -362,10 +352,9 @@ func (s *Service) oneNote(out model.Discussions, all []gitlab.Discussion, q Disc
 				continue
 			}
 			resolvable, resolved := resolution(d)
-			nm := s.note(n, q.Offset, render.DiscussionBudget)
-			if q.Offset > nm.Budget.TotalChars {
-				return model.Discussions{}, gapi.Errf(gapi.ClassInvalid,
-					"offset %d is past the end of comment %d, which has %d characters", q.Offset, q.NoteID, nm.Budget.TotalChars)
+			nm, err := s.note(n, q.Offset, render.DiscussionBudget)
+			if err != nil {
+				return model.Discussions{}, err
 			}
 			out.Threads = append(out.Threads, model.Thread{ID: d.ID, Individual: d.IndividualNote, Resolvable: resolvable,
 				Resolved: resolved, LastActivity: lastTime(n), Notes: []model.Note{nm}})
@@ -374,23 +363,7 @@ func (s *Service) oneNote(out model.Discussions, all []gitlab.Discussion, q Disc
 			return out, nil
 		}
 	}
-	return model.Discussions{}, gapi.Errf(gapi.ClassNotFound, "comment %d is not on this %s", q.NoteID, map[bool]string{false: "issue", true: "merge request"}[q.MergeRequest])
-}
-
-func decodeThreadToken(s, binding string) (int, error) {
-	var tok threadToken
-	raw, err := base64.RawURLEncoding.DecodeString(s)
-	if err == nil {
-		err = json.Unmarshal(raw, &tok)
-	}
-	if err != nil || tok.B == "" || tok.O < 0 {
-		return 0, gapi.Errf(gapi.ClassInvalid, "page_token is not one this server issued: pass it exactly as returned, or start again without it")
-	}
-	if tok.B != binding {
-		return 0, gapi.Errf(gapi.ClassInvalid,
-			"page_token was issued for a different query: repeat the call that returned it with the same arguments, or start again without it")
-	}
-	return tok.O, nil
+	return model.Discussions{}, gapi.Errf(gapi.ClassNotFound, "comment %d is not on this %s", q.NoteID, strings.ReplaceAll(q.Type, "_", " "))
 }
 
 // ------------------------------------------------------------ helpers

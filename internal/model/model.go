@@ -475,7 +475,9 @@ type Commit struct {
 	FilesComplete    bool         `json:"files_complete" jsonschema:"False when the commit changes more files than were read"`
 	NextFileOffset   *int         `json:"next_file_offset" jsonschema:"Pass as file_offset to see the diffs left out by the budget; null when none were"`
 	DiffBudget       int          `json:"diff_budget_chars"`
-	HiddenRemoved    int          `json:"hidden_chars_removed"`
+	// HiddenRemoved counts the hidden characters made visible in the
+	// diffs shown; the message's are in MessageBudget.
+	HiddenRemoved int `json:"hidden_chars_removed"`
 }
 
 // FileChange names a changed file.

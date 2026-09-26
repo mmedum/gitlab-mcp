@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/internal/gitlab"
@@ -222,8 +221,7 @@ func (s *Service) SearchIssues(ctx context.Context, q ItemSearch) (model.ItemLis
 	}
 	out := model.ItemList{Items: make([]model.ItemRow, 0, len(rows)), Listing: listing(len(rows), page)}
 	for _, it := range rows {
-		out.Items = append(out.Items, itemRow(it.ProjectID, it.References.Full, it.IID, it.State, false, it.Author,
-			it.Labels, it.Title, it.CreatedAt, it.UpdatedAt))
+		out.Items = append(out.Items, issueRow(it))
 	}
 	return out, nil
 }
@@ -239,8 +237,7 @@ func (s *Service) SearchMergeRequests(ctx context.Context, q ItemSearch) (model.
 	}
 	out := model.ItemList{Items: make([]model.ItemRow, 0, len(rows)), Listing: listing(len(rows), page)}
 	for _, it := range rows {
-		out.Items = append(out.Items, itemRow(it.ProjectID, it.References.Full, it.IID, it.State, it.Draft, it.Author,
-			it.Labels, it.Title, it.CreatedAt, it.UpdatedAt))
+		out.Items = append(out.Items, mrRow(it))
 	}
 	return out, nil
 }
@@ -270,16 +267,26 @@ func (s *Service) scopeSearch(q *ItemSearch) error {
 	return nil
 }
 
-func itemRow(projectID int64, full string, iid int64, state string, draft bool, author gitlab.UserBasic,
-	labels []string, title string, created, updated time.Time) model.ItemRow {
-	t, _ := render.Line(title, render.TitleChars)
-	path := full
-	if i := strings.LastIndexAny(full, "#!"); i > 0 {
-		path = full[:i]
+func issueRow(it gitlab.Issue) model.ItemRow {
+	return baseRow(model.ItemRow{IID: it.IID, Reference: it.References.Full, State: it.State, Author: it.Author.Username,
+		Labels: it.Labels, CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt}, it.ProjectID, it.Title)
+}
+
+func mrRow(mr gitlab.MergeRequest) model.ItemRow {
+	return baseRow(model.ItemRow{IID: mr.IID, Reference: mr.References.Full, State: mr.State, Draft: mr.Draft,
+		Author: mr.Author.Username, Labels: mr.Labels, CreatedAt: mr.CreatedAt, UpdatedAt: mr.UpdatedAt}, mr.ProjectID, mr.Title)
+}
+
+// baseRow finishes a search row the same way for issues and merge
+// requests: the project named by id and by the path in the reference,
+// the title prepared, and labels never null.
+func baseRow(r model.ItemRow, projectID int64, title string) model.ItemRow {
+	path := r.Reference
+	if i := strings.LastIndexAny(path, "#!"); i > 0 {
+		path = path[:i]
 	}
-	if labels == nil {
-		labels = []string{}
-	}
-	return model.ItemRow{Project: model.ProjectRef{ID: projectID, Path: path}, IID: iid, Reference: full, State: state,
-		Draft: draft, Author: author.Username, Labels: labels, CreatedAt: created, UpdatedAt: updated, UntrustedTitle: t}
+	r.Project = model.ProjectRef{ID: projectID, Path: path}
+	r.UntrustedTitle, _ = render.Line(title, render.TitleChars)
+	r.Labels = nonNil(r.Labels)
+	return r
 }

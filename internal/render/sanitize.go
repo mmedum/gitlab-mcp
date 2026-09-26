@@ -11,6 +11,7 @@ package render
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -80,9 +81,10 @@ func Code(s string) (string, int) {
 }
 
 // Line prepares a one-line field someone else wrote, such as a title:
-// hidden characters dropped, whitespace runs folded to one space, and
-// the result cut to max characters. It returns the line and how many
-// characters were dropped.
+// hidden characters dropped, runs of spaces and control characters (line
+// and paragraph separators included) folded to one space, and the result
+// cut to max characters. It returns the line and how many characters
+// were dropped.
 func Line(s string, max int) (string, int) {
 	n := 0
 	var b strings.Builder
@@ -91,7 +93,7 @@ func Line(s string, max int) (string, int) {
 		switch {
 		case hidden(r):
 			n++
-		case r == '\n' || r == '\r' || r == '\t' || r == ' ' || r < 0x20 || r == 0x7f:
+		case r == ' ' || control(r):
 			space = b.Len() > 0
 		default:
 			if space {
@@ -227,8 +229,7 @@ func Links(s, self string) string {
 	if !strings.Contains(s, "](") && !strings.Contains(s, "]:") {
 		return s
 	}
-	s = inlineLink.ReplaceAllStringFunc(s, func(m string) string {
-		p := inlineLink.FindStringSubmatch(m)
+	s = replaceMatches(inlineLink, s, func(p []string) string {
 		image, text, dest := p[1] == "!", p[2], p[3]
 		where := destination(dest, self)
 		if image {
@@ -236,52 +237,94 @@ func Links(s, self string) string {
 		}
 		return text + " (" + where + ")"
 	})
-	return refDefinition.ReplaceAllStringFunc(s, func(m string) string {
-		p := refDefinition.FindStringSubmatch(m)
+	return replaceMatches(refDefinition, s, func(p []string) string {
 		return p[1] + destination(p[2], self)
 	})
 }
 
+// replaceMatches replaces every match of re in s with what repl makes of
+// its submatches, matching each once.
+func replaceMatches(re *regexp.Regexp, s string, repl func(submatches []string) string) string {
+	matches := re.FindAllStringSubmatchIndex(s, -1)
+	if matches == nil {
+		return s
+	}
+	var out strings.Builder
+	last := 0
+	for _, m := range matches {
+		p := make([]string, len(m)/2)
+		for i := range p {
+			if m[2*i] >= 0 {
+				p[i] = s[m[2*i]:m[2*i+1]]
+			}
+		}
+		out.WriteString(s[last:m[0]])
+		out.WriteString(repl(p))
+		last = m[1]
+	}
+	out.WriteString(s[last:])
+	return out.String()
+}
+
 // destination describes a link target without its path, unless it is
-// on this instance.
+// on this instance. self is the instance's host[:port], with the port
+// only when it is not the scheme's default, as Instance.Host writes it.
 func destination(dest, self string) string {
 	// A browser reads a backslash as a slash in an http(s) link, so /\host
 	// is another host and the authority can end at a backslash.
 	dest = strings.ReplaceAll(dest, `\`, "/")
-	lower := strings.ToLower(dest)
 	switch {
-	case strings.HasPrefix(lower, "mailto:"):
+	case strings.HasPrefix(strings.ToLower(dest), "mailto:"):
 		return "email link"
 	case strings.HasPrefix(dest, "#"):
 		return "link within this text"
 	case strings.HasPrefix(dest, "/") && !strings.HasPrefix(dest, "//"):
 		return "link on this instance: " + dest
 	}
-	scheme, rest, ok := strings.Cut(dest, "://")
-	if !ok {
-		if strings.HasPrefix(dest, "//") {
-			scheme, rest = "", dest[2:]
-		} else {
-			return "relative link: " + dest
+	// url.Parse reads the authority as a browser does: it ends at the
+	// first of / ? #, and userinfo runs to the last @ inside it.
+	u, err := url.Parse(dest)
+	switch {
+	case err != nil:
+		return "link to an address that could not be read"
+	case u.Host == "" && u.Scheme == "":
+		return "relative link: " + dest
+	case u.Host == "":
+		return u.Scheme + " link"
+	}
+	if onInstance(u, self) {
+		path := u.EscapedPath()
+		if u.ForceQuery || u.RawQuery != "" {
+			path += "?" + u.RawQuery
 		}
-	}
-	// The authority ends at the first of / ? #, and userinfo runs to the
-	// last @ inside it, as a browser reads it. An @ past the authority is
-	// path, query or fragment and says nothing about the host.
-	end := strings.IndexAny(rest, "/?#")
-	if end < 0 {
-		end = len(rest)
-	}
-	host, path := rest[:end], rest[end:]
-	if at := strings.LastIndex(host, "@"); at >= 0 {
-		host = host[at+1:]
-	}
-	host = strings.ToLower(host)
-	if self != "" && host == strings.ToLower(self) {
+		if u.Fragment != "" {
+			path += "#" + u.EscapedFragment()
+		}
 		return "link on this instance: /" + strings.TrimPrefix(path, "/")
 	}
-	if scheme != "" && scheme != "http" && scheme != "https" {
-		return scheme + " link to " + host
+	host := strings.ToLower(u.Host)
+	if u.Scheme != "" && u.Scheme != "http" && u.Scheme != "https" {
+		return u.Scheme + " link to " + host
 	}
 	return "link to " + host
+}
+
+// onInstance reports whether u is on the host self names, on the same
+// port once each side's default is filled in.
+func onInstance(u *url.URL, self string) bool {
+	if self == "" {
+		return false
+	}
+	s, err := url.Parse("//" + self)
+	if err != nil {
+		return false
+	}
+	hostname := func(v *url.URL) string { return strings.TrimSuffix(strings.ToLower(v.Hostname()), ".") }
+	port := func(v *url.URL) string {
+		if p := v.Port(); p != "" {
+			return p
+		}
+		return map[string]string{"http": "80", "https": "443"}[u.Scheme]
+	}
+	return hostname(u) == hostname(s) && port(u) == port(s)
 }

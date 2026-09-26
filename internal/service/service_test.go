@@ -96,7 +96,7 @@ func TestResolveURLListsCandidatesItCannotSettle(t *testing.T) {
 }
 
 func TestMeReadsMetadataWhenStartupCouldNot(t *testing.T) {
-	s, _ := newService(t, gitlabtest.Options{Version: "18.2.1", Enterprise: true}, config.Config{WriteNamespaces: []string{"example-group"}})
+	s, gl := newService(t, gitlabtest.Options{Version: "18.2.1", Enterprise: true}, config.Config{WriteNamespaces: []string{"example-group"}})
 	s.SetRegistered([]Registered{{Name: "get_me", Kind: scopes.KindRead}, {Name: "x", Kind: scopes.KindWrite}})
 	me, err := s.Me(t.Context())
 	if err != nil {
@@ -105,6 +105,16 @@ func TestMeReadsMetadataWhenStartupCouldNot(t *testing.T) {
 	if me.Instance.Version != "18.2.1" || me.Instance.Edition != "Enterprise" || !me.WriteScope.Confined ||
 		fmt.Sprint(me.Registered.Kinds) != "[read write]" || me.Token.ExpiresAt == nil {
 		t.Errorf("me = %+v", me)
+	}
+	// Once read, the metadata is kept.
+	gl.ResetRequests()
+	if me, err = s.Me(t.Context()); err != nil || me.Instance.Version != "18.2.1" {
+		t.Fatalf("second get_me: %+v, %v", me, err)
+	}
+	for _, r := range gl.Requests() {
+		if strings.HasSuffix(r.EscapedPath, "/metadata") {
+			t.Errorf("the second get_me read the metadata again")
+		}
 	}
 	// Without a client every call is [auth].
 	if _, err := New(Options{}).Me(t.Context()); class(err) != gapi.ClassAuth {
@@ -127,7 +137,7 @@ func TestDiscussionsOverTheBudget(t *testing.T) {
 		gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: path, Status: http.StatusOK, Body: string(body)})
 	}
 	inject()
-	d, err := s.ListDiscussions(t.Context(), DiscussionQuery{Project: "2001", IID: 1})
+	d, err := s.ListDiscussions(t.Context(), DiscussionQuery{Project: "2001", Type: "issue", IID: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +150,7 @@ func TestDiscussionsOverTheBudget(t *testing.T) {
 	}
 	// The next page starts with the first thread not shown.
 	inject()
-	next, err := s.ListDiscussions(t.Context(), DiscussionQuery{Project: "2001", IID: 1, PageToken: *d.Listing.NextPageToken})
+	next, err := s.ListDiscussions(t.Context(), DiscussionQuery{Project: "2001", Type: "issue", IID: 1, PageToken: *d.Listing.NextPageToken})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +159,7 @@ func TestDiscussionsOverTheBudget(t *testing.T) {
 	}
 	// A cut comment continues by note_id and offset.
 	inject()
-	one, err := s.ListDiscussions(t.Context(), DiscussionQuery{Project: "2001", IID: 1, NoteID: 107,
+	one, err := s.ListDiscussions(t.Context(), DiscussionQuery{Project: "2001", Type: "issue", IID: 1, NoteID: 107,
 		Offset: *d.Threads[0].Notes[0].Budget.ContinueOffset})
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +169,7 @@ func TestDiscussionsOverTheBudget(t *testing.T) {
 	}
 	// A token from another query is refused.
 	inject()
-	_, err = s.ListDiscussions(t.Context(), DiscussionQuery{Project: "2001", IID: 1, IncludeSystem: true,
+	_, err = s.ListDiscussions(t.Context(), DiscussionQuery{Project: "2001", Type: "issue", IID: 1, IncludeSystem: true,
 		PageToken: *d.Listing.NextPageToken})
 	if class(err) != gapi.ClassInvalid {
 		t.Errorf("foreign token: %v", err)
@@ -230,6 +240,54 @@ func TestCommitMessageBudget(t *testing.T) {
 	inject()
 	if _, err := s.GetCommit(t.Context(), "2001", sha, 0, 20000); class(err) != gapi.ClassInvalid {
 		t.Errorf("offset past the end: %v", err)
+	}
+}
+
+// TestCommitCountsHiddenTextOnce: the message's hidden characters are
+// in its budget, the diffs' in the commit's own count.
+func TestCommitCountsHiddenTextOnce(t *testing.T) {
+	s, gl := newService(t, gitlabtest.Options{}, config.Config{})
+	c, _, err := s.client.ListCommits(t.Context(), gapi.ProjectByID(alphaID), gapi.CommitQuery{}, gapi.ListOptions{PerPage: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := c[0].ID
+	commit, _ := json.Marshal(gitlab.Commit{ID: sha, ShortID: sha[:8], Message: "Fix\u202e it\n"})
+	diffs, _ := json.Marshal([]gitlab.Diff{{OldPath: "a", NewPath: "a", Diff: "+x\u200b\u2066\n"}})
+	// The diff fault goes first: the commit's path is a prefix of it.
+	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/diff", alphaID, sha),
+		Status: http.StatusOK, Body: string(diffs)})
+	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s", alphaID, sha),
+		Status: http.StatusOK, Body: string(commit)})
+	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.MessageBudget.HiddenRemoved != 1 || out.HiddenRemoved != 2 {
+		t.Errorf("message %d, diffs %d; want 1 and 2", out.MessageBudget.HiddenRemoved, out.HiddenRemoved)
+	}
+}
+
+// TestProjectIDIsReadOncePerProcess: a numeric id's path is read once,
+// and a later call takes it from the process cache.
+func TestProjectIDIsReadOncePerProcess(t *testing.T) {
+	s, gl := newService(t, gitlabtest.Options{}, config.Config{})
+	count := func() int {
+		n := 0
+		for _, r := range gl.Requests() {
+			if r.EscapedPath == fmt.Sprintf("/api/v4/projects/%d", alphaID) {
+				n++
+			}
+		}
+		return n
+	}
+	for range 2 {
+		if _, err := s.ListBranches(t.Context(), "2001", "", gapi.ListOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := count(); n != 1 {
+		t.Errorf("the project was read %d times, want once", n)
 	}
 }
 

@@ -40,10 +40,8 @@ func getMe() definition {
 			"registered, where writes may go, and the last rate-limit reading. Call it before attributing anything " +
 			"to \"me\", and when a tool seems to be missing: a tool this configuration leaves out is absent rather than failing, " +
 			"and the result says which kinds and toolsets are on."},
-		run: func(ctx context.Context, svc *service.Service, _ getMeIn) (model.Me, error) { return svc.Me(ctx) },
-		text: func(m model.Me, _ render.Boundary) string {
-			return render.Me(m)
-		},
+		run:  func(ctx context.Context, svc *service.Service, _ getMeIn) (model.Me, error) { return svc.Me(ctx) },
+		text: render.Me,
 	}
 }
 
@@ -64,7 +62,7 @@ func resolveURL() definition {
 		run: func(ctx context.Context, svc *service.Service, in resolveURLIn) (model.Resolved, error) {
 			return svc.ResolveURL(ctx, in.URL)
 		},
-		text: func(r model.Resolved, _ render.Boundary) string { return render.Resolved(r) },
+		text: render.Resolved,
 	}
 }
 

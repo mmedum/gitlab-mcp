@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/internal/gitlab"
@@ -43,12 +44,9 @@ func (s *Service) GetFile(ctx context.Context, raw, path, ref string, offset int
 		return out, nil
 	}
 	text, visible := render.Code(string(content))
-	shown, b := render.Cut(text, offset, render.FileBudget)
-	if offset > b.TotalChars {
-		return model.File{}, gapi.Errf(gapi.ClassInvalid, "offset %d is past the end of the file, which has %d characters", offset, b.TotalChars)
+	if out.UntrustedContent, out.Budget, err = cut(text, visible, offset, render.FileBudget, "the file", "offset"); err != nil {
+		return model.File{}, err
 	}
-	b.HiddenRemoved = visible
-	out.UntrustedContent, out.Budget = shown, b
 	return out, nil
 }
 
@@ -131,16 +129,16 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, me
 		return model.Commit{}, gapi.Errf(gapi.ClassInvalid, "file_offset %d is past the %d changed files read", fileOffset, len(diffs))
 	}
 	msg, hiddenMsg := render.Code(c.Message)
-	msg, msgBudget := render.Cut(msg, messageOffset, render.CommitMessageBudget)
-	if messageOffset > msgBudget.TotalChars {
-		return model.Commit{}, gapi.Errf(gapi.ClassInvalid, "message_offset %d is past the end of the message, which has %d characters",
-			messageOffset, msgBudget.TotalChars)
+	msg, msgBudget, err := cut(msg, hiddenMsg, messageOffset, render.CommitMessageBudget, "the message", "message_offset")
+	if err != nil {
+		return model.Commit{}, err
 	}
-	msgBudget.HiddenRemoved = hiddenMsg
+	// The message's hidden characters are counted in its budget, and the
+	// diffs' in HiddenRemoved: each once.
 	out := model.Commit{Project: ref, ID: c.ID, ShortID: c.ShortID, WebURL: c.WebURL, AuthorName: c.AuthorName,
 		AuthoredAt: c.AuthoredDate, CommitterName: c.CommitterName, CommittedAt: c.CommittedDate,
 		ParentIDs: nonNil(c.ParentIDs), UntrustedMessage: msg, MessageBudget: msgBudget, Files: []model.FileDiff{},
-		NotShown: []model.FileChange{}, FilesComplete: complete, DiffBudget: render.DiffBudget, HiddenRemoved: hiddenMsg}
+		NotShown: []model.FileChange{}, FilesComplete: complete, DiffBudget: render.DiffBudget}
 	if c.Stats != nil {
 		out.Additions, out.Deletions = c.Stats.Additions, c.Stats.Deletions
 	}
@@ -158,13 +156,18 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, me
 			out.NotShown = append(out.NotShown, change)
 			continue
 		}
+		// Once the budget is spent, the rest are named without preparing
+		// their text.
+		if out.NextFileOffset != nil {
+			change.Reason = "budget"
+			out.NotShown = append(out.NotShown, change)
+			continue
+		}
 		text, visible := render.Code(d.Diff)
-		size := len([]rune(text))
-		if out.NextFileOffset == nil && used+size > render.DiffBudget && len(out.Files) > 0 {
+		size := utf8.RuneCountInString(text)
+		if used+size > render.DiffBudget && len(out.Files) > 0 {
 			next := fileOffset + i
 			out.NextFileOffset = &next
-		}
-		if out.NextFileOffset != nil {
 			change.Reason = "budget"
 			out.NotShown = append(out.NotShown, change)
 			continue
@@ -186,20 +189,9 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, me
 
 // commitDiffs reads a commit's per-file diffs, up to maxDiffPages.
 func (s *Service) commitDiffs(ctx context.Context, p gapi.Project, sha string) ([]gitlab.Diff, bool, error) {
-	var all []gitlab.Diff
-	opts := gapi.ListOptions{PerPage: gapi.MaxPerPage}
-	for range maxDiffPages {
-		rows, page, err := s.client.GetCommitDiff(ctx, p, sha, opts)
-		if err != nil {
-			return nil, false, err
-		}
-		all = append(all, rows...)
-		if page.Complete() {
-			return all, true, nil
-		}
-		opts.PageToken = page.NextToken
-	}
-	return all, false, nil
+	return readPages(maxDiffPages, func(opts gapi.ListOptions) ([]gitlab.Diff, gapi.Page, error) {
+		return s.client.GetCommitDiff(ctx, p, sha, opts)
+	})
 }
 
 func diffStatus(d gitlab.Diff) string {

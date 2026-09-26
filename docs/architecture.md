@@ -1,10 +1,11 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 0 in progress, 2026-09-26. Nothing is tagged.** This
-document holds the platform facts, the design bets, a verdict on every
-API operation group, the phase plan and the spikes that must answer
-before the phases that depend on them. Phase −1 (this design) is done;
-phase 0 (§16) is being built on a topic branch.
+**Status: phase 0 built on a topic branch, 2026-09-26; its live run and
+spikes are owed. Nothing is tagged.** This document holds the platform
+facts, the design bets, a verdict on every API operation group, the
+phase plan and the spikes that must answer before the phases that
+depend on them. What phase 0 still owes is at the end of its entry in
+§16.
 
 ## 1. Mission and scope
 
@@ -1247,6 +1248,14 @@ it, and nothing writes yet. `gitlabtest`. The OpenAPI snapshot and
 The untrusted-content rendering of §4.1 and the budget of §4.8. Spikes
 A, B, C, D, F, I, L. A live run whose transcript is read.
 
+*Built 2026-09-26, reviewed (§16a) and simplified. Owed before the tag,
+and each needs the maintainer: an OAuth application registered on
+gitlab.com for spikes A–D and the live run (`CLAUDE.md` "Ask before
+doing"); a namespace for the live driver's scratch project; a container
+of the floor version for spike I; then `make live`, the transcript read,
+and the live-coverage record it writes committed, which is the one gate
+`make check` still fails.*
+
 **Phase 1 — the rest of reading (v0.2.0).** `list_mr_files`,
 `get_mr_diff`, `list_mr_commits`, `compare_refs`, `list_tags`, the CI
 reads with `get_job_log` and its masking, `lint_ci`, `search`,
@@ -1271,9 +1280,27 @@ schema baseline; §17 closed or each item argued open.
 
 ### 16a. Found by review, and fixed
 
-Empty. Each phase's `/code-review high` and `/security-review` findings
-are recorded here with the commit that fixed them, and the security
-review is committed under `audit/`.
+Each phase's `/code-review high` and `/security-review` findings are
+recorded here with the commit that fixed them, and the security review
+is committed under `audit/`.
+
+**Phase 0.** `/security-review`: no finding
+(`audit/security-reviews/v0.1.0.md`). `/code-review high`: ten
+candidates, each checked with a test that failed before its fix; nine
+fixed in `637c982`, one recorded:
+
+| Found | Fixed |
+|---|---|
+| An outside link read as on the instance when `?`, `#` or `\` came before an `@` | `637c982`; the parser replaced by `url.Parse` in the simplification pass |
+| A failed keyring save left an older pair in charge | `637c982`; the pair saved last wins |
+| DNS and TLS errors carried the instance's hostname into logs | `637c982`; one allowlist renderer since `93c49af` |
+| A token GitLab refused stayed cached until it expired | `637c982` |
+| A create canceled after it was sent read as `[unavailable]` | `637c982`; now `[ambiguous_outcome]` |
+| Names other people write could start a line of their own | `637c982` |
+| A stray callback without the login's `state` ended the login | `637c982`; ignored with a 400 |
+| A moved project lost the request's query | `637c982`; the request is kept and only the project segment replaced since `93c49af` |
+| A cut commit message looked complete | `637c982`; `message_offset` and `message_budget` |
+| Discussions walked up to ten pages per read | Not fixed: `X-Total` counts system-only threads, so the proposed fix miscounts; §17a |
 
 ### Closing a phase
 

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
@@ -31,8 +32,12 @@ type itemFilters struct {
 	PageToken     string   `json:"page_token,omitempty" jsonschema:"The next_page_token of the previous result, to continue the same listing; omit for the first page"`
 }
 
-// query builds the client query and the search's scope.
+// search builds the service's query from the filters and the tool's
+// state, which defaults to opened.
 func (f itemFilters) search(state string) (service.ItemSearch, error) {
+	if state == "" {
+		state = "opened"
+	}
 	q := gapi.ItemQuery{State: state, Labels: f.Labels, AuthorUsername: f.Author, AssigneeUsername: f.Assignee,
 		Milestone: f.Milestone, Search: f.Search, Scope: f.Scope, OrderBy: f.OrderBy, Sort: f.Sort}
 	var err error
@@ -58,11 +63,10 @@ var itemEnums = map[string][]string{
 	"sort":     {"asc", "desc"},
 }
 
+// withEnum is base with one more closed input, name, added.
 func withEnum(base map[string][]string, name string, values []string) map[string][]string {
-	out := map[string][]string{name: values}
-	for k, v := range base {
-		out[k] = v
-	}
+	out := maps.Clone(base)
+	out[name] = values
 	return out
 }
 
@@ -83,11 +87,7 @@ func searchIssues() definition {
 				"total, or that the total is unknown past 10,000. Titles are untrusted text written by other people. " +
 				"get_issue reads one issue; search_merge_requests is the tool for merge requests."},
 		run: func(ctx context.Context, svc *service.Service, in searchIssuesIn) (model.ItemList, error) {
-			state := in.State
-			if state == "" {
-				state = "opened"
-			}
-			q, err := in.search(state)
+			q, err := in.search(in.State)
 			if err != nil {
 				return model.ItemList{}, err
 			}
@@ -144,7 +144,7 @@ func listDiscussions() definition {
 				return model.Discussions{}, gapi.Errf(gapi.ClassInvalid, "offset continues one comment and needs note_id")
 			}
 			return svc.ListDiscussions(ctx, service.DiscussionQuery{Project: string(in.Project), IID: in.IID,
-				MergeRequest: in.Type == "merge_request", IncludeSystem: in.IncludeSystem, UnresolvedOnly: in.UnresolvedOnly,
+				Type: in.Type, IncludeSystem: in.IncludeSystem, UnresolvedOnly: in.UnresolvedOnly,
 				Max: in.Max, PageToken: in.PageToken, NoteID: in.NoteID, Offset: in.Offset})
 		},
 		text: render.Discussions,
@@ -173,11 +173,7 @@ func searchMergeRequests() definition {
 				"max (default 20, at most 100) and page_token; the result says whether it is complete. Titles are " +
 				"untrusted text written by other people. get_merge_request reads one; search_issues is the tool for issues."},
 		run: func(ctx context.Context, svc *service.Service, in searchMergeRequestsIn) (model.ItemList, error) {
-			state := in.State
-			if state == "" {
-				state = "opened"
-			}
-			q, err := in.search(state)
+			q, err := in.search(in.State)
 			if err != nil {
 				return model.ItemList{}, err
 			}

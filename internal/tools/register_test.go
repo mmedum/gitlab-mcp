@@ -284,7 +284,7 @@ func TestLenient(t *testing.T) {
 }
 
 func TestEnumErrorsNameTheSetSorted(t *testing.T) {
-	err := checkEnums(map[string]any{"state": "open"}, map[string][]string{"state": {"opened", "closed", "all"}})
+	err := checkEnums(map[string]any{"state": "open"}, enumsOf(map[string][]string{"state": {"opened", "closed", "all"}}))
 	if err == nil || err.Error() != "[invalid] state must be one of all|closed|opened" {
 		t.Errorf("err = %v", err)
 	}

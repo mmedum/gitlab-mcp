@@ -21,9 +21,6 @@ func NewBoundary() Boundary {
 	return Boundary{token: hex.EncodeToString(b[:])}
 }
 
-// FixedBoundary is a boundary with a known token, for goldens.
-func FixedBoundary(token string) Boundary { return Boundary{token: token} }
-
 // Token is the per-call token.
 func (b Boundary) Token() string { return b.token }
 
@@ -86,11 +83,14 @@ func defuse(s string) string {
 	return s
 }
 
+// angles swaps angle brackets for look-alikes no marker is made of.
+var angles = strings.NewReplacer("<", "‹", ">", "›")
+
 // originValue keeps a marker's origin on one line and unambiguous: no
 // control characters, no angle brackets, and quoted if it has a space.
 func originValue(v string) string {
 	v, _ = Line(v, 300)
-	v = strings.NewReplacer("<", "‹", ">", "›").Replace(v)
+	v = angles.Replace(v)
 	if strings.ContainsAny(v, " \"=") {
 		return strconv.Quote(v)
 	}

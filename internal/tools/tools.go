@@ -45,12 +45,11 @@ func Register(s *mcp.Server, d Deps) []service.Registered {
 }
 
 func register(s *mcp.Server, d Deps, defs []definition) []service.Registered {
-	out := surface(defs, d.Config, d.Metadata, d.Granted)
+	defs = allowed(defs, d.Config, d.Metadata, d.Granted)
 	for _, def := range defs {
-		if gate(def.spec(), d.Config, d.Metadata, d.Granted) == "" {
-			def.add(s, d)
-		}
+		def.add(s, d)
 	}
+	out := registered(defs)
 	if d.Service != nil {
 		d.Service.SetRegistered(out)
 	}
@@ -65,12 +64,24 @@ func Surface(cfg config.Config, meta instance.Metadata, granted []string) []serv
 }
 
 func surface(defs []definition, cfg config.Config, meta instance.Metadata, granted []string) []service.Registered {
-	var out []service.Registered
+	return registered(allowed(defs, cfg, meta, granted))
+}
+
+// allowed is the definitions the gates let through, each gated once.
+func allowed(defs []definition, cfg config.Config, meta instance.Metadata, granted []string) []definition {
+	var out []definition
 	for _, def := range defs {
-		sp := def.spec()
-		if gate(sp, cfg, meta, granted) == "" {
-			out = append(out, service.Registered{Name: sp.Name, Kind: sp.Kind.Scope(), Toolset: sp.Toolset})
+		if gate(def.spec(), cfg, meta, granted) == "" {
+			out = append(out, def)
 		}
+	}
+	return out
+}
+
+func registered(defs []definition) []service.Registered {
+	out := make([]service.Registered, len(defs))
+	for i, def := range defs {
+		out[i] = service.Registered{Name: def.spec().Name, Kind: def.spec().Kind.Scope()}
 	}
 	return out
 }

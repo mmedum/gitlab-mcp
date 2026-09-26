@@ -55,12 +55,51 @@ func (p Page) TotalKnown() bool { return p.Total >= 0 }
 // query and not the position in it.
 var paginationKeys = []string{"page", "per_page", "cursor", "id_after", "id_before", "page_token"}
 
-// pageToken is what a NextToken encodes.
-type pageToken struct {
+// boundToken is what every page token encodes: a position, and the
+// query it belongs to.
+type boundToken struct {
 	// B binds the token to the query it was issued for.
 	B string `json:"b"`
-	// P are the parameters that select the next page.
-	P map[string]string `json:"p"`
+	// P is the position: for a GitLab listing, the parameters that
+	// select the next page.
+	P json.RawMessage `json:"p"`
+}
+
+// EncodeToken makes an opaque page token carrying position, bound to
+// the query binding names. A listing this server pages itself uses it
+// too, so every page_token has one shape and one set of refusals.
+func EncodeToken(binding string, position any) string {
+	p, _ := json.Marshal(position)
+	raw, _ := json.Marshal(boundToken{B: binding, P: p})
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// DecodeToken reads a token EncodeToken made into position. It refuses
+// [invalid] a token it cannot read, and one bound to another query.
+func DecodeToken(s, binding string, position any) error {
+	var tok boundToken
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err == nil {
+		err = json.Unmarshal(raw, &tok)
+	}
+	if err == nil && (tok.B == "" || len(tok.P) == 0) {
+		err = errNotIssued()
+	}
+	if err == nil {
+		err = json.Unmarshal(tok.P, position)
+	}
+	if err != nil {
+		return errNotIssued()
+	}
+	if tok.B != binding {
+		return Errf(ClassInvalid,
+			"page_token was issued for a different query: repeat the call that returned it with the same arguments, or start again without it")
+	}
+	return nil
+}
+
+func errNotIssued() error {
+	return Errf(ClassInvalid, "page_token is not one this server issued: pass it exactly as returned, or start again without it")
 }
 
 // binding hashes a call's method, path and query, less the pagination
@@ -91,15 +130,18 @@ func (c *Client) list(ctx context.Context, call Call, opts ListOptions, out any)
 	call.Query = q
 
 	if opts.PageToken != "" {
-		tok, err := decodePageToken(opts.PageToken)
-		if err != nil {
+		var next map[string]string
+		if err := DecodeToken(opts.PageToken, binding(call, path), &next); err != nil {
 			return Page{}, err
 		}
-		if tok.B != binding(call, path) {
-			return Page{}, Errf(ClassInvalid,
-				"page_token was issued for a different query: repeat the call that returned it with the same arguments, or start again without it")
+		// Only a pagination parameter may move, whatever the token says.
+		if len(next) == 0 {
+			return Page{}, errNotIssued()
 		}
-		for k, v := range tok.P {
+		for k, v := range next {
+			if k == "per_page" || !slices.Contains(paginationKeys, k) {
+				return Page{}, errNotIssued()
+			}
 			q.Set(k, v)
 		}
 	}
@@ -125,9 +167,7 @@ func (c *Client) list(ctx context.Context, call Call, opts ListOptions, out any)
 		return Page{}, err
 	}
 	if len(next) > 0 {
-		tok := pageToken{B: binding(call, path), P: next}
-		raw, _ := json.Marshal(tok)
-		page.NextToken = base64.RawURLEncoding.EncodeToString(raw)
+		page.NextToken = EncodeToken(binding(call, path), next)
 	}
 	return page, nil
 }
@@ -190,21 +230,4 @@ func linkNext(values []string) string {
 		}
 	}
 	return ""
-}
-
-func decodePageToken(s string) (pageToken, error) {
-	var tok pageToken
-	raw, err := base64.RawURLEncoding.DecodeString(s)
-	if err == nil {
-		err = json.Unmarshal(raw, &tok)
-	}
-	if err != nil || tok.B == "" || len(tok.P) == 0 {
-		return pageToken{}, Errf(ClassInvalid, "page_token is not one this server issued: pass it exactly as returned, or start again without it")
-	}
-	for k := range tok.P {
-		if k == "per_page" || !slices.Contains(paginationKeys, k) {
-			return pageToken{}, Errf(ClassInvalid, "page_token is not one this server issued")
-		}
-	}
-	return tok, nil
 }

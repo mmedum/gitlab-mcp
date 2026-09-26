@@ -56,9 +56,9 @@ under `dist/`. `release-notes` prints what the release page would say.
   run. The vendored schemas are frozen in both directions: their hashes
   say the bytes are the ones reviewed, never that upstream still serves
   them.
-- `/security-review` over the previous tag to `HEAD`, committed as
-  `audit/security-reviews/vX.Y.Z.md`, with findings fixed or recorded in
-  `docs/architecture.md` §16a.
+- `/security-review` over the previous tag to `HEAD`, committed under
+  `audit/security-reviews/` in a file named for the tag, with findings
+  fixed or recorded in `docs/architecture.md` §16a.
 - The release commit, on a topic branch and through a pull request like
   any other: `main` is never pushed to directly, release commits
   included. It renames `[Unreleased]` in `CHANGELOG.md` to the version
@@ -130,7 +130,7 @@ released binary and run `go run ./scripts/gates smoke <path>` against
 it (not `make smoke`, which builds its own first), run
 `gitlab-mcp doctor` with it, and open the bundle in Claude Desktop.
 
-Record it in `audit/release-smoke/vX.Y.Z.md`: the gates, the
+Record it under `audit/release-smoke/`, in a file named for the tag: the gates, the
 reproducible-build hashes, the schema re-fetches, anything found, and
 the go-ahead.
 

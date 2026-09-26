@@ -15,6 +15,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/internal/render"
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
 )
 
@@ -32,9 +33,8 @@ type Options struct {
 // resolve_url to report the surface that exists rather than a second
 // description of the rules that built it.
 type Registered struct {
-	Name    string
-	Kind    scopes.Kind
-	Toolset string // "" for the default set
+	Name string
+	Kind scopes.Kind
 }
 
 // Service holds what every call shares.
@@ -42,11 +42,12 @@ type Service struct {
 	client  *gapi.Client
 	inst    instance.Instance
 	cfg     config.Config
-	meta    instance.Metadata
 	granted []string
 
 	mu         sync.RWMutex
 	registered []Registered
+	// meta is the instance's version and edition, zero until known.
+	meta instance.Metadata
 }
 
 // New builds a Service. The instance comes from the client, or from the
@@ -109,8 +110,9 @@ func (s *Service) parseProject(raw string) (gapi.Project, error) {
 	return gapi.ParseProject(raw)
 }
 
-// project resolves the caller's project to its id and path with one
-// read, and reports a move GitLab answered with (§6.1, §2.15).
+// project resolves the caller's project to its id and path, with at
+// most one read and none when the process already knows it, and reports
+// a move GitLab answered with (§6.1, §2.15).
 func (s *Service) project(ctx context.Context, raw string) (gapi.Project, model.ProjectRef, error) {
 	c, err := s.api()
 	if err != nil {
@@ -120,13 +122,13 @@ func (s *Service) project(ctx context.Context, raw string) (gapi.Project, model.
 	if err != nil {
 		return gapi.Project{}, model.ProjectRef{}, err
 	}
-	if p.ID() == 0 {
-		p, err = c.ResolveProject(ctx, p)
-		if err != nil {
-			return gapi.Project{}, model.ProjectRef{}, err
-		}
+	if p, err = c.ResolveProject(ctx, p); err != nil {
+		return gapi.Project{}, model.ProjectRef{}, err
+	}
+	if p.Path() != "" {
 		return p, projectRef(ctx, p.ID(), p.Path()), nil
 	}
+	// An id the process has not met yet: one read learns its path.
 	proj, err := c.GetProject(ctx, p)
 	if err != nil {
 		return gapi.Project{}, model.ProjectRef{}, err
@@ -146,6 +148,39 @@ func projectRef(ctx context.Context, id int64, path string) model.ProjectRef {
 		}
 	}
 	return ref
+}
+
+// cut shows the part of a prepared text from offset that fits budget,
+// with the hidden characters removed while preparing it, and refuses an
+// offset past the end. what names the text in that refusal, param the
+// input that carried the offset.
+func cut(text string, removed, offset, budget int, what, param string) (string, model.Budget, error) {
+	shown, b := render.Cut(text, offset, budget)
+	if offset > b.TotalChars {
+		return "", model.Budget{}, gapi.Errf(gapi.ClassInvalid, "%s %d is past the end of %s, which has %d characters",
+			param, offset, what, b.TotalChars)
+	}
+	b.HiddenRemoved = removed
+	return shown, b, nil
+}
+
+// readPages reads a listing a page of a hundred at a time, up to
+// maxPages; complete is false when there were more.
+func readPages[T any](maxPages int, read func(gapi.ListOptions) ([]T, gapi.Page, error)) ([]T, bool, error) {
+	var all []T
+	opts := gapi.ListOptions{PerPage: gapi.MaxPerPage}
+	for range maxPages {
+		rows, page, err := read(opts)
+		if err != nil {
+			return nil, false, err
+		}
+		all = append(all, rows...)
+		if page.Complete() {
+			return all, true, nil
+		}
+		opts.PageToken = page.NextToken
+	}
+	return all, false, nil
 }
 
 // listing turns a client page into the model's.

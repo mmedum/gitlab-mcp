@@ -22,6 +22,7 @@ lifted verbatim.
 - Token refresh under a cross-process lock, so two clients share one login.
 - Read tools: `get_me`, `resolve_url`, `search_projects`, `get_project`, `search_issues`, `get_issue`, `list_discussions`, `search_merge_requests`, `get_merge_request`, `get_file`, `list_tree`, `list_branches`, `list_commits`, `get_commit`.
 - GitLab content rendered inside untrusted-content boundaries, within a reply budget that says what it left out.
+- `get_commit` continues a long commit message with `message_offset`, as every cut read can be continued.
 - Read-only mode (`GITLAB_MCP_READ_ONLY`) registers only the read tools and requests only `read_api`.
 - The quick-action guard every later write goes through.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.

@@ -140,8 +140,11 @@ func gate(sp spec, cfg config.Config, meta instance.Metadata, granted []string) 
 		return "toolset"
 	}
 	if sp.MinVersion != "" && meta.Version.Major != 0 {
-		major, minor := parseMinVersion(sp.MinVersion)
-		if !meta.AtLeast(major, minor) {
+		least, err := instance.ParseVersion(sp.MinVersion)
+		if err != nil {
+			panic("tools: MinVersion " + strconv.Quote(sp.MinVersion) + " is not major.minor")
+		}
+		if !meta.AtLeast(least.Major, least.Minor) {
 			return "version"
 		}
 	}
@@ -149,16 +152,6 @@ func gate(sp spec, cfg config.Config, meta instance.Metadata, granted []string) 
 		return "scope"
 	}
 	return ""
-}
-
-func parseMinVersion(v string) (int, int) {
-	a, b, _ := strings.Cut(v, ".")
-	major, err1 := strconv.Atoi(a)
-	minor, err2 := strconv.Atoi(b)
-	if err1 != nil || err2 != nil {
-		panic("tools: MinVersion " + strconv.Quote(v) + " is not major.minor")
-	}
-	return major, minor
 }
 
 // definition is a tool whose input and output types are fixed.
@@ -204,7 +197,7 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 		mt.Meta = mcp.Meta{"anthropic/requiresUserInteraction": true}
 	}
 	c := &caller[In, Out]{t: t, d: d, in: in, inResolved: inResolved, outResolved: outResolved,
-		dryRun: boolField[In]("dry_run"), confirm: boolField[In]("confirm")}
+		enums: enumsOf(t.sp.Enums), dryRun: boolField[In]("dry_run"), confirm: boolField[In]("confirm")}
 	if t.sp.Kind == Destructive && c.confirm < 0 {
 		panic("tools: " + t.sp.Name + " is Destructive and has no confirm input")
 	}
@@ -218,6 +211,7 @@ type caller[In, Out any] struct {
 	in          *jsonschema.Schema
 	inResolved  *jsonschema.Resolved
 	outResolved *jsonschema.Resolved
+	enums       []enum
 	dryRun      int
 	confirm     int
 }
@@ -294,7 +288,7 @@ func (c *caller[In, Out]) decode(raw json.RawMessage) (In, error) {
 		// never a value.
 		c.d.logger().Debug("lenient arguments", "tool", c.t.sp.Name, "fields", adjusted)
 	}
-	if err := checkEnums(args, c.t.sp.Enums); err != nil {
+	if err := checkEnums(args, c.enums); err != nil {
 		return in, err
 	}
 	data, err := json.Marshal(args)
@@ -391,18 +385,32 @@ func allows(s *jsonschema.Schema, typ string) bool {
 	return s.Type == typ || slices.Contains(s.Types, typ)
 }
 
+// enum is one closed input, its values sorted.
+type enum struct {
+	name   string
+	values []string
+}
+
+// enumsOf sorts a spec's closed inputs once, by name and values, so a
+// call checks them in a fixed order and names each set sorted.
+func enumsOf(m map[string][]string) []enum {
+	out := make([]enum, 0, len(m))
+	for _, name := range slices.Sorted(maps.Keys(m)) {
+		out = append(out, enum{name: name, values: slices.Sorted(slices.Values(m[name]))})
+	}
+	return out
+}
+
 // checkEnums refuses a value outside a closed set, naming the set
 // sorted, so the caller can correct itself in one turn.
-func checkEnums(args map[string]any, enums map[string][]string) error {
-	for _, name := range slices.Sorted(maps.Keys(enums)) {
-		v, ok := args[name]
+func checkEnums(args map[string]any, enums []enum) error {
+	for _, e := range enums {
+		v, ok := args[e.name]
 		if !ok {
 			continue
 		}
-		s, isString := v.(string)
-		allowed := slices.Sorted(slices.Values(enums[name]))
-		if !isString || !slices.Contains(allowed, s) {
-			return gapi.Errf(gapi.ClassInvalid, "%s must be one of %s", name, strings.Join(allowed, "|"))
+		if s, isString := v.(string); !isString || !slices.Contains(e.values, s) {
+			return gapi.Errf(gapi.ClassInvalid, "%s must be one of %s", e.name, strings.Join(e.values, "|"))
 		}
 	}
 	return nil

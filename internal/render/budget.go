@@ -2,6 +2,7 @@ package render
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mmedum/gitlab-mcp/internal/model"
 )
@@ -34,35 +35,49 @@ const (
 // An offset past the end yields nothing and a budget whose
 // ContinueOffset is null; the caller decides whether that is an error.
 func Cut(text string, offset, budget int) (string, model.Budget) {
-	r := []rune(text)
-	total := len(r)
+	total := utf8.RuneCountInString(text)
 	offset = min(max(offset, 0), total)
 	end := min(total, offset+budget)
+	from := byteIndex(text, 0, offset)
+	to := byteIndex(text, from, end-offset)
 	if end < total {
-		window := string(r[offset:end])
+		window := text[from:to]
 		if i := lastBreak(window, "\n\n", budget/2); i >= 0 {
-			end = offset + i
+			to = from + i
 		} else if i := lastBreak(window, "\n", budget/2); i >= 0 {
-			end = offset + i
+			to = from + i
 		}
+		end = offset + utf8.RuneCountInString(text[from:to])
 	}
 	b := model.Budget{BudgetChars: budget, TotalChars: total, Offset: offset, ShownChars: end - offset}
 	if end < total {
 		next := end
 		b.ContinueOffset = &next
 	}
-	return string(r[offset:end]), b
+	return text[from:to], b
 }
 
-// lastBreak returns the rune index just past the last sep in window, if
-// that index is at least floor; else -1.
+// byteIndex returns the byte index n characters past the byte index
+// from, or the end of s.
+func byteIndex(s string, from, n int) int {
+	for i := range s[from:] {
+		if n == 0 {
+			return from + i
+		}
+		n--
+	}
+	return len(s)
+}
+
+// lastBreak returns the byte index just past the last sep in window, if
+// that is at least floor characters in; else -1.
 func lastBreak(window, sep string, floor int) int {
 	i := strings.LastIndex(window, sep)
 	if i < 0 {
 		return -1
 	}
-	at := len([]rune(window[:i+len(sep)]))
-	if at < floor {
+	at := i + len(sep)
+	if utf8.RuneCountInString(window[:at]) < floor {
 		return -1
 	}
 	return at

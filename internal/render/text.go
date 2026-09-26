@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,12 +27,22 @@ func whenPtr(t *time.Time) string {
 }
 
 func users(us []model.User) string {
-	if len(us) == 0 {
-		return "none"
-	}
-	out := make([]string, len(us))
+	names := make([]string, len(us))
 	for i, u := range us {
-		out[i] = "@" + u.Username
+		names[i] = u.Username
+	}
+	return atList(names, "none")
+}
+
+// atList lists usernames with their @, or says empty when there are
+// none.
+func atList(names []string, empty string) string {
+	if len(names) == 0 {
+		return empty
+	}
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = "@" + Ident(n)
 	}
 	return strings.Join(out, ", ")
 }
@@ -69,9 +80,9 @@ func yesNo(b bool) string {
 
 // projectLine names a project by path and id, and says when it moved.
 func projectLine(p model.ProjectRef) string {
-	s := p.Path + " (project id " + strconv.FormatInt(p.ID, 10) + ")"
+	s := Ident(p.Path) + " (project id " + strconv.FormatInt(p.ID, 10) + ")"
 	if p.MovedFrom != nil {
-		s += "\nNote: " + *p.MovedFrom + " has moved to " + p.Path + "; use the new path or the id from now on."
+		s += "\nNote: " + Ident(*p.MovedFrom) + " has moved to " + Ident(p.Path) + "; use the new path or the id from now on."
 	}
 	return s
 }
@@ -120,10 +131,10 @@ func budgetLineFor(what, param string, b model.Budget) string {
 
 // --------------------------------------------------------------- get_me
 
-// Me renders get_me.
-func Me(m model.Me) string {
+// Me renders get_me. It shows nothing that needs a boundary.
+func Me(m model.Me, _ Boundary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Signed in as @%s (%s), user id %d", m.User.Username, person(m.User.Name), m.User.ID)
+	fmt.Fprintf(&b, "Signed in as @%s (%s), user id %d", Ident(m.User.Username), person(m.User.Name), m.User.ID)
 	if m.User.Bot {
 		b.WriteString(", a bot account")
 	}
@@ -132,11 +143,11 @@ func Me(m model.Me) string {
 	}
 	b.WriteString(".\n")
 	if m.Instance.Known {
-		fmt.Fprintf(&b, "Instance: %s, GitLab %s, %s Edition.\n", m.Instance.URL, m.Instance.Version, m.Instance.Edition)
+		fmt.Fprintf(&b, "Instance: %s, GitLab %s, %s Edition.\n", m.Instance.URL, Ident(m.Instance.Version), m.Instance.Edition)
 	} else {
 		fmt.Fprintf(&b, "Instance: %s; its version and edition could not be read.\n", m.Instance.URL)
 	}
-	fmt.Fprintf(&b, "Token: %s, scopes %s", m.Token.Kind, list(m.Token.Scopes))
+	fmt.Fprintf(&b, "Token: %s, scopes %s", m.Token.Kind, idents(m.Token.Scopes))
 	if m.Token.ExpiresAt != nil {
 		fmt.Fprintf(&b, ", expires %s and is refreshed before then", when(*m.Token.ExpiresAt))
 	}
@@ -162,8 +173,8 @@ func Me(m model.Me) string {
 
 // ---------------------------------------------------------- resolve_url
 
-// Resolved renders resolve_url.
-func Resolved(r model.Resolved) string {
+// Resolved renders resolve_url. It shows nothing that needs a boundary.
+func Resolved(r model.Resolved, _ Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "A %s in %s", strings.ReplaceAll(r.Kind, "_", " "), Ident(r.Project))
 	switch {
@@ -205,7 +216,7 @@ func Resolved(r model.Resolved) string {
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\nRead it with %s:", r.Tool)
-	for _, k := range sortedKeys(r.Arguments) {
+	for _, k := range slices.Sorted(maps.Keys(r.Arguments)) {
 		fmt.Fprintf(&b, " %s=%v", k, quoteIfString(r.Arguments[k]))
 	}
 	return b.String()
@@ -235,7 +246,7 @@ func ProjectList(l model.ProjectList, bd Boundary) string {
 		b.WriteString("\n" + bd.Notice())
 	}
 	for _, p := range l.Projects {
-		fmt.Fprintf(&b, "\n- %d %s: %s, default branch %s", p.ID, p.Path, p.Visibility, orNone(Ident(p.DefaultBranch)))
+		fmt.Fprintf(&b, "\n- %d %s: %s, default branch %s", p.ID, Ident(p.Path), Ident(p.Visibility), orNone(Ident(p.DefaultBranch)))
 		if p.Archived {
 			b.WriteString(", archived")
 		}
@@ -252,8 +263,9 @@ func Project(p model.Project, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Project %s\n", projectLine(p.Project))
 	fmt.Fprintf(&b, "%s, %s; default branch %s; archived %s; empty repository %s.\n",
-		p.WebURL, p.Visibility, orNone(Ident(p.DefaultBranch)), yesNo(p.Archived), yesNo(p.EmptyRepo))
-	fmt.Fprintf(&b, "Under %s (%s). Created %s, last activity %s.\n", p.Namespace, p.NamespaceKind, when(p.CreatedAt), whenPtr(p.LastActivityAt))
+		Ident(p.WebURL), Ident(p.Visibility), orNone(Ident(p.DefaultBranch)), yesNo(p.Archived), yesNo(p.EmptyRepo))
+	fmt.Fprintf(&b, "Under %s (%s). Created %s, last activity %s.\n", Ident(p.Namespace), Ident(p.NamespaceKind), when(p.CreatedAt),
+		whenPtr(p.LastActivityAt))
 	fmt.Fprintf(&b, "Stars %d, forks %d", p.Stars, p.Forks)
 	if p.OpenIssues != nil {
 		fmt.Fprintf(&b, ", open issues %d", *p.OpenIssues)
@@ -277,12 +289,12 @@ func ItemList(l model.ItemList, noun string, bd Boundary) string {
 		b.WriteString("\n" + bd.Notice())
 	}
 	for _, it := range l.Items {
-		state := it.State
+		state := Ident(it.State)
 		if it.Draft {
 			state += ", draft"
 		}
-		fmt.Fprintf(&b, "\n- %s (project id %d, iid %d): %s, by @%s, updated %s", it.Reference, it.Project.ID, it.IID,
-			state, it.Author, when(it.UpdatedAt))
+		fmt.Fprintf(&b, "\n- %s (project id %d, iid %d): %s, by @%s, updated %s", Ident(it.Reference), it.Project.ID, it.IID,
+			state, Ident(it.Author), when(it.UpdatedAt))
 		if len(it.Labels) > 0 {
 			fmt.Fprintf(&b, ", labels %s", idents(it.Labels))
 		}
@@ -306,25 +318,25 @@ func milestone(m *model.Milestone) string {
 	if m == nil {
 		return "none"
 	}
-	return fmt.Sprintf("%q (%s)", m.Title, m.State)
+	return fmt.Sprintf("%q (%s)", m.Title, Ident(m.State))
 }
 
 // Issue renders get_issue.
 func Issue(is model.Issue, bd Boundary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Issue %s, iid %d, in %s\n", is.Reference, is.IID, projectLine(is.Project))
-	fmt.Fprintf(&b, "%s; %s; type %s; confidential %s.\n", is.WebURL, is.State, is.Type, yesNo(is.Confidential))
-	fmt.Fprintf(&b, "Author @%s; assignees %s; labels %s; milestone %s.\n", is.Author.Username, users(is.Assignees),
+	fmt.Fprintf(&b, "Issue %s, iid %d, in %s\n", Ident(is.Reference), is.IID, projectLine(is.Project))
+	fmt.Fprintf(&b, "%s; %s; type %s; confidential %s.\n", Ident(is.WebURL), Ident(is.State), Ident(is.Type), yesNo(is.Confidential))
+	fmt.Fprintf(&b, "Author @%s; assignees %s; labels %s; milestone %s.\n", Ident(is.Author.Username), users(is.Assignees),
 		idents(is.Labels), milestone(is.Milestone))
 	fmt.Fprintf(&b, "Created %s; updated %s", when(is.CreatedAt), when(is.UpdatedAt))
 	if is.ClosedAt != nil {
 		fmt.Fprintf(&b, "; closed %s", when(*is.ClosedAt))
 		if is.ClosedBy != nil {
-			fmt.Fprintf(&b, " by @%s", is.ClosedBy.Username)
+			fmt.Fprintf(&b, " by @%s", Ident(is.ClosedBy.Username))
 		}
 	}
 	if is.DueDate != nil {
-		fmt.Fprintf(&b, "; due %s", *is.DueDate)
+		fmt.Fprintf(&b, "; due %s", Ident(*is.DueDate))
 	}
 	b.WriteString(".\n")
 	if is.Tasks != nil && is.Tasks.Count > 0 {
@@ -342,42 +354,42 @@ func Issue(is model.Issue, bd Boundary) string {
 // MergeRequest renders get_merge_request.
 func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Merge request %s, iid %d, in %s\n", mr.Reference, mr.IID, projectLine(mr.Project))
-	state := mr.State
+	fmt.Fprintf(&b, "Merge request %s, iid %d, in %s\n", Ident(mr.Reference), mr.IID, projectLine(mr.Project))
+	state := Ident(mr.State)
 	if mr.Draft {
 		state += ", draft"
 	}
-	fmt.Fprintf(&b, "%s; %s; %s into %s", mr.WebURL, state, Ident(mr.SourceBranch), Ident(mr.TargetBranch))
+	fmt.Fprintf(&b, "%s; %s; %s into %s", Ident(mr.WebURL), state, Ident(mr.SourceBranch), Ident(mr.TargetBranch))
 	if mr.SourceProjectID != mr.Project.ID {
 		fmt.Fprintf(&b, " (from the fork with project id %d)", mr.SourceProjectID)
 	}
 	b.WriteString(".\n")
-	fmt.Fprintf(&b, "Head %s; merge status %s; conflicts %s; files changed %s.\n", mr.SHA, mr.DetailedMergeStatus,
-		yesNo(mr.HasConflicts), mr.ChangesCount)
-	if mr.DiffRefs != nil {
-		fmt.Fprintf(&b, "Diff refs: base %s, start %s, head %s.\n", mr.DiffRefs.BaseSHA, mr.DiffRefs.StartSHA, mr.DiffRefs.HeadSHA)
+	fmt.Fprintf(&b, "Head %s; merge status %s; conflicts %s; files changed %s.\n", Ident(mr.SHA), Ident(mr.DetailedMergeStatus),
+		yesNo(mr.HasConflicts), Ident(mr.ChangesCount))
+	if d := mr.DiffRefs; d != nil {
+		fmt.Fprintf(&b, "Diff refs: base %s, start %s, head %s.\n", Ident(d.BaseSHA), Ident(d.StartSHA), Ident(d.HeadSHA))
 	}
 	if mr.HeadPipeline != nil {
-		fmt.Fprintf(&b, "Head pipeline %d: %s.\n", mr.HeadPipeline.ID, mr.HeadPipeline.Status)
+		fmt.Fprintf(&b, "Head pipeline %d: %s.\n", mr.HeadPipeline.ID, Ident(mr.HeadPipeline.Status))
 	} else {
 		b.WriteString("No head pipeline.\n")
 	}
 	if a := mr.Approvals; a == nil {
 		b.WriteString("Approvals: could not be read.\n")
 	} else {
-		fmt.Fprintf(&b, "Approvals: approved %s; approved by %s", yesNo(a.Approved), atList(a.ApprovedBy))
+		fmt.Fprintf(&b, "Approvals: approved %s; approved by %s", yesNo(a.Approved), atList(a.ApprovedBy, "nobody"))
 		if a.Required != nil && a.Left != nil {
 			fmt.Fprintf(&b, "; %d required, %d left", *a.Required, *a.Left)
 		}
 		b.WriteString(".\n")
 	}
-	fmt.Fprintf(&b, "Author @%s; assignees %s; reviewers %s; labels %s; milestone %s.\n", mr.Author.Username,
+	fmt.Fprintf(&b, "Author @%s; assignees %s; reviewers %s; labels %s; milestone %s.\n", Ident(mr.Author.Username),
 		users(mr.Assignees), users(mr.Reviewers), idents(mr.Labels), milestone(mr.Milestone))
 	fmt.Fprintf(&b, "Created %s; updated %s", when(mr.CreatedAt), when(mr.UpdatedAt))
 	if mr.MergedAt != nil {
 		fmt.Fprintf(&b, "; merged %s", when(*mr.MergedAt))
 		if mr.MergedBy != nil {
-			fmt.Fprintf(&b, " by @%s", mr.MergedBy.Username)
+			fmt.Fprintf(&b, " by @%s", Ident(mr.MergedBy.Username))
 		}
 	}
 	if mr.ClosedAt != nil {
@@ -391,17 +403,6 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	b.WriteString(bd.Block(o, mr.UntrustedDescription) + "\n")
 	b.WriteString(budgetLine("Description", mr.DescriptionBudget))
 	return b.String()
-}
-
-func atList(names []string) string {
-	if len(names) == 0 {
-		return "nobody"
-	}
-	out := make([]string, len(names))
-	for i, n := range names {
-		out[i] = "@" + n
-	}
-	return strings.Join(out, ", ")
 }
 
 // ---------------------------------------------------------- discussions
@@ -421,7 +422,7 @@ func Discussions(d model.Discussions, bd Boundary) string {
 		b.WriteString("\n" + bd.Notice())
 	}
 	for _, t := range d.Threads {
-		fmt.Fprintf(&b, "\n\nThread %s", t.ID)
+		fmt.Fprintf(&b, "\n\nThread %s", Ident(t.ID))
 		switch {
 		case t.Individual:
 			b.WriteString(" (a single comment)")
@@ -438,11 +439,11 @@ func Discussions(d model.Discussions, bd Boundary) string {
 			case p.OldLine != nil:
 				fmt.Fprintf(&b, " old line %d", *p.OldLine)
 			}
-			fmt.Fprintf(&b, " at %s", p.HeadSHA)
+			fmt.Fprintf(&b, " at %s", Ident(p.HeadSHA))
 		}
 		fmt.Fprintf(&b, ", last activity %s:", when(t.LastActivity))
 		for _, n := range t.Notes {
-			fmt.Fprintf(&b, "\nComment %d by @%s at %s", n.ID, n.Author.Username, when(n.CreatedAt))
+			fmt.Fprintf(&b, "\nComment %d by @%s at %s", n.ID, Ident(n.Author.Username), when(n.CreatedAt))
 			if n.System {
 				b.WriteString(", a system note")
 			}
@@ -451,19 +452,17 @@ func Discussions(d model.Discussions, bd Boundary) string {
 			}
 			b.WriteString(":\n")
 			b.WriteString(bd.Block(Origin{Kind: "comment", Project: d.Project.Path, Item: item, Author: n.Author.Username}, n.UntrustedBody))
-			if n.Budget.ContinueOffset != nil {
-				fmt.Fprintf(&b, "\nComment %d: characters %d to %d of %d shown; continue with note_id=%d offset=%d.",
-					n.ID, n.Budget.Offset, n.Budget.Offset+n.Budget.ShownChars, n.Budget.TotalChars, n.ID, *n.Budget.ContinueOffset)
-			}
-			if n.Budget.HiddenRemoved > 0 {
-				fmt.Fprintf(&b, "\n%d hidden characters were removed from comment %d.", n.Budget.HiddenRemoved, n.ID)
+			// A comment shown whole and clean needs no budget line.
+			if n.Budget.ContinueOffset != nil || n.Budget.Offset > 0 || n.Budget.HiddenRemoved > 0 {
+				b.WriteString("\n" + budgetLineFor(fmt.Sprintf("Comment %d", n.ID), fmt.Sprintf("note_id=%d offset", n.ID), n.Budget))
 			}
 		}
 	}
 	if len(d.NotShown) > 0 {
 		b.WriteString("\n\nNot shown for the budget; the next page starts with these:")
 		for _, t := range d.NotShown {
-			fmt.Fprintf(&b, "\n- thread %s, started by @%s, %d comments, last activity %s", t.ID, t.Author, t.Notes, when(t.LastActivity))
+			fmt.Fprintf(&b, "\n- thread %s, started by @%s, %d comments, last activity %s", Ident(t.ID), Ident(t.Author), t.Notes,
+				when(t.LastActivity))
 		}
 	}
 	return b.String()
@@ -475,10 +474,10 @@ func Discussions(d model.Discussions, bd Boundary) string {
 func File(f model.File, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "File %s at %s in %s\n", Ident(f.Path), Ident(f.Ref), projectLine(f.Project))
-	fmt.Fprintf(&b, "%d bytes; blob %s; last commit %s; ref resolved to %s; sha256 %s.\n", f.Size, f.BlobID,
-		f.LastCommitID, f.CommitID, f.SHA256)
+	fmt.Fprintf(&b, "%d bytes; blob %s; last commit %s; ref resolved to %s; sha256 %s.\n", f.Size, Ident(f.BlobID),
+		Ident(f.LastCommitID), Ident(f.CommitID), Ident(f.SHA256))
 	if f.Binary {
-		fmt.Fprintf(&b, "Binary content (%s): not shown.", f.ContentType)
+		fmt.Fprintf(&b, "Binary content (%s): not shown.", Ident(f.ContentType))
 		return b.String()
 	}
 	b.WriteString(bd.Notice() + "\n")
@@ -499,7 +498,7 @@ func Tree(t model.Tree, _ Boundary) string {
 	for _, e := range t.Entries {
 		kind := map[string]string{"tree": "dir", "blob": "file", "commit": "submodule"}[e.Type]
 		if kind == "" {
-			kind = e.Type
+			kind = Ident(e.Type)
 		}
 		fmt.Fprintf(&b, "\n%-9s %s", kind, Ident(e.Path))
 	}
@@ -535,7 +534,7 @@ func Branches(l model.Branches, bd Boundary) string {
 		if len(flags) > 0 {
 			fmt.Fprintf(&b, " (%s)", strings.Join(flags, ", "))
 		}
-		fmt.Fprintf(&b, ": head %s at %s, %s", shortSHA(br.CommitID), when(br.CommittedAt), bd.Inline(br.UntrustedCommitTitle))
+		fmt.Fprintf(&b, ": head %s at %s, %s", Ident(shortSHA(br.CommitID)), when(br.CommittedAt), bd.Inline(br.UntrustedCommitTitle))
 	}
 	return b.String()
 }
@@ -551,7 +550,7 @@ func Commits(l model.Commits, bd Boundary) string {
 		b.WriteString("\n" + bd.Notice())
 	}
 	for _, c := range l.Commits {
-		fmt.Fprintf(&b, "\n- %s %s by %s", c.ID, when(c.CommittedAt), person(c.AuthorName))
+		fmt.Fprintf(&b, "\n- %s %s by %s", Ident(c.ID), when(c.CommittedAt), person(c.AuthorName))
 		if c.Parents > 1 {
 			b.WriteString(", a merge")
 		}
@@ -563,19 +562,16 @@ func Commits(l model.Commits, bd Boundary) string {
 // Commit renders get_commit.
 func Commit(c model.Commit, bd Boundary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Commit %s in %s\n", c.ID, projectLine(c.Project))
-	fmt.Fprintf(&b, "%s\nAuthored by %s at %s; committed by %s at %s; parents %s.\n", c.WebURL, person(c.AuthorName),
-		when(c.AuthoredAt), person(c.CommitterName), when(c.CommittedAt), list(c.ParentIDs))
+	fmt.Fprintf(&b, "Commit %s in %s\n", Ident(c.ID), projectLine(c.Project))
+	fmt.Fprintf(&b, "%s\nAuthored by %s at %s; committed by %s at %s; parents %s.\n", Ident(c.WebURL), person(c.AuthorName),
+		when(c.AuthoredAt), person(c.CommitterName), when(c.CommittedAt), idents(c.ParentIDs))
 	fmt.Fprintf(&b, "%d lines added, %d removed.\n", c.Additions, c.Deletions)
 	b.WriteString(bd.Notice() + "\n")
 	o := Origin{Kind: "commit_message", Project: c.Project.Path, Item: c.ShortID, Author: ""}
 	b.WriteString(bd.Block(o, c.UntrustedMessage) + "\n")
-	// The commit's hidden-character count is reported once, below.
-	mb := c.MessageBudget
-	mb.HiddenRemoved = 0
-	b.WriteString(budgetLineFor("Message", "message_offset", mb))
+	b.WriteString(budgetLineFor("Message", "message_offset", c.MessageBudget))
 	for _, f := range c.Files {
-		fmt.Fprintf(&b, "\n\n%s %s", f.Status, fileName(f.OldPath, f.NewPath))
+		fmt.Fprintf(&b, "\n\n%s %s", Ident(f.Status), fileName(f.OldPath, f.NewPath))
 		b.WriteString(":\n" + bd.Block(Origin{Kind: "diff", Project: c.Project.Path, Item: f.NewPath + "@" + c.ShortID}, f.UntrustedDiff))
 		if f.Truncated {
 			b.WriteString("\nThis diff was cut at the budget; get_file reads the file itself.")
@@ -585,7 +581,7 @@ func Commit(c model.Commit, bd Boundary) string {
 	if len(c.NotShown) > 0 {
 		b.WriteString(" Not shown:")
 		for _, f := range c.NotShown {
-			fmt.Fprintf(&b, "\n- %s %s (%s)", f.Status, fileName(f.OldPath, f.NewPath), notShownReason(f.Reason))
+			fmt.Fprintf(&b, "\n- %s %s (%s)", Ident(f.Status), fileName(f.OldPath, f.NewPath), notShownReason(f.Reason))
 		}
 	}
 	if c.NextFileOffset != nil {
@@ -595,7 +591,7 @@ func Commit(c model.Commit, bd Boundary) string {
 		b.WriteString("\nThe commit changes more files than were read.")
 	}
 	if c.HiddenRemoved > 0 {
-		fmt.Fprintf(&b, "\n%d hidden characters were made visible.", c.HiddenRemoved)
+		fmt.Fprintf(&b, "\n%d hidden characters in the diffs were made visible.", c.HiddenRemoved)
 	}
 	return b.String()
 }
@@ -617,13 +613,4 @@ func notShownReason(r string) string {
 		return "over the budget"
 	}
 	return r
-}
-
-func sortedKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }
