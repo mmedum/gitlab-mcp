@@ -160,13 +160,16 @@ than the gate loosened.
 - `internal/gitlab/` wire types; `internal/gapi/` the raw REST client,
   with `gitlabtest/` the in-memory instance used by tests.
 - `internal/quickaction/` detecting and escaping quick-action lines, no
-  network; `internal/diffpos/` computing a diff note's position from a
-  unified diff, no network; `internal/model/` the server's view of an
+  network; `internal/model/` the server's view of an
   issue, merge request, discussion and pipeline; `internal/render/` text
   output, budgets and the untrusted-content boundaries;
   `internal/service/` orchestration and policy; `internal/tools/` the
   MCP tools; `internal/server/` SDK wiring and the schema dump;
-  `internal/redact/` log and output masking.
+  `internal/redact/` log and output masking; `internal/version/` the
+  build's version.
+- Phase 2 adds the `diffpos` package under `internal/`: a diff note's
+  position computed from a unified diff, no network. It joins this list
+  when it exists.
 - `scripts/gates/` the repository's own checks, as Go;
   `scripts/internal/` what the gates and drivers share;
   `scripts/livegitlab/` the live driver; `scripts/evals/` the

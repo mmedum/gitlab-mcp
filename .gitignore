@@ -1,0 +1,45 @@
+# Build output
+/gitlab-mcp
+/gitlab-mcp.exe
+/.gates
+/.gates.exe
+# `go build ./...` with no -o leaves these beside the module.
+/gates
+/gates.exe
+/livegitlab
+/livegitlab.exe
+/evals
+/evals.exe
+/dist/
+*.test
+
+# Test and gate artifacts
+cov*.out
+*.coverprofile
+coverage.html
+schemas.json
+server.json
+
+# Never: a token, an environment file, or a publisher binary
+token.json
+.env
+.env.*
+/mcp-publisher
+
+# Editor and tool scratch files. Listed before the first `git add -A`,
+# because an editor's temp file reaches a public repository that way and
+# is not visible at commit time.
+*.swp
+*.swo
+*~
+.#*
+\#*\#
+*.orig
+*.rej
+*.bak
+*.tmp
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+/.claude/

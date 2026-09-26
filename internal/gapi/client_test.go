@@ -1,0 +1,863 @@
+package gapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/internal/instance"
+)
+
+type staticToken string
+
+func (s staticToken) Token(context.Context) (string, error) { return string(s), nil }
+
+// sleeps records the waits between attempts without waiting.
+type sleeps struct {
+	mu sync.Mutex
+	d  []time.Duration
+}
+
+func (s *sleeps) sleep(_ context.Context, d time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.d = append(s.d, d)
+	return nil
+}
+
+func (s *sleeps) all() []time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]time.Duration(nil), s.d...)
+}
+
+func mustInstance(t *testing.T, raw string) instance.Instance {
+	t.Helper()
+	inst, err := instance.Parse(raw, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inst
+}
+
+type fixture struct {
+	token  string
+	srv    *gitlabtest.Server
+	client *Client
+	sleeps *sleeps
+	logs   *bytes.Buffer
+}
+
+func newFixture(t *testing.T, opts gitlabtest.Options, mod ...func(*Options)) *fixture {
+	t.Helper()
+	srv := gitlabtest.New(t, opts)
+	f := &fixture{srv: srv, token: srv.Token(), sleeps: &sleeps{}, logs: &bytes.Buffer{}}
+	o := Options{
+		Instance: mustInstance(t, srv.URL),
+		Tokens:   staticToken(f.token),
+		Version:  "1.2.3",
+		Sleep:    f.sleeps.sleep,
+		Logger:   slog.New(slog.NewTextHandler(&lockedWriter{w: f.logs}, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	}
+	for _, m := range mod {
+		m(&o)
+	}
+	c, err := New(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.client = c
+	return f
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  *bytes.Buffer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+func wantClass(t *testing.T, err error, want Class) *Error {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("err = nil, want [%s]", want)
+	}
+	var e *Error
+	if !errors.As(err, &e) {
+		t.Fatalf("err = %v (%T), want a *Error of class %s", err, err, want)
+	}
+	if e.Class != want {
+		t.Fatalf("class = %s, want %s: %v", e.Class, want, err)
+	}
+	if !strings.HasPrefix(err.Error(), "["+string(want)+"] ") {
+		t.Fatalf("text %q does not start with [%s]", err.Error(), want)
+	}
+	return e
+}
+
+func mustProject(t *testing.T, s string) Project {
+	t.Helper()
+	p, err := ParseProject(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestReadsSendBearerAndUserAgent(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := context.Background()
+	u, err := f.client.GetCurrentUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Username != "alice" || u.ID != 1001 {
+		t.Errorf("user = %+v, want alice 1001", u)
+	}
+	m, err := f.client.GetMetadata(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Version != "19.4.0" || m.Enterprise {
+		t.Errorf("metadata = %+v", m)
+	}
+	reqs := f.srv.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	for _, r := range reqs {
+		if r.Authorization != "Bearer "+f.token {
+			t.Errorf("authorization = %q", r.Authorization)
+		}
+		if r.UserAgent != "gitlab-mcp/1.2.3" {
+			t.Errorf("user agent = %q, want gitlab-mcp/1.2.3", r.UserAgent)
+		}
+	}
+	if reqs[0].EscapedPath != "/api/v4/user" || reqs[1].EscapedPath != "/api/v4/metadata" {
+		t.Errorf("paths = %q, %q", reqs[0].EscapedPath, reqs[1].EscapedPath)
+	}
+}
+
+func TestNoTokenIsAuthWithoutARequest(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{}, func(o *Options) { o.Tokens = nil })
+	_, err := f.client.GetCurrentUser(context.Background())
+	wantClass(t, err, ClassAuth)
+	if n := len(f.srv.Requests()); n != 0 {
+		t.Errorf("requests = %d, want 0", n)
+	}
+}
+
+func TestTokenSourceFailureIsAuth(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{}, func(o *Options) { o.Tokens = failingToken{} })
+	e := wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassAuth)
+	if !strings.Contains(e.Message, "gitlab-mcp login") {
+		t.Errorf("message %q does not say to log in", e.Message)
+	}
+}
+
+type failingToken struct{}
+
+func (failingToken) Token(context.Context) (string, error) { return "", errors.New("keyring locked") }
+
+func errOf[T any](_ T, err error) error { return err }
+
+func TestRevokedTokenIsAuth(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	tok := f.srv.TokenFor("alice", "api")
+	f.srv.Revoke(tok)
+	f.client.tokens = staticToken(tok)
+	wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassAuth)
+}
+
+func TestPrivateProjectIsNotFoundNamingAccess(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	_, err := f.client.GetProject(context.Background(), mustProject(t, gitlabtest.ProjectSecret))
+	e := wantClass(t, err, ClassNotFound)
+	if !strings.Contains(e.Message, "the project was not found, or you do not have access") {
+		t.Errorf("message = %q", e.Message)
+	}
+	if e.Status != 404 {
+		t.Errorf("status = %d", e.Status)
+	}
+}
+
+func TestMissingRouteIsUnsupported(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	err := f.client.Do(context.Background(), Call{Method: "GET", Path: "projects/{}/no_such_feature",
+		Args: []string{"2001"}, Name: "probe"}, nil)
+	e := wantClass(t, err, ClassUnsupported)
+	if !strings.Contains(e.Message, "no API route for probe") {
+		t.Errorf("message = %q", e.Message)
+	}
+}
+
+func TestReadAPITokenWriteIsAuthNamingScope(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	f.client.tokens = staticToken(f.srv.TokenFor("alice", "read_api"))
+	err := f.client.Do(context.Background(), Call{Method: "POST", Path: "projects/{}/issues/{}/notes",
+		Args: []string{"2001", "1"}, Body: map[string]string{"body": "hello"}, Name: "add_comment"}, nil)
+	e := wantClass(t, err, ClassAuth)
+	if !strings.Contains(e.Message, `"api" scope`) {
+		t.Errorf("message = %q, want it to name the api scope", e.Message)
+	}
+}
+
+func TestProjectPathEscapedOnceAndSecretsNeverDecoded(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	p, err := f.client.GetProject(context.Background(), mustProject(t, gitlabtest.ProjectAlpha))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ID != 2001 || p.PathWithNamespace != "example-group/alpha" {
+		t.Errorf("project = %d %q", p.ID, p.PathWithNamespace)
+	}
+	if got := f.srv.Requests()[0].EscapedPath; got != "/api/v4/projects/example-group%2Falpha" {
+		t.Errorf("path = %q, want the full path escaped once", got)
+	}
+	// runners_token is served and has no field; drift names it once.
+	_, _ = f.client.GetProject(context.Background(), mustProject(t, gitlabtest.ProjectAlpha))
+	logs := f.logs.String()
+	if n := strings.Count(logs, "field=Project.runners_token"); n != 1 {
+		t.Errorf("drift for runners_token logged %d times, want 1:\n%s", n, logs)
+	}
+	if strings.Contains(logs, "fixture-secret-never-decoded") || strings.Contains(logs, "example-group") {
+		t.Errorf("logs carry payload:\n%s", logs)
+	}
+}
+
+func TestResolveProjectOncePerCall(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := WithCall(context.Background())
+	p := mustProject(t, "Example-Group/Alpha")
+	for range 3 {
+		got, err := f.client.ResolveProject(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ID() != 2001 || got.Path() != "example-group/alpha" {
+			t.Errorf("resolved = %d %q", got.ID(), got.Path())
+		}
+	}
+	if n := Requests(ctx); n != 1 {
+		t.Errorf("Requests = %d, want 1", n)
+	}
+	// A new call resolves again.
+	ctx2 := WithCall(context.Background())
+	if _, err := f.client.ResolveProject(ctx2, p); err != nil {
+		t.Fatal(err)
+	}
+	if n := Requests(ctx2); n != 1 {
+		t.Errorf("second call Requests = %d, want 1", n)
+	}
+	byID, err := f.client.ResolveProject(ctx2, ProjectByID(7))
+	if err != nil || byID.ID() != 7 || Requests(ctx2) != 1 {
+		t.Errorf("an id resolved with a request: %v %v %d", byID, err, Requests(ctx2))
+	}
+}
+
+func TestGetFileEscapesPathAndRef(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := context.Background()
+	alpha := ProjectByID(2001)
+	file, err := f.client.GetFile(ctx, alpha, "src/login.go", "feature/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, _ := base64.StdEncoding.DecodeString(file.Content)
+	if string(content) != "package main\n\n// login is a stub.\nfunc login() {}\n" || file.LastCommitID == "" {
+		t.Errorf("file = %+v, content %q", file, content)
+	}
+	if _, err := f.client.GetFile(ctx, alpha, "docs/with space.md", ""); err != nil {
+		t.Fatal(err)
+	}
+	reqs := f.srv.Requests()
+	if reqs[0].EscapedPath != "/api/v4/projects/2001/repository/files/src%2Flogin.go" || reqs[0].RawQuery != "ref=feature%2Flogin" {
+		t.Errorf("request = %s ? %s", reqs[0].EscapedPath, reqs[0].RawQuery)
+	}
+	if reqs[1].EscapedPath != "/api/v4/projects/2001/repository/files/docs%2Fwith%20space.md" || reqs[1].RawQuery != "ref=HEAD" {
+		t.Errorf("request = %s ? %s", reqs[1].EscapedPath, reqs[1].RawQuery)
+	}
+	_, err = f.client.GetFile(ctx, alpha, "missing.txt", "main")
+	e := wantClass(t, err, ClassNotFound)
+	if !strings.Contains(e.Message, "the file was not found") {
+		t.Errorf("message = %q", e.Message)
+	}
+}
+
+func TestDotSegmentsRefusedBeforeSending(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	for _, path := range []string{"../etc/passwd", "a/../../b", "a/./b", ".", ""} {
+		_, err := f.client.GetFile(context.Background(), ProjectByID(2001), path, "main")
+		wantClass(t, err, ClassInvalid)
+	}
+	if n := len(f.srv.Requests()); n != 0 {
+		t.Errorf("requests = %d, want 0", n)
+	}
+}
+
+func TestOffsetPagingWalksEveryIssue(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := context.Background()
+	q := ItemQuery{Project: ProjectByID(2001)}
+	seen := map[int64]bool{}
+	opts := ListOptions{PerPage: 10}
+	pages := 0
+	for {
+		rows, page, err := f.client.SearchIssues(ctx, q, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if page.Total != 25 || !page.TotalKnown() {
+			t.Errorf("total = %d, want 25", page.Total)
+		}
+		for _, r := range rows {
+			seen[r.IID] = true
+		}
+		if page.Complete() {
+			break
+		}
+		opts.PageToken = page.NextToken
+	}
+	if pages != 3 || len(seen) != 25 {
+		t.Errorf("pages = %d, issues = %d; want 3 and 25", pages, len(seen))
+	}
+}
+
+func TestPageTokenBoundToItsQuery(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := context.Background()
+	_, page, err := f.client.SearchIssues(ctx, ItemQuery{Project: ProjectByID(2001)}, ListOptions{PerPage: 5})
+	if err != nil || page.Complete() {
+		t.Fatalf("first page: %v %+v", err, page)
+	}
+	before := len(f.srv.Requests())
+	cases := []struct {
+		name  string
+		q     ItemQuery
+		token string
+	}{
+		{"another filter", ItemQuery{Project: ProjectByID(2001), State: "opened"}, page.NextToken},
+		{"another project", ItemQuery{Project: ProjectByID(2002)}, page.NextToken},
+		{"garbage", ItemQuery{Project: ProjectByID(2001)}, "not-a-token"},
+		{"forged filter key", ItemQuery{Project: ProjectByID(2001)},
+			base64.RawURLEncoding.EncodeToString([]byte(`{"b":"x","p":{"sudo":"root"}}`))},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := f.client.SearchIssues(ctx, c.q, ListOptions{PerPage: 5, PageToken: c.token})
+			wantClass(t, err, ClassInvalid)
+		})
+	}
+	if n := len(f.srv.Requests()); n != before {
+		t.Errorf("a refused token reached GitLab: %d requests", n-before)
+	}
+	// The right query with a different page size is the same query.
+	if _, _, err := f.client.SearchIssues(ctx, ItemQuery{Project: ProjectByID(2001)}, ListOptions{PerPage: 7, PageToken: page.NextToken}); err != nil {
+		t.Errorf("same query refused: %v", err)
+	}
+}
+
+func TestTotalUnknownPastTheLimit(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{TotalLimit: 5, ExtraProjects: 10})
+	_, page, err := f.client.SearchProjects(context.Background(), ProjectQuery{}, ListOptions{PerPage: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.TotalKnown() || page.Total != -1 || page.Complete() {
+		t.Errorf("page = %+v, want an unknown total and a next page", page)
+	}
+}
+
+func TestOffsetCapIs405AndKeysetWalksPastIt(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{OffsetCap: 4, ExtraProjects: 10})
+	ctx := context.Background()
+	opts := ListOptions{PerPage: 2}
+	var err error
+	for range 5 {
+		var page Page
+		_, page, err = f.client.SearchProjects(ctx, ProjectQuery{}, opts)
+		if err != nil {
+			break
+		}
+		opts.PageToken = page.NextToken
+	}
+	e := wantClass(t, err, ClassInvalid)
+	if e.Status != 405 || !strings.Contains(e.Message, "keyset") {
+		t.Errorf("error = %+v", e)
+	}
+
+	seen := map[int64]bool{}
+	opts = ListOptions{PerPage: 2}
+	for {
+		rows, page, err := f.client.SearchProjects(ctx, ProjectQuery{Keyset: true}, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			seen[r.ID] = true
+		}
+		if page.TotalKnown() {
+			t.Errorf("keyset reported a total")
+		}
+		if page.Complete() {
+			break
+		}
+		opts.PageToken = page.NextToken
+	}
+	// alpha, beta and ten bulk projects; secret is invisible to alice.
+	if len(seen) != 12 || seen[2003] {
+		t.Errorf("keyset saw %d projects (secret seen: %v), want 12", len(seen), seen[2003])
+	}
+}
+
+func TestTreeKeysetPaging(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := context.Background()
+	opts := ListOptions{PerPage: 4}
+	var paths []string
+	for {
+		rows, page, err := f.client.ListTree(ctx, ProjectByID(2001), TreeQuery{Path: "docs/pages"}, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			paths = append(paths, r.Path)
+		}
+		if page.Complete() {
+			break
+		}
+		opts.PageToken = page.NextToken
+	}
+	if len(paths) != 12 || paths[0] != "docs/pages/page-01.md" || paths[11] != "docs/pages/page-12.md" {
+		t.Errorf("paths = %v", paths)
+	}
+	for _, r := range f.srv.Requests()[1:] {
+		if !strings.Contains(r.RawQuery, "page_token=") || !strings.Contains(r.RawQuery, "pagination=keyset") {
+			t.Errorf("follow-up query %q lacks the keyset cursor", r.RawQuery)
+		}
+	}
+}
+
+func TestRateLimited429IsRetriedHonoringRetryAfter(t *testing.T) {
+	for _, shape := range []struct {
+		name  string
+		fault gitlabtest.Fault
+		which string
+	}{
+		{"rack attack plain text", gitlabtest.RackAttack429("/user", 3, 1), "request throttle"},
+		{"application json", gitlabtest.Application429("/user", 3, 1), "application limit"},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			f := newFixture(t, gitlabtest.Options{})
+			f.srv.Inject(shape.fault)
+			if _, err := f.client.GetCurrentUser(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			// The backoff honors Retry-After; a throttle also holds the
+			// instance, which the stubbed sleep records as a second wait.
+			if got := f.sleeps.all(); len(got) == 0 || len(got) > 2 || got[0] < 3*time.Second {
+				t.Errorf("waits = %v, want a first of at least 3s", got)
+			}
+			if n := len(f.srv.Requests()); n != 2 {
+				t.Errorf("requests = %d, want 2", n)
+			}
+			// With one attempt, the message names the shape and the wait.
+			f.srv.Inject(shape.fault)
+			f.client.maxAttempts = 1
+			e := wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassRateLimited)
+			if !strings.Contains(e.Message, shape.which) || !strings.Contains(e.Message, "retry after 3s") {
+				t.Errorf("message = %q", e.Message)
+			}
+		})
+	}
+}
+
+func TestRateLimitedPostIsRetried(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	f.srv.Inject(gitlabtest.Application429("/projects/2001/issues/1/notes", 1, 1))
+	err := f.client.Do(context.Background(), Call{Method: "POST", Path: "projects/{}/issues/{}/notes",
+		Args: []string{"2001", "1"}, Body: map[string]string{"body": "Thanks."}, Bucket: BucketNotes, Name: "add_comment"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.srv.Requests()); n != 2 {
+		t.Errorf("requests = %d, want 2", n)
+	}
+}
+
+func TestRetryAfterPastDeadlineIsNotSlept(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	f.srv.Inject(gitlabtest.RackAttack429("/user", 30, 1))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	e := wantClass(t, errOf(f.client.GetCurrentUser(ctx)), ClassRateLimited)
+	if !strings.Contains(e.Message, "retry after 30s") {
+		t.Errorf("message = %q", e.Message)
+	}
+	if len(f.sleeps.all()) != 0 || len(f.srv.Requests()) != 1 {
+		t.Errorf("slept %v and sent %d", f.sleeps.all(), len(f.srv.Requests()))
+	}
+}
+
+func TestServerErrorsRetriedForGetNeverForCreate(t *testing.T) {
+	notes := Call{Method: "POST", Path: "projects/{}/issues/{}/notes", Args: []string{"2001", "1"},
+		Body: map[string]string{"body": "Thanks."}, Name: "add_comment"}
+	cases := []struct {
+		name     string
+		call     Call
+		fault    gitlabtest.Fault
+		class    Class
+		requests int
+	}{
+		{"GET recovers", Call{Method: "GET", Path: "user", Name: "get_me"},
+			gitlabtest.Fault{Path: "/user", Status: 502, Times: 2, Body: "bad gateway"}, "", 3},
+		{"GET gives up after four", Call{Method: "GET", Path: "user", Name: "get_me"},
+			gitlabtest.Fault{Path: "/user", Status: 500, Times: 10, Body: "{}"}, ClassUnavailable, 4},
+		{"create is ambiguous", notes,
+			gitlabtest.Fault{Path: "/projects/2001/issues/1/notes", Status: 500, Body: "{}"}, ClassAmbiguousOutcome, 1},
+		{"declared repeatable POST recovers", func() Call { c := notes; c.Repeatable = "test"; return c }(),
+			gitlabtest.Fault{Path: "/projects/2001/issues/1/notes", Status: 503, Body: "{}"}, "", 2},
+		{"PUT recovers", Call{Method: "PUT", Path: "projects/{}", Args: []string{"2001"}, Name: "update"},
+			gitlabtest.Fault{Path: "/projects/2001", Method: "PUT", Status: 502, Times: 1, Body: "{}"}, ClassUnsupported, 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t, gitlabtest.Options{})
+			f.srv.Inject(c.fault)
+			err := f.client.Do(context.Background(), c.call, nil)
+			if c.class == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				wantClass(t, err, c.class)
+			}
+			if n := len(f.srv.Requests()); n != c.requests {
+				t.Errorf("requests = %d, want %d", n, c.requests)
+			}
+		})
+	}
+}
+
+func TestDryRunRefusesEveryWrite(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := WithDryRun(context.Background())
+	if !IsDryRun(ctx) || IsDryRun(context.Background()) {
+		t.Fatal("IsDryRun is wrong")
+	}
+	for _, m := range []string{"POST", "PUT", "DELETE"} {
+		err := f.client.Do(ctx, Call{Method: m, Path: "projects/{}", Args: []string{"2001"}, Repeatable: "x", Name: "w"}, nil)
+		e := wantClass(t, err, ClassBlocked)
+		if !errors.Is(e, ErrDryRunWrite) {
+			t.Errorf("%s: cause is not ErrDryRunWrite", m)
+		}
+	}
+	if n := len(f.srv.Requests()); n != 0 {
+		t.Errorf("requests = %d, want 0", n)
+	}
+	if _, err := f.client.GetCurrentUser(ctx); err != nil {
+		t.Errorf("a read under a dry run failed: %v", err)
+	}
+}
+
+func TestMovedProjectFollowedOnceForGet(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := WithCall(context.Background())
+	iss, err := f.client.GetIssue(ctx, mustProject(t, gitlabtest.ProjectMoved), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iss.ProjectID != 2001 || iss.IID != 1 {
+		t.Errorf("issue = %d/%d", iss.ProjectID, iss.IID)
+	}
+	moves := Moves(ctx)
+	if len(moves) != 1 || moves[0] != (Move{From: "example-group/old-alpha", To: "example-group/alpha"}) {
+		t.Errorf("moves = %+v", moves)
+	}
+	reqs := f.srv.Requests()
+	if len(reqs) != 2 || reqs[1].EscapedPath != "/api/v4/projects/example-group%2Falpha/issues/1" {
+		t.Errorf("requests = %+v", reqs)
+	}
+	if Requests(ctx) != 2 {
+		t.Errorf("Requests = %d, want 2", Requests(ctx))
+	}
+
+	err = f.client.Do(ctx, Call{Method: "POST", Path: "projects/{}/issues/{}/notes",
+		Args: []string{gitlabtest.ProjectMoved, "1"}, Body: map[string]string{"body": "x"}, Name: "add_comment"}, nil)
+	e := wantClass(t, err, ClassInvalid)
+	if !strings.Contains(e.Message, "renamed or moved") {
+		t.Errorf("message = %q", e.Message)
+	}
+}
+
+func TestRedirectsElsewhereAreNeverFollowed(t *testing.T) {
+	for _, loc := range []string{
+		"https://other.invalid/api/v4/user",
+		"/users/sign_in",
+		"/api/v4/projects/2001",
+	} {
+		t.Run(loc, func(t *testing.T) {
+			f := newFixture(t, gitlabtest.Options{})
+			f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: 302, Header: http.Header{"Location": {loc}}})
+			e := wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassUnexpected)
+			if strings.Contains(e.Error(), "other.invalid") || strings.Contains(e.Error(), "sign_in") {
+				t.Errorf("message names the redirect target: %q", e.Error())
+			}
+			if n := len(f.srv.Requests()); n != 1 {
+				t.Errorf("requests = %d, want 1", n)
+			}
+		})
+	}
+}
+
+func TestNextLinkOffInstanceIsNotFollowed(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	h := http.Header{"Link": {`<https://other.invalid/api/v4/projects?page=2>; rel="next"`}, "Content-Type": {"application/json"}}
+	f.srv.Inject(gitlabtest.Fault{Path: "/projects", Status: 200, Header: h, Body: "[]"})
+	_, _, err := f.client.SearchProjects(context.Background(), ProjectQuery{}, ListOptions{})
+	wantClass(t, err, ClassUnexpected)
+}
+
+func TestNonJSONBodyIsDescribed(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: 200, Header: http.Header{"Content-Type": {"text/html"}},
+		Body: "<html><body>Sign in to continue\n\n</body></html>"})
+	e := wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassUnexpected)
+	if !strings.Contains(e.Message, `status 200, text/html, starting "<html><body>Sign in to continue </body></html>"`) {
+		t.Errorf("message = %q", e.Message)
+	}
+	f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: 400, Header: http.Header{"Content-Type": {"text/html"}}, Body: "<p>nope</p>"})
+	e = wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassInvalid)
+	if !strings.Contains(e.Message, `status 400, text/html, starting "<p>nope</p>"`) {
+		t.Errorf("message = %q", e.Message)
+	}
+}
+
+func TestHeaderTimeout(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{}, func(o *Options) {
+		o.HeaderTimeout = 50 * time.Millisecond
+		o.MaxAttempts = 2
+	})
+	f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: 200, Body: "{}", Delay: 300 * time.Millisecond, Times: 2})
+	e := wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassUnavailable)
+	if !strings.Contains(e.Message, "no response headers") {
+		t.Errorf("message = %q", e.Message)
+	}
+	f.srv.Inject(gitlabtest.Fault{Path: "/projects/2001/issues/1/notes", Status: 201, Body: "{}", Delay: 300 * time.Millisecond})
+	err := f.client.Do(context.Background(), Call{Method: "POST", Path: "projects/{}/issues/{}/notes",
+		Args: []string{"2001", "1"}, Body: map[string]string{"body": "x"}, Name: "add_comment"}, nil)
+	wantClass(t, err, ClassAmbiguousOutcome)
+}
+
+func TestStalledBodyIsCut(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{}, func(o *Options) {
+		o.StallTimeout = 50 * time.Millisecond
+		o.MaxAttempts = 1
+	})
+	f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: 200, Body: `{"id":1,"username":"alice"}`, StallAfter: 400 * time.Millisecond})
+	start := time.Now()
+	e := wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassUnavailable)
+	if !strings.Contains(e.Message, "stopped arriving") {
+		t.Errorf("message = %q", e.Message)
+	}
+	if time.Since(start) > 350*time.Millisecond {
+		t.Errorf("the stall guard took %s", time.Since(start))
+	}
+}
+
+func TestBodyCap(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{}, func(o *Options) { o.MaxAttempts = 1 })
+	big := `{"username":"` + strings.Repeat("a", MaxResponseBytes) + `"}`
+	f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: 200, Body: big})
+	e := wantClass(t, errOf(f.client.GetCurrentUser(context.Background())), ClassUnavailable)
+	if !strings.Contains(e.Message, "larger than 32 MiB") {
+		t.Errorf("message = %q", e.Message)
+	}
+}
+
+func TestTransportErrorsCarryNoPathOrQuery(t *testing.T) {
+	dead := httptest.NewServer(http.NotFoundHandler())
+	raw := dead.URL
+	dead.Close()
+	s := &sleeps{}
+	c, err := New(Options{Instance: mustInstance(t, raw), Tokens: staticToken("t"), Sleep: s.sleep, MaxAttempts: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = c.SearchIssues(context.Background(), ItemQuery{Project: mustProject(t, "example-group/hidden-name"),
+		Search: "canary-term"}, ListOptions{})
+	e := wantClass(t, err, ClassUnavailable)
+	for _, leak := range []string{"hidden-name", "canary-term", "/api/v4", "127.0.0.1"} {
+		if strings.Contains(e.Error(), leak) {
+			t.Errorf("error carries %q: %s", leak, e.Error())
+		}
+	}
+	// A refused connection never reached GitLab, so even a create may
+	// try again.
+	if len(s.all()) != 1 {
+		t.Errorf("waits = %v, want one retry", s.all())
+	}
+}
+
+func TestTokenInfo(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	f.client.tokens = staticToken(f.srv.TokenFor("bob", "read_api"))
+	ti, err := f.client.TokenInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ti.ResourceOwnerID != 1002 || len(ti.Scope) != 1 || ti.Scope[0] != "read_api" ||
+		ti.Application.UID != gitlabtest.ClientID || ti.ExpiresIn == nil || *ti.ExpiresIn <= 0 {
+		t.Errorf("token info = %+v", ti)
+	}
+	if got := f.srv.Requests()[0].EscapedPath; got != "/oauth/token/info" {
+		t.Errorf("path = %q", got)
+	}
+}
+
+func TestPhaseZeroReads(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{Enterprise: true})
+	ctx := context.Background()
+	alpha := ProjectByID(2001)
+
+	mr, err := f.client.GetMergeRequest(ctx, alpha, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mr.DiffRefs == nil || mr.HeadPipeline == nil || mr.DetailedMergeStatus != "mergeable" || mr.SourceBranch != "feature/login" {
+		t.Errorf("merge request = %+v", mr)
+	}
+	ap, err := f.client.GetMergeRequestApprovals(ctx, alpha, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ap.Approved || ap.ApprovalsRequired == nil || *ap.ApprovalsLeft != 0 || ap.ApprovedBy[0].User.Username != "carol" {
+		t.Errorf("approvals = %+v", ap)
+	}
+	ds, _, err := f.client.ListMergeRequestDiscussions(ctx, alpha, 1, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 3 || ds[0].Notes[0].Position == nil || *ds[0].Notes[0].Type != "DiffNote" {
+		t.Errorf("discussions = %+v", ds)
+	}
+	ids, _, err := f.client.ListIssueDiscussions(ctx, alpha, 2, ListOptions{})
+	if err != nil || len(ids) != 3 || !ids[2].Notes[0].System {
+		t.Errorf("issue discussions = %+v, %v", ids, err)
+	}
+	iss, err := f.client.GetIssue(ctx, alpha, 4)
+	if err != nil || iss.State != "closed" || iss.ClosedAt == nil {
+		t.Errorf("issue 4 = %+v, %v", iss, err)
+	}
+	wantClass(t, errOf(f.client.GetIssue(ctx, alpha, 999)), ClassNotFound)
+	wantClass(t, errOf(f.client.GetIssue(ctx, alpha, 0)), ClassInvalid)
+
+	branches, _, err := f.client.ListBranches(ctx, alpha, "", ListOptions{})
+	if err != nil || len(branches) != 3 || branches[0].Name != "feature/login" || !branches[1].Default {
+		t.Errorf("branches = %+v, %v", branches, err)
+	}
+	commits, page, err := f.client.ListCommits(ctx, alpha, CommitQuery{Ref: "main"}, ListOptions{PerPage: 100})
+	if err != nil || len(commits) != 30 || page.Total != 30 || commits[0].Stats != nil {
+		t.Errorf("commits = %d, total %d, %v", len(commits), page.Total, err)
+	}
+	c, err := f.client.GetCommit(ctx, alpha, commits[0].ShortID)
+	if err != nil || c.ID != commits[0].ID || c.Stats == nil {
+		t.Errorf("commit = %+v, %v", c, err)
+	}
+	diffs, _, err := f.client.GetCommitDiff(ctx, alpha, c.ID, ListOptions{})
+	if err != nil || len(diffs) != 1 || !strings.Contains(diffs[0].Diff, "+generated change 30") {
+		t.Errorf("diffs = %+v, %v", diffs, err)
+	}
+	pbs, _, err := f.client.ListProtectedBranches(ctx, alpha, ListOptions{})
+	if err != nil || len(pbs) != 2 || pbs[1].Name != "release/*" {
+		t.Errorf("protected = %+v, %v", pbs, err)
+	}
+
+	// The instance-wide lists default to what alice created.
+	mrs, _, err := f.client.SearchMergeRequests(ctx, ItemQuery{}, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range mrs {
+		if m.Author.Username != "alice" || m.DiffRefs != nil {
+			t.Errorf("row = %+v", m)
+		}
+	}
+	all, _, err := f.client.SearchMergeRequests(ctx, ItemQuery{Scope: "all", ReviewerUsername: "carol"}, ListOptions{})
+	if err != nil || len(all) != 3 {
+		t.Errorf("all mrs = %d, %v", len(all), err)
+	}
+	grp, err := ParseGroup(gitlabtest.GroupSub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gi, _, err := f.client.SearchIssues(ctx, ItemQuery{Group: grp}, ListOptions{})
+	if err != nil || len(gi) != 1 || gi[0].ProjectID != 2002 {
+		t.Errorf("group issues = %+v, %v", gi, err)
+	}
+	labeled, _, err := f.client.SearchIssues(ctx, ItemQuery{Project: alpha, Labels: []string{"bug", "docs"}, State: "opened"}, ListOptions{PerPage: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range labeled {
+		if i.State != "opened" || !contains(i.Labels, "bug") || !contains(i.Labels, "docs") {
+			t.Errorf("filtered row = %+v", i)
+		}
+	}
+	if len(labeled) == 0 {
+		t.Error("label filter matched nothing")
+	}
+	_, _, err = f.client.SearchIssues(ctx, ItemQuery{Project: alpha, Group: grp}, ListOptions{})
+	wantClass(t, err, ClassInvalid)
+	projs, _, err := f.client.SearchProjects(ctx, ProjectQuery{Group: mustGroup(t, gitlabtest.GroupTop), IncludeSubgroups: true}, ListOptions{})
+	if err != nil || len(projs) != 2 {
+		t.Errorf("group projects = %d, %v", len(projs), err)
+	}
+}
+
+func mustGroup(t *testing.T, s string) Group {
+	t.Helper()
+	g, err := ParseGroup(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func TestNewRequiresInstance(t *testing.T) {
+	_, err := New(Options{})
+	wantClass(t, err, ClassInvalid)
+}
+
+func TestTokenNeverLeavesTheInstance(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	u, _ := url.Parse("https://other.invalid/api/v4/user")
+	_, err := f.client.attempt(context.Background(), "GET", u, nil, "secret")
+	if !errors.Is(err, errOffInstance) {
+		t.Errorf("err = %v, want errOffInstance", err)
+	}
+}

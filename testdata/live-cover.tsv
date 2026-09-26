@@ -1,0 +1,11 @@
+# Tool options the live driver does not send, and why (docs/architecture.md
+# §13). `gates live-cover` holds it against the surface and against
+# testdata/live-cover-record.tsv, which scripts/livegitlab writes at the
+# end of a run from what actually went out.
+#
+# Columns, tab-separated: tool.option (tool.* for the tool itself),
+# verdict, reason.
+#
+#   undrivable  something outside the driver's reach blocks it; say what
+#   undriven    a step could send it and none does yet; say what closing
+#               it takes. The count has a ceiling that only goes down.

@@ -1,0 +1,94 @@
+name: Bug report
+description: Something the server did that it should not have
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please do not paste anything from a real GitLab instance.** Not a
+        hostname, a group or project path, a branch name, a username or
+        email address, an issue or merge request title or description, a
+        comment, a file path or file contents, a commit message, a job log,
+        a numeric id, your OAuth application id, or a token of any kind.
+
+        **A tool result is your organization's code**, and other people's
+        words. `get_file`, `get_issue`, `list_discussions` and the rest
+        return exactly that, and this server does not mask it. Describe what
+        came back by its shape, or reproduce it in a project you made for
+        the purpose.
+
+        `doctor`, `status`, `--version` and a debug log **are** safe to
+        paste, and a test holds that rather than hoping: the log carries
+        the method, the tool, the outcome, the duration and a truncated id,
+        and `doctor` and `status` mask the instance host, namespaces, the
+        username and the application id.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: doctor output
+      description: "`gitlab-mcp doctor`"
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`gitlab-mcp --version`"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Release archive
+        - go install
+        - Claude Desktop bundle (.mcpb)
+        - MCP registry
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: "Claude Desktop, Claude Code, ... and its version"
+    validations:
+      required: true
+  - type: dropdown
+    id: instance-kind
+    attributes:
+      label: Instance
+      options:
+        - gitlab.com
+        - Self-managed, Community Edition
+        - Self-managed, Enterprise Edition
+        - GitLab Dedicated
+    validations:
+      required: true
+  - type: input
+    id: instance-version
+    attributes:
+      label: GitLab version
+      description: "For self-managed, the version `doctor` reports. Not the hostname."
+      placeholder: "18.4.1"
+  - type: textarea
+    id: flags
+    attributes:
+      label: Flags in effect
+      description: "GITLAB_MCP_READ_ONLY, GITLAB_MCP_ENABLE_SHIP, GITLAB_MCP_ENABLE_DESTRUCTIVE, GITLAB_MCP_TOOLSETS, and whether GITLAB_MCP_WRITE_NAMESPACES is set. Names and on/off only: not the instance URL, the application id or a namespace."
+      render: text
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you asked for, what the server did, and what you expected. Describe GitLab content by its shape, not its text.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Debug log
+      description: "Run with GITLAB_MCP_LOG_LEVEL=debug and paste stderr around the failure. It carries no instance content."
+      render: text

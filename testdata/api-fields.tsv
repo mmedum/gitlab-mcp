@@ -1,0 +1,60 @@
+# Fields the client sends or decodes that the OpenAPI snapshot does not
+# publish, or publishes with a type the Go kind cannot hold
+# (docs/architecture.md §8b). `gates api-fields` holds it: a field sent
+# or decoded that is neither published nor here fails, and a row that
+# excuses nothing fails.
+#
+# Columns, tab-separated: "VERB /path query|body|response field",
+# verdict, reason. The verdict is verified-live once a live run has read
+# the field back from a real instance, reasoned until then.
+#
+# A field inside an object is asked about once, at the outermost object
+# the file does not publish, or at the nearest one it publishes with no
+# fields inside.
+GET /issues response assignees	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /groups/{id}/issues response assignees	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/issues response assignees	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/issues/{issue_iid} response assignees	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /merge_requests response assignees	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /groups/{id}/merge_requests response assignees	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/merge_requests response assignees	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/merge_requests/{merge_request_iid} response assignees	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /merge_requests response reviewers	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /groups/{id}/merge_requests response reviewers	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/merge_requests response reviewers	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/merge_requests/{merge_request_iid} response reviewers	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/issues/{noteable_id}/discussions response notes	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/issues/{noteable_id}/discussions response notes.position	reasoned	the note entity publishes position as an untyped object; its fields are the diff position of GitLab's merge request discussions reference, and only a DiffNote carries one
+GET /projects/{id}/merge_requests/{noteable_id}/discussions response notes	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /projects/{id}/merge_requests/{noteable_id}/discussions response notes.position	reasoned	the note entity publishes position as an untyped object; its fields are the diff position of GitLab's merge request discussions reference, and only a DiffNote carries one
+GET /projects/{id}/merge_requests/{merge_request_iid}/approvals response approved_by	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array
+GET /merge_requests response changes_count	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /merge_requests response diff_refs	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /merge_requests response head_pipeline	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /groups/{id}/merge_requests response changes_count	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /groups/{id}/merge_requests response diff_refs	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /groups/{id}/merge_requests response head_pipeline	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /projects/{id}/merge_requests response changes_count	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /projects/{id}/merge_requests response diff_refs	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /projects/{id}/merge_requests response head_pipeline	reasoned	a list row and the single read share gitlab.MergeRequest; GitLab sends this only on the single read, and its zero value is what the renderer treats as absent
+GET /projects/{id}/merge_requests/{merge_request_iid}/approvals response approvals_left	reasoned	a Premium field the Enterprise entity adds; the file publishes the Community entity, and the pointer is nil on Community Edition
+GET /projects/{id}/merge_requests/{merge_request_iid}/approvals response approvals_required	reasoned	a Premium field the Enterprise entity adds; the file publishes the Community entity, and the pointer is nil on Community Edition
+GET /projects/{id}/repository/branches response commit.stats	reasoned	branches embed gitlab.Commit, which get_commit fills with stats; a branch's commit never carries them and the pointer stays nil
+GET /projects/{id}/repository/commits response stats	reasoned	sent only with with_stats, which the client does not ask for on a list; the pointer stays nil and get_commit reads stats one commit at a time
+GET /projects response archived	reasoned	GitLab answers GET /projects without simple=true with the full project entity; the file declares BasicProjectDetails, which lacks it
+GET /projects response empty_repo	reasoned	GitLab answers GET /projects without simple=true with the full project entity; the file declares BasicProjectDetails, which lacks it
+GET /projects response open_issues_count	reasoned	GitLab answers GET /projects without simple=true with the full project entity; the file declares BasicProjectDetails, which lacks it
+GET /projects query pagination	reasoned	keyset pagination on project lists is in GitLab's REST pagination reference and missing from the generated file; the live run confirms the Link header it returns
+GET /groups/{id}/projects query pagination	reasoned	keyset pagination on project lists is in GitLab's REST pagination reference and missing from the generated file; the live run confirms the Link header it returns
+GET /user response is_admin	reasoned	GitLab adds is_admin only through the UserWithAdmin entity, for an administrator; absent reads as false, which is correct for everyone else
+GET /projects/{id}/repository/files/{file_path} response blob_id	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response commit_id	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response content	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response content_sha256	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response encoding	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response execute_filemode	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response file_name	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response file_path	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response last_commit_id	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response ref	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back
+GET /projects/{id}/repository/files/{file_path} response size	reasoned	the file publishes no 200 schema for this route; the field is in GitLab's repository files API reference and the live run reads it back

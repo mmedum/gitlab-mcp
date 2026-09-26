@@ -1,11 +1,10 @@
 # Architecture — gitlab-mcp
 
-**Status: design only, 2026-09-25. Nothing is built or tagged.** This
-document is the whole of phase −1: the platform facts, the design bets,
-a verdict on every API operation group, the phase plan and the spikes
-that must answer before the phases that depend on them. Phase 0 (§16)
-starts from this file and `CLAUDE.md` alone, after the maintainer says
-"go".
+**Status: phase 0 in progress, 2026-09-26. Nothing is tagged.** This
+document holds the platform facts, the design bets, a verdict on every
+API operation group, the phase plan and the spikes that must answer
+before the phases that depend on them. Phase −1 (this design) is done;
+phase 0 (§16) is being built on a topic branch.
 
 ## 1. Mission and scope
 
@@ -285,7 +284,10 @@ never add its own voice to the attacker's.
 2. **Hidden text is removed and counted.** Zero-width and
    bidirectional-control characters and HTML comments are dropped from
    Markdown before it is shown, and the result says how many characters
-   were dropped. Rendered HTML is never requested.
+   were dropped. In code — files, diffs, commit messages — the same
+   characters are made visible as `<U+202E>` and counted instead, because
+   dropping them would silently alter text the caller may edit, and they
+   are how Trojan Source hides code. Rendered HTML is never requested.
 3. **Nothing is fetched.** No image, attachment or link in content is
    followed. Links render as text with their host shown.
 4. **Job logs are masked.** Every token shape GitLab documents
@@ -441,7 +443,10 @@ never lossy text. List projections are compact: an embedded project,
 milestone or pipeline becomes its id and name.
 
 **A read never silently returns less than it found**: every omission is
-named and continuable.
+named and continuable. Budgets, in characters: a description 20,000; a
+file 60,000; discussions 30,000 a page and one comment 6,000; commit
+diffs 40,000; a commit message 8,000. Three omissions are named but not
+yet continuable (§17a).
 
 ### 4.9 One instance, many hosts, and every edition
 
@@ -491,7 +496,7 @@ this list, and a gate or test is named for each claim where one exists.
 When a sibling fixes something shared, it is added here with the date.
 
 **Pins.** Taken from upstream on 2026-09-24; no sibling was newer on
-2026-09-25. Every one is re-resolved against upstream at scaffold time,
+2026-09-25; re-resolved at scaffold time on 2026-09-26, when two had moved. Every one is re-resolved against upstream at scaffold time,
 not copied from here.
 
 | Tool | Version |
@@ -499,36 +504,37 @@ not copied from here.
 | Go | 1.27.1 (`go-version-file: go.mod` in CI) |
 | MCP Go SDK | v1.8.0 |
 | jsonschema-go | v0.4.3 |
-| golangci-lint | v2.13.2 |
+| golangci-lint | v2.14.0 (moved 2026-09-26) |
 | goreleaser | v2.18.2 |
 | cosign | v3.1.3 (`cosign-release:` on the installer) |
 | syft | v1.52.0 (`syft-version:` on the installer) |
 | mcp-publisher | v1.8.1, its own sigstore bundle verified before extraction |
-| gitleaks | v8.30.1, through `GITLEAKS_VERSION` env on the action |
+| gitleaks | v8.30.1, run through `go run` by `make secrets`; the pre-commit hook's version compared with it |
 | govulncheck | v1.8.0 |
-| go-licenses | §17.6 |
+| go-licenses | v1.6.0 (§17.6) |
 | actionlint | v1.7.12, run through `go run`, not Docker |
-| codeql-action | v4.38.1 — labeled with the release tag, never a bundle tag |
+| codeql-action | v4.38.2 (moved 2026-09-26) — labeled with the release tag, never a bundle tag |
 | mcpb manifest schema | v2.1.2 tag, `manifest_version` 0.3 |
 
 Every action pinned to a full SHA with the version in a trailing
 comment. Newest seen across siblings on 2026-09-25: checkout v7.0.1,
 setup-go v7.0.0, golangci-lint-action v9.3.0, goreleaser-action v7.2.3,
 attest-build-provenance v4.2.2, cosign-installer v4.1.2,
-sbom-action/download-syft v0.24.2, upload-artifact v7.0.1,
-gitleaks-action v3.0.0.
+sbom-action/download-syft v0.24.2, upload-artifact v7.0.1. The
+golangci-lint and gitleaks actions are not used: every CI step is a
+`make` target, which runs both tools through `go run`.
 
 **CI and release.**
 
 | Component | Must carry |
 |---|---|
-| `ci.yml` | every step is a `make` target, so parity holds by construction; ubuntu/macos/windows matrix, gates and coverage on all three; `defaults.run.shell: bash`; `timeout-minutes` on every job; `permissions: contents: read` at top; `persist-credentials: false` on every checkout; `concurrency` with `cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}`; `workflow_dispatch`; a full-history secrets job on every PR; `fetch-depth: 0` where schema-diff and staleness run; the schema dump uploaded as an artifact; golangci-lint-action with `install-mode: goinstall`; the same `-coverpkg` in CI and the Makefile, held by a test; `goreleaser check` and actionlint as targets |
+| `ci.yml` | every step is a `make` target, so parity holds by construction; ubuntu/macos/windows matrix, gates and coverage on all three; `defaults.run.shell: bash`; `timeout-minutes` on every job; `permissions: contents: read` at top; `persist-credentials: false` on every checkout; `concurrency` with `cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}`; `workflow_dispatch`; a full-history secrets job on every PR; `fetch-depth: 0` where schema-diff and staleness run; the schema dump uploaded as an artifact; lint and secrets as `make` targets rather than their actions; the same `-coverpkg` in CI and the Makefile, held by a test; `goreleaser check` and actionlint as targets |
 | PR base **(09-25)** | every PR-diff gate (changelog, schema-diff) measures against `git merge-base` of the fetched base branch, never `github.event.pull_request.base.sha`, which is stale in stacked PRs |
 | schema-change acknowledgment **(09-25)** | a non-empty tool-surface diff needs a `SCHEMA-CHANGE:` footer (additive) or `BREAKING CHANGE:` on some commit in the PR, description text included; the acknowledgment is an empty commit, never an amend |
 | `codeql.yml` | push, PR, weekly; bash default; a timeout |
 | `release.yml` | `workflow_dispatch` on a tag as well as the tag event; refuses a tag whose CI run is not green (`actions: read`, queried by head SHA); write permission raised only in the goreleaser job; `go test` before signing; notes lifted from the CHANGELOG into `$RUNNER_TEMP`; a reproducible-build check that builds one target twice and compares hashes; `subject-path` naming the archives, `checksums.txt` and `dist/*.mcpb`, comma-separated; the registry job skipped for a prerelease (`!contains(github.ref_name, '-')`) |
 | `publish-mcp.yml` | its own workflow, callable from the release and by dispatch for an old tag; job permissions `id-token: write` and `contents: read` only; `cosign verify-blob` on `checksums.txt` with the certificate identity pinned exactly to this repository's `release.yml` at the tag, before the hash is read; the publisher's identity pinned to its own release workflow at its tag; downloads to a file, never piped into `tar`; `server.json` generated at publish time and validated against the vendored registry schema |
-| `.goreleaser.yaml` | `go mod download` in the hook, never `tidy`; `CGO_ENABLED=0`; `-s -w -trimpath`; `{{ .Version }}` through ldflags, never `{{ .Tag }}`; `mod_timestamp: {{ .CommitTimestamp }}`; `universal_binaries` with `replace: false`, kept out of the archives by `ids`; zip for Windows; `files: [LICENSE, README.md]`; `prerelease: auto`; the bundle packed in the universal binary's post hook and named in both `checksum.extra_files` and `release.extra_files`; a keyless cosign `--bundle` over the checksums; an SBOM per archive; a footer whose verification commands match the artifacts, with the exact certificate identity rather than a regexp |
+| `.goreleaser.yaml` | `go mod download` in the hook, never `tidy`; `CGO_ENABLED=0`; `-s -w -trimpath`; `{{ .Version }}` through ldflags, never `{{ .Tag }}`; `mod_timestamp: {{ .CommitTimestamp }}`; `universal_binaries` with `replace: false`, kept out of the archives by `ids`; zip for Windows; `files: [LICENSE, NOTICE, README.md]` (Apache-2.0 §4(d) carries NOTICE with distributions); `prerelease: auto`; the bundle packed in the universal binary's post hook and named in both `checksum.extra_files` and `release.extra_files`; a keyless cosign `--bundle` over the checksums; an SBOM per archive; a footer whose verification commands match the artifacts, with the exact certificate identity rather than a regexp |
 | `dependabot.yml` | weekly gomod and actions; `github/codeql-action*` grouped; gomod grouped on `minor` and `patch`; a `ci` commit prefix; no labels that do not exist |
 | `Makefile` | every tool run as `go run mod@version`, never from PATH, goreleaser included, so `pins` compares the Makefile's pin with the workflow's; `EXE` suffix on Windows; the gates built once; `release-rehearse` as `--snapshot --clean --skip=publish,sign,sbom`; manual targets `schema-baseline`, `leaks-history`, `mcpb-pack`, `schema-refetch`, `api-diff`, `evals`; `tidy` as `go mod tidy -diff`; `hooks` setting `core.hooksPath`; no comment claiming to be "everything CI runs" |
 | pre-commit | `.githooks/pre-commit` running `go run ./scripts/gates precommit`: gofmt, vet, leaks, and `gitleaks protect --staged --redact` (warning and skipping when absent), all problems collected before failing; no Python pre-commit framework |
@@ -581,9 +587,9 @@ gitleaks-action v3.0.0.
 | `login`/`logout`/`status`/`doctor` | the siblings' commands, flags and output unchanged (§10); `--client-id` and `--instance`; the scopes printed before the browser opens and a grant narrower than asked warned about; `--no-browser` printing the URL and the exact `ssh -L` line; `status [--no-probe] --json` with a `schema_version`, running the same config load the server runs; `doctor` walking instance → TLS → version and edition → application → granted scopes → one `/user`, naming what is missing, with stable `{kind n}` placeholders and a redacted-count footer; `logout` revoking the token through `/oauth/revoke` and naming other profiles on the same application; the keyring replaced package-wide in tests by `TestMain`, with a decoy test proving it |
 | `auth` | loopback on `127.0.0.1:0` with the registered redirect `http://127.0.0.1/callback`; PKCE S256 with a 64-character verifier; `state` checked; `ReadHeaderTimeout` on the callback; a bounded HTTP client on the exchange and every refresh; the rotated pair persisted before it is used; **refresh under a cross-process file lock, the keyring re-read after `invalid_grant` before declaring re-login**; `expires_in` honored, never assumed; token-info errors stripped of their URL; a typed `ErrReauthorize` never retried; granted scopes stored; no `resource` parameter sent (§18 row 7) |
 | `scopes` | one source of truth per mode: `read_api` read-only, `api` otherwise; the per-tool requirement; `Satisfied` and `Missing`; the generator for `docs/setup.md` |
-| `credentials` | resolution **env → keyring → file**, documented as that order; per instance, keyring account `<host>` plus username; a keyring save deletes a stale plaintext file; `Delete` clears every store and joins errors; a silent keyring told apart from a missing login; a warning on every use of the plaintext file; temp file, rename, then ACL; a partial env set is an error |
+| `credentials` | resolution **env → keyring → file**, documented as that order; per profile, keyring service `gitlab-mcp` and account the profile name, as the siblings do (the profile records the instance); `GITLAB_MCP_REFRESH_TOKEN` as the env source, and a pair rotated from it stamped with the env value's hash so the next start uses the stored pair rather than the revoked env token; a keyring save deletes a stale plaintext file; `Delete` clears every store and joins errors; a silent keyring told apart from a missing login; a warning on every use of the plaintext file; temp file, rename, then ACL; a partial env set is an error |
 | `fileperm` | 0600 on Unix; a protected DACL on Windows restricting the file to the current user |
-| `userconfig` | profiles per instance, a default-instance pointer written atomically; profile names by regex; the config-dir override refused outside the home directory by real path unless `GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME=true` |
+| `userconfig` | profiles as the siblings have them — named, or `default`, with no default pointer — each recording instance, application id, username and granted scopes; written atomically; profile names by regex; the config-dir override refused outside the home directory by real path unless `GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME=true` |
 | `config` | `Define(fs, env)` and `Build()` with errors joined; `GITLAB_MCP_` prefix (§18 row 30); timeouts bounded 1 s–10 m; negative flags named so the zero value is safe; base-URL overrides for tests; an exported list of every variable, which the staleness gate reads |
 | `redact` | host, namespace path, username, email, token and client-id masking for product output; redact before truncating; mask where text is produced, not in a Writer; an already-masked value still matched; id truncation and the redacting printer for maintainer tooling |
 | `server` | per-call log line with method, tool, outcome, milliseconds and rate bucket; the SDK's logger only at debug; instructions built from the configuration, naming only registered tools (a test holds it) and naming the flags that would add more; one description constant of at most 100 characters feeding the manifest and the registry; resource templates with `{x}`, never `{+x}`; resource not-found as `CodeInvalidParams` with a `[class]` message; the schema dump taking the SDK version from build info |
@@ -706,7 +712,7 @@ location (§6.2):
 
 ### 7.4 Where an inline comment lands
 
-`internal/diffpos` builds GitLab's position from the model's `file`,
+The `diffpos` package builds GitLab's position from the model's `file`,
 `line` and `side`:
 
 1. read the merge request's latest diff version for `base_sha`,
@@ -876,8 +882,9 @@ operation, plus prefix write-offs, each with a reason and the number of
 operations it covers. The gate fails on an operation with neither, a
 client call with no row, and a row or rule matching nothing.
 
-Phase 0 writes the TSV. The groups below are the design's verdicts; the
-counts are measured then.
+The committed snapshot is v19.4.1-ee, 1,856 operations; the TSV holds
+323 exact rows and 226 prefix rules, and the gate reports the counts.
+The groups below are the design's verdicts; the TSV is the record.
 
 | Group (path prefix) | Verdict |
 |---|---|
@@ -905,6 +912,9 @@ counts are measured then.
 | deploy keys, deploy tokens, access tokens (project, group, personal other than `self`) | Written off: credential administration |
 | hooks, integrations, system hooks, import, export, mirrors, admin, application settings, applications, license, broadcast messages, geo, sidekiq, features | Written off: administration |
 | `/internal/*` and experimental routes | Written off: not public API, marked by path and lifecycle |
+| AI, editor and chat features; feature flags; topics; namespaces; badges; notification settings; the CI catalog; job-token scope; resource groups | Written off: product administration or features with no assistant task in a project |
+| boards, error tracking and alerts, Markdown rendering, templates, merge trains, suggestions, DORA and analytics | Deferred: suggestions are a Ship candidate; the rest have no tool in §8 yet (§17.11 for the Premium ones) |
+| navigation reads no tool uses yet (`GET /groups`, `/users/{id}` and the like) | Deferred until a tool needs them |
 
 ### 8b. Field coverage
 
@@ -1036,6 +1046,16 @@ What GitLab changes underneath, none of which the person sees:
 - **Changing a setting that changes scope needs a new login**, and the
   server says so at startup rather than failing on the first call, as
   the siblings do.
+- **Startup reads before it serves.** Registration depends on the
+  instance's version and the granted scopes, so startup reads token
+  info, `/metadata` and `/user` once each, bounded by the smaller of
+  15 s and the HTTP timeout. Every failure there is logged and the
+  server starts anyway, so errors surface per call; the one fatal
+  outcome is a token whose scopes cannot serve the configured mode.
+- **A token is never sent to an instance it was not issued by.** An
+  instance named by flag or environment that differs from the one the
+  profile signed in to withholds the token: every call answers `[auth]`
+  naming the mismatch.
 
 Deliberately absent, so the family stays alike: personal access tokens,
 the device flow (§2.5), and a client id shipped in the binary. Each was
@@ -1096,8 +1116,12 @@ application for everyone.
 - **`internal/quickaction` first**, with table tests over GitLab's
   extractor rules — paragraphs, fences, indented code, quotes, HTML,
   inline code, CRLF, a command on the last line — and a fuzz test that
-  an escaped body never yields a command and renders the same text.
-- **`internal/diffpos`**, table-tested over generated diffs: added,
+  an escaped body never yields a command and that removing the inserted
+  backslashes gives the body back. It renders the same text except where
+  GitLab's backtick pairing differs from CommonMark's, or inside
+  multi-line raw inline HTML; there the backslash shows, which is the
+  safe direction.
+- **The `diffpos` package** (phase 2), table-tested over generated diffs: added,
   removed and context lines, ranges across hunks, renames, a line
   outside every hunk.
 - **`internal/instance`**, over every base-URL shape of §3.4.
@@ -1216,7 +1240,7 @@ reads with `get_job_log` and its masking, `lint_ci`, `search`,
 `list_labels`, `list_milestones`, `list_members`, `find_users`,
 `list_todos`, `list_review_comments`, the three resources. Spikes H, J.
 
-**Phase 2 — the write path (v0.3.0).** `internal/diffpos` and its
+**Phase 2 — the write path (v0.3.0).** The `diffpos` package and its
 tests; `create_issue`, `update_issue` with the witness, `add_comment`,
 `resolve_discussion`, the review tools, `create_merge_request`,
 `update_merge_request`, `create_branch`, `create_commit` with the
@@ -1277,13 +1301,15 @@ review is committed under `audit/`.
    the same reason as §17.1; the device flow goes with it. If a
    headless need appears later, it is argued here first, and it arrives
    in every sibling or none.
-6. **go-licenses v1.6.0 or v2.** Decide in phase 0 by running both over
-   the real module graph. **Open.**
-7. **Lenient argument decoding.** No sibling does it. Accepting
-   `"[\"a\"]"` where an array is declared helps clients that stringify,
-   and makes the schema a less exact contract. Proposed: accept
-   JSON-in-a-string for arrays and integers only, treat `null` and `""`
-   as absent for optional inputs, and log that it happened. **Open.**
+6. **go-licenses v1.6.0 or v2.** **Decided 2026-09-26: v1.6.0.** Both
+   v1.6.0 and v2.0.1 were run over the real module graph and pass the
+   same allow-list; v1.6.0 matches the siblings.
+7. **Lenient argument decoding.** **Decided 2026-09-26: as proposed.**
+   Arrays and integers sent as JSON inside a string are decoded; `null`
+   and `""` for an optional input mean absent; required inputs are never
+   relaxed; a debug line names the inputs adjusted, never their values.
+   It needs the untyped `AddTool`, so `register` validates arguments
+   itself after decoding.
 8. **Default toolsets.** Proposed as §8: wiki, snippets, releases,
    deployments and activity off by default, which keeps the default at
    43 tools. **Open.**
@@ -1303,7 +1329,12 @@ review is committed under `audit/`.
 
 ### 17a. Deferred cleanups
 
-None yet. Candidates for after 1.0, from §8a: issue move and links,
+- Three reads name an omission without a way to continue it, short of
+  §4.8: a commit message over 8,000 characters, a project description
+  over 20,000, and a single file's diff larger than the whole diff
+  budget (cut, with a pointer to `get_file`). Found in phase 0.
+
+Candidates for after 1.0, from §8a: issue move and links,
 label and milestone writes, rebase, cherry-pick, revert, blame, artifact
 download, tag writes.
 
@@ -1380,3 +1411,6 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 37 | A sibling already decodes stringified arguments or marks untrusted content with boundaries | All siblings' code | **Refuted (tier 2).** Neither exists anywhere; §4.1 and §17.7 are new ground |
 | 38 | Denylisting built-in tools confines an evals run | A sibling's evals log | **Refuted (tier 2).** Grep and Glob read maintainer notes mid-task. `--tools ""` and `--setting-sources ""`, fail-closed |
 | 39 | A struct printed with `%+v` is redacted by `LogValue` | A sibling's `Settings` | **Refuted (tier 2).** `%+v` reads unexported fields; `String()` is needed too |
+| 40 | A quick-action guard can match GitLab with a regular expression | GitLab's extractor and the Markdown pipeline it calls at `829b21d2`; comrak v0.55.0, the version GitLab's renderer pins; a differential oracle over about 1.3 million generated bodies | **Refined (tier 1).** Detection needs comrak's block structure, so `internal/quickaction` ports it. Zero lines GitLab would run were missed; four deliberate over-detections (any `/word`, both backtick readings, no rendered-text prefilter, description-list terms). Before 16.7 the extractor was regular-expression only and ran commands inside `~~~` fences and lazy lines; spike E checks the floor version |
+| 41 | GitLab's token prefixes are the ones commonly listed | GitLab's token page, fetched 2026-09-26 | **Refined (tier 3).** `glpat-`, `gloas-`, `gldt-`, `glrt-`, `glrtr-`, `glcbt-`, `glptt-`, `glft-`, `glimt-`, `glagent-`, `glwt-`, `glsoat-`, `glffct-`, `_gitlab_session=`, and the runner `GR1348941`; `gloat-` is not listed. A custom personal-access-token prefix cannot be matched by shape |
+| 42 | Dropping hidden characters is safe everywhere | Trojan Source (CVE-2021-42574) | **Refuted for code.** Dropped from Markdown, made visible in files, diffs and commit messages (§4.1.2) |

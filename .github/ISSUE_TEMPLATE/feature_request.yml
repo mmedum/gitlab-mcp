@@ -1,0 +1,33 @@
+name: Feature request
+description: A tool, an option or a behavior that is not there yet
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include anything from a real GitLab instance: no
+        hostnames, paths, names, titles or content. Describe things by
+        their shape.
+
+        Some things are left out on purpose. `testdata/api-coverage.tsv`
+        carries a verdict for every GitLab REST operation, including the
+        ones written off and why, and `docs/architecture.md` §8a says why
+        administration, runners and CI variables are out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The task, not the implementation. What would you ask a model to do?
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today
+      description: Which tools you tried, and where they stopped short.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have worked around it with
