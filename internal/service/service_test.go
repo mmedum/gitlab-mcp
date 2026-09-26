@@ -23,7 +23,7 @@ const alphaID = 2001
 func newService(t *testing.T, o gitlabtest.Options, cfg config.Config) (*Service, *gitlabtest.Server) {
 	t.Helper()
 	gl := gitlabtest.New(t, o)
-	inst, err := instance.Parse(gl.URL, false)
+	inst, err := instance.Parse(gl.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

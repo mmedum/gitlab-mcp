@@ -1,6 +1,7 @@
 # Configuration
 
-Every setting is an environment variable with the `GITLAB_MCP_` prefix,
+The server talks to gitlab.com and nothing else, so no setting names an
+instance. Every setting is an environment variable with the `GITLAB_MCP_` prefix,
 and most also have a command-line flag. A flag given on the command line
 beats the environment; the environment beats the default. Every
 subcommand accepts the same flags, so `doctor` and `status` check the
@@ -18,16 +19,13 @@ itself, and every problem is reported together.
 
 | Variable | Flag | Default | What it does |
 |---|---|---|---|
-| `GITLAB_MCP_INSTANCE` | `--instance` | `https://gitlab.com` | The GitLab instance: gitlab.com or a self-managed base URL. A missing scheme means `https`; a trailing `/api/v4` is dropped; a sub-path such as `/gitlab` is kept. When neither the flag nor the variable is given, the profile's instance is used, else gitlab.com. |
-| `GITLAB_MCP_PROFILE` | `--profile` | `default` | Which stored sign-in to use. Separate profiles keep separate tokens, such as one for gitlab.com and one for a self-managed instance. Lowercase letters, digits, `-` and `_`. |
+| `GITLAB_MCP_PROFILE` | `--profile` | `default` | Which stored sign-in to use. Separate profiles keep separate tokens, such as one per GitLab account. Lowercase letters, digits, `-` and `_`. |
 | `GITLAB_MCP_CLIENT_ID` | `--client-id` | the profile's | The OAuth application id. Overrides the one the profile recorded at login. |
 | `GITLAB_MCP_READ_ONLY` | `--read-only` | `false` | Register only the Read tools and request `read_api`. Needs a login made in this mode. |
 | `GITLAB_MCP_ENABLE_SHIP` | `--enable-ship` | `false` | Register merging, approving, running and canceling CI, and creating releases. |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE` | `--enable-destructive` | `false` | Register deletions. Each call also needs `confirm: true`. |
 | `GITLAB_MCP_TOOLSETS` | `--toolsets` | none | Comma-separated optional toolsets: `activity`, `deployments`, `releases`, `snippets`, `wiki`, or `all`. |
 | `GITLAB_MCP_WRITE_NAMESPACES` | `--write-namespaces` | anywhere | Comma-separated group or project paths that Write, Ship and Destructive calls are confined to. A call aimed elsewhere is `[blocked]`. |
-| `GITLAB_MCP_CA_FILE` | `--ca-file` | none | A PEM file of extra certificate authorities to trust for the instance, on top of the system's. Read at start; a file that cannot be read or holds no certificate is refused then. |
-| `GITLAB_MCP_ALLOW_HTTP` | `--allow-http` | `false` | Allow plain `http` to an instance that is not loopback. The token then travels in the clear. |
 | `GITLAB_MCP_LOG_LEVEL` | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. |
 | `GITLAB_MCP_LOG_FORMAT` | `--log-format` | `text` | `text` or `json`. |
 | `GITLAB_MCP_HTTP_TIMEOUT` | `--http-timeout` | `60s` | Deadline for one attempt at an API call, as a Go duration between `1s` and `10m`. |
@@ -51,8 +49,6 @@ and a bare flag such as `--read-only` means `true`.
 - A token whose granted scopes cannot serve the mode, such as a
   `read_api` login with read-only mode off. Start-up fails naming the
   missing scope; run `gitlab-mcp login` again in the mode you want.
-- An `http` instance that is not loopback, unless
-  `GITLAB_MCP_ALLOW_HTTP=true`.
 - An unknown toolset, a namespace that is not a group or project path, a
   timeout outside its bounds, a log level or format not listed above.
 
@@ -76,9 +72,6 @@ settings that would add more, so a model can tell you what to turn on
 rather than guess. `docs/security.md` says what this does and does not
 protect.
 
-The instance's version also decides: a tool whose route is newer than
-the instance is not registered.
-
 ## Where things are stored
 
 The config directory is your OS config directory plus `gitlab-mcp`
@@ -87,10 +80,10 @@ Support/gitlab-mcp` on macOS, `%AppData%\gitlab-mcp` on Windows), or
 `GITLAB_MCP_CONFIG_DIR`. The `default` profile lives at its top; any
 other under `profiles/<name>/`. Each profile directory holds:
 
-- `config.json`, the non-secret state: the instance, the application
-  id, your username, where the token went and the scopes GitLab granted.
-  It is restricted to your account like the token, because it names a
-  person and an instance.
+- `config.json`, the non-secret state: the instance it signed in to,
+  the application id, your username, where the token went and the
+  scopes GitLab granted. It is restricted to your account like the
+  token, because it names a person.
 - The token pair, in the OS keyring (Secret Service on Linux, Keychain
   on macOS, Credential Manager on Windows) under the service
   `gitlab-mcp` and the profile's name.
@@ -119,16 +112,14 @@ new value is used.
 `logout` neither revokes nor removes a token that came from the
 environment; it is not the command's to remove.
 
-## Proxies and private certificate authorities
+## Proxies
 
 Proxies come from the standard `HTTPS_PROXY`, `HTTP_PROXY` and
 `NO_PROXY` variables. An MCP client starts the server with the
 environment it is configured with, which may not be your shell's, so
-put them in the client's `env` block as well.
-
-For an instance whose certificate is signed by a private authority, set
-`GITLAB_MCP_CA_FILE` to that authority's PEM bundle. It is added to the
-system's roots, not in place of them.
+put them in the client's `env` block as well. Certificates are checked
+against the system's authorities; a proxy that inspects TLS needs its
+authority in the system's trust store.
 
 ## In an MCP client
 
@@ -146,7 +137,7 @@ system's roots, not in place of them.
 }
 ```
 
-The Claude Desktop bundle asks for the instance, the application id,
-the profile and read-only mode, and passes them as the matching
+The Claude Desktop bundle asks for the application id, the profile and
+read-only mode, and passes them as the matching
 variables. It does not log you in; run `gitlab-mcp login` from a
 terminal first (`docs/setup.md`).

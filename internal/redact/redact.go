@@ -114,8 +114,9 @@ func Email(addr string) string {
 // Addresses masks every address in s with Email.
 func Addresses(s string) string { return address.ReplaceAllStringFunc(s, Email) }
 
-// publicHosts name no organization, and "gitlab.com or self-managed" is
-// the first thing a diagnosis asks. Loopback names nobody either.
+// publicHosts name no organization, and "gitlab.com or the test
+// instance" is the first thing a diagnosis asks. Loopback names nobody
+// either.
 var publicHosts = map[string]bool{
 	"gitlab.com": true, "localhost": true, "127.0.0.1": true, "::1": true,
 }

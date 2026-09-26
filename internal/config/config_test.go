@@ -6,7 +6,6 @@ import (
 	"flag"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -42,13 +41,16 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Instance != "https://gitlab.com" {
-		t.Errorf("Instance = %q", c.Instance)
+	if c.Instance.String() != "https://gitlab.com" || c.Target().String() != "https://gitlab.com" || c.TestInstance {
+		t.Errorf("Instance = %q, TestInstance %v", c.Instance, c.TestInstance)
 	}
-	if c.Profile != "" || c.ClientID != "" || c.CAFile != "" {
-		t.Errorf("Profile %q, ClientID %q, CAFile %q; want all empty", c.Profile, c.ClientID, c.CAFile)
+	if (Config{}).Target().String() != "https://gitlab.com" {
+		t.Errorf("a zero Config targets %q", (Config{}).Target())
 	}
-	if c.ReadOnly || c.EnableShip || c.EnableDestructive || c.AllowHTTP {
+	if c.Profile != "" || c.ClientID != "" {
+		t.Errorf("Profile %q, ClientID %q; want both empty", c.Profile, c.ClientID)
+	}
+	if c.ReadOnly || c.EnableShip || c.EnableDestructive {
 		t.Errorf("a switch defaulted on: %+v", c)
 	}
 	if len(c.Toolsets) != 0 || len(c.WriteNamespaces) != 0 {
@@ -63,20 +65,13 @@ func TestDefaults(t *testing.T) {
 }
 
 func TestEnvironmentAndFlags(t *testing.T) {
-	ca := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(ca, []byte("pem"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	env := map[string]string{
-		EnvInstance:          "gitlab.example.com",
 		EnvProfile:           "work",
 		EnvClientID:          "app-id",
 		EnvEnableShip:        "true",
 		EnvEnableDestructive: "1",
 		EnvToolsets:          "wiki, Releases,,wiki",
 		EnvWriteNamespaces:   "example-group/app, /example-group/sub/",
-		EnvCAFile:            ca,
-		EnvAllowHTTP:         "yes",
 		EnvLogLevel:          "DEBUG",
 		EnvLogFormat:         "json",
 		EnvHTTPTimeout:       "90s",
@@ -85,10 +80,10 @@ func TestEnvironmentAndFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Instance != "gitlab.example.com" || c.Profile != "work" || c.ClientID != "app-id" || c.CAFile != ca {
+	if c.Profile != "work" || c.ClientID != "app-id" {
 		t.Errorf("strings: %+v", c)
 	}
-	if !c.EnableShip || !c.EnableDestructive || !c.AllowHTTP || c.ReadOnly {
+	if !c.EnableShip || !c.EnableDestructive || c.ReadOnly {
 		t.Errorf("switches: %+v", c)
 	}
 	if want := []string{"releases", "wiki"}; !slices.Equal(c.Toolsets, want) {
@@ -105,12 +100,12 @@ func TestEnvironmentAndFlags(t *testing.T) {
 	}
 
 	// A flag wins over the environment; a bare switch means true.
-	c, err = load(t, []string{"--instance", "https://gitlab.com", "--profile=home", "--client-id", "other",
+	c, err = load(t, []string{"--profile=home", "--client-id", "other",
 		"--enable-ship=false", "--enable-destructive=false", "--read-only", "--http-timeout", "2m"}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Instance != "https://gitlab.com" || c.Profile != "home" || c.ClientID != "other" {
+	if c.Profile != "home" || c.ClientID != "other" {
 		t.Errorf("flags did not win: %+v", c)
 	}
 	if !c.ReadOnly || c.EnableShip || c.HTTPTimeout != 2*time.Minute {
@@ -147,13 +142,12 @@ func TestReadOnlyWithAnEnableFlagNamesBoth(t *testing.T) {
 
 func TestInvalidValuesReportedTogether(t *testing.T) {
 	env := map[string]string{
-		EnvInstance:        " ",
+		EnvTestInstance:    "https://gitlab.example.com",
 		EnvProfile:         "Bad/Name",
 		EnvClientID:        "has space",
 		EnvReadOnly:        "maybe",
 		EnvToolsets:        "wiki,issues,pipelines",
 		EnvWriteNamespaces: "example-group/../x,ok,a//b",
-		EnvCAFile:          filepath.Join(t.TempDir(), "missing.pem"),
 		EnvLogLevel:        "loud",
 		EnvLogFormat:       "xml",
 		EnvHTTPTimeout:     "soon",
@@ -163,10 +157,10 @@ func TestInvalidValuesReportedTogether(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	for _, want := range []string{
-		EnvInstance, EnvProfile, EnvClientID, EnvReadOnly,
+		EnvTestInstance, EnvProfile, EnvClientID, EnvReadOnly,
 		"unknown toolset issues, pipelines (want activity, deployments, releases, snippets, wiki, or all)",
 		`"example-group/../x"`, `"a//b"`,
-		EnvCAFile, EnvLogLevel, EnvLogFormat, EnvHTTPTimeout,
+		EnvLogLevel, EnvLogFormat, EnvHTTPTimeout,
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
@@ -190,10 +184,55 @@ func TestHTTPTimeoutBounds(t *testing.T) {
 	}
 }
 
-func TestCAFileMustBeAFile(t *testing.T) {
-	_, err := load(t, nil, map[string]string{EnvCAFile: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "is a directory") {
-		t.Errorf("err = %v", err)
+// TestTestInstanceIsLoopbackOnly holds that the development override
+// can never point a token at a real host.
+func TestTestInstanceIsLoopbackOnly(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string // String(); "" means refused
+	}{
+		{"http://127.0.0.1:8080", "http://127.0.0.1:8080"},
+		{"http://[::1]:8080/", "http://[::1]:8080"},
+		{"http://localhost:3000", "http://localhost:3000"},
+		{"https://127.0.0.1", "https://127.0.0.1"},
+		{"https://gitlab.com", ""},
+		{"https://gitlab.example.com", ""},
+		{"http://gitlab.example.com", ""},
+		{"http://127.0.0.1.example.com", ""},
+		{"http://localhost.example.com", ""},
+		{"ftp://127.0.0.1", ""},
+	}
+	for _, tt := range tests {
+		c, err := load(t, nil, map[string]string{EnvTestInstance: tt.raw})
+		if tt.want == "" {
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), EnvTestInstance) {
+				t.Errorf("%s: err = %v, want it refused", tt.raw, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", tt.raw, err)
+			continue
+		}
+		if c.Instance.String() != tt.want || c.Target().String() != tt.want || !c.TestInstance {
+			t.Errorf("%s: Instance %q, TestInstance %v; want %q", tt.raw, c.Instance, c.TestInstance, tt.want)
+		}
+	}
+}
+
+// TestNoInstanceSetting holds that the retired settings are gone: a
+// person cannot point the server anywhere but gitlab.com.
+func TestNoInstanceSetting(t *testing.T) {
+	for _, f := range []string{"--instance", "--ca-file", "--allow-http", "--test-instance"} {
+		if _, err := load(t, []string{f, "x"}, nil); err == nil {
+			t.Errorf("%s was accepted", f)
+		}
+	}
+	for _, name := range []string{"GITLAB_MCP_INSTANCE", "GITLAB_MCP_CA_FILE", "GITLAB_MCP_ALLOW_HTTP"} {
+		c, err := load(t, nil, map[string]string{name: "http://gitlab.example.com"})
+		if err != nil || c.Target().String() != "https://gitlab.com" {
+			t.Errorf("%s: Target %q, err %v; want it ignored", name, c.Target(), err)
+		}
 	}
 }
 
@@ -251,7 +290,6 @@ func TestUnknownFlag(t *testing.T) {
 // stated here rather than read back from Vars.
 func TestVarsList(t *testing.T) {
 	want := map[string]struct{ flag, def string }{
-		"GITLAB_MCP_INSTANCE":                      {"instance", "https://gitlab.com"},
 		"GITLAB_MCP_PROFILE":                       {"profile", ""},
 		"GITLAB_MCP_CLIENT_ID":                     {"client-id", ""},
 		"GITLAB_MCP_READ_ONLY":                     {"read-only", "false"},
@@ -259,14 +297,13 @@ func TestVarsList(t *testing.T) {
 		"GITLAB_MCP_ENABLE_DESTRUCTIVE":            {"enable-destructive", "false"},
 		"GITLAB_MCP_TOOLSETS":                      {"toolsets", ""},
 		"GITLAB_MCP_WRITE_NAMESPACES":              {"write-namespaces", ""},
-		"GITLAB_MCP_CA_FILE":                       {"ca-file", ""},
-		"GITLAB_MCP_ALLOW_HTTP":                    {"allow-http", "false"},
 		"GITLAB_MCP_LOG_LEVEL":                     {"log-level", "info"},
 		"GITLAB_MCP_LOG_FORMAT":                    {"log-format", "text"},
 		"GITLAB_MCP_HTTP_TIMEOUT":                  {"http-timeout", "1m0s"},
 		"GITLAB_MCP_CONFIG_DIR":                    {"config-dir", ""},
 		"GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME": {"", "false"},
 		"GITLAB_MCP_REFRESH_TOKEN":                 {"", ""},
+		"GITLAB_MCP_TEST_INSTANCE":                 {"", ""},
 	}
 	if len(Vars) != len(want) {
 		t.Errorf("Vars has %d entries, want %d", len(Vars), len(want))
@@ -288,8 +325,11 @@ func TestVarsList(t *testing.T) {
 		}
 	}
 	names := EnvVars()
-	if !slices.IsSorted(names) || len(names) != len(want) {
+	if !slices.IsSorted(names) || len(names) != len(want)-1 || slices.Contains(names, "GITLAB_MCP_TEST_INSTANCE") {
 		t.Errorf("EnvVars = %v", names)
+	}
+	if dev := DevVars(); !slices.Equal(dev, []string{"GITLAB_MCP_TEST_INSTANCE"}) {
+		t.Errorf("DevVars = %v", dev)
 	}
 }
 
@@ -302,8 +342,10 @@ func TestDefineReadsExactlyVars(t *testing.T) {
 	fs.SetOutput(io.Discard)
 	Define(fs, func(k string) string { read = append(read, k); return "" })
 	slices.Sort(read)
-	if !slices.Equal(read, EnvVars()) {
-		t.Errorf("Define read %v, Vars lists %v", read, EnvVars())
+	all := append(EnvVars(), DevVars()...)
+	slices.Sort(all)
+	if !slices.Equal(read, all) {
+		t.Errorf("Define read %v, Vars lists %v", read, all)
 	}
 	var flags []string
 	fs.VisitAll(func(f *flag.Flag) {

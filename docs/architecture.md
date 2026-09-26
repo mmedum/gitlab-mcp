@@ -1,18 +1,17 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 0 built on a topic branch and run live, 2026-09-26;
-some of its spikes are owed. Nothing is tagged.** This document holds the platform
-facts, the design bets, a verdict on every API operation group, the
-phase plan and the spikes that must answer before the phases that
-depend on them. What phase 0 still owes is at the end of its entry in
-§16.
+**Status: phase 0 built on a topic branch and run live against
+gitlab.com, 2026-09-26; it owes nothing but the tag. Nothing is
+tagged.** This document holds the platform facts, the design bets, a
+verdict on every API operation group, the phase plan and the spikes that
+must answer before the phases that depend on them.
 
 ## 1. Mission and scope
 
 A production-grade Go MCP server for GitLab, distributed to other
 people. One binary, stdio, per-user sign-in, no hosted deployment. It
-works against gitlab.com and against self-managed instances, Community
-and Enterprise Edition, from the floor version of §17.4 up.
+works against **gitlab.com, and nothing else**: self-managed instances
+are out of scope (§4.9; maintainer, 2026-09-26, §14).
 
 The server works **inside projects**: finding and reading issues and
 merge requests, reviewing a merge request the way a person does (drafts,
@@ -59,9 +58,8 @@ Nine servers were surveyed; their trackers are where §3 comes from.
   interactive OAuth path beside a headless token path.
 
 What none of them offers together, and what this server is for: a local
-stdio binary that signs in exactly as its Google siblings do, keeps its token
-in the OS keyring and works the same on gitlab.com and an instance
-behind a corporate CA; **a curated surface of about fifty tools** rather
+stdio binary that signs in to gitlab.com exactly as its Google siblings
+do and keeps its token in the OS keyring; **a curated surface of about fifty tools** rather
 than an API mirror; **gating enforced by registration**, so a tool that
 is off cannot be called; **no quick action ever executed by what it
 writes**; reviews built the way people review, with the server — not the
@@ -75,6 +73,8 @@ answered by GitLab.
 
 ### Non-goals
 
+- **Self-managed instances.** gitlab.com only: no instance setting, no
+  private CA, no version gating (§4.9, §14).
 - **Administration.** Instance settings, users, runners, group and
   project settings, access tokens, deploy keys and tokens, webhooks,
   integrations, audit events. §8a.
@@ -113,8 +113,9 @@ v5.9.3, RFCs, or a GitLab page; §18 has the row and marks which.
 3. **Refresh tokens rotate with no grace.** A refresh revokes the old
    access and refresh tokens at once, under a lock; a second refresh
    with the old token is `invalid_grant`. Access tokens last
-   `expires_in` seconds — 7,200 by default, configurable by
-   administrators from 19.1 down to 300. §10.
+   `expires_in` seconds — 7,200 by default; configurable by
+   administrators from 19.1 down to 300 (self-managed only; out of
+   scope). §10.
 4. **Dynamic Client Registration cannot mint an `api` token.** It
    creates public PKCE clients whose scope is forced to `mcp`, prefixes
    their name `[Unverified Dynamic Application]`, is rate limited per
@@ -133,10 +134,10 @@ v5.9.3, RFCs, or a GitLab page; §18 has the row and marks which.
    Registration is the only control. §4.3.
 7. **Personal access tokens expire.** Expiry has been mandatory since
    16.0, at most 365 days (400 behind a flag), at midnight UTC;
-   administrators can relax it on self-managed. Fine-grained tokens are
-   GA from 19.2 and cover about 1,270 of about 1,583 route declarations.
-   Not used (§10); recorded because instance policy on them is what
-   people will ask about.
+   administrators can relax it on self-managed (out of scope).
+   Fine-grained tokens are GA from 19.2 and cover about 1,270 of about
+   1,583 route declarations. Not used (§10); recorded because policy on
+   them is what people will ask about.
 8. **Quick actions run through the API.** Creating a note or creating or
    updating an issue or merge request executes every quick-action line
    in the body — `/close`, `/merge`, `/assign`, `/move`, `/label`,
@@ -174,14 +175,15 @@ v5.9.3, RFCs, or a GitLab page; §18 has the row and marks which.
     throttles; an application limit can answer 429 while
     `RateLimit-Remaining` shows quota. A Rack::Attack 429 body is plain
     text; an application 429 is JSON. Self-managed instances ship the
-    general throttles off. §11.
+    general throttles off (self-managed only; out of scope). §11.
 14. **Errors come in four shapes.** `{"message": "404 Project Not
     Found"}`; `{"message": {"field": ["…"]}}` for validation (400 or
     422); `{"message": {"error": "…"}}` for spam and application limits;
     `{"error": "…"}` for parameter validation and **for a route that
     does not exist**, which the catch-all answers `{"error": "404 Not
-    Found"}`. That last shape is how a missing Enterprise route or an
-    older instance is told apart from a missing resource (spike F).
+    Found"}`. That last shape is how a route the account's tier lacks —
+    or, on self-managed (out of scope), an older instance's — is told
+    apart from a missing resource (spike F).
     §6.5.
 15. **404 hides private resources.** A project the token cannot read is
     404, not 403. Merging without permission is **401**, not 403. A
@@ -200,7 +202,9 @@ v5.9.3, RFCs, or a GitLab page; §18 has the row and marks which.
     `revision` and `enterprise` and needs authentication; there is no
     plan field a normal user can read, and a licensed-feature refusal is
     404 in some routes and 403 in others. The OpenAPI file marks tier on
-    3 of 1,862 operations. Tier is probed, never assumed. §7.9.
+    3 of 1,862 operations. Tier is probed, never assumed. The version
+    matters only on self-managed (out of scope): gitlab.com runs the
+    newest release, so the version is informational here. §7.9.
 19. **The machine-readable surface is the OpenAPI v3 file.**
     `doc/api/openapi/openapi_v3.yaml` is generated from the Grape routes
     and checked current in GitLab's CI: 1,384 paths and 1,862
@@ -230,9 +234,12 @@ Each traced to a public report in §1's servers; §18 has the evidence.
 3. A `read_api` token is never offered a write tool.
 4. The base URL is normalized: a host, a URL, a URL ending `/api/v4`, a
    sub-path install; `/api/v4` duplicated and `http` refused were both
-   reported.
+   reported. *Here there is no base URL to configure: the instance is
+   gitlab.com (§4.9).*
 5. A private CA, `HTTPS_PROXY` and `NO_PROXY` work; self-signed
-   instances were the most-reported setup failure.
+   instances were the most-reported setup failure. *Here the proxies
+   from the environment work; a private CA is self-managed only and out
+   of scope (§4.9).*
 6. Every path segment is escaped exactly once, from typed parts; a
    branch with a slash escaped twice, and an unencoded id walked `../`
    to other endpoints.
@@ -458,21 +465,31 @@ file 60,000; discussions 30,000 a page and one comment 6,000; commit
 diffs 40,000; a commit message 8,000. Two omissions are named but not
 yet continuable (§17a).
 
-### 4.9 One instance, many hosts, and every edition
+### 4.9 gitlab.com, and nothing else
 
-The configured instance is normalized once (`internal/instance`):
-scheme, host, port and sub-path, with a trailing `/api/v4` removed and a
-missing scheme read as `https`. `http` is refused for any host that is
-not loopback unless `GITLAB_MCP_ALLOW_HTTP=true`, because the token
-travels in the clear. A private CA comes from `GITLAB_MCP_CA_FILE`;
-proxies from the standard environment variables.
+The instance is `https://gitlab.com`, fixed in the code
+(`instance.GitLabCom`); no setting names another (§14, 2026-09-26).
+Proxies come from the standard environment variables and trust from the
+system's certificate authorities.
 
-At startup the server reads `/api/v4/metadata` for version and edition.
-A tool whose route or parameter is newer than the instance is
-unregistered, and a tool that reaches a route the instance does not
-have gets `[unsupported]` from the catch-all shape of §2.14. Profiles
-are keyed by instance, so one person can use gitlab.com and a
-self-managed instance side by side.
+One development override exists, `GITLAB_MCP_TEST_INSTANCE`, with no
+flag: the tests, the evals and the smoke gate point the binary at the
+in-memory instance with it. It is refused at startup unless its host is
+loopback (`127.0.0.1`, `::1` or `localhost`), so it can never send a
+token to another real host, and it is logged at warn when set. It is
+documented in `docs/development.md` only; the staleness gate keeps it
+out of `docs/configuration.md` and the `mcpb` gate out of the bundle.
+Plain `http` is accepted for loopback alone.
+
+gitlab.com runs the newest release, so no tool is gated by version.
+`get_me` and `doctor` read `/api/v4/metadata` to report the version and
+edition, as information. A route the account's tier lacks — a
+Premium-only route on a Free namespace — gets `[unsupported]` from the
+catch-all shape of §2.14.
+
+A profile records the instance it signed in to, and its token is sent
+nowhere else: a profile signed in to the test instance never sends its
+token to gitlab.com, and the reverse (§10).
 
 ### 4.10 Own wire types, raw REST v4
 
@@ -553,9 +570,9 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `.gitattributes` | `* text=auto eol=lf`; `*.png`, `*.pdf` binary |
 | `.editorconfig` | utf-8, lf, final newline; tabs for Go and the Makefile; two spaces for YAML, JSON and Markdown |
 | `NOTICE` | unofficial, not affiliated with GitLab Inc., trademark note, Apache-2.0 |
-| issue and PR templates | `ISSUE_TEMPLATE/config.yml` with the private advisory link and "run `doctor` first"; the bug form asks for `doctor`, version, install method, client, instance kind (gitlab.com or self-managed) and version, flag state and a debug log, explains why those are safe to paste, and says what never to paste — "a tool result is your organization's code"; the PR template with Summary, Test plan and Notes and the schema-change footer |
+| issue and PR templates | `ISSUE_TEMPLATE/config.yml` with the private advisory link and "run `doctor` first"; the bug form asks for `doctor`, version, install method, the client and its version, flag state and a debug log, explains why those are safe to paste, and says what never to paste — "a tool result is your organization's code"; the PR template with Summary, Test plan and Notes and the schema-change footer |
 | `audit/` **(09-25)** | `audit/security-reviews/v<tag>.md`, the committed `/security-review` over `prev-tag..HEAD`; `audit/release-smoke/v<tag>.md`, the release verification record: gates, reproducible-build hashes, schema and spec re-fetches, bugs found, the maintainer's go-ahead |
-| `packaging/mcpb/manifest.json` | `$schema` at the pinned tag; `manifest_version` 0.3; placeholder version `0.0.0-dev`; `claude_desktop >= 0.10.0`; per-platform commands; `author`, `license`, `keywords`, `repository`, `documentation` and a `support` URL; `user_config` with `instance`, `client_id`, `profile` and `read_only`; a `long_description` saying the bundle does not log you in |
+| `packaging/mcpb/manifest.json` | `$schema` at the pinned tag; `manifest_version` 0.3; placeholder version `0.0.0-dev`; `claude_desktop >= 0.10.0`; per-platform commands; `author`, `license`, `keywords`, `repository`, `documentation` and a `support` URL; `user_config` with `client_id`, `profile` and `read_only` (no instance: gitlab.com only); a `long_description` saying the bundle does not log you in |
 | Linux launcher | generated by the packer from the same staging table that names the binaries; `set -eu`; x86_64/amd64 and aarch64/arm64 aliased; `exec`s; an unknown architecture to stderr, non-zero, suggesting `go install`; a missing or non-executable binary named |
 
 **Gates (`scripts/gates`, one command, one registry).**
@@ -594,17 +611,17 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | Component | Must carry |
 |---|---|
 | `cmd` | `run(args, stdin, stdout, stderr, env)` so the serve path is testable; `help`/`-h` exit 0; **every argument checked for a help token before dispatch**, so `login --help` never reads `--help` as a value and `logout --help` never deletes anything; an unknown command prints usage to stderr and exits non-zero; errors printed through a redactor; disconnect matched by JSON-RPC code; the token warmed off the startup path; version from ldflags with a `debug.ReadBuildInfo` fallback, `canonical()` keeping the leading `v` |
-| `login`/`logout`/`status`/`doctor` | the siblings' commands, flags and output unchanged (§10); `--client-id` and `--instance`; the scopes printed before the browser opens and a grant narrower than asked warned about; `--no-browser` printing the URL and the exact `ssh -L` line; `status [--no-probe] --json` with a `schema_version`, running the same config load the server runs; `doctor` walking instance → TLS → version and edition → application → granted scopes → one `/user`, naming what is missing, with stable `{kind n}` placeholders and a redacted-count footer; `logout` revoking the token through `/oauth/revoke` and naming other profiles on the same application; the keyring replaced package-wide in tests by `TestMain`, with a decoy test proving it |
+| `login`/`logout`/`status`/`doctor` | the siblings' commands, flags and output unchanged (§10); `--client-id`, and no instance flag (§4.9); the scopes printed before the browser opens and a grant narrower than asked warned about; `--no-browser` printing the URL and the exact `ssh -L` line; `status [--no-probe] --json` with a `schema_version`, running the same config load the server runs; `doctor` walking instance → TLS → version and edition → application → granted scopes → one `/user`, naming what is missing, with stable `{kind n}` placeholders and a redacted-count footer; `logout` revoking the token through `/oauth/revoke` and naming other profiles on the same application; the keyring replaced package-wide in tests by `TestMain`, with a decoy test proving it |
 | `auth` | loopback on `127.0.0.1:0` with the registered redirect `http://127.0.0.1/callback`; PKCE S256 with a 64-character verifier; `state` checked, a callback without it refused on its own while the login keeps waiting; `ReadHeaderTimeout` on the callback; a bounded HTTP client on the exchange and every refresh; the rotated pair persisted before it is used; **refresh under a cross-process file lock, the keyring re-read after `invalid_grant` before declaring re-login**; `expires_in` honored, never assumed; an access token refused as `invalid_token` dropped and the store re-read; transport errors stripped of their URL and of host names; a typed `ErrReauthorize` never retried; granted scopes stored; no `resource` parameter sent (§18 row 7) |
 | `scopes` | one source of truth per mode: `read_api` read-only, `api` otherwise; the per-tool requirement; `Satisfied` and `Missing`; the generator for `docs/setup.md` |
 | `credentials` | resolution **env → keyring → file**, documented as that order; per profile, keyring service `gitlab-mcp` and account the profile name, as the siblings do (the profile records the instance); `GITLAB_MCP_REFRESH_TOKEN` as the env source, and a pair rotated from it stamped with the env value's hash so the next start uses the stored pair rather than the revoked env token; a keyring save deletes a stale plaintext file; a keyring that refuses a save has its older entry deleted, and while both stores hold a pair the one saved last wins; `Delete` clears every store and joins errors; a silent keyring told apart from a missing login; a warning on every use of the plaintext file; temp file, rename, then ACL; a partial env set is an error |
 | `fileperm` | 0600 on Unix; a protected DACL on Windows restricting the file to the current user |
-| `userconfig` | profiles as the siblings have them — named, or `default`, with no default pointer — each recording instance, application id, username and granted scopes; written atomically; profile names by regex; the config-dir override refused outside the home directory by real path unless `GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME=true` |
-| `config` | `Define(fs, env)` and `Build()` with errors joined; `GITLAB_MCP_` prefix (§18 row 30); timeouts bounded 1 s–10 m; negative flags named so the zero value is safe; base-URL overrides for tests; an exported list of every variable, which the staleness gate reads |
+| `userconfig` | profiles as the siblings have them — named, or `default`, with no default pointer — each recording the instance it signed in to (so its token goes nowhere else), application id, username and granted scopes; written atomically; profile names by regex; the config-dir override refused outside the home directory by real path unless `GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME=true` |
+| `config` | `Define(fs, env)` and `Build()` with errors joined; `GITLAB_MCP_` prefix (§18 row 30); timeouts bounded 1 s–10 m; negative flags named so the zero value is safe; no instance setting, and one development override, `GITLAB_MCP_TEST_INSTANCE`, env only and refused unless loopback (§4.9); an exported list of every variable, the override marked, which the staleness and `mcpb` gates read |
 | `redact` | host, namespace path, username, email, token and client-id masking for product output; redact before truncating; mask where text is produced, not in a Writer; an already-masked value still matched; id truncation and the redacting printer for maintainer tooling |
 | `server` | per-call log line with method, tool, outcome, milliseconds and rate bucket; the SDK's logger only at debug; instructions built from the configuration, naming only registered tools (a test holds it) and naming the flags that would add more; one description constant of at most 100 characters feeding the manifest and the registry; resource templates with `{x}`, never `{+x}`; resource not-found as `CodeInvalidParams` with a `[class]` message; the schema dump taking the SDK version from build info |
-| `app` | startup assembly reachable without `main`; `Settings` with the token unexported and **both `LogValue` and `String` redacting**, because `%+v` reads unexported fields |
-| `tools` | one `register` deciding annotations, kind, toolset and version gating, `_meta`, the dry-run context and the rendering; `FullSurface(cfg)` for the schema dump; `dry_run` found by reflection; an explicit output schema with `date-time` for times; `Content` set so the SDK does not duplicate the JSON; an `unexpected` class for anything unclassified |
+| `app` | startup assembly reachable without `main`; the instance fixed to gitlab.com or the loopback test override, logged at warn when overridden; a profile signed in to another instance keeps its token; `Settings` with the token unexported and **both `LogValue` and `String` redacting**, because `%+v` reads unexported fields |
+| `tools` | one `register` deciding annotations, kind, toolset and scope gating (no version gating: §4.9), `_meta`, the dry-run context and the rendering; `FullSurface(cfg)` for the schema dump; `dry_run` found by reflection; an explicit output schema with `date-time` for times; `Content` set so the SDK does not duplicate the JSON; an `unexpected` class for anything unclassified |
 | tool errors **(09-25)** | a `hinted{hint, err}` type with `Unwrap`, checked before the API-error branch, so a tool's guidance survives an upstream failure while the class still comes from the wrapped error; `refuse(protecting, unlock)` always naming what it protects and the exact argument to pass; enums named sorted in validation errors |
 | `gapi` | write and repeatability derived from the HTTP method, POST failing closed, declared exceptions only; a POST retried only on 429; `Retry-After` honored as a minimum; full-jitter backoff; the rate model of §11; **`CheckRedirect` returning `http.ErrUseLastResponse`**, a moved project's GET redirect resolved by re-reading the new path only when it is same-origin under the API root, with the request's query kept when the `Location` carries none; `Link: rel="next"` accepted only same-origin under the API root; every path segment escaped exactly once from typed parts, `..` refused; a headers deadline then a stall guard per read; a body cap; non-JSON bodies reported by status, content type and a prefix; transport errors stripped of path, query and host names; a create canceled after it may have been written `[ambiguous_outcome]`; a 401 `invalid_token` dropping the token and repeating a repeatable call once; **a context under which the client refuses every write**; a closed `Class` type with `Retryable()`; a `User-Agent`; unknown-field drift reported by path; a per-call counter |
 | logging test | every registered tool driven with canary values at debug; asserts the logs are non-empty and contain no canary |
@@ -668,7 +685,7 @@ forces:
 | `blocked` | a guard refused what the API would have allowed: quick action, protected branch, write allow-list, Ship-dependent review | pass the override, or don't |
 | `rate_limited` | §2.13, application or instance | wait; the message says how long |
 | `unavailable` | a transient upstream failure | retry |
-| `unsupported` | the instance lacks the route, edition or tier, or the API cannot do this (§2) | see the message |
+| `unsupported` | the account's tier or edition lacks the route, or the API cannot do this (§2) | see the message |
 | `ambiguous_outcome` | a create may or may not have happened (§4.5) | read the verdict; never repeat blind |
 | `unexpected` | anything unclassified, including a 202 from note creation | report it |
 
@@ -785,10 +802,11 @@ most 100). `search` per §7.1.
 
 `get_me` returns the user, the instance's version and edition, the
 token's kind, scopes and expiry, the registered kinds and toolsets, the
-write allow-list, and the last rate-limit reading. A tool gated by
-version is absent below its version; a tier-gated route answering 403 or
-404 on a feature GitLab licenses is `[unsupported]` naming the likely
-tier, never `not_found`.
+write allow-list, and the last rate-limit reading. The version and
+edition are information: gitlab.com runs the newest release, so no tool
+is gated by version (§4.9). A tier-gated route answering 403 or 404 on a
+feature GitLab licenses is `[unsupported]` naming the likely tier, never
+`not_found`.
 
 ## 8. Tool surface
 
@@ -1001,6 +1019,8 @@ something to do.
 | `GITLAB_MCP_TOOLSETS` | adds `wiki`, `snippets`, `releases`, `deployments`, `activity`, or `all` | — |
 | `GITLAB_MCP_WRITE_NAMESPACES` | confines Write, Ship, Destructive (§4.7) | — |
 
+No setting chooses the instance: it is gitlab.com (§4.9).
+
 `READ_ONLY` with either enable flag is refused at startup, naming both.
 A token whose granted scopes do not cover the mode is refused at
 startup, naming the scope — a `read_api` token never gets a write tool,
@@ -1017,13 +1037,12 @@ keyring and nowhere a tool can read.
 sibling servers already knows this one:
 
 1. Register your own OAuth application once, as you create a Desktop
-   OAuth client for the Google servers. On GitLab that is user settings
-   → Applications (or a group's or the instance's, §2.1): redirect URI
+   OAuth client for the Google servers. On gitlab.com that is user
+   settings → Applications (or a group's, §2.1): redirect URI
    `http://127.0.0.1/callback`, **Confidential unchecked**, scope `api`
    (`read_api` for read-only). `docs/setup.md` says exactly this and is
    generated from the code (§5a `staleness`).
-2. `gitlab-mcp login --client-id <application id>` (plus `--instance`
-   for self-managed). It prints the scopes it will ask for, opens the
+2. `gitlab-mcp login --client-id <application id>`. It prints the scopes it will ask for, opens the
    browser, listens on `127.0.0.1:0` with PKCE S256 and `state`, and
    warns if GitLab granted less than it asked for.
 3. `gitlab-mcp doctor` to check it. `status`, `logout` and profiles
@@ -1034,9 +1053,9 @@ The same subcommands, the same flags (`--profile`, `--no-browser` with
 the exact `ssh -L` line for SSH, `--client-id` in the place of
 `--client-secret`), the same keyring layout per profile with a warned
 0600 file fallback, the same env → keyring → file order, no out-of-band
-flow. A profile records the instance and the application id, so one
-person can keep a gitlab.com profile and a self-managed one side by
-side.
+flow. A profile records the application id and the instance it signed
+in to — gitlab.com, or the test instance in development — so its token
+is never sent anywhere else.
 
 What GitLab changes underneath, none of which the person sees:
 
@@ -1061,30 +1080,31 @@ What GitLab changes underneath, none of which the person sees:
   server says so at startup rather than failing on the first call, as
   the siblings do.
 - **Startup reads before it serves.** Registration depends on the
-  instance's version and the granted scopes, so startup reads token
-  info, `/metadata` and `/user` once each, bounded by the smaller of
-  15 s and the HTTP timeout. Every failure there is logged and the
+  granted scopes, so startup reads token info once, bounded by the
+  smaller of 15 s and the HTTP timeout. It reads neither `/metadata` nor
+  `/user`: nothing is gated by version (§4.9). Every failure there is logged and the
   server starts anyway, so errors surface per call; the one fatal
   outcome is a token whose scopes cannot serve the configured mode.
-- **A token is never sent to an instance it was not issued by.** An
-  instance named by flag or environment that differs from the one the
-  profile signed in to withholds the token: every call answers `[auth]`
-  naming the mismatch.
+- **A token is never sent to an instance it was not issued by.** A
+  profile signed in to another instance than the one in use — the test
+  instance while the server talks to gitlab.com, or the reverse —
+  withholds its token: every call answers `[auth]` naming the mismatch
+  and saying to log in again.
 
 Deliberately absent, so the family stays alike: personal access tokens,
 the device flow (§2.5), and a client id shipped in the binary. Each was
 considered (§17.1, §17.5) and each would make this server sign in
 differently from the rest.
 
-Configuration: `GITLAB_MCP_INSTANCE` (default `https://gitlab.com`),
-`GITLAB_MCP_PROFILE`, `GITLAB_MCP_CLIENT_ID`, `GITLAB_MCP_READ_ONLY`,
-`GITLAB_MCP_ENABLE_SHIP`, `GITLAB_MCP_ENABLE_DESTRUCTIVE`,
-`GITLAB_MCP_TOOLSETS`,
-`GITLAB_MCP_WRITE_NAMESPACES`, `GITLAB_MCP_CA_FILE`,
-`GITLAB_MCP_ALLOW_HTTP`, `GITLAB_MCP_LOG_LEVEL`, `GITLAB_MCP_LOG_FORMAT`
-(`text` default), `GITLAB_MCP_HTTP_TIMEOUT` (60 s default),
-`GITLAB_MCP_CONFIG_DIR`. Each also a flag. `docs/configuration.md` is
-checked against the exported list.
+Configuration: `GITLAB_MCP_PROFILE`, `GITLAB_MCP_CLIENT_ID`,
+`GITLAB_MCP_READ_ONLY`, `GITLAB_MCP_ENABLE_SHIP`,
+`GITLAB_MCP_ENABLE_DESTRUCTIVE`, `GITLAB_MCP_TOOLSETS`,
+`GITLAB_MCP_WRITE_NAMESPACES`, `GITLAB_MCP_LOG_LEVEL`,
+`GITLAB_MCP_LOG_FORMAT` (`text` default), `GITLAB_MCP_HTTP_TIMEOUT`
+(60 s default), `GITLAB_MCP_CONFIG_DIR`. Each also a flag.
+`docs/configuration.md` is checked against the exported list. There is
+no instance setting; the development override of §4.9 is documented in
+`docs/development.md` alone.
 
 Process: one stdio session; starts before authentication so `doctor` and
 `--dump-schemas` work signed out; a disconnect is exit 0.
@@ -1121,9 +1141,7 @@ might as well exist.
 
 `docs/setup.md` is an input, not a description: the application's
 redirect, confidentiality and scope are generated from the code and
-gated. It has a gitlab.com section and a self-managed section, the
-latter including how an administrator registers one trusted instance
-application for everyone.
+gated. It covers gitlab.com, the only instance.
 
 ## 13. Testing
 
@@ -1138,7 +1156,8 @@ application for everyone.
 - **The `diffpos` package** (phase 2), table-tested over generated diffs: added,
   removed and context lines, ranges across hunks, renames, a line
   outside every hunk.
-- **`internal/instance`**, over every base-URL shape of §3.4.
+- **`internal/instance`**, over every base-URL shape of §3.4, which the
+  loopback test override may still take.
 - **`gitlabtest`**, an in-memory GitLab behind the REST paths the client
   uses, generated per §9.1, modeling the facts of §2 the server depends
   on: quick actions executed from bodies (so a missing guard fails a
@@ -1149,7 +1168,7 @@ application for everyone.
   job log (with masking), listings, and the hidden-text case.
 - **The logging test** of §9.2.
 - **The live driver**, `scripts/livegitlab`, per §9.1, against
-  gitlab.com and a container of the floor version (§17.4): every tool
+  gitlab.com only, with no instance flag: every tool
   and option, held by `live-cover`; the transcript through one
   redacting writer, held by `transcript`; read by a person before a
   phase counts.
@@ -1167,7 +1186,8 @@ application for everyone.
 | Decision | By | Consequence |
 |---|---|---|
 | Design first, reviewed before code | maintainer, 2026-09-25 | this document; phase 0 waits for "go" |
-| gitlab.com and self-managed both | maintainer, 2026-09-25 | §4.9; profiles per instance |
+| gitlab.com and self-managed both | maintainer, 2026-09-25 | **Reversed 2026-09-26**, row below |
+| gitlab.com only; self-managed out of scope | maintainer, 2026-09-26 | reverses the 2026-09-25 row above. §4.9: no instance setting, no private CA, no plain-http permission, no version gating; one loopback-only development override; spike I dropped; §17.4 closed |
 | Sign-in the same as every sibling: own OAuth application, loopback, browser, keyring; no tokens, no device flow, no shipped client id | maintainer, 2026-09-25 and 2026-09-26 | §10; §17.1 and §17.5 decided |
 | Issues, merge requests, repository, CI, wiki, snippets and releases in 1.0 | maintainer, 2026-09-25 | §8; wiki, snippets and releases as toolsets |
 | Merging, approving and CI runs behind a Ship flag | this design | §4.3 |
@@ -1180,16 +1200,19 @@ application for everyone.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-A, B, C, D, F and L have run on gitlab.com (2026-09-26); the rest have not.
+A, B, C, D, F and L have run on gitlab.com (2026-09-26); the rest have
+not. Spike I, the floor version, was dropped with self-managed support
+(§14, 2026-09-26).
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
   send `http://127.0.0.1:<random>/callback`, `http://[::1]:<random>/…`
   and `http://localhost:<random>/…`. Expect the first two accepted and
-  the third refused. On gitlab.com and on the floor version. §2.1.
+  the third refused. On gitlab.com. §2.1.
   *Verdict, gitlab.com, 2026-09-26: a random `127.0.0.1` port was
   accepted against the registered `http://127.0.0.1/callback`, through
-  the real `login`. `[::1]`, `localhost` and the floor version are
-  still open.*
+  the real `login`. The `[::1]` and `localhost` halves are not needed:
+  gitlab.com is the only instance, and it answered for the address
+  `login` uses.*
 - **Spike B — public client.** Code exchange, refresh and
   `/oauth/revoke` with only `client_id`, on gitlab.com. §2.2.
   *Verdict, gitlab.com, 2026-09-26: code exchange and refresh work
@@ -1230,11 +1253,8 @@ A, B, C, D, F and L have run on gitlab.com (2026-09-26); the rest have not.
   comments (§2.6).
 - **Spike H — conditional reads.** Whether `If-None-Match` returns 304 on
   API GETs and whether a 304 is counted against the rate limit.
-- **Spike I — floor version.** `/api/v4/metadata` with a `read_api`
-  token, OAuth loopback, draft notes and `/diffs` markers on the floor
-  version's container. §17.4.
 - **Spike J — job log windows.** `byte_offset` and `byte_limit` on
-  gitlab.com and the floor version, and from which version.
+  gitlab.com.
 - **Spike K — inline positions.** Comments computed by `diffpos` on
   added, removed and unchanged lines and a range, read back from the
   web view.
@@ -1275,16 +1295,17 @@ it, and nothing writes yet. `gitlabtest`. The OpenAPI snapshot and
 `list_discussions`, `search_merge_requests`, `get_merge_request`,
 `get_file`, `list_tree`, `list_branches`, `list_commits`, `get_commit`.
 The untrusted-content rendering of §4.1 and the budget of §4.8. Spikes
-A, B, C, D, F, I, L. A live run whose transcript is read.
+A, B, C, D, F, L. A live run whose transcript is read.
 
 *Built 2026-09-26, reviewed (§16a) and simplified. The live run passed
 on gitlab.com the same day and its transcript was read: it found the
 signed-in person's display name and user id unmasked in the driver's
 output (fixed and re-run clean), a sha256 labeled as a client id by the
 shape mask (safe, left), and two wording defects (fixed). Spikes A and B
-answered on gitlab.com, then C, D, F and L. Still owed before the tag:
-spike I, with A's `[::1]` and `localhost` halves, on a container of the
-floor version.*
+answered on gitlab.com, then C, D, F and L. The same day the server was
+narrowed to gitlab.com (§14), which dropped spike I and A's `[::1]` and
+`localhost` halves, the instance setting, the private CA and version
+gating. Nothing is owed before the tag.*
 
 **Phase 1 — the rest of reading (v0.2.0).** `list_mr_files`,
 `get_mr_diff`, `list_mr_commits`, `compare_refs`, `list_tags`, the CI
@@ -1361,12 +1382,10 @@ fixed in `637c982`, one recorded:
    withheld unless `GITLAB_MCP_UNTRUSTED_CONTENT=show`. It costs a
    members read per call and hides legitimate bug reports. Proposed:
    decide in phase 4 from the injection evals. **Open.**
-4. **The floor version.** Proposed: **18.0**, with version-gated tools
-   and parameters above it, and a container of it in the live driver.
-   GitLab backports security fixes to the current and two previous
-   monthly releases only, so anything older is unpatched; self-managed
-   fleets are nevertheless often older, and spike I says what breaks.
-   **Open.**
+4. **The floor version.** **Decided 2026-09-26: not applicable.** The
+   server serves gitlab.com only (§14), which runs the newest release,
+   so no tool is gated by version and the live driver runs no floor
+   container. It was proposed at 18.0 while self-managed was in scope.
 5. **Personal access tokens in 1.0.** **Decided 2026-09-26: no**, for
    the same reason as §17.1; the device flow goes with it. If a
    headless need appears later, it is argued here first, and it arrives
@@ -1487,7 +1506,7 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 37 | A sibling already decodes stringified arguments or marks untrusted content with boundaries | All siblings' code | **Refuted (tier 2).** Neither exists anywhere; §4.1 and §17.7 are new ground |
 | 38 | Denylisting built-in tools confines an evals run | A sibling's evals log | **Refuted (tier 2).** Grep and Glob read maintainer notes mid-task. `--tools ""` and `--setting-sources ""`, fail-closed |
 | 39 | A struct printed with `%+v` is redacted by `LogValue` | A sibling's `Settings` | **Refuted (tier 2).** `%+v` reads unexported fields; `String()` is needed too |
-| 40 | A quick-action guard can match GitLab with a regular expression | GitLab's extractor and the Markdown pipeline it calls at `829b21d2`; comrak v0.55.0, the version GitLab's renderer pins; a differential oracle over about 1.3 million generated bodies | **Refined (tier 1).** Detection needs comrak's block structure, so `internal/quickaction` ports it. Zero lines GitLab would run were missed; four deliberate over-detections (any `/word`, both backtick readings, no rendered-text prefilter, description-list terms). Before 16.7 the extractor was regular-expression only and ran commands inside `~~~` fences and lazy lines; spike E checks the floor version |
+| 40 | A quick-action guard can match GitLab with a regular expression | GitLab's extractor and the Markdown pipeline it calls at `829b21d2`; comrak v0.55.0, the version GitLab's renderer pins; a differential oracle over about 1.3 million generated bodies | **Refined (tier 1).** Detection needs comrak's block structure, so `internal/quickaction` ports it. Zero lines GitLab would run were missed; four deliberate over-detections (any `/word`, both backtick readings, no rendered-text prefilter, description-list terms). Before 16.7 the extractor was regular-expression only and ran commands inside `~~~` fences and lazy lines, which no longer matters: gitlab.com is the only instance |
 | 41 | GitLab's token prefixes are the ones commonly listed | GitLab's token page, fetched 2026-09-26 | **Refined (tier 3).** `glpat-`, `gloas-`, `gldt-`, `glrt-`, `glrtr-`, `glcbt-`, `glptt-`, `glft-`, `glimt-`, `glagent-`, `glwt-`, `glsoat-`, `glffct-`, `_gitlab_session=`, and the runner `GR1348941`; `gloat-` is not listed. A custom personal-access-token prefix cannot be matched by shape |
 | 42 | Dropping hidden characters is safe everywhere | Trojan Source (CVE-2021-42574) | **Refuted for code.** Dropped from Markdown, made visible in files, diffs and commit messages (§4.1.2) |
 | 43 | A moved project's redirect names its new path | Spike L on gitlab.com | **Refuted (tier 1, live).** It names the numeric id; the client replaces only the project segment, so either works, and the test instance now matches |

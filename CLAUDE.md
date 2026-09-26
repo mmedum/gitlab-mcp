@@ -6,8 +6,10 @@ global instructions still apply; this file adds to them.
 ## Mission
 
 A production-grade Go MCP server for GitLab, distributed to other
-people. One binary, stdio, per-user sign-in, gitlab.com and self-managed
-instances alike, no hosted deployment. The design, its evidence log, the
+people. One binary, stdio, per-user sign-in, no hosted deployment,
+against **gitlab.com** only: self-managed instances are out of scope
+(`docs/architecture.md` §4.9, §14), and the one development override
+(`docs/development.md`) is refused unless loopback. The design, its evidence log, the
 decided constraints and the phase plan live in `docs/architecture.md`.
 Read it before changing the tool surface, the sign-in flow, the scopes,
 the write guards or the kinds. The server works inside projects: issues,
@@ -151,12 +153,12 @@ than the gate loosened.
 - `cmd/gitlab-mcp/` — subcommands and process wiring.
 - `internal/app/` startup assembly, reachable without `main`.
 - `internal/config/` env plus bound flags; `internal/credentials/`
-  env → keyring → file; `internal/userconfig/` non-secret profile state
-  per instance; `internal/fileperm/` restricting a file to the account
+  env → keyring → file; `internal/userconfig/` non-secret profile state,
+  the instance it signed in to included; `internal/fileperm/` restricting a file to the account
   that wrote it; `internal/auth/` loopback OAuth, the token source and
   the refresh lock; `internal/scopes/` the scope per mode and what each
-  tool needs; `internal/instance/` base-URL normalization, version and
-  edition detection.
+  tool needs; `internal/instance/` the base URL (gitlab.com, or the
+  loopback test override) and parsing the version and edition.
 - `internal/gitlab/` wire types; `internal/gapi/` the raw REST client,
   with `gitlabtest/` the in-memory instance used by tests.
 - `internal/quickaction/` detecting and escaping quick-action lines, no

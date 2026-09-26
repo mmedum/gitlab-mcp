@@ -75,7 +75,7 @@ type Options struct {
 	// Instance is the normalized GitLab the client talks to. The token
 	// is sent nowhere else.
 	Instance instance.Instance
-	// HTTPClient carries the transport: a private CA, a proxy. It is
+	// HTTPClient carries the transport and its proxy. It is
 	// copied; its redirect policy is replaced and its Timeout cleared,
 	// because the client bounds each attempt itself.
 	HTTPClient *http.Client
@@ -836,7 +836,7 @@ func classifyTransport(ctx context.Context, name string, repeatable bool, err er
 		return verdict{err: Wrap(ClassUnavailable, err, "GitLab's answer to %s was larger than %d MiB and was not read", name, MaxResponseBytes>>20)}
 	case redact.IsCertificateError(err):
 		return verdict{err: Wrap(ClassUnavailable, err,
-			"the instance's TLS certificate was not trusted for %s: %s. For a private CA, set GITLAB_MCP_CA_FILE", name, err)}
+			"the instance's TLS certificate was not trusted for %s: %s. A proxy that inspects TLS needs its authority in this machine's trust store", name, err)}
 	case ctx.Err() != nil && (repeatable || neverSent(err)):
 		return verdict{err: Wrap(ClassUnavailable, err, "%s was canceled or ran out of time", name)}
 	case neverSent(err):

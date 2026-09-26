@@ -54,7 +54,8 @@ func ValidProfile(name string) error {
 
 // Config is the stored, non-secret profile state.
 type Config struct {
-	// Instance is the normalized base URL the profile signs in to.
+	// Instance is the normalized base URL the profile signed in to:
+	// gitlab.com, or the test instance. The token is sent nowhere else.
 	Instance string `json:"instance"`
 	// ClientID is the OAuth application id. Not a secret: the
 	// application is public and has none.

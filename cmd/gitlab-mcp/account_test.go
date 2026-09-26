@@ -17,7 +17,7 @@ func signedIn(t *testing.T, opts gitlabtest.Options, extra ...string) (map[strin
 	t.Helper()
 	env := home(t)
 	srv := gitlabtest.New(t, opts)
-	env[config.EnvInstance] = srv.URL
+	env[config.EnvTestInstance] = srv.URL
 	env[config.EnvClientID] = gitlabtest.ClientID
 	b := useBrowser(t)
 	r := runWith(env, nil, append([]string{"login"}, extra...)...)
@@ -30,7 +30,7 @@ func signedIn(t *testing.T, opts gitlabtest.Options, extra ...string) (map[strin
 func TestLoginEndToEnd(t *testing.T) {
 	env := home(t)
 	srv := gitlabtest.New(t, gitlabtest.Options{AuthorizeAs: "bob"})
-	env[config.EnvInstance] = srv.URL
+	env[config.EnvTestInstance] = srv.URL
 	env[config.EnvClientID] = gitlabtest.ClientID
 	b := useBrowser(t)
 
@@ -86,7 +86,7 @@ func TestLoginWithoutAnApplicationSaysHowToRegisterOne(t *testing.T) {
 func TestLoginToAConfidentialApplication(t *testing.T) {
 	env := home(t)
 	srv := gitlabtest.New(t, gitlabtest.Options{Confidential: true, ClientSecret: "not-sent"})
-	env[config.EnvInstance] = srv.URL
+	env[config.EnvTestInstance] = srv.URL
 	env[config.EnvClientID] = gitlabtest.ClientID
 	useBrowser(t)
 	r := runWith(env, nil, "login")

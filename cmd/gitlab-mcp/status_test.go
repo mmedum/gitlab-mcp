@@ -168,7 +168,7 @@ func TestDoctorAfterLogin(t *testing.T) {
 func TestDoctorSignedOut(t *testing.T) {
 	env := home(t)
 	srv := gitlabtest.New(t, gitlabtest.Options{})
-	env[config.EnvInstance] = srv.URL
+	env[config.EnvTestInstance] = srv.URL
 	r := runWith(env, nil, "doctor")
 	if r.code != 1 || !strings.Contains(r.stdout, "[FAIL] sign-in") || !strings.Contains(r.stdout, "--client-id") ||
 		!strings.Contains(r.stdout, "1 problem(s).") {
@@ -202,36 +202,41 @@ func TestDoctorNamesAnUntrustedCertificate(t *testing.T) {
 	tlsSrv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	tlsSrv.StartTLS()
 	t.Cleanup(tlsSrv.Close)
-	env[config.EnvInstance] = tlsSrv.URL
+	env[config.EnvTestInstance] = tlsSrv.URL
 	r := runWith(env, nil, "doctor")
-	if r.code != 1 || !strings.Contains(r.stdout, "[FAIL] TLS") || !strings.Contains(r.stdout, config.EnvCAFile) {
+	if r.code != 1 || !strings.Contains(r.stdout, "[FAIL] TLS") || !strings.Contains(r.stdout, "trust store") {
 		t.Errorf("doctor on an untrusted certificate: %+v", r)
 	}
 }
 
 func TestDoctorNamesAnUnreachableInstance(t *testing.T) {
 	env := home(t)
-	env[config.EnvInstance] = "https://gitlab.example.invalid"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env[config.EnvTestInstance] = "http://" + ln.Addr().String()
+	_ = ln.Close()
 	r := runWith(env, nil, "doctor")
 	if r.code != 1 || !strings.Contains(r.stdout, "could not be reached") {
 		t.Errorf("doctor: %+v", r)
 	}
-	if strings.Contains(r.stdout, "gitlab.example.invalid") || !strings.Contains(r.stdout, "{host 1}") {
-		t.Errorf("the host is not masked:\n%s", r.stdout)
-	}
 }
 
-func TestDoctorMasksTheHostWhenTheInstanceIsRefused(t *testing.T) {
-	env := home(t)
-	// Plain http to a host that is not loopback is refused before any
-	// settings exist; the error names the host, and it must print masked.
-	env[config.EnvInstance] = "http://gitlab.example.invalid"
-	r := runWith(env, nil, "doctor")
-	if r.code != 1 || !strings.Contains(r.stdout, "[FAIL] instance") {
-		t.Fatalf("doctor: %+v", r)
-	}
-	if strings.Contains(r.stdout, "gitlab.example.invalid") || !strings.Contains(r.stdout, "{host 1}") {
-		t.Errorf("the refused host is not masked:\n%s", r.stdout)
+// TestDoctorRefusesATestInstanceThatIsNotLoopback: the override can
+// never point the token at a real host, and the refusal does not name
+// the host it refused.
+func TestDoctorRefusesATestInstanceThatIsNotLoopback(t *testing.T) {
+	for _, raw := range []string{"http://gitlab.example.invalid", "https://gitlab.example.invalid"} {
+		env := home(t)
+		env[config.EnvTestInstance] = raw
+		r := runWith(env, nil, "doctor")
+		if r.code != 1 || !strings.Contains(r.stderr, config.EnvTestInstance) {
+			t.Fatalf("%s: doctor: %+v", raw, r)
+		}
+		if strings.Contains(r.stdout+r.stderr, "gitlab.example.invalid") {
+			t.Errorf("%s: the refused host is named:\n%s%s", raw, r.stdout, r.stderr)
+		}
 	}
 }
 
@@ -260,7 +265,7 @@ func TestUnreachableNamesNoHost(t *testing.T) {
 		"lookup": {inURL(&net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Name: host, Server: "10.9.8.7:53",
 			Err: "no such host", IsNotFound: true}}), "could not be reached: lookup: no such host"},
 		"wrong host name": {inURL(&tls.CertificateVerificationError{Err: x509.HostnameError{
-			Certificate: &x509.Certificate{DNSNames: []string{"canary-cert.example.net"}}, Host: host}}), config.EnvCAFile},
+			Certificate: &x509.Certificate{DNSNames: []string{"canary-cert.example.net"}}, Host: host}}), "trust store"},
 		"url error in a url error": {inURL(inURL(errors.New("proxyconnect " + host))), "could not be reached: the connection failed"},
 		"deadline":                 {inURL(context.DeadlineExceeded), "could not be reached: timed out"},
 	} {

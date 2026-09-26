@@ -144,7 +144,7 @@ func TestTheRecorderWritesWhatWasSent(t *testing.T) {
 		t.Errorf("missing = %s", got)
 	}
 	path := filepath.Join(t.TempDir(), "record.tsv")
-	if err := r.write(path, "run of 2026-09-26 against a self-managed instance"); err != nil {
+	if err := r.write(path, "run of 2026-09-26 against a gitlab.com instance"); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -152,7 +152,7 @@ func TestTheRecorderWritesWhatWasSent(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "# Written by scripts/livegitlab at the end of a run; do not edit.\n" +
-		"# run of 2026-09-26 against a self-managed instance\n" +
+		"# run of 2026-09-26 against a gitlab.com instance\n" +
 		"# Columns: tool.option (tool.* for the call itself), times sent.\n" +
 		"get_issue.*\t2\nget_issue.iid\t2\nget_issue.offset\t1\nget_issue.project\t2\nget_me.*\t1\n"
 	if string(raw) != want {

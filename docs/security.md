@@ -1,7 +1,7 @@
 # Security
 
 This server acts as one signed-in person, with their own OAuth
-application, from their own machine, against one GitLab instance. It
+application, from their own machine, against gitlab.com. It
 has no hosted component, no telemetry and no update check. This page
 says what it can touch, what stops it going further, and what it cannot
 stop. `SECURITY.md` says how to report a problem.
@@ -137,16 +137,21 @@ replace it with a `read_api` one.
 
 ## What the server talks to
 
-Only the configured instance. Plain `http` is refused for any host that
-is not loopback unless `GITLAB_MCP_ALLOW_HTTP=true`, because the token
-would travel in the clear. No redirect is followed, and no URL from a
-response is called, except a same-origin `Link: rel="next"` under the
-instance's API root: a followed redirect would carry the token to
-another host.
+Only gitlab.com, over `https`, trusting the system's certificate
+authorities. No setting names another instance. No redirect is
+followed, and no URL from a response is called, except a same-origin
+`Link: rel="next"` under the API root: a followed redirect would carry
+the token to another host.
 
-A token is only ever sent to the instance that issued it. If the
-instance named by flag or environment differs from the one the profile
-signed in to, the token is withheld and every call answers `[auth]`
+The one exception is a development override, documented in
+`docs/development.md`, that points the binary at an in-memory stand-in
+for the tests. Start-up refuses it unless its host is loopback, so it
+cannot send a token to another real host, and logs a warning whenever
+it is set.
+
+A token is only ever sent to the instance that issued it. A profile
+signed in to the test instance does not send its token to gitlab.com,
+nor the reverse: the token is withheld and every call answers `[auth]`
 naming the mismatch.
 
 ## Token storage and rotation
@@ -190,7 +195,8 @@ registered tool with canary values at debug level and fails if any
 canary reaches the log.
 
 `status` and `doctor` print to your terminal, where you asked for them,
-and mask the instance's host, the application id and your username as
+and mask any host other than gitlab.com, the application id and your
+username as
 `{host 1}`, `{client-id 1}` and `{user 1}`, with a count of what was
 masked at the end.
 
@@ -201,8 +207,8 @@ Into an issue, a pull request, a chat or a model conversation you share:
 - a token of any kind: anything starting `glpat-`, `gloas-` or another
   GitLab prefix, or an OAuth access or refresh token;
 - `token.json`, or the output of a keyring tool;
-- your application id, your instance's hostname, a group or project
-  path, a username or an email address;
+- your application id, a group or project path, a username or an email
+  address;
 - a tool result, issue or merge request text, file contents or a job
   log. A tool result is your organization's code and other people's
   words.

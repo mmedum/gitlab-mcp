@@ -5,7 +5,7 @@
   "display_name": "GitLab (unofficial)",
   "version": "0.0.0-dev",
   "description": "GitLab over MCP from your own account: issues, merge requests, reviews, the repository and CI.",
-  "long_description": "Work inside GitLab projects from your own account, on gitlab.com or a self-managed instance: find and read issues and merge requests, review a merge request, read the repository and CI. Content from GitLab is marked as untrusted data rather than instructions. Nothing this server writes runs a quick action, code reaches a protected branch only through a merge request, and merging, approving, running CI and deleting are not offered unless you turn them on.\n\nTHIS BUNDLE DOES NOT LOG YOU IN, and cannot. Each person brings their own OAuth application, so before the tools work you need to register one on your GitLab instance and run `gitlab-mcp login --client-id <application id>` once from a terminal (add `--instance <url>` for a self-managed instance). The setup is documented at https://github.com/mmedum/gitlab-mcp/blob/main/docs/setup.md. Without that step the server starts, lists its tools, and answers every call with \"not signed in\".",
+  "long_description": "Work inside GitLab projects from your own gitlab.com account: find and read issues and merge requests, review a merge request, read the repository and CI. Content from GitLab is marked as untrusted data rather than instructions. Nothing this server writes runs a quick action, code reaches a protected branch only through a merge request, and merging, approving, running CI and deleting are not offered unless you turn them on.\n\nTHIS BUNDLE DOES NOT LOG YOU IN, and cannot. Each person brings their own OAuth application, so before the tools work you need to register one on gitlab.com and run `gitlab-mcp login --client-id <application id>` once from a terminal. The setup is documented at https://github.com/mmedum/gitlab-mcp/blob/main/docs/setup.md. Without that step the server starts, lists its tools, and answers every call with \"not signed in\".",
   "author": {
     "name": "Mark Medum Bundgaard"
   },
@@ -31,7 +31,6 @@
       "command": "${__dirname}/server/gitlab-mcp-darwin",
       "args": [],
       "env": {
-        "GITLAB_MCP_INSTANCE": "${user_config.instance}",
         "GITLAB_MCP_CLIENT_ID": "${user_config.client_id}",
         "GITLAB_MCP_PROFILE": "${user_config.profile}",
         "GITLAB_MCP_READ_ONLY": "${user_config.read_only}"
@@ -47,23 +46,16 @@
     }
   },
   "user_config": {
-    "instance": {
-      "type": "string",
-      "title": "GitLab instance",
-      "description": "The instance's base URL. https://gitlab.com, or your self-managed instance.",
-      "default": "https://gitlab.com",
-      "required": false
-    },
     "client_id": {
       "type": "string",
       "title": "OAuth application id",
-      "description": "The id of the OAuth application you registered on that instance. You still need to run `gitlab-mcp login --client-id <application id>` once from a terminal.",
+      "description": "The id of the OAuth application you registered on gitlab.com. You still need to run `gitlab-mcp login --client-id <application id>` once from a terminal.",
       "required": true
     },
     "profile": {
       "type": "string",
       "title": "Profile",
-      "description": "Which stored login to use. Separate profiles keep separate tokens, such as one for gitlab.com and one for a self-managed instance.",
+      "description": "Which stored login to use. Separate profiles keep separate tokens, such as one per GitLab account.",
       "default": "default",
       "required": false
     },

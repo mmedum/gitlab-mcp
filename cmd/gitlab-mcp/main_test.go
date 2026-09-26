@@ -102,7 +102,7 @@ func TestACommandsHelpShowsItsFlags(t *testing.T) {
 func TestAHelpTokenIsNeverReadAsAValue(t *testing.T) {
 	env := home(t)
 	srv := gitlabtest.New(t, gitlabtest.Options{})
-	env[config.EnvInstance] = srv.URL
+	env[config.EnvTestInstance] = srv.URL
 	b := useBrowser(t)
 
 	// --help after a flag that takes a value is still help, not an
@@ -230,7 +230,7 @@ func TestServeSignedOutEndsCleanlyOnAClosedStdin(t *testing.T) {
 func TestServeRefusesATokenThatCannotServeTheMode(t *testing.T) {
 	env := home(t)
 	srv := gitlabtest.New(t, gitlabtest.Options{})
-	env[config.EnvInstance] = srv.URL
+	env[config.EnvTestInstance] = srv.URL
 	env[config.EnvClientID] = gitlabtest.ClientID
 	env[config.EnvReadOnly] = "true"
 	useBrowser(t)

@@ -4,17 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +51,8 @@ type env map[string]string
 func (e env) get(k string) string { return e[k] }
 
 // setup is a config directory, an environment pointing at it, and a
-// keyring.
+// keyring. A non-empty instanceURL is the test instance, which must be
+// loopback.
 func setup(t *testing.T, instanceURL string) (env, memKeyring) {
 	t.Helper()
 	e := env{
@@ -65,7 +60,7 @@ func setup(t *testing.T, instanceURL string) (env, memKeyring) {
 		config.EnvConfigDirAllowOutsideHome: "true",
 	}
 	if instanceURL != "" {
-		e[config.EnvInstance] = instanceURL
+		e[config.EnvTestInstance] = instanceURL
 	}
 	return e, memKeyring{}
 }
@@ -75,11 +70,6 @@ func load(t *testing.T, e env) config.Config {
 	cfg, err := config.Load(nil, e.get)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if e[config.EnvInstance] == "" {
-		// As the command does: an instance nobody named is left to the
-		// profile.
-		cfg.Instance = ""
 	}
 	return cfg
 }
@@ -99,33 +89,67 @@ func signIn(t *testing.T, cfg config.Config, k memKeyring, instanceURL, access s
 	}
 }
 
-func TestResolveUsesTheProfilesInstanceUnlessOneIsGiven(t *testing.T) {
-	e, k := setup(t, "")
-	cfg := load(t, e)
-	signIn(t, cfg, k, "https://gitlab.example.com/gitlab", "test-access")
+// TestATokenStaysWithTheInstanceThatIssuedIt holds the one credential
+// rule the test override could break: a profile signed in to the test
+// instance never sends its token to gitlab.com, and the reverse.
+func TestATokenStaysWithTheInstanceThatIssuedIt(t *testing.T) {
+	const fake = "http://127.0.0.1:9"
+	for _, tc := range []struct {
+		name, signedIn, override string
+		want                     string // the instance; "" in signedOut
+		signedOut                bool
+	}{
+		{"gitlab.com profile on gitlab.com", "https://gitlab.com", "", "https://gitlab.com", false},
+		{"test profile on the test instance", fake, fake, fake, false},
+		{"test profile, no override", fake, "", "https://gitlab.com", true},
+		{"gitlab.com profile, override set", "https://gitlab.com", fake, fake, true},
+		{"another test port", "http://127.0.0.1:10", fake, fake, true},
+		{"a host an older build accepted", "https://gitlab.example.com", "", "https://gitlab.com", true},
+		{"an unreadable record", "http://gitlab.example.com", "", "https://gitlab.com", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, k := setup(t, tc.override)
+			cfg := load(t, e)
+			signIn(t, cfg, k, tc.signedIn, "test-access")
+			s, err := Resolve(cfg, Options{Env: e.get, Keyring: k})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.Instance.String() != tc.want {
+				t.Errorf("instance %s, want %s", s.Instance, tc.want)
+			}
+			if (s.CredentialsErr != nil) != tc.signedOut {
+				t.Fatalf("credentials %v, want signed out %v", s.CredentialsErr, tc.signedOut)
+			}
+			if !tc.signedOut {
+				if s.ClientID != gitlabtest.ClientID {
+					t.Errorf("client id %q", s.ClientID)
+				}
+				return
+			}
+			if !strings.Contains(s.CredentialsErr.Error(), "gitlab-mcp login") {
+				t.Errorf("credentials %v do not say what to do", s.CredentialsErr)
+			}
+			if _, err := s.Tokens().Token(context.Background()); err == nil || !strings.HasPrefix(err.Error(), "[auth]") {
+				t.Errorf("token for another instance: %v", err)
+			}
+		})
+	}
+}
 
-	s, err := Resolve(cfg, Options{Env: e.get, Keyring: k})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Instance.String() != "https://gitlab.example.com/gitlab" || s.CredentialsErr != nil {
-		t.Errorf("instance %s, credentials %v", s.Instance, s.CredentialsErr)
-	}
-	if s.ClientID != gitlabtest.ClientID {
-		t.Errorf("client id %q", s.ClientID)
-	}
-
-	// Another instance named: the token stays away from it.
-	e[config.EnvInstance] = "https://other.example.com"
-	s, err = Resolve(load(t, e), Options{Env: e.get, Keyring: k})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Instance.String() != "https://other.example.com" || s.CredentialsErr == nil {
-		t.Fatalf("instance %s, credentials %v; want the named instance and no credentials", s.Instance, s.CredentialsErr)
-	}
-	if _, err := s.Tokens().Token(context.Background()); err == nil || !strings.HasPrefix(err.Error(), "[auth]") {
-		t.Errorf("token for another instance: %v", err)
+// TestTheTestInstanceIsLoggedAtWarn: the override is never silent.
+func TestTheTestInstanceIsLoggedAtWarn(t *testing.T) {
+	for _, override := range []string{"", "http://127.0.0.1:9"} {
+		e, k := setup(t, override)
+		var logged bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&logged, nil))
+		if _, err := Resolve(load(t, e), Options{Env: e.get, Keyring: k, Logger: logger}); err != nil {
+			t.Fatal(err)
+		}
+		got := strings.Count(logged.String(), "level=WARN msg=\""+config.EnvTestInstance)
+		if want := map[bool]int{true: 1, false: 0}[override != ""]; got != want {
+			t.Errorf("override %q: %d warnings, want %d:\n%s", override, got, want, logged.String())
+		}
 	}
 }
 
@@ -135,7 +159,7 @@ func TestResolveWithNoProfileStartsSignedOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Instance.String() != config.DefaultInstance {
+	if s.Instance.String() != "https://gitlab.com" {
 		t.Errorf("instance %s, want gitlab.com", s.Instance)
 	}
 	if s.CredentialsErr == nil || !strings.Contains(s.CredentialsErr.Error(), "gitlab-mcp login") {
@@ -146,7 +170,7 @@ func TestResolveWithNoProfileStartsSignedOut(t *testing.T) {
 func TestTheClientIDOverrideWins(t *testing.T) {
 	e, k := setup(t, "")
 	cfg := load(t, e)
-	signIn(t, cfg, k, "https://gitlab.example.com", "test-access")
+	signIn(t, cfg, k, "https://gitlab.com", "test-access")
 	e[config.EnvClientID] = "another-application"
 	s, err := Resolve(load(t, e), Options{Env: e.get, Keyring: k})
 	if err != nil {
@@ -157,61 +181,10 @@ func TestTheClientIDOverrideWins(t *testing.T) {
 	}
 }
 
-func TestABadInstanceOrCAFileIsAStartupError(t *testing.T) {
-	e, k := setup(t, "http://gitlab.example.com")
-	if _, err := Resolve(load(t, e), Options{Env: e.get, Keyring: k}); err == nil || !strings.Contains(err.Error(), config.EnvInstance) {
-		t.Errorf("plain http to a remote host: %v", err)
-	}
-	e, _ = setup(t, "https://gitlab.example.com")
-	junk := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(junk, []byte("not a certificate"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	e[config.EnvCAFile] = junk
-	if _, err := Resolve(load(t, e), Options{Env: e.get, Keyring: k}); err == nil || !strings.Contains(err.Error(), "no PEM certificate") {
-		t.Errorf("junk CA file: %v", err)
-	}
-}
-
-func TestTheCAFileIsTrusted(t *testing.T) {
-	tlsSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	// The refused handshake is the point of the first half; its log line
-	// is noise.
-	tlsSrv.Config.ErrorLog = log.New(io.Discard, "", 0)
-	tlsSrv.StartTLS()
-	t.Cleanup(tlsSrv.Close)
-	caPath := filepath.Join(t.TempDir(), "ca.pem")
-	block := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tlsSrv.Certificate().Raw})
-	if err := os.WriteFile(caPath, block, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	e, _ := setup(t, tlsSrv.URL)
-	plain, err := NewHTTPClient(load(t, e))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp, err := plain.Get(tlsSrv.URL); err == nil { //nolint:noctx // test
-		_ = resp.Body.Close()
-		t.Error("an unknown CA was trusted without the CA file")
-	}
-	e[config.EnvCAFile] = caPath
-	trusting, err := NewHTTPClient(load(t, e))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := trusting.Get(tlsSrv.URL) //nolint:noctx // test
-	if err != nil {
-		t.Fatalf("with the CA file: %v", err)
-	}
-	_ = resp.Body.Close()
-}
-
 func TestSettingsNeverPrintTheHostTheApplicationOrTheToken(t *testing.T) {
-	e, k := setup(t, "")
+	e, k := setup(t, "http://127.0.0.1:9")
 	cfg := load(t, e)
-	signIn(t, cfg, k, "https://gitlab.example.com", "test-access-canary")
+	signIn(t, cfg, k, "http://127.0.0.1:9", "test-access-canary")
 	s, err := Resolve(cfg, Options{Env: e.get, Keyring: k})
 	if err != nil {
 		t.Fatal(err)
@@ -226,19 +199,19 @@ func TestSettingsNeverPrintTheHostTheApplicationOrTheToken(t *testing.T) {
 		"%v": fmt.Sprintf("%v", s), "%+v": fmt.Sprintf("%+v", s), "value %+v": fmt.Sprintf("%+v", *s),
 		"String": s.String(), "log": logged.String(),
 	} {
-		for _, leak := range []string{"gitlab.example.com", gitlabtest.ClientID, "test-access-canary", "test-refresh-unused", "alice"} {
+		for _, leak := range []string{"127.0.0.1", gitlabtest.ClientID, "test-access-canary", "test-refresh-unused", "alice"} {
 			if strings.Contains(text, leak) {
 				t.Errorf("%s carries %q: %s", name, leak, text)
 			}
 		}
-		if !strings.Contains(text, "self-managed") || !strings.Contains(text, "default") {
+		if !strings.Contains(text, "test instance") || !strings.Contains(text, "default") {
 			t.Errorf("%s lost the safe fields: %s", name, text)
 		}
 	}
 }
 
-func TestProbeReadsTheInstanceAndTheScopes(t *testing.T) {
-	srv := gitlabtest.New(t, gitlabtest.Options{Version: "19.2.1-ee", Enterprise: true})
+func TestProbeReadsTheScopes(t *testing.T) {
+	srv := gitlabtest.New(t, gitlabtest.Options{})
 	e, k := setup(t, srv.URL)
 	cfg := load(t, e)
 	signIn(t, cfg, k, srv.URL, srv.TokenFor("bob", "api"), "read_api")
@@ -247,13 +220,11 @@ func TestProbeReadsTheInstanceAndTheScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := s.Probe(context.Background(), slog.New(slog.DiscardHandler), "test")
-	if st.Metadata.Version.String() != "19.2.1-ee" || !st.Metadata.Enterprise {
-		t.Errorf("metadata %+v", st.Metadata)
-	}
-	// Nothing reads the account at startup, so it is not asked for.
+	// Nothing reads the account or the version at startup: registration
+	// needs neither, so neither is asked for.
 	for _, r := range srv.Requests() {
-		if r.EscapedPath == "/api/v4/user" {
-			t.Errorf("the probe read /user")
+		if r.EscapedPath == "/api/v4/user" || r.EscapedPath == "/api/v4/metadata" {
+			t.Errorf("the probe read %s", r.EscapedPath)
 		}
 	}
 	// Read live, not from the stored login.
@@ -322,9 +293,6 @@ func TestAnUnreachableInstanceStillGetsAServer(t *testing.T) {
 	rt, err := Assemble(context.Background(), cfg, Options{Env: e.get, Keyring: k})
 	if err != nil {
 		t.Fatalf("an unreachable instance refused to start: %v", err)
-	}
-	if rt.Startup.Metadata != (instance.Metadata{}) {
-		t.Errorf("metadata %+v from an unreachable instance", rt.Startup.Metadata)
 	}
 	// The stored grant stands in for the live one.
 	if strings.Join(rt.Startup.Granted, " ") != "api" {
@@ -400,20 +368,20 @@ func TestIsDisconnectMatchesTheCode(t *testing.T) {
 }
 
 func TestInstanceKind(t *testing.T) {
-	e, _ := setup(t, "")
-	for raw, want := range map[string]string{
-		"https://gitlab.com":                 "gitlab.com",
-		"gitlab.com":                         "gitlab.com",
-		"https://gitlab.example.com":         "self-managed",
-		"https://gitlab.com.example.invalid": "self-managed",
+	fake, err := instance.Parse("http://127.0.0.1:9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		inst instance.Instance
+		want string
+	}{
+		{instance.GitLabCom, "gitlab.com"},
+		{fake, "test instance"},
+		{instance.Instance{}, ""},
 	} {
-		e[config.EnvInstance] = raw
-		s, err := Resolve(load(t, e), Options{Env: e.get})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := InstanceKind(s.Instance); got != want {
-			t.Errorf("%s: %q, want %q", raw, got, want)
+		if got := InstanceKind(tc.inst); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.inst, got, tc.want)
 		}
 	}
 }

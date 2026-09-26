@@ -376,9 +376,8 @@ func mcpbLicense(root string) string {
 }
 
 // mcpbUserConfig is what the bundle asks for at install, each key with
-// the variable it sets. §5a: instance, client_id, profile and read_only.
+// the variable it sets. §5a: client_id, profile and read_only.
 var mcpbUserConfig = map[string]string{
-	"instance":  config.EnvInstance,
 	"client_id": config.EnvClientID,
 	"profile":   config.EnvProfile,
 	"read_only": config.EnvReadOnly,
@@ -403,8 +402,8 @@ func mcpbRepoProblems(root string, m mcpbManifest) []string {
 			m.Description, mcpbServerPackage, desc))
 	}
 	known := map[string]bool{}
-	for _, v := range config.Vars {
-		known[v.Name] = true
+	for _, v := range config.EnvVars() {
+		known[v] = true
 	}
 	envs := map[string]map[string]string{"mcp_config": m.Server.MCPConfig.Env}
 	for platform, over := range m.Server.MCPConfig.PlatformOverrides {
@@ -412,7 +411,10 @@ func mcpbRepoProblems(root string, m mcpbManifest) []string {
 	}
 	for _, where := range slices.Sorted(maps.Keys(envs)) {
 		for _, key := range slices.Sorted(maps.Keys(envs[where])) {
-			if !known[key] {
+			switch {
+			case slices.Contains(config.DevVars(), key):
+				problems = append(problems, fmt.Sprintf("%s.env sets %s, a development override no bundle may carry", where, key))
+			case !known[key]:
 				problems = append(problems, fmt.Sprintf("%s.env sets %s, which the server does not read", where, key))
 			}
 		}

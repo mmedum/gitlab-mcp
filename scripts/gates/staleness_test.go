@@ -64,9 +64,9 @@ func stalenessFixture() stalenessInputs {
 	readme.WriteString("\n## Safety\n\n| Setting | Registers |\n|---|---|\n| `GITLAB_MCP_READ_ONLY=true` | reads |\n\n" +
 		"Three things hold:\n\n- one\n- two\n  continued\n- three\n\n" + strings.Join(spans, " ") + "\n")
 
-	vars := []string{"GITLAB_MCP_INSTANCE", "GITLAB_MCP_PROFILE", "GITLAB_MCP_CLIENT_ID", "GITLAB_MCP_READ_ONLY",
-		"GITLAB_MCP_ENABLE_SHIP", "GITLAB_MCP_ENABLE_DESTRUCTIVE", "GITLAB_MCP_TOOLSETS", "GITLAB_MCP_CA_FILE",
-		"GITLAB_MCP_LOG_LEVEL", "GITLAB_MCP_HTTP_TIMEOUT"}
+	vars := []string{"GITLAB_MCP_PROFILE", "GITLAB_MCP_CLIENT_ID", "GITLAB_MCP_READ_ONLY",
+		"GITLAB_MCP_ENABLE_SHIP", "GITLAB_MCP_ENABLE_DESTRUCTIVE", "GITLAB_MCP_TOOLSETS", "GITLAB_MCP_WRITE_NAMESPACES",
+		"GITLAB_MCP_LOG_LEVEL", "GITLAB_MCP_LOG_FORMAT", "GITLAB_MCP_HTTP_TIMEOUT"}
 	var configDoc strings.Builder
 	configDoc.WriteString("# Configuration\n\n| Variable | Flag |\n|---|---|\n")
 	for _, v := range vars {
@@ -82,6 +82,7 @@ func stalenessFixture() stalenessInputs {
 		devDoc.WriteString("- `" + name + "` checks a thing.\n")
 	}
 	devDoc.WriteString("\nRun one with `go run ./scripts/gates gate03`.\n")
+	devDoc.WriteString("\n`GITLAB_MCP_TEST_INSTANCE` points the binary at the fake.\n")
 
 	modes := []stalenessMode{
 		{Name: "default", Block: "Name:          gitlab-mcp\nScopes:        api\n"},
@@ -113,6 +114,7 @@ func stalenessFixture() stalenessInputs {
 		packages:   packages,
 		hasGo:      func(rel string) bool { return rel != "scripts/internal" },
 		configVars: vars,
+		devVars:    []string{"GITLAB_MCP_TEST_INSTANCE"},
 		modes:      modes,
 		commands:   commandNames,
 		built:      true,
@@ -128,7 +130,7 @@ func TestStalenessPassesOnTheFixture(t *testing.T) {
 	}
 	joined := strings.Join(r.read, "\n")
 	for _, want := range []string{"package map: 22 listed paths, 23 packages", "§8 tool counts: 25 table rows",
-		"README tool table: 10 rows", "prose counts: 1 numbers", "setup blocks: 2 modes", "settings: 10 variables"} {
+		"README tool table: 10 rows", "prose counts: 1 numbers", "setup blocks: 2 modes", "settings: 11 variables"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("the report does not say %q:\n%s", want, joined)
 		}
@@ -165,6 +167,12 @@ func TestStalenessRefuses(t *testing.T) {
 		{"a documented variable nothing reads", func(in *stalenessInputs) {
 			in.docs[stalenessConfigDoc] += "| `GITLAB_MCP_OLD` | x |\n"
 		}, "documents GITLAB_MCP_OLD, which the server does not read"},
+		{"a development override in the configuration document", func(in *stalenessInputs) {
+			in.docs[stalenessConfigDoc] += "| `GITLAB_MCP_TEST_INSTANCE` | x |\n"
+		}, "documents GITLAB_MCP_TEST_INSTANCE, a development override that belongs in docs/development.md only"},
+		{"an undocumented development override", func(in *stalenessInputs) {
+			in.docs[stalenessDevDoc] = strings.ReplaceAll(in.docs[stalenessDevDoc], "GITLAB_MCP_TEST_INSTANCE", "the override")
+		}, "docs/development.md does not document the development override GITLAB_MCP_TEST_INSTANCE"},
 		{"an undocumented gate", func(in *stalenessInputs) {
 			in.commands = append(in.commands, "newgate")
 		}, "does not name the newgate gate"},

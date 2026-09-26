@@ -76,8 +76,6 @@ type statusSettings struct {
 	EnableDestructive bool     `json:"enable_destructive"`
 	Toolsets          []string `json:"toolsets"`
 	WriteNamespaces   int      `json:"write_namespaces"`
-	CAFile            bool     `json:"ca_file"`
-	AllowHTTP         bool     `json:"allow_http"`
 	HTTPTimeout       string   `json:"http_timeout"`
 	LogLevel          string   `json:"log_level"`
 	LogFormat         string   `json:"log_format"`
@@ -94,9 +92,9 @@ type statusProbe struct {
 // masker registers what identifies this setup, so every line printed
 // masks it the same way.
 //
-// When the settings could not be resolved, the instance as configured is
-// still registered, so an error naming it (http refused, say) prints
-// masked like every other line.
+// When the settings could not be resolved, the test instance as set is
+// still registered, so an error naming it prints masked like every
+// other line.
 func masker(s *app.Settings, rawInstance string) *redact.Masker {
 	m := redact.NewMasker()
 	if s == nil {
@@ -162,8 +160,8 @@ func newStatusReport(ctx context.Context, cfg config.Config, s *app.Settings, pr
 		Settings: statusSettings{
 			ReadOnly: cfg.ReadOnly, EnableShip: cfg.EnableShip, EnableDestructive: cfg.EnableDestructive,
 			Toolsets: orEmpty(cfg.Toolsets), WriteNamespaces: len(cfg.WriteNamespaces),
-			CAFile: cfg.CAFile != "", AllowHTTP: cfg.AllowHTTP, HTTPTimeout: cfg.HTTPTimeout.String(),
-			LogLevel: string(cfg.LogLevel), LogFormat: string(cfg.LogFormat),
+			HTTPTimeout: cfg.HTTPTimeout.String(),
+			LogLevel:    string(cfg.LogLevel), LogFormat: string(cfg.LogFormat),
 		},
 		Profiles: []string{},
 	}
@@ -289,7 +287,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, env func(string) string)
 	if err == nil {
 		s, err = app.Resolve(cfg, app.Options{Env: env, Keyring: keyringBackend, Warn: warnTo(stderr)})
 	}
-	m := masker(s, cfg.Instance)
+	m := masker(s, env(config.EnvTestInstance))
 	code := 1
 	if err != nil {
 		r.Reason = orNil(err.Error())
@@ -320,7 +318,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer, env func(string) string)
 	var warnings []string
 	s, err := app.Resolve(cfg, app.Options{Env: env, Keyring: keyringBackend,
 		Warn: func(msg string) { warnings = append(warnings, msg) }})
-	d := &doctor{w: stdout, m: masker(s, cfg.Instance)}
+	d := &doctor{w: stdout, m: masker(s, env(config.EnvTestInstance))}
 	d.printf("%s\n", version.Info())
 	if err != nil {
 		d.report(false, "instance", err.Error())
@@ -491,9 +489,6 @@ func (d *doctor) reach(ctx context.Context, cfg config.Config, s *app.Settings) 
 	detail := "the instance answers"
 	if s.Instance.Scheme() == "https" {
 		detail = "certificate trusted"
-		if cfg.CAFile != "" {
-			detail += " (with " + config.EnvCAFile + ")"
-		}
 	}
 	d.report(true, label, detail)
 	return true
@@ -503,8 +498,8 @@ func (d *doctor) reach(ctx context.Context, cfg config.Config, s *app.Settings) 
 // the host names or the addresses the error carries.
 func unreachable(err error) string {
 	if redact.IsCertificateError(err) {
-		return "the instance's certificate is not trusted: set " + config.EnvCAFile +
-			" to the PEM bundle of the authority that signed it"
+		return "the instance's certificate is not trusted: a proxy that inspects TLS needs its authority " +
+			"in this machine's trust store"
 	}
 	return "the instance could not be reached: " + redact.NetError(err)
 }

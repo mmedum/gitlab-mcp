@@ -7,20 +7,20 @@ Start with:
 gitlab-mcp doctor
 ```
 
-`doctor` checks, in order: the instance, TLS, the sign-in, the version
-and edition, the application the token was issued to, the granted
+`doctor` checks, in order: the instance (always gitlab.com), TLS, the
+sign-in, the version and edition, the application the token was issued to, the granted
 scopes, and one call to `/user`. It stops at the first failure a later
 check depends on. Each check prints a line, and a failure prints what
 it found beneath it:
 
 ```text
 [ok  ] instance
-       https://{host 1} (self-managed)
+       https://gitlab.com (gitlab.com)
 [FAIL] TLS
        the instance could not be reached: lookup: no such host
 
 1 problem(s).
-redacted: 1 host
+redacted: nothing
 ```
 
 The sections below are keyed by the check that fails. Run `doctor`
@@ -29,8 +29,8 @@ the client may not pass your shell's environment, and `doctor` checks
 what it is given. `gitlab-mcp status` shows the settings it read.
 
 Tool errors read `[class] message`. `[auth]` means the sign-in,
-`[forbidden]` your role or a project rule, and `[unsupported]` the
-instance. `docs/architecture.md` §6.5 lists every class.
+`[forbidden]` your role or a project rule, and `[unsupported]` a route
+your account's tier lacks. `docs/architecture.md` §6.5 lists every class.
 
 ## Login fails with `invalid_client`
 
@@ -41,8 +41,7 @@ gitlab-mcp: login failed: GitLab refused the application as a public client (inv
 The application was saved with **Confidential** ticked, which GitLab
 does by default. Open it in GitLab, untick Confidential, save, and log
 in again; the application id does not change. If it was already
-unticked, the id is wrong or belongs to another instance: check
-`--client-id` and `--instance`.
+unticked, the id is wrong: check `--client-id`.
 
 If it starts happening to a sign-in that worked, somebody ticked the
 box since. `doctor` then fails on `sign-in` with the same text.
@@ -123,68 +122,37 @@ Related messages:
   unavailable at login and the token is in a file. It works; the
   warning is deliberate. Log in again once a keyring is available.
 
-## The certificate is not trusted
-
-```text
-[FAIL] TLS
-       the instance's certificate is not trusted: set GITLAB_MCP_CA_FILE to the PEM bundle of the authority that signed it
-```
-
-The instance uses a certificate from a private or self-signed
-authority. Set `GITLAB_MCP_CA_FILE` to that authority's PEM file (your
-IT department's root, or the instance's own certificate if it is
-self-signed). It is added to the system's roots. Once it works,
-`doctor` says `certificate trusted (with GITLAB_MCP_CA_FILE)`.
-
-A file that cannot be read stops every command before `doctor` runs;
-one with no PEM certificate in it fails on `instance`, naming the
-setting.
-
-## The instance cannot be reached
+## gitlab.com cannot be reached
 
 ```text
 [FAIL] TLS
        the instance could not be reached: lookup: no such host
 ```
 
-or `dial: ... connection refused`, or `timed out`. Check the URL in
-`GITLAB_MCP_INSTANCE` or `--instance` first: the base URL, such as
-`https://gitlab.example.com`, not a page inside it.
+or `dial: ... connection refused`, or `timed out`. Behind a proxy, set
+`HTTPS_PROXY` (and `NO_PROXY` for anything that must bypass it). Set
+them in the MCP client's `env` block too: the client starts the server
+with its own environment, and a proxy that works in your shell may be
+missing there. `doctor` run from the shell passing while the client
+fails is the sign.
 
-Behind a proxy, set `HTTPS_PROXY` (and `NO_PROXY` for anything that
-must bypass it). Set them in the MCP client's `env` block too: the
-client starts the server with its own environment, and a proxy that
-works in your shell may be missing there. `doctor` run from the shell
-passing while the client fails is the sign.
-
-## `http` is refused
-
-```text
-[FAIL] instance
-       GITLAB_MCP_INSTANCE: http is refused for ... because the token would travel in the clear; use https, or set GITLAB_MCP_ALLOW_HTTP=true to accept that
-```
-
-Use the `https` URL. Only if the instance truly has none, and you
-accept that the token crosses the network in the clear, set
-`GITLAB_MCP_ALLOW_HTTP=true`. Loopback addresses are allowed without it.
+If instead `doctor` says the certificate is not trusted, something
+between you and gitlab.com presented its own: a proxy that inspects
+TLS needs its authority in this machine's trust store.
 
 ## The token is withheld: another instance
 
 ```text
 [FAIL] sign-in
-       profile "default" is signed in to another instance; name that instance's profile with --profile, or run `gitlab-mcp login` to sign this profile in to this one
+       profile "default" is signed in to another instance than gitlab.com; run `gitlab-mcp login` to sign it in to this one
 ```
 
-Every tool answers `[auth]` with the same text. The instance named by
-flag or environment is not the one the profile signed in to, and a
-token is only ever sent to the instance that issued it.
-
-The usual cause is the Claude Desktop bundle's instance field left at
-`https://gitlab.com` for a profile signed in to a self-managed
-instance, or the other way round. Set the instance to match the
-profile, or name the profile that matches the instance with
-`GITLAB_MCP_PROFILE`. With no instance set at all, the profile's is
-used.
+Every tool answers `[auth]` with the same text. The profile's token
+was issued by another instance, and a token is only ever sent to the
+instance that issued it. The profile was made by a build that served
+other instances, or against the test instance of
+`docs/development.md`. Run `gitlab-mcp login` to sign it in to
+gitlab.com.
 
 ## Not signed in
 
@@ -207,24 +175,20 @@ and config directory you logged in with.
 
 In `doctor` it shows on `/user`. The server already waited: it retries
 a 429 up to four attempts, honoring `Retry-After`, within the call's
-deadline. gitlab.com limits notes to 60 a minute; a self-managed
-instance has whatever limits its administrator set. Wait, and ask the
+deadline. gitlab.com limits notes to 60 a minute. Wait, and ask the
 model to make fewer calls. `get_me` reports the last rate-limit reading
 it saw.
 
 ## `[unsupported]`, or a tool is missing
 
 ```text
-[unsupported] this GitLab instance has no API route for ...: it may be older than the feature, or lack the edition or tier it needs
+[unsupported] GitLab has no API route for ... here: it may need an edition or tier this account lacks
 ```
 
-`doctor`'s `version and edition` line says what the instance is, such
-as `GitLab <version>, Community Edition`. Some routes exist only in the
-Enterprise Edition or a paid tier, and some only from a given GitLab
-version. The server reads the version at start and does not register a
-tool whose route is newer than the instance. If the version could not
-be read at start, nothing is left out on that account, and a call the
-instance cannot serve answers `[unsupported]` instead.
+Some routes exist only in a paid tier, and a call to one from a Free
+namespace answers `[unsupported]`. gitlab.com runs the newest release,
+so no tool is left out for its version; `doctor`'s `version and
+edition` line is information.
 
 A tool can also be missing because a setting leaves it unregistered:
 read-only mode, Ship and Destructive off, a toolset not named.
@@ -241,4 +205,4 @@ Check your role in the project.
 Use the bug form. Paste `doctor` and `status` output, `--version`, and
 a log at `GITLAB_MCP_LOG_LEVEL=debug`: all mask or leave out what
 identifies you. Never paste a token, a tool result or anything from
-your instance; `docs/security.md` has the full list.
+your projects; `docs/security.md` has the full list.

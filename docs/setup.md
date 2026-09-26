@@ -1,11 +1,12 @@
 # Setting up sign-in
 
-You bring your own OAuth application. The binary ships no client id, and
+The server works against gitlab.com only. You bring your own OAuth
+application. The binary ships no client id, and
 there are no personal access tokens and no device flow. Register the
 application once, run `gitlab-mcp login` once, and the token lives in
 your OS keyring from then on.
 
-The application form takes the same four values everywhere. The blocks
+The application form takes four values. The blocks
 below are generated from `internal/scopes` and `make staleness` compares
 them with the code exactly, so what you copy here is what `login` sends.
 
@@ -47,8 +48,7 @@ Why each value is what it is:
   says what that means. If you will use both modes, tick both scopes on
   the one application.
 
-Leave "Trusted" and the other boxes as they are unless you are an
-administrator (below).
+Leave "Trusted" and the other boxes as they are.
 
 ## gitlab.com
 
@@ -57,30 +57,11 @@ administrator (below).
 3. Save. Copy the **Application ID** GitLab shows. There is no secret to
    copy, because the application is not confidential.
 
-## Self-managed
-
-The same steps work on any instance whose administrator has not turned
-off user applications: your avatar → **Edit profile** → **Applications**
-on your instance. A group owner can register one under the group's
-**Settings** → **Applications** instead, for the group's members to
-share.
-
-### An administrator registering one application for everyone
-
-On an instance with many users, an administrator can register a single
-application and hand out its id:
-
-1. **Admin area** → **Applications** → **New application**.
-2. Fill in the block for the mode people will use (tick both scopes if
-   some use read-only mode and some do not).
-3. Tick **Trusted** if people should not see GitLab's authorization
-   screen on each login. Leave **Confidential** unchecked.
-4. Publish the **Application ID** internally. It is not a secret, but it
-   is not something to paste into a public issue either.
-
-Each person still runs `login` with that id, and each gets a token of
-their own that acts as them. Deleting or renewing the application signs
-out everyone who uses it.
+A group owner can register one under the group's **Settings** →
+**Applications** instead, for the group's members to share. Each person
+still runs `login` with that id and gets a token of their own that acts
+as them. Deleting or renewing the application signs out everyone who
+uses it.
 
 ## Log in
 
@@ -88,25 +69,22 @@ From a terminal, once per machine and profile:
 
 ```bash
 gitlab-mcp login --client-id <application id>
-# a self-managed instance:
-gitlab-mcp login --client-id <application id> --instance https://gitlab.example.com
 # read-only mode:
 gitlab-mcp login --client-id <application id> --read-only
 ```
 
-`login` prints the profile, the instance and the scopes it will ask
-for, opens your browser at GitLab's authorization page, and waits up to
+`login` prints the profile and the scopes it will ask for, opens your browser at GitLab's authorization page, and waits up to
 ten minutes for the redirect back. It then stores the token pair in the
 OS keyring, reads who you are, and records the instance, the
 application id, your username and the scopes GitLab **granted** in the
 profile. If GitLab granted less than was asked, it says so.
 
-The instance and application id are remembered, so later runs of the
-server need neither. `--profile <name>` keeps a second sign-in beside
-the first, such as gitlab.com and a self-managed instance:
+The application id is remembered, so later runs of the server do not
+need it. `--profile <name>` keeps a second sign-in beside the first,
+such as a second gitlab.com account:
 
 ```bash
-gitlab-mcp login --profile work --client-id <application id> --instance https://gitlab.example.com
+gitlab-mcp login --profile work --client-id <application id>
 ```
 
 and the server then runs with `GITLAB_MCP_PROFILE=work`.
@@ -122,8 +100,8 @@ gitlab-mcp doctor
 ```
 
 `doctor` walks what goes wrong at setup, in the order it goes wrong:
-the instance, TLS, the sign-in, the version and edition, the
-application the token was issued to, the granted scopes, and one call
+the connection to gitlab.com, TLS, the sign-in, the version and
+edition, the application the token was issued to, the granted scopes, and one call
 as you. Each line is `[ok  ]` or `[FAIL]` with what to do. Hostnames,
 the application id and your username are masked as `{host 1}`,
 `{client-id 1}` and `{user 1}`, so the output is safe to paste into an
@@ -162,7 +140,7 @@ GitLab refused the application as a public client (invalid_client). Open the app
 
 Open the application, untick **Confidential**, save, and log in again.
 Unticking it does not change the application id. If the box was already
-unticked, the id you passed is wrong or belongs to another instance.
+unticked, the id you passed is wrong.
 
 ## Removing it
 

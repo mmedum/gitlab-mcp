@@ -261,7 +261,7 @@ release-rehearse: ## Build the whole release locally, unsigned (manual)
 	$(GO) run $(GORELEASER) release --snapshot --clean --skip=publish,sign,sbom
 
 .PHONY: live
-live: build ## Drive the built binary against a scratch project (docs/development.md)
+live: build ## Drive the built binary against a scratch project on gitlab.com (docs/development.md)
 	$(GO) run -tags=live ./scripts/livegitlab -bin $(BIN) $(LIVE_ARGS)
 
 # Not in `check`: it spends money and is not deterministic. Its

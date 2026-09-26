@@ -42,7 +42,7 @@ const (
 	ClassRateLimited Class = "rate_limited"
 	// ClassUnavailable: a transient upstream failure.
 	ClassUnavailable Class = "unavailable"
-	// ClassUnsupported: the instance lacks the route, edition or tier, or
+	// ClassUnsupported: the account's tier or edition lacks the route, or
 	// the API cannot do this.
 	ClassUnsupported Class = "unsupported"
 	// ClassAmbiguousOutcome: a create may or may not have happened (§4.5).

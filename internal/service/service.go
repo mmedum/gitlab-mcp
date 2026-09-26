@@ -23,10 +23,9 @@ import (
 type Options struct {
 	// Client is nil when nobody is signed in; every call then answers
 	// [auth].
-	Client   *gapi.Client
-	Config   config.Config
-	Metadata instance.Metadata
-	Granted  []string
+	Client  *gapi.Client
+	Config  config.Config
+	Granted []string
 }
 
 // Registered is one tool the server registered, for get_me and
@@ -46,7 +45,8 @@ type Service struct {
 
 	mu         sync.RWMutex
 	registered []Registered
-	// meta is the instance's version and edition, zero until known.
+	// meta is the instance's version and edition, zero until get_me
+	// reads them.
 	meta instance.Metadata
 }
 
@@ -54,11 +54,9 @@ type Service struct {
 // configuration when there is no client, so resolve_url can still say
 // what a URL is before anyone signs in.
 func New(o Options) *Service {
-	s := &Service{client: o.Client, cfg: o.Config, meta: o.Metadata, granted: o.Granted}
+	s := &Service{client: o.Client, cfg: o.Config, granted: o.Granted, inst: o.Config.Target()}
 	if o.Client != nil {
 		s.inst = o.Client.Instance()
-	} else if o.Config.Instance != "" {
-		s.inst, _ = instance.Parse(o.Config.Instance, o.Config.AllowHTTP)
 	}
 	return s
 }

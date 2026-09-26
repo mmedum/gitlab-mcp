@@ -1,8 +1,8 @@
 //go:build live
 
-// Command livegitlab drives the built server over stdio against a real
-// GitLab instance, which is the check no fake can make: that the tools
-// behave against GitLab itself (docs/architecture.md §9.1, §13).
+// Command livegitlab drives the built server over stdio against
+// gitlab.com, which is the check no fake can make: that the tools behave
+// against GitLab itself (docs/architecture.md §9.1, §13).
 //
 // It reads only what it wrote. It creates two private scratch projects
 // named for the run under the group -namespace names, fills them with its
@@ -19,7 +19,7 @@
 // one of them is text this driver wrote. Read the transcript before
 // sharing it.
 //
-//	make live LIVE_ARGS="-instance https://gitlab.example.com -namespace example-group/scratch"
+//	make live LIVE_ARGS="-namespace example-group/scratch"
 //
 // It records what it sent, per tool option, in
 // testdata/live-cover-record.tsv, which `gates live-cover` reads.
@@ -45,7 +45,6 @@ import (
 // options are what one run was asked to do.
 type options struct {
 	binary    string
-	instance  string
 	namespace string
 	profile   string
 	keep      bool
@@ -55,7 +54,6 @@ type options struct {
 func main() {
 	var o options
 	flag.StringVar(&o.binary, "bin", "./gitlab-mcp", "the server binary to drive")
-	flag.StringVar(&o.instance, "instance", "", "the instance, as GITLAB_MCP_INSTANCE takes it (required)")
 	flag.StringVar(&o.namespace, "namespace", "", "the group the scratch projects are created in, which you own (required)")
 	flag.StringVar(&o.profile, "profile", "", "the signed-in profile to use; empty takes the default")
 	flag.BoolVar(&o.keep, "keep", false, "leave the scratch projects in place for a look afterwards")
@@ -63,8 +61,8 @@ func main() {
 	flag.Parse()
 
 	p := redact.NewPrinter(redact.NewRedactor(false))
-	if o.instance == "" || o.namespace == "" {
-		p.Fail("livegitlab: -instance and -namespace are required; the run creates its projects in -namespace and reads nothing else")
+	if o.namespace == "" {
+		p.Fail("livegitlab: -namespace is required; the run creates its projects in -namespace and reads nothing else")
 		os.Exit(2)
 	}
 	err := run(context.Background(), o, p)
@@ -78,7 +76,9 @@ func main() {
 func run(ctx context.Context, o options, p *redact.Printer) error {
 	red := p.Redactor()
 	red.Known(redact.KindPath, o.namespace)
-	env := map[string]string{config.EnvInstance: o.instance}
+	// Built from nothing, so a test instance set in the shell cannot
+	// redirect the run: it is always gitlab.com.
+	env := map[string]string{}
 	if o.profile != "" {
 		env[config.EnvProfile] = o.profile
 	}
@@ -141,7 +141,7 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 		return fmt.Errorf("seed the scratch projects: %w", err)
 	}
 
-	serverEnv := []string{config.EnvInstance + "=" + o.instance, config.EnvLogLevel + "=info"}
+	serverEnv := []string{config.EnvLogLevel + "=info"}
 	if o.profile != "" {
 		serverEnv = append(serverEnv, config.EnvProfile+"="+o.profile)
 	}

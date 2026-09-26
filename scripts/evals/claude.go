@@ -46,8 +46,7 @@ func serverEnv(ctx context.Context, w *world) ([]string, func(), error) {
 		return nil, nil, err
 	}
 	env := []string{
-		config.EnvInstance + "=" + w.srv.URL,
-		config.EnvAllowHTTP + "=true",
+		config.EnvTestInstance + "=" + w.srv.URL,
 		config.EnvClientID + "=" + gitlabtest.ClientID,
 		config.EnvProfile + "=evals",
 		config.EnvConfigDir + "=" + dir,

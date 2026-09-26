@@ -103,7 +103,7 @@ type Application struct {
 	// ClientID is the application id GitLab shows. The application is
 	// public, so there is no secret.
 	ClientID string
-	// HTTPClient carries the transport: a private CA, a proxy. It is
+	// HTTPClient carries the transport and its proxy. It is
 	// copied; redirects are refused and Timeout applied.
 	HTTPClient *http.Client
 	// Timeout bounds one call. Zero means DefaultHTTPTimeout.

@@ -63,9 +63,10 @@ type stalenessInputs struct {
 	// and relative to the root; hasGo says which directories hold Go.
 	packages []string
 	hasGo    func(rel string) bool
-	// configVars are the variables internal/config says the server
-	// reads.
-	configVars []string
+	// configVars are the variables internal/config says a person
+	// running the server may set; devVars are its development
+	// overrides.
+	configVars, devVars []string
 	// modes are the scope modes, each with the setup block
 	// internal/scopes generates for it.
 	modes []stalenessMode
@@ -109,7 +110,7 @@ func stalenessCheck(in stalenessInputs) stalenessReport {
 	n, p = stalenessPaths(in.docs, in.exists, in.topLevel)
 	r.add(fmt.Sprintf("paths: %d repository paths named", n), p)
 
-	n, p = stalenessEnv(in.docs[stalenessConfigDoc], in.configVars)
+	n, p = stalenessEnv(in.docs[stalenessConfigDoc], in.docs[stalenessDevDoc], in.configVars, in.devVars)
 	r.add(fmt.Sprintf("settings: %d variables", n), p)
 
 	n, p = stalenessGates(in.docs[stalenessDevDoc], in.commands)
@@ -185,6 +186,7 @@ func stalenessGather(root string, args []string) (stalenessInputs, error) {
 	}
 	in.built = stalenessBuilt(root)
 	in.configVars = config.EnvVars()
+	in.devVars = config.DevVars()
 	for _, m := range scopes.Modes() {
 		in.modes = append(in.modes, stalenessMode{Name: string(m.Mode), Block: scopes.SetupBlock(m.Mode)})
 	}
@@ -441,12 +443,19 @@ func stalenessPathLike(s string) (string, bool) {
 var stalenessEnvRef = regexp.MustCompile(`\b` + config.EnvPrefix + `[A-Z0-9_]*[A-Z0-9]\b`)
 
 // stalenessEnv holds docs/configuration.md to the variables
-// internal/config says the server reads, both ways.
-func stalenessEnv(doc string, vars []string) (int, []string) {
+// internal/config says the server reads, both ways, and the development
+// overrides to docs/development.md alone: a person configuring the
+// server is never offered one.
+func stalenessEnv(doc, devDoc string, vars, devVars []string) (int, []string) {
 	if doc == "" {
 		return 0, []string{stalenessConfigDoc + " is missing, and it is where every setting is documented"}
 	}
 	problems := gatekit.Floor("variables in internal/config.Vars", len(vars), 10)
+	for _, v := range devVars {
+		if !slices.Contains(stalenessEnvRef.FindAllString(devDoc, -1), v) {
+			problems = append(problems, stalenessDevDoc+" does not document the development override "+v)
+		}
+	}
 	documented := map[string]bool{}
 	for _, v := range stalenessEnvRef.FindAllString(doc, -1) {
 		documented[v] = true
@@ -457,11 +466,14 @@ func stalenessEnv(doc string, vars []string) (int, []string) {
 		}
 	}
 	for _, v := range slices.Sorted(maps.Keys(documented)) {
-		if !slices.Contains(vars, v) {
+		switch {
+		case slices.Contains(devVars, v):
+			problems = append(problems, stalenessConfigDoc+" documents "+v+", a development override that belongs in "+stalenessDevDoc+" only")
+		case !slices.Contains(vars, v):
 			problems = append(problems, stalenessConfigDoc+" documents "+v+", which the server does not read")
 		}
 	}
-	return len(vars), problems
+	return len(vars) + len(devVars), problems
 }
 
 var stalenessGateRef = regexp.MustCompile("`(?:go run \\./scripts/)?gates ([a-z][a-z0-9-]*)")

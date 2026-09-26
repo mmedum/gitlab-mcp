@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
 	"github.com/mmedum/gitlab-mcp/internal/service"
 	"github.com/mmedum/gitlab-mcp/internal/tools"
@@ -80,8 +79,8 @@ func flags(cfg config.Config) []flag {
 }
 
 // instructionsFor is the instruction text for one configuration.
-func instructionsFor(cfg config.Config, meta instance.Metadata, granted []string) string {
-	registered := tools.Surface(cfg, meta, granted)
+func instructionsFor(cfg config.Config, granted []string) string {
+	registered := tools.Surface(cfg, granted)
 	names := make([]string, 0, len(registered))
 	for _, r := range registered {
 		names = append(names, r.Name)
@@ -102,7 +101,7 @@ func instructionsFor(cfg config.Config, meta instance.Metadata, granted []string
 
 	var more []string
 	for _, f := range flags(cfg) {
-		added := len(tools.Surface(f.apply(cfg), meta, granted)) - len(registered)
+		added := len(tools.Surface(f.apply(cfg), granted)) - len(registered)
 		if added > 0 {
 			more = append(more, fmt.Sprintf("%s adds %s (%d tools)", f.setting, f.adds, added))
 		}

@@ -95,7 +95,7 @@ func (s *Service) Me(ctx context.Context) (model.Me, error) {
 }
 
 // metadata is the instance's version and edition as far as they are
-// known: from startup, or from the first get_me that read them.
+// known: from the first get_me that read them.
 func (s *Service) metadata() instance.Metadata {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

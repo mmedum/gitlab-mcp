@@ -43,7 +43,7 @@ func (s *sleeps) all() []time.Duration {
 
 func mustInstance(t *testing.T, raw string) instance.Instance {
 	t.Helper()
-	inst, err := instance.Parse(raw, false)
+	inst, err := instance.Parse(raw)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,6 @@ import (
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
 )
 
 // The reads against the in-memory instance. Expected values are the
@@ -440,10 +439,8 @@ func TestSurfaceCounts(t *testing.T) {
 		{"full", FullSurface(config.Config{}), 14},
 	}
 	for _, c := range cases {
-		if got := len(Surface(c.cfg, zeroMeta, nil)); got != c.want {
+		if got := len(Surface(c.cfg, nil)); got != c.want {
 			t.Errorf("%s: %d tools, want %d", c.name, got, c.want)
 		}
 	}
 }
-
-var zeroMeta instance.Metadata

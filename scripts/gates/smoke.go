@@ -50,12 +50,12 @@ func smoke(out io.Writer, args []string) error {
 	return runSmoke(out, executable(args[0]), smokeEnv(cfgDir), surfaceFloor)
 }
 
-// smokeEnv is a configuration no real account can be behind: a host
-// under .invalid, a profile named for this gate, and a configuration
-// directory made for the run.
+// smokeEnv is a configuration no real account can be behind: the test
+// instance on a loopback port nothing listens on, a profile named for
+// this gate, and a configuration directory made for the run.
 func smokeEnv(cfgDir string) []string {
 	return []string{
-		"GITLAB_MCP_INSTANCE=https://gitlab.example.invalid",
+		"GITLAB_MCP_TEST_INSTANCE=http://127.0.0.1:1",
 		"GITLAB_MCP_PROFILE=gates-smoke",
 		"GITLAB_MCP_CONFIG_DIR=" + cfgDir,
 		"GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME=true",

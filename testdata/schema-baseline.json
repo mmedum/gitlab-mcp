@@ -795,7 +795,7 @@
             "additionalProperties": false,
             "properties": {
               "known": {
-                "description": "False until GitLab sent RateLimit headers; many instances never do",
+                "description": "False until GitLab sent RateLimit headers, which not every response carries",
                 "type": "boolean"
               },
               "limit": {

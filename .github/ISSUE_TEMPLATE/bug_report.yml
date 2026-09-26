@@ -20,7 +20,7 @@ body:
         `doctor`, `status`, `--version` and a debug log **are** safe to
         paste, and a test holds that rather than hoping: the log carries
         the method, the tool, the outcome, the duration and a truncated id,
-        and `doctor` and `status` mask the instance host, namespaces, the
+        and `doctor` and `status` mask hosts, namespaces, the
         username and the application id.
   - type: textarea
     id: doctor
@@ -56,28 +56,11 @@ body:
       placeholder: "Claude Desktop, Claude Code, ... and its version"
     validations:
       required: true
-  - type: dropdown
-    id: instance-kind
-    attributes:
-      label: Instance
-      options:
-        - gitlab.com
-        - Self-managed, Community Edition
-        - Self-managed, Enterprise Edition
-        - GitLab Dedicated
-    validations:
-      required: true
-  - type: input
-    id: instance-version
-    attributes:
-      label: GitLab version
-      description: "For self-managed, the version `doctor` reports. Not the hostname."
-      placeholder: "18.4.1"
   - type: textarea
     id: flags
     attributes:
       label: Flags in effect
-      description: "GITLAB_MCP_READ_ONLY, GITLAB_MCP_ENABLE_SHIP, GITLAB_MCP_ENABLE_DESTRUCTIVE, GITLAB_MCP_TOOLSETS, and whether GITLAB_MCP_WRITE_NAMESPACES is set. Names and on/off only: not the instance URL, the application id or a namespace."
+      description: "GITLAB_MCP_READ_ONLY, GITLAB_MCP_ENABLE_SHIP, GITLAB_MCP_ENABLE_DESTRUCTIVE, GITLAB_MCP_TOOLSETS, and whether GITLAB_MCP_WRITE_NAMESPACES is set. Names and on/off only: not the application id or a namespace."
       render: text
   - type: textarea
     id: what
@@ -90,5 +73,5 @@ body:
     id: log
     attributes:
       label: Debug log
-      description: "Run with GITLAB_MCP_LOG_LEVEL=debug and paste stderr around the failure. It carries no instance content."
+      description: "Run with GITLAB_MCP_LOG_LEVEL=debug and paste stderr around the failure. It carries no GitLab content."
       render: text

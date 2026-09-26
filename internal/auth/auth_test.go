@@ -45,7 +45,7 @@ func (c *clock) Advance(d time.Duration) {
 
 func newApp(t *testing.T, srv *gitlabtest.Server, c *clock) *Application {
 	t.Helper()
-	inst, err := instance.Parse(srv.URL, false)
+	inst, err := instance.Parse(srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestTransportErrorsCarryNoURL(t *testing.T) {
 	}
 	addr := ln.Addr().String()
 	_ = ln.Close()
-	inst, err := instance.Parse("http://"+addr+"/example-group", false)
+	inst, err := instance.Parse("http://" + addr + "/example-group")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestTransportErrorsCarryNoURL(t *testing.T) {
 }
 
 func TestAnApplicationNeedsAnIDAndAnInstance(t *testing.T) {
-	inst, _ := instance.Parse("https://gitlab.example.com", false)
+	inst, _ := instance.Parse("https://gitlab.example.com")
 	for name, app := range map[string]*Application{
 		"no id":       {Instance: inst},
 		"no instance": {ClientID: gitlabtest.ClientID},
@@ -441,7 +441,7 @@ func (f failWith) RoundTrip(*http.Request) (*http.Response, error) { return nil,
 // looked up, and a certificate for the wrong host names both hosts.
 // Neither name may reach the error text, which reaches logs.
 func TestTransportErrorsCarryNoHostName(t *testing.T) {
-	inst, err := instance.Parse("https://canary-host.example.net", false)
+	inst, err := instance.Parse("https://canary-host.example.net")
 	if err != nil {
 		t.Fatal(err)
 	}

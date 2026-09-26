@@ -129,7 +129,7 @@ type WriteScope struct {
 
 // RateReading is the last rate-limit reading GitLab sent (§2.13).
 type RateReading struct {
-	Known     bool       `json:"known" jsonschema:"False until GitLab sent RateLimit headers; many instances never do"`
+	Known     bool       `json:"known" jsonschema:"False until GitLab sent RateLimit headers, which not every response carries"`
 	Limit     int        `json:"limit"`
 	Remaining int        `json:"remaining"`
 	Reset     *time.Time `json:"reset"`

@@ -8,8 +8,9 @@
 // so a misconfigured server fails before it announces itself.
 //
 // Vars lists every variable. Define binds from it, and the staleness
-// gate holds docs/configuration.md against it, so a setting cannot be
-// added without being documented.
+// gate holds docs/configuration.md (and, for the development override,
+// docs/development.md) against it, so a setting cannot be added without
+// being documented.
 package config
 
 import (
@@ -18,12 +19,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
 	"github.com/mmedum/gitlab-mcp/internal/userconfig"
 )
@@ -32,9 +33,6 @@ import (
 // GITLAB_: CI jobs already set GITLAB_CI, GITLAB_USER_LOGIN and more
 // (§18 row 30).
 const EnvPrefix = "GITLAB_MCP_"
-
-// DefaultInstance is the instance used when none is configured.
-const DefaultInstance = "https://gitlab.com"
 
 // DefaultHTTPTimeout bounds one attempt at an API call.
 const DefaultHTTPTimeout = 60 * time.Second
@@ -59,11 +57,14 @@ type Var struct {
 	Doc string
 	// Switch marks a boolean: a bare --flag means true.
 	Switch bool
+	// Dev marks a development override: documented in
+	// docs/development.md rather than docs/configuration.md, and never
+	// offered to the people running the server.
+	Dev bool
 }
 
 // Variable names.
 const (
-	EnvInstance                  = EnvPrefix + "INSTANCE"
 	EnvProfile                   = EnvPrefix + "PROFILE"
 	EnvClientID                  = EnvPrefix + "CLIENT_ID"
 	EnvReadOnly                  = EnvPrefix + "READ_ONLY"
@@ -71,8 +72,6 @@ const (
 	EnvEnableDestructive         = EnvPrefix + "ENABLE_DESTRUCTIVE"
 	EnvToolsets                  = EnvPrefix + "TOOLSETS"
 	EnvWriteNamespaces           = EnvPrefix + "WRITE_NAMESPACES"
-	EnvCAFile                    = EnvPrefix + "CA_FILE"
-	EnvAllowHTTP                 = EnvPrefix + "ALLOW_HTTP"
 	EnvLogLevel                  = EnvPrefix + "LOG_LEVEL"
 	EnvLogFormat                 = EnvPrefix + "LOG_FORMAT"
 	EnvHTTPTimeout               = EnvPrefix + "HTTP_TIMEOUT"
@@ -82,12 +81,15 @@ const (
 	// and has no flag: a secret on a command line is visible to every
 	// process on the machine.
 	EnvRefreshToken = EnvPrefix + "REFRESH_TOKEN"
+	// EnvTestInstance points the server at a loopback stand-in for
+	// gitlab.com: the in-memory instance the tests, the evals and the
+	// smoke gate run. It has no flag and is refused for any other host,
+	// so it cannot send a token to a real one.
+	EnvTestInstance = EnvPrefix + "TEST_INSTANCE"
 )
 
 // Vars is every variable this server reads, in documentation order.
 var Vars = []Var{
-	{Name: EnvInstance, Flag: "instance", Default: DefaultInstance,
-		Doc: "the GitLab instance: gitlab.com or a self-managed base URL"},
 	{Name: EnvProfile, Flag: "profile",
 		Doc: "named sign-in profile; unset means \"default\""},
 	{Name: EnvClientID, Flag: "client-id",
@@ -102,10 +104,6 @@ var Vars = []Var{
 		Doc: "comma-separated optional toolsets: " + strings.Join(Toolsets, ", ") + ", or all"},
 	{Name: EnvWriteNamespaces, Flag: "write-namespaces",
 		Doc: "comma-separated groups or projects that writes are confined to; unset means anywhere"},
-	{Name: EnvCAFile, Flag: "ca-file",
-		Doc: "PEM file of extra certificate authorities to trust for the instance"},
-	{Name: EnvAllowHTTP, Flag: "allow-http", Default: "false", Switch: true,
-		Doc: "allow plain http to an instance that is not loopback; the token travels in the clear"},
 	{Name: EnvLogLevel, Flag: "log-level", Default: string(LogInfo),
 		Doc: "log level: debug, info, warn, error"},
 	{Name: EnvLogFormat, Flag: "log-format", Default: string(LogText),
@@ -118,13 +116,23 @@ var Vars = []Var{
 		Doc: "accept a config directory outside your home directory"},
 	{Name: EnvRefreshToken,
 		Doc: "a refresh token to use instead of the stored one (CI, automation)"},
+	{Name: EnvTestInstance, Dev: true,
+		Doc: "a loopback base URL that stands in for gitlab.com, for tests only"},
 }
 
-// EnvVars is every variable name, sorted.
-func EnvVars() []string {
-	out := make([]string, 0, len(Vars))
+// EnvVars is every variable a person running the server may set,
+// sorted: Vars less the development overrides.
+func EnvVars() []string { return names(false) }
+
+// DevVars is every development override, sorted.
+func DevVars() []string { return names(true) }
+
+func names(dev bool) []string {
+	var out []string
 	for _, v := range Vars {
-		out = append(out, v.Name)
+		if v.Dev == dev {
+			out = append(out, v.Name)
+		}
 	}
 	slices.Sort(out)
 	return out
@@ -173,9 +181,11 @@ const (
 
 // Config is the validated runtime configuration.
 type Config struct {
-	// Instance is the configured instance as given. internal/instance
-	// normalizes it; this package only refuses an empty one.
-	Instance string
+	// Instance is gitlab.com, or the loopback stand-in of
+	// GITLAB_MCP_TEST_INSTANCE. Zero means gitlab.com; use Target.
+	Instance instance.Instance
+	// TestInstance says GITLAB_MCP_TEST_INSTANCE is set.
+	TestInstance bool
 	// Profile is the profile named, or empty for "default".
 	Profile string
 	// ClientID overrides the profile's stored OAuth application id.
@@ -193,15 +203,20 @@ type Config struct {
 	// WriteNamespaces confine Write, Ship and Destructive (§4.7). Empty
 	// means no confinement.
 	WriteNamespaces []string
-	// CAFile is an extra trust bundle, or empty.
-	CAFile string
-	// AllowHTTP permits http to a host that is not loopback.
-	AllowHTTP   bool
-	LogLevel    LogLevel
-	LogFormat   LogFormat
-	HTTPTimeout time.Duration
+	LogLevel        LogLevel
+	LogFormat       LogFormat
+	HTTPTimeout     time.Duration
 	// ConfigDir is the resolved base directory for profiles.
 	ConfigDir userconfig.Dir
+}
+
+// Target is the instance this configuration talks to: gitlab.com unless
+// the test override names another.
+func (c Config) Target() instance.Instance {
+	if c.Instance.IsZero() {
+		return instance.GitLabCom
+	}
+	return c.Instance
 }
 
 // Mode is the scope mode this configuration is in.
@@ -293,10 +308,9 @@ func (s *Settings) Build() (Config, error) {
 		}
 	}
 
-	c.Instance = strings.TrimSpace(s.get(EnvInstance))
-	if c.Instance == "" {
-		add(fmt.Errorf("%w: %s is empty", ErrInvalid, EnvInstance))
-	}
+	var err error
+	c.Instance, c.TestInstance, err = parseTestInstance(s.get(EnvTestInstance))
+	add(err)
 
 	c.Profile = strings.TrimSpace(s.get(EnvProfile))
 	if c.Profile != "" {
@@ -309,7 +323,6 @@ func (s *Settings) Build() (Config, error) {
 		add(fmt.Errorf("%w: %s is not an application id", ErrInvalid, EnvClientID))
 	}
 
-	var err error
 	c.ReadOnly, err = parseBool(EnvReadOnly, s.get(EnvReadOnly))
 	add(err)
 	c.EnableShip, err = parseBool(EnvEnableShip, s.get(EnvEnableShip))
@@ -330,11 +343,6 @@ func (s *Settings) Build() (Config, error) {
 	c.Toolsets, err = parseToolsets(s.get(EnvToolsets))
 	add(err)
 	c.WriteNamespaces, err = parseNamespaces(s.get(EnvWriteNamespaces))
-	add(err)
-
-	c.CAFile, err = parseCAFile(s.get(EnvCAFile))
-	add(err)
-	c.AllowHTTP, err = parseBool(EnvAllowHTTP, s.get(EnvAllowHTTP))
 	add(err)
 
 	c.LogLevel = LogLevel(strings.ToLower(strings.TrimSpace(s.get(EnvLogLevel))))
@@ -442,21 +450,24 @@ func parseNamespaces(v string) ([]string, error) {
 	return slices.Compact(out), nil
 }
 
-// parseCAFile refuses a file that cannot be read now, because a typo
-// accepted at start surfaces later as every call failing TLS.
-func parseCAFile(v string) (string, error) {
-	path := strings.TrimSpace(v)
-	if path == "" {
-		return "", nil
+// parseTestInstance reads the development override. Unset means
+// gitlab.com. Set, it must be loopback: the override exists for the
+// in-memory instance, and a token sent anywhere else would reach a
+// host that did not issue it.
+func parseTestInstance(v string) (instance.Instance, bool, error) {
+	raw := strings.TrimSpace(v)
+	if raw == "" {
+		return instance.GitLabCom, false, nil
 	}
-	info, err := os.Stat(path)
+	inst, err := instance.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s %q cannot be read: %w", ErrInvalid, EnvCAFile, path, err)
+		return instance.Instance{}, false, fmt.Errorf("%w: %s: %w", ErrInvalid, EnvTestInstance, err)
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("%w: %s %q is a directory", ErrInvalid, EnvCAFile, path)
+	if !instance.IsLoopback(inst.Hostname()) {
+		return instance.Instance{}, false, fmt.Errorf("%w: %s must be a loopback address (127.0.0.1, ::1 or localhost); "+
+			"this server serves gitlab.com only", ErrInvalid, EnvTestInstance)
 	}
-	return path, nil
+	return inst, true, nil
 }
 
 func parseTimeout(v string) (time.Duration, error) {

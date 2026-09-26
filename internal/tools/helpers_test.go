@@ -31,7 +31,6 @@ type harnessOptions struct {
 	cfg      config.Config
 	logger   *slog.Logger
 	noClient bool
-	meta     instance.Metadata
 	granted  []string
 	defs     []definition // nil: every definition
 }
@@ -39,7 +38,7 @@ type harnessOptions struct {
 func newHarness(t *testing.T, o harnessOptions) *harness {
 	t.Helper()
 	gl := gitlabtest.New(t, o.gl)
-	inst, err := instance.Parse(gl.URL, false)
+	inst, err := instance.Parse(gl.URL)
 	if err != nil {
 		t.Fatalf("instance: %v", err)
 	}
@@ -52,16 +51,16 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 		}
 	}
 	cfg := o.cfg
-	if cfg.Instance == "" {
-		cfg.Instance = gl.URL
+	if cfg.Instance.IsZero() {
+		cfg.Instance = inst
 	}
-	svc := service.New(service.Options{Client: client, Config: cfg, Metadata: o.meta, Granted: o.granted})
+	svc := service.New(service.Options{Client: client, Config: cfg, Granted: o.granted})
 	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	defs := o.defs
 	if defs == nil {
 		defs = definitions()
 	}
-	reg := register(s, Deps{Service: svc, Config: cfg, Metadata: o.meta, Granted: o.granted, Logger: o.logger}, defs)
+	reg := register(s, Deps{Service: svc, Config: cfg, Granted: o.granted, Logger: o.logger}, defs)
 	ct, st := mcp.NewInMemoryTransports()
 	ss, err := s.Connect(t.Context(), st, nil)
 	if err != nil {

@@ -12,9 +12,7 @@ import (
 )
 
 // Defaults of the rate model (§11). gitlab.com allows 2,000
-// authenticated API requests a minute per user and 60 notes a minute;
-// self-managed instances ship the general throttles off, so the
-// gitlab.com figures are a ceiling rather than a guess low.
+// authenticated API requests a minute per user and 60 notes a minute.
 const (
 	DefaultRequestsPerMinute = 2000
 	DefaultNotesPerMinute    = 60

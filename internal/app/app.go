@@ -1,8 +1,7 @@
 // Package app is the startup assembly every entry point shares: open the
-// profile, settle the instance and the OAuth application, build the HTTP
-// transport, the token source and the GitLab client, read what the
-// instance is, refuse a mode the sign-in cannot serve, and wire the MCP
-// server.
+// profile, settle the OAuth application, build the HTTP transport, the
+// token source and the GitLab client, refuse a mode the sign-in cannot
+// serve, and wire the MCP server.
 //
 // It lives outside package main so the commands, the tests and any
 // later driver assemble the server the way the binary does, rather than
@@ -12,16 +11,12 @@ package app
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -99,19 +94,19 @@ func OpenProfile(cfg config.Config, keyring credentials.Backend, env func(string
 }
 
 // Settings is the configuration settled against the profile: which
-// instance, which application, which transport. The token source is
+// application, which transport. The token source is
 // unexported, and String and LogValue both render the same safe fields,
 // because %+v reads unexported fields and a log line reads String.
 type Settings struct {
 	Config  config.Config
 	Profile *Profile
-	// Instance is the one this server talks to: the configured one, else
-	// the profile's, else gitlab.com.
+	// Instance is gitlab.com, or the loopback stand-in of
+	// GITLAB_MCP_TEST_INSTANCE.
 	Instance instance.Instance
 	// ClientID is the OAuth application: the override, else the
 	// profile's.
 	ClientID string
-	// HTTPClient carries the private CA and the proxy.
+	// HTTPClient carries the proxy.
 	HTTPClient *http.Client
 	// CredentialsErr is why the stored sign-in will not be used, or nil.
 	// The server still starts without one, so tools/list works before
@@ -123,12 +118,12 @@ type Settings struct {
 }
 
 // Resolve settles the configuration against the profile. It reads the
-// profile and the CA file and touches no network.
+// profile and touches no network.
 //
-// cfg.Instance empty means none was given: the profile's instance is
-// used, else gitlab.com. A given instance that differs from the one the
-// profile signed in to keeps the profile's token away from it, since a
-// token is only ever sent to the instance that issued it.
+// A profile signed in to another instance than this one keeps its token
+// to itself, since a token is only ever sent to the instance that issued
+// it: one signed in to the test instance never reaches gitlab.com, and
+// the reverse.
 func Resolve(cfg config.Config, o Options) (*Settings, error) {
 	logger := o.logger()
 	warn := o.Warn
@@ -139,32 +134,20 @@ func Resolve(cfg config.Config, o Options) (*Settings, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Settings{Config: cfg, Profile: p}
-
-	raw := cfg.Instance
-	if raw == "" {
-		raw = p.User.Instance
+	s := &Settings{Config: cfg, Profile: p, Instance: cfg.Target()}
+	if cfg.TestInstance {
+		logger.Warn(config.EnvTestInstance + " is set: this server talks to a loopback test instance, not gitlab.com")
 	}
-	if raw == "" {
-		raw = config.DefaultInstance
-	}
-	if s.Instance, err = instance.Parse(raw, cfg.AllowHTTP); err != nil {
-		return nil, fmt.Errorf("%s: %w", config.EnvInstance, err)
-	}
-	if cfg.Instance != "" && p.User.Instance != "" {
-		if storedInst, err := instance.Parse(p.User.Instance, true); err == nil && storedInst.String() != s.Instance.String() {
-			s.CredentialsErr = fmt.Errorf("profile %q is signed in to another instance; name that instance's profile "+
-				"with --profile, or run `gitlab-mcp login` to sign this profile in to this one", p.Name)
-		}
+	if !SameInstance(p.User.Instance, s.Instance) {
+		s.CredentialsErr = fmt.Errorf("profile %q is signed in to another instance than %s; "+
+			"run `gitlab-mcp login` to sign it in to this one", p.Name, InstanceKind(s.Instance))
 	}
 
 	s.ClientID = cfg.ClientID
 	if s.ClientID == "" {
 		s.ClientID = p.User.ClientID
 	}
-	if s.HTTPClient, err = NewHTTPClient(cfg); err != nil {
-		return nil, err
-	}
+	s.HTTPClient = NewHTTPClient()
 	s.app = &auth.Application{Instance: s.Instance, ClientID: s.ClientID, HTTPClient: s.HTTPClient, Timeout: cfg.HTTPTimeout}
 
 	if s.CredentialsErr == nil && s.ClientID == "" && o.env(credentials.EnvVar) == "" && !p.HasUser {
@@ -244,8 +227,6 @@ func (s Settings) LogValue() slog.Value {
 		slog.Bool("destructive", s.Config.EnableDestructive),
 		slog.String("toolsets", strings.Join(s.Config.Toolsets, ",")),
 		slog.Int("write_namespaces", len(s.Config.WriteNamespaces)),
-		slog.Bool("ca_file", s.Config.CAFile != ""),
-		slog.Bool("allow_http", s.Config.AllowHTTP),
 	)
 }
 
@@ -256,54 +237,47 @@ func maskedID(id string) string {
 	return redact.ID(id)
 }
 
-// InstanceKind names an instance without naming its host: "gitlab.com"
-// or "self-managed".
+// InstanceKind names an instance without naming its host: "gitlab.com",
+// or "test instance" for the loopback stand-in.
 func InstanceKind(i instance.Instance) string {
-	if i.IsZero() {
+	switch {
+	case i.IsZero():
 		return ""
-	}
-	if i.Hostname() == "gitlab.com" && i.Path() == "" {
+	case i == instance.GitLabCom:
 		return "gitlab.com"
 	}
-	return "self-managed"
+	return "test instance"
+}
+
+// SameInstance reports whether a profile's recorded instance is inst.
+// A profile that records none has not signed in, and matches. One that
+// records something unreadable, such as a URL an older build accepted,
+// does not.
+func SameInstance(recorded string, inst instance.Instance) bool {
+	if recorded == "" {
+		return true
+	}
+	r, err := instance.Parse(recorded)
+	return err == nil && r == inst
 }
 
 // NewHTTPClient builds the transport every call to the instance uses:
-// proxies from the standard environment variables, and the extra
-// certificate authorities of GITLAB_MCP_CA_FILE on top of the system's.
-// No redirect is followed.
-func NewHTTPClient(cfg config.Config) (*http.Client, error) {
+// proxies from the standard environment variables and the system's
+// certificate authorities. No redirect is followed.
+func NewHTTPClient() *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Proxy = http.ProxyFromEnvironment
 	// Every call goes to one host, as many at once as the rate model
 	// allows; fewer idle connections would close and reopen them.
 	t.MaxIdleConnsPerHost = gapi.DefaultConcurrency
-	if cfg.CAFile != "" {
-		// The file is one the person named in their configuration.
-		pem, err := os.ReadFile(cfg.CAFile) //nolint:gosec // a path the operator supplied deliberately
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", config.EnvCAFile, err)
-		}
-		pool, err := x509.SystemCertPool()
-		if err != nil || pool == nil {
-			pool = x509.NewCertPool()
-		}
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("%s: %s holds no PEM certificate", config.EnvCAFile, cfg.CAFile)
-		}
-		t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
-	}
 	return &http.Client{
 		Transport:     t,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}, nil
+	}
 }
 
 // Startup is what the server learned from the instance before serving.
 type Startup struct {
-	// Metadata is the instance's version and edition; zero when it could
-	// not be read.
-	Metadata instance.Metadata
 	// Granted is the token's scopes, read live or else from the last
 	// login.
 	Granted []string
@@ -313,14 +287,13 @@ type Startup struct {
 // server's start by at most this.
 const startupBudget = 15 * time.Second
 
-// Probe reads the token's scopes and /metadata. Registration needs the
-// version before the server exists, so these are read before serving;
-// each failure is logged and left for the calls to report, so an
-// instance that is down at start still gets a server.
+// Probe reads the token's scopes. Registration needs them before the
+// server exists, so they are read before serving; a failure is logged
+// and left for the calls to report, so an instance that is down at start
+// still gets a server.
 //
 // The token is warmed first, so a refresh that is due happens here
-// rather than on the first tool call, and once rather than in both
-// reads; the two reads then run together.
+// rather than on the first tool call.
 func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version string) Startup {
 	var st Startup
 	if s.Profile != nil {
@@ -345,25 +318,11 @@ func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version strin
 			"reason", redact.Text(err.Error()))
 		return st
 	}
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		if info, err := c.TokenInfo(ctx); err != nil {
-			logger.Warn("could not read the token's scopes; using those of the last login", "reason", redact.Text(err.Error()))
-		} else if len(info.Scope) > 0 {
-			st.Granted = info.Scope
-		}
-	})
-	wg.Go(func() {
-		if md, err := c.GetMetadata(ctx); err != nil {
-			logger.Warn("could not read the instance's version; version-gated tools stay registered and answer [unsupported] where the instance lacks them",
-				"reason", redact.Text(err.Error()))
-		} else if m, err := instance.NewMetadata(md.Version, md.Revision, md.Enterprise); err != nil {
-			logger.Warn("the instance reported a version this server cannot read", "reason", redact.Text(err.Error()))
-		} else {
-			st.Metadata = m
-		}
-	})
-	wg.Wait()
+	if info, err := c.TokenInfo(ctx); err != nil {
+		logger.Warn("could not read the token's scopes; using those of the last login", "reason", redact.Text(err.Error()))
+	} else if len(info.Scope) > 0 {
+		st.Granted = info.Scope
+	}
 	return st
 }
 
@@ -404,8 +363,7 @@ type Runtime struct {
 }
 
 // Assemble builds the server. It fails on a configuration that cannot
-// work (a bad instance or CA file, a sign-in whose scopes the mode
-// exceeds), and not on a missing sign-in or an unreachable instance:
+// work (a sign-in whose scopes the mode exceeds), and not on a missing sign-in or an unreachable instance:
 // those surface per call.
 func Assemble(ctx context.Context, cfg config.Config, o Options) (*Runtime, error) {
 	logger := o.logger()
@@ -426,7 +384,7 @@ func Assemble(ctx context.Context, cfg config.Config, o Options) (*Runtime, erro
 		return nil, err
 	}
 	srv := newServer(server.Options{
-		Config: cfg, Client: client, Metadata: st.Metadata, Granted: st.Granted,
+		Config: cfg, Client: client, Granted: st.Granted,
 		Logger: logger, Version: o.Version,
 	})
 	return &Runtime{Settings: s, Client: client, Startup: st, Server: srv}, nil

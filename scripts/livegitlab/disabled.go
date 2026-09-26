@@ -13,7 +13,7 @@ import (
 
 func main() {
 	p := redact.NewPrinter(redact.NewRedactor(false))
-	p.Fail("livegitlab drives a real instance and is behind a build tag. Run it with:\n" +
-		"  make live LIVE_ARGS=\"-instance https://gitlab.example.com -namespace example-group/scratch\"")
+	p.Fail("livegitlab drives gitlab.com and is behind a build tag. Run it with:\n" +
+		"  make live LIVE_ARGS=\"-namespace example-group/scratch\"")
 	os.Exit(2)
 }

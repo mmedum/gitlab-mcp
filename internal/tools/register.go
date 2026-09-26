@@ -17,7 +17,6 @@ import (
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/render"
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
 	"github.com/mmedum/gitlab-mcp/internal/service"
@@ -86,10 +85,6 @@ type spec struct {
 	// Toolset is the optional toolset the tool belongs to, "" for the
 	// default set.
 	Toolset string
-	// MinVersion is the oldest GitLab the tool's route exists on,
-	// "major.minor", or "" for every supported version. Below it the tool
-	// is not registered when the instance's version is known (§4.9).
-	MinVersion string
 	// Idempotent marks a write that lands the same way twice.
 	Idempotent bool
 	// Bucket is the rate bucket the tool's requests are charged to
@@ -103,9 +98,6 @@ type spec struct {
 type Deps struct {
 	Service *service.Service
 	Config  config.Config
-	// Metadata is the instance's version and edition, zero when unknown;
-	// version gating applies only when it is known.
-	Metadata instance.Metadata
 	// Granted are the token's scopes, empty when unknown. A tool whose kind
 	// needs a scope the token lacks is not registered: a read_api token
 	// never gets a write tool, whatever the flags say (§9.4).
@@ -121,7 +113,7 @@ func (d Deps) logger() *slog.Logger {
 }
 
 // gate says why a tool is not registered, "" when it is.
-func gate(sp spec, cfg config.Config, meta instance.Metadata, granted []string) string {
+func gate(sp spec, cfg config.Config, granted []string) string {
 	switch sp.Kind {
 	case Write:
 		if cfg.ReadOnly {
@@ -138,15 +130,6 @@ func gate(sp spec, cfg config.Config, meta instance.Metadata, granted []string) 
 	}
 	if sp.Toolset != "" && !cfg.ToolsetEnabled(sp.Toolset) {
 		return "toolset"
-	}
-	if sp.MinVersion != "" && meta.Version.Major != 0 {
-		least, err := instance.ParseVersion(sp.MinVersion)
-		if err != nil {
-			panic("tools: MinVersion " + strconv.Quote(sp.MinVersion) + " is not major.minor")
-		}
-		if !meta.AtLeast(least.Major, least.Minor) {
-			return "version"
-		}
 	}
 	if len(granted) > 0 && !scopes.Satisfied(granted, scopes.Required(sp.Kind.Scope())) {
 		return "scope"

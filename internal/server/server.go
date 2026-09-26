@@ -16,7 +16,6 @@ import (
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/service"
 	"github.com/mmedum/gitlab-mcp/internal/tools"
 	"github.com/mmedum/gitlab-mcp/internal/version"
@@ -35,12 +34,11 @@ const sdkModule = "github.com/modelcontextprotocol/go-sdk"
 
 // Options is what the server needs from startup.
 type Options struct {
-	Config   config.Config
-	Client   *gapi.Client
-	Metadata instance.Metadata // zero when the instance was not reachable at startup
-	Granted  []string          // scopes the token was granted
-	Logger   *slog.Logger
-	Version  string
+	Config  config.Config
+	Client  *gapi.Client
+	Granted []string // scopes the token was granted
+	Logger  *slog.Logger
+	Version string
 }
 
 // New builds the MCP server with every tool the configuration registers.
@@ -51,7 +49,7 @@ func New(opts Options) *mcp.Server {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	so := &mcp.ServerOptions{Instructions: instructionsFor(opts.Config, opts.Metadata, opts.Granted)}
+	so := &mcp.ServerOptions{Instructions: instructionsFor(opts.Config, opts.Granted)}
 	// The SDK's own logger writes session chatter. It is attached only at
 	// debug, where someone asked for it.
 	if logger.Enabled(context.Background(), slog.LevelDebug) {
@@ -59,8 +57,8 @@ func New(opts Options) *mcp.Server {
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: Name, Version: opts.Version}, so)
 	s.AddReceivingMiddleware(logMethods(logger))
-	svc := service.New(service.Options{Client: opts.Client, Config: opts.Config, Metadata: opts.Metadata, Granted: opts.Granted})
-	tools.Register(s, tools.Deps{Service: svc, Config: opts.Config, Metadata: opts.Metadata, Granted: opts.Granted, Logger: logger})
+	svc := service.New(service.Options{Client: opts.Client, Config: opts.Config, Granted: opts.Granted})
+	tools.Register(s, tools.Deps{Service: svc, Config: opts.Config, Granted: opts.Granted, Logger: logger})
 	return s
 }
 

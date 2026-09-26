@@ -83,7 +83,7 @@ func TestResolveURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.url, func(t *testing.T) {
-			i, err := Parse(tt.instance, false)
+			i, err := Parse(tt.instance)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,7 +134,7 @@ func TestResolveURLErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.url, func(t *testing.T) {
-			i, err := Parse(tt.instance, false)
+			i, err := Parse(tt.instance)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -159,7 +159,7 @@ func TestResolveURLErrors(t *testing.T) {
 }
 
 func TestRefPathCandidates(t *testing.T) {
-	i, err := Parse("gitlab.example.com", false)
+	i, err := Parse("gitlab.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

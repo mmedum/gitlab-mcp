@@ -206,12 +206,12 @@ func (a answer) refused() verdict {
 }
 
 // notFound tells the catch-all route, {"error": "404 Not Found"}, from a
-// missing resource. The route missing means an older version or a
-// missing edition (§2.14, spike F); a resource missing may be one the
+// missing resource. The route missing means a tier or edition the
+// account lacks (§2.14, spike F); a resource missing may be one the
 // token cannot see, since GitLab answers 404 for both (§2.15).
 func (a answer) notFound() verdict {
 	if a.env.message == "" && strings.EqualFold(strings.TrimSpace(a.env.topError), "404 Not Found") {
-		return a.fail(ClassUnsupported, "this GitLab instance has no API route for %s: it may be older than the feature, or lack the edition or tier it needs", a.name)
+		return a.fail(ClassUnsupported, "GitLab has no API route for %s here: it may need an edition or tier this account lacks", a.name)
 	}
 	what := "the resource"
 	if m := notFoundWhat.FindStringSubmatch(strings.TrimSpace(a.env.message)); m != nil && m[1] != "" {

@@ -140,13 +140,14 @@ counts, and **the transcript is read**. A driver in this family twice
 reported success while its results were wrong.
 
 ```bash
-make live LIVE_ARGS="-instance https://gitlab.example.com -namespace example-group/scratch"
+make live LIVE_ARGS="-namespace example-group/scratch"
 ```
 
 What it does, so nothing is a surprise:
 
-- It signs in with your stored profile (`-profile` picks one) and needs
-  a group you own, named by `-namespace`.
+- It runs against gitlab.com, always; there is no instance flag. It
+  signs in with your stored profile (`-profile` picks one) and needs a
+  group you own, named by `-namespace`.
 - It creates private scratch projects named for the run under that
   group, fills them with its own files, branches, issues, comments and
   merge requests, and drives every tool and option against them. Every
@@ -165,6 +166,25 @@ What it does, so nothing is a surprise:
 `ANTHROPIC_API_KEY`, costs money and is not deterministic, so it is run
 by hand and its transcript is read like the live driver's. It reads
 only the in-memory instance of `internal/gapi/gitlabtest`.
+
+## The test instance
+
+The server serves gitlab.com only, and no setting a person can reach
+changes that. One development override points the binary at the
+in-memory instance instead:
+
+| Variable | What it does |
+|---|---|
+| `GITLAB_MCP_TEST_INSTANCE` | A base URL on a loopback host (`127.0.0.1`, `::1` or `localhost`) that stands in for gitlab.com. Plain `http` is fine there. It has no flag. |
+
+The evals and the smoke gate set it; tests set it or build the
+configuration in code. Start-up refuses any other host, so it can never
+send a token to a real one, and logs a warning whenever it is set. A
+profile signed in to the test instance keeps its token away from
+gitlab.com, and the reverse. It is documented here and nowhere a person
+configuring the server would read: `make staleness` fails if
+`docs/configuration.md` names it, and `make mcpb` if the bundle sets
+it.
 
 ## Adding a tool
 

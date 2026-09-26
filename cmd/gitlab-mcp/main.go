@@ -41,7 +41,7 @@ func main() {
 // commands is every subcommand, with the line usage prints for it.
 var commands = []struct{ name, synopsis, summary string }{
 	{"serve", "gitlab-mcp [serve]", "run the MCP server over stdio"},
-	{"login", "gitlab-mcp login --client-id <id> [--instance <url>] [--no-browser]",
+	{"login", "gitlab-mcp login --client-id <id> [--no-browser]",
 		"sign in with your own OAuth application"},
 	{"logout", "gitlab-mcp logout", "revoke and delete the stored token"},
 	{"status", "gitlab-mcp status [--no-probe] [--json]", "show the profile and settings"},
@@ -224,24 +224,9 @@ func (f *flags) parse(args []string, stderr io.Writer) *int {
 	return nil
 }
 
-// build validates the settings, the same load the server runs. An
-// instance nobody named, on the command line or in the environment, is
-// left empty so the profile's is used (app.Resolve).
+// build validates the settings, the same load the server runs.
 func (f *flags) build() (config.Config, error) {
-	cfg, err := f.settings.Build()
-	if err != nil {
-		return config.Config{}, err
-	}
-	given := strings.TrimSpace(f.env(config.EnvInstance)) != ""
-	f.fs.Visit(func(fl *flag.Flag) {
-		if fl.Name == "instance" {
-			given = true
-		}
-	})
-	if !given {
-		cfg.Instance = ""
-	}
-	return cfg, nil
+	return f.settings.Build()
 }
 
 // config parses and builds, printing any problem; a non-nil code means

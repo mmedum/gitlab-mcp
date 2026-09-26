@@ -5,8 +5,8 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/mmedum/gitlab-mcp.svg)](https://pkg.go.dev/github.com/mmedum/gitlab-mcp)
 [![License: Apache 2.0](https://img.shields.io/github/license/mmedum/gitlab-mcp)](./LICENSE)
 
-An MCP server for GitLab. One binary over stdio, signed in as you, on
-gitlab.com or a self-managed instance. It works inside projects: issues,
+An MCP server for gitlab.com. One binary over stdio, signed in as you.
+It works inside projects: issues,
 merge requests, reviews, the repository and CI. Instance and group
 administration, runners, CI variables and tokens are out of scope.
 
@@ -22,7 +22,7 @@ Unofficial, and not affiliated with GitLab Inc. See `NOTICE`.
 - **Content is marked as untrusted.** Issues, reviews, files and job
   logs come back inside boundaries the content cannot close.
 - **Signs in like a desktop app.** Your own OAuth application, a browser
-  tab, the token in the OS keyring; gitlab.com and self-managed alike.
+  tab, the token in the OS keyring.
 - **Verifiable releases.** Signed checksums, build provenance and SBOMs.
 
 ## Status
@@ -36,14 +36,14 @@ read tools below are being built; nothing writes yet.
 
 | Tool | What it does |
 |---|---|
-| `get_me` | Who is signed in, on which instance, with which scopes |
+| `get_me` | Who is signed in, with which scopes, and what GitLab reports about itself |
 | `resolve_url` | Turn a GitLab web URL into the project, issue, merge request, file or commit it names |
 | `search_projects` | Find projects by name, or within a group |
 | `get_project` | One project: default branch, visibility, what it has turned on |
-| `search_issues` | Find issues across the instance, a group or a project |
+| `search_issues` | Find issues across gitlab.com, a group or a project |
 | `get_issue` | One issue, its description marked as untrusted content |
 | `list_discussions` | The comment threads on an issue or a merge request |
-| `search_merge_requests` | Find merge requests across the instance or a project |
+| `search_merge_requests` | Find merge requests across gitlab.com or a project |
 | `get_merge_request` | One merge request with its approvals |
 | `get_file` | A file at a ref, bounded |
 | `list_tree` | A directory listing at a ref |
@@ -68,17 +68,14 @@ It does not log you in; do the steps below first.
 You bring your own OAuth application. Nothing is shipped in the binary,
 and there are no personal access tokens.
 
-1. **Register an application**, once. On GitLab: your avatar → Edit
-   profile → Applications (or a group's or the instance's). Redirect URI
+1. **Register an application**, once. On gitlab.com: your avatar → Edit
+   profile → Applications (or a group's). Redirect URI
    `http://127.0.0.1/callback`, **Confidential unchecked**, scope `api`
-   (`read_api` for read-only). `docs/setup.md` has the exact values for
-   gitlab.com and for a self-managed instance.
+   (`read_api` for read-only). `docs/setup.md` has the exact values.
 2. **Log in** from a terminal:
 
    ```bash
    gitlab-mcp login --client-id <application id>
-   # self-managed:
-   gitlab-mcp login --client-id <application id> --instance https://gitlab.example.com
    ```
 
    It prints the scopes it will ask for, opens your browser, and stores
@@ -91,10 +88,10 @@ and there are no personal access tokens.
    gitlab-mcp doctor
    ```
 
-   `doctor` walks the instance, TLS, the version, the application, the
+   `doctor` walks the connection, TLS, the sign-in, the application, the
    granted scopes and one call as you, and names what is missing.
-   `status` and `logout` do what they say; `--profile` keeps a gitlab.com
-   login and a self-managed one side by side.
+   `status` and `logout` do what they say; `--profile` keeps two
+   gitlab.com logins side by side.
 
 ## Connect a client
 

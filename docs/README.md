@@ -4,8 +4,8 @@ For people using the server:
 
 | Document | Read it when |
 |---|---|
-| [setup.md](setup.md) | registering your OAuth application and logging in, on gitlab.com or a self-managed instance |
-| [configuration.md](configuration.md) | changing what the server registers, where it stores things, or how it reaches your instance |
+| [setup.md](setup.md) | registering your OAuth application on gitlab.com and logging in |
+| [configuration.md](configuration.md) | changing what the server registers, where it stores things, or how it reaches gitlab.com through a proxy |
 | [runbook.md](runbook.md) | `doctor` reports a failure, or a tool answers `[auth]`, `[rate_limited]` or `[unsupported]` |
 | [security.md](security.md) | deciding which flags to turn on, or what is safe to paste |
 

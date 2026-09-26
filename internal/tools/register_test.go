@@ -13,7 +13,6 @@ import (
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/model"
 	"github.com/mmedum/gitlab-mcp/internal/render"
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
@@ -37,9 +36,9 @@ type fakeOut struct {
 
 var fixedTime = time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
 
-func fake(name string, k Kind, toolset, minVersion string) definition {
+func fake(name string, k Kind, toolset string) definition {
 	return tool[fakeIn, fakeOut]{
-		sp: spec{Name: name, Kind: k, Toolset: toolset, MinVersion: minVersion, Description: "A fake."},
+		sp: spec{Name: name, Kind: k, Toolset: toolset, Description: "A fake."},
 		run: func(ctx context.Context, _ *service.Service, in fakeIn) (fakeOut, error) {
 			switch in.Fail {
 			case "hinted":
@@ -57,12 +56,11 @@ func fake(name string, k Kind, toolset, minVersion string) definition {
 
 func fakes() []definition {
 	return []definition{
-		fake("fake_read", Read, "", ""),
-		fake("fake_write", Write, "", ""),
-		fake("fake_ship", Ship, "", ""),
-		fake("fake_delete", Destructive, "", ""),
-		fake("fake_wiki", Read, "wiki", ""),
-		fake("fake_new", Read, "", "19.5"),
+		fake("fake_read", Read, ""),
+		fake("fake_write", Write, ""),
+		fake("fake_ship", Ship, ""),
+		fake("fake_delete", Destructive, ""),
+		fake("fake_wiki", Read, "wiki"),
 	}
 }
 
@@ -74,44 +72,30 @@ func names(r []service.Registered) []string {
 	return out
 }
 
-func meta(t *testing.T, v string) instance.Metadata {
-	t.Helper()
-	m, err := instance.NewMetadata(v, "abc", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return m
-}
-
 func TestGate(t *testing.T) {
 	cases := []struct {
 		name    string
 		cfg     config.Config
-		meta    instance.Metadata
 		granted []string
 		want    []string
 	}{
-		{"default", config.Config{}, instance.Metadata{}, nil,
-			[]string{"fake_read", "fake_write", "fake_new"}},
-		{"read-only beats every flag", config.Config{ReadOnly: true, EnableShip: true, EnableDestructive: true}, instance.Metadata{}, nil,
-			[]string{"fake_read", "fake_new"}},
-		{"ship", config.Config{EnableShip: true}, instance.Metadata{}, nil,
-			[]string{"fake_read", "fake_write", "fake_ship", "fake_new"}},
-		{"destructive", config.Config{EnableDestructive: true}, instance.Metadata{}, nil,
-			[]string{"fake_read", "fake_write", "fake_delete", "fake_new"}},
-		{"toolset", config.Config{Toolsets: []string{"wiki"}}, instance.Metadata{}, nil,
-			[]string{"fake_read", "fake_write", "fake_wiki", "fake_new"}},
-		{"older instance", config.Config{}, meta(t, "19.4.2"), nil,
+		{"default", config.Config{}, nil,
 			[]string{"fake_read", "fake_write"}},
-		{"new enough instance", config.Config{}, meta(t, "19.5.0"), nil,
-			[]string{"fake_read", "fake_write", "fake_new"}},
-		{"a read_api token gets no write tool", FullSurface(config.Config{}), instance.Metadata{}, []string{scopes.ReadAPI},
-			[]string{"fake_read", "fake_wiki", "fake_new"}},
-		{"an api token gets everything", FullSurface(config.Config{}), instance.Metadata{}, []string{scopes.API},
-			[]string{"fake_read", "fake_write", "fake_ship", "fake_delete", "fake_wiki", "fake_new"}},
+		{"read-only beats every flag", config.Config{ReadOnly: true, EnableShip: true, EnableDestructive: true}, nil,
+			[]string{"fake_read"}},
+		{"ship", config.Config{EnableShip: true}, nil,
+			[]string{"fake_read", "fake_write", "fake_ship"}},
+		{"destructive", config.Config{EnableDestructive: true}, nil,
+			[]string{"fake_read", "fake_write", "fake_delete"}},
+		{"toolset", config.Config{Toolsets: []string{"wiki"}}, nil,
+			[]string{"fake_read", "fake_write", "fake_wiki"}},
+		{"a read_api token gets no write tool", FullSurface(config.Config{}), []string{scopes.ReadAPI},
+			[]string{"fake_read", "fake_wiki"}},
+		{"an api token gets everything", FullSurface(config.Config{}), []string{scopes.API},
+			[]string{"fake_read", "fake_write", "fake_ship", "fake_delete", "fake_wiki"}},
 	}
 	for _, c := range cases {
-		got := names(surface(fakes(), c.cfg, c.meta, c.granted))
+		got := names(surface(fakes(), c.cfg, c.granted))
 		if !slices.Equal(got, c.want) {
 			t.Errorf("%s: registered %v, want %v", c.name, got, c.want)
 		}
@@ -121,7 +105,7 @@ func TestGate(t *testing.T) {
 // TestFullSurfaceRegistersEverything holds FullSurface's claim: no
 // combination of the gates registers a tool it does not.
 func TestFullSurfaceRegistersEverything(t *testing.T) {
-	full := names(surface(fakes(), FullSurface(config.Config{}), instance.Metadata{}, nil))
+	full := names(surface(fakes(), FullSurface(config.Config{}), nil))
 	if len(full) != len(fakes()) {
 		t.Fatalf("FullSurface registers %v, want all %d", full, len(fakes()))
 	}
@@ -130,13 +114,13 @@ func TestFullSurfaceRegistersEverything(t *testing.T) {
 		if mask&8 != 0 {
 			cfg.Toolsets = config.Toolsets
 		}
-		for _, n := range names(surface(fakes(), cfg, instance.Metadata{}, nil)) {
+		for _, n := range names(surface(fakes(), cfg, nil)) {
 			if !slices.Contains(full, n) {
 				t.Errorf("%+v registers %s, which FullSurface does not", cfg, n)
 			}
 		}
 	}
-	if got := len(Surface(FullSurface(config.Config{}), instance.Metadata{}, nil)); got != len(definitions()) {
+	if got := len(Surface(FullSurface(config.Config{}), nil)); got != len(definitions()) {
 		t.Errorf("FullSurface registers %d of %d real tools", got, len(definitions()))
 	}
 }

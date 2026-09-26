@@ -1,6 +1,6 @@
-// Package instance normalizes the configured GitLab base URL, checks
-// URLs against it, reads the instance's version and edition, and turns
-// GitLab web URLs into tool arguments.
+// Package instance normalizes the GitLab base URL (gitlab.com, or the
+// loopback test instance), checks URLs against it, reads the instance's
+// version and edition, and turns GitLab web URLs into tool arguments.
 //
 // The base URL is normalized once, so every request and every origin
 // check compares the same scheme, host, port and sub-path (§4.9).
@@ -42,10 +42,13 @@ type Instance struct {
 	path     string // "" or "/gitlab", decoded, no trailing slash
 }
 
-// Parse normalizes a configured base URL. A missing scheme is read as
-// https. http is refused for a host that is not loopback unless
-// allowHTTP is set, because the token would travel in the clear.
-func Parse(raw string, allowHTTP bool) (Instance, error) {
+// GitLabCom is the one instance this server serves.
+var GitLabCom = Instance{scheme: "https", hostname: "gitlab.com"}
+
+// Parse normalizes a base URL. A missing scheme is read as https. http
+// is refused for a host that is not loopback, because the token would
+// travel in the clear.
+func Parse(raw string) (Instance, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return Instance{}, invalidf("the instance URL is empty")
@@ -82,8 +85,8 @@ func Parse(raw string, allowHTTP bool) (Instance, error) {
 	if err != nil {
 		return Instance{}, err
 	}
-	if u.Scheme == "http" && !allowHTTP && !IsLoopback(hostname) {
-		return Instance{}, invalidf("http is refused for %s because the token would travel in the clear; use https, or set GITLAB_MCP_ALLOW_HTTP=true to accept that", hostname)
+	if u.Scheme == "http" && !IsLoopback(hostname) {
+		return Instance{}, invalidf("http is refused for a host that is not loopback, because the token would travel in the clear; use https")
 	}
 	return Instance{scheme: u.Scheme, hostname: hostname, port: port, path: path}, nil
 }

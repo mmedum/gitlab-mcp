@@ -34,7 +34,7 @@ var loginTimeout = 10 * time.Minute
 // noApplication is what login and doctor say when no application id is
 // known.
 const noApplication = "no OAuth application id: register an application in GitLab, then run " +
-	"`gitlab-mcp login --client-id <Application ID>` (add --instance <url> for a self-managed instance)"
+	"`gitlab-mcp login --client-id <Application ID>`"
 
 // writeSetup prints the exact form to fill in GitLab. It is written
 // unmasked: it is generated from internal/scopes, names nothing of the
@@ -183,19 +183,14 @@ func revoke(stdout io.Writer, cfg config.Config, p *app.Profile, refresh string)
 	if clientID == "" {
 		clientID = cfg.ClientID
 	}
-	// The stored instance passed the http check when login stored it.
-	inst, err := instance.Parse(p.User.Instance, true)
+	// The token goes back to the instance that issued it, and only there.
+	inst, err := instance.Parse(p.User.Instance)
 	if err != nil || clientID == "" {
 		outf(stdout, "The profile does not record its instance and application, so the token was not revoked; "+
 			"removing the local copy anyway.\n")
 		return
 	}
-	hc, err := app.NewHTTPClient(cfg)
-	if err != nil {
-		outf(stdout, "Could not revoke the token at GitLab (%v); removing the local copy anyway.\n", err)
-		return
-	}
-	a := &auth.Application{Instance: inst, ClientID: clientID, HTTPClient: hc, Timeout: cfg.HTTPTimeout}
+	a := &auth.Application{Instance: inst, ClientID: clientID, HTTPClient: app.NewHTTPClient(), Timeout: cfg.HTTPTimeout}
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.HTTPTimeout)
 	defer cancel()
 	if err := a.Revoke(ctx, refresh); err != nil {

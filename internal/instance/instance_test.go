@@ -9,10 +9,9 @@ import (
 
 func TestParse(t *testing.T) {
 	tests := []struct {
-		raw       string
-		allowHTTP bool
-		want      string // String(); "" means an error is expected
-		wantErr   string // substring of the error
+		raw     string
+		want    string // String(); "" means an error is expected
+		wantErr string // substring of the error
 	}{
 		{raw: "gitlab.example.com", want: "https://gitlab.example.com"},
 		{raw: "  https://gitlab.example.com  ", want: "https://gitlab.example.com"},
@@ -30,8 +29,7 @@ func TestParse(t *testing.T) {
 		{raw: "http://localhost:80/", want: "http://localhost"},
 		{raw: "http://[::1]:8080", want: "http://[::1]:8080"},
 		{raw: "https://[::1]", want: "https://[::1]"},
-		{raw: "http://gitlab.example.com", allowHTTP: true, want: "http://gitlab.example.com"},
-		{raw: "http://gitlab.example.com", wantErr: "GITLAB_MCP_ALLOW_HTTP=true"},
+		{raw: "http://gitlab.example.com", wantErr: "http is refused"},
 		{raw: "", wantErr: "empty"},
 		{raw: "   ", wantErr: "empty"},
 		{raw: "ftp://gitlab.example.com", wantErr: "must use https"},
@@ -46,7 +44,7 @@ func TestParse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
-			got, err := Parse(tt.raw, tt.allowHTTP)
+			got, err := Parse(tt.raw)
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatalf("Parse(%q) = %v, want error containing %q", tt.raw, got, tt.wantErr)
@@ -85,7 +83,7 @@ func TestAccessors(t *testing.T) {
 			"http://[::1]:8080", "http://[::1]:8080/api/v4"},
 	}
 	for _, tt := range tests {
-		i, err := Parse(tt.raw, false)
+		i, err := Parse(tt.raw)
 		if err != nil {
 			t.Fatalf("Parse(%q): %v", tt.raw, err)
 		}
@@ -109,7 +107,7 @@ func TestAccessors(t *testing.T) {
 }
 
 func TestWebBaseIsACopy(t *testing.T) {
-	i, err := Parse("https://gitlab.example.com/gitlab", false)
+	i, err := Parse("https://gitlab.example.com/gitlab")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +128,7 @@ func mustURL(t *testing.T, s string) *url.URL {
 }
 
 func TestSameOrigin(t *testing.T) {
-	i, err := Parse("https://gitlab.example.com/gitlab", false)
+	i, err := Parse("https://gitlab.example.com/gitlab")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +155,7 @@ func TestSameOrigin(t *testing.T) {
 }
 
 func TestUnderAPIRoot(t *testing.T) {
-	i, err := Parse("https://gitlab.example.com/gitlab", false)
+	i, err := Parse("https://gitlab.example.com/gitlab")
 	if err != nil {
 		t.Fatal(err)
 	}

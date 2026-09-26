@@ -60,7 +60,7 @@ func newWorld(ctx context.Context) (*world, error) {
 	tb := &harnessTB{}
 	srv := gitlabtest.New(tb, gitlabtest.Options{})
 	w := &world{srv: srv, tb: tb}
-	inst, err := instance.Parse(srv.URL, true)
+	inst, err := instance.Parse(srv.URL)
 	if err != nil {
 		w.close()
 		return nil, err

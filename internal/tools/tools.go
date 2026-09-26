@@ -8,7 +8,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/service"
 )
 
@@ -45,7 +44,7 @@ func Register(s *mcp.Server, d Deps) []service.Registered {
 }
 
 func register(s *mcp.Server, d Deps, defs []definition) []service.Registered {
-	defs = allowed(defs, d.Config, d.Metadata, d.Granted)
+	defs = allowed(defs, d.Config, d.Granted)
 	for _, def := range defs {
 		def.add(s, d)
 	}
@@ -59,19 +58,19 @@ func register(s *mcp.Server, d Deps, defs []definition) []service.Registered {
 // Surface is what Register would register under a configuration,
 // without building a server. The server instructions are written from
 // it, and from what a flag would add to it.
-func Surface(cfg config.Config, meta instance.Metadata, granted []string) []service.Registered {
-	return surface(definitions(), cfg, meta, granted)
+func Surface(cfg config.Config, granted []string) []service.Registered {
+	return surface(definitions(), cfg, granted)
 }
 
-func surface(defs []definition, cfg config.Config, meta instance.Metadata, granted []string) []service.Registered {
-	return registered(allowed(defs, cfg, meta, granted))
+func surface(defs []definition, cfg config.Config, granted []string) []service.Registered {
+	return registered(allowed(defs, cfg, granted))
 }
 
 // allowed is the definitions the gates let through, each gated once.
-func allowed(defs []definition, cfg config.Config, meta instance.Metadata, granted []string) []definition {
+func allowed(defs []definition, cfg config.Config, granted []string) []definition {
 	var out []definition
 	for _, def := range defs {
-		if gate(def.spec(), cfg, meta, granted) == "" {
+		if gate(def.spec(), cfg, granted) == "" {
 			out = append(out, def)
 		}
 	}

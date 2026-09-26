@@ -18,7 +18,7 @@ lifted verbatim.
 ### Added
 
 - `login`, `logout`, `status` and `doctor`, signing in with your own OAuth application through `--client-id`.
-- gitlab.com and self-managed instances, with profiles kept side by side.
+- gitlab.com as the one instance, with profiles kept side by side; a sign-in is only ever sent to the instance that issued it.
 - Token refresh under a cross-process lock, so two clients share one login.
 - Read tools: `get_me`, `resolve_url`, `search_projects`, `get_project`, `search_issues`, `get_issue`, `list_discussions`, `search_merge_requests`, `get_merge_request`, `get_file`, `list_tree`, `list_branches`, `list_commits`, `get_commit`.
 - GitLab content rendered inside untrusted-content boundaries, within a reply budget that says what it left out.

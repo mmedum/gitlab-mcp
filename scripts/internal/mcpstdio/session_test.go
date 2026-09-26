@@ -54,7 +54,7 @@ func fakeServer(mode string) {
 		case "initialize":
 			params, _ := req["params"].(map[string]any)
 			reply(id, map[string]any{"protocolVersion": params["protocolVersion"],
-				"leaked_env": os.Getenv("GITLAB_MCP_INSTANCE"), "extra_env": os.Getenv("EXTRA")})
+				"leaked_env": os.Getenv("GITLAB_MCP_TEST_INSTANCE"), "extra_env": os.Getenv("EXTRA")})
 		case "tools/list":
 			params, _ := req["params"].(map[string]any)
 			if params["cursor"] == "page2" {
@@ -83,7 +83,7 @@ func fakeServer(mode string) {
 func start(t *testing.T, mode string, cfg Config) *Session {
 	t.Helper()
 	t.Setenv(fakeServerEnv, mode)
-	t.Setenv("GITLAB_MCP_INSTANCE", "https://gitlab.example.com")
+	t.Setenv("GITLAB_MCP_TEST_INSTANCE", "http://127.0.0.1:9")
 	s, err := Start(os.Args[0], cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestSessionDrivesTheSurface(t *testing.T) {
 		t.Errorf("protocolVersion = %v, want the one asked for", init["protocolVersion"])
 	}
 	if init["leaked_env"] != "" {
-		t.Errorf("the server inherited GITLAB_MCP_INSTANCE=%v", init["leaked_env"])
+		t.Errorf("the server inherited GITLAB_MCP_TEST_INSTANCE=%v", init["leaked_env"])
 	}
 	if init["extra_env"] != "yes" {
 		t.Errorf("Config.Env did not reach the server: %v", init["extra_env"])

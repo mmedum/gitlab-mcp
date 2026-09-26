@@ -52,7 +52,7 @@ func TestErrorText(t *testing.T) {
 	if c, ok := ClassOf(fmt.Errorf("outer: %w", w)); !ok || c != ClassUnavailable {
 		t.Errorf("ClassOf = %v %v", c, ok)
 	}
-	_, instErr := instance.Parse("ftp://gitlab.example.com", false)
+	_, instErr := instance.Parse("ftp://gitlab.example.com")
 	if c, ok := ClassOf(instErr); !ok || c != ClassInvalid {
 		t.Errorf("ClassOf(instance error) = %v %v", c, ok)
 	}

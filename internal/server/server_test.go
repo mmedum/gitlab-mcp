@@ -12,7 +12,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
 	"github.com/mmedum/gitlab-mcp/internal/tools"
 )
@@ -63,28 +62,25 @@ var toolName = regexp.MustCompile(`\b[a-z]+(?:_[a-z]+)+\b`)
 
 func TestInstructionsNameOnlyRegisteredTools(t *testing.T) {
 	var all []string
-	for _, r := range tools.Surface(tools.FullSurface(config.Config{}), instance.Metadata{}, nil) {
+	for _, r := range tools.Surface(tools.FullSurface(config.Config{}), nil) {
 		all = append(all, r.Name)
 	}
-	old, _ := instance.NewMetadata("17.0.0", "", false)
 	cases := []struct {
 		name    string
 		cfg     config.Config
-		meta    instance.Metadata
 		granted []string
 	}{
-		{"default", config.Config{}, instance.Metadata{}, nil},
-		{"read-only", config.Config{ReadOnly: true}, instance.Metadata{}, nil},
-		{"full", tools.FullSurface(config.Config{}), instance.Metadata{}, nil},
-		{"old instance", config.Config{}, old, nil},
-		{"read_api token", config.Config{}, instance.Metadata{}, []string{scopes.ReadAPI}},
+		{"default", config.Config{}, nil},
+		{"read-only", config.Config{ReadOnly: true}, nil},
+		{"full", tools.FullSurface(config.Config{}), nil},
+		{"read_api token", config.Config{}, []string{scopes.ReadAPI}},
 	}
 	for _, c := range cases {
 		var registered []string
-		for _, r := range tools.Surface(c.cfg, c.meta, c.granted) {
+		for _, r := range tools.Surface(c.cfg, c.granted) {
 			registered = append(registered, r.Name)
 		}
-		text := instructionsFor(c.cfg, c.meta, c.granted)
+		text := instructionsFor(c.cfg, c.granted)
 		named := 0
 		for _, word := range toolName.FindAllString(text, -1) {
 			if !slices.Contains(all, word) {
@@ -100,7 +96,7 @@ func TestInstructionsNameOnlyRegisteredTools(t *testing.T) {
 			t.Errorf("%s: the instructions name %d tools of %d registered", c.name, named, len(registered))
 		}
 	}
-	if !strings.Contains(instructionsFor(config.Config{ReadOnly: true}, instance.Metadata{}, nil), "read-only") {
+	if !strings.Contains(instructionsFor(config.Config{ReadOnly: true}, nil), "read-only") {
 		t.Error("read-only mode is not stated")
 	}
 }
@@ -129,7 +125,7 @@ func TestLoggerOnlyAttachedAtDebug(t *testing.T) {
 }
 
 func TestSignedOutServerAnswersAuth(t *testing.T) {
-	s := New(Options{Config: config.Config{Instance: "https://gitlab.example.com"}, Version: "test"})
+	s := New(Options{Config: config.Config{}, Version: "test"})
 	ct, st := mcp.NewInMemoryTransports()
 	ss, err := s.Connect(t.Context(), st, nil)
 	if err != nil {
@@ -151,7 +147,7 @@ func TestSignedOutServerAnswersAuth(t *testing.T) {
 	}
 	// resolve_url needs no sign-in for what it can answer alone.
 	res, err = cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "resolve_url",
-		Arguments: map[string]any{"url": "https://gitlab.example.com/example-group/alpha/-/issues/3"}})
+		Arguments: map[string]any{"url": "https://gitlab.com/example-group/alpha/-/issues/3"}})
 	if err != nil || res.IsError {
 		t.Errorf("resolve_url signed out: %v %v", err, res.Content)
 	}

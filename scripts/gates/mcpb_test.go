@@ -66,7 +66,7 @@ func TestMcpbFixturePasses(t *testing.T) {
 	if err := mcpbCheck(&out, mcpbRoot(t, mcpbFixture(t))); err != nil {
 		t.Fatalf("the fixture fails: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "7 staged files, 3 platforms, 4 user_config keys") {
+	if !strings.Contains(out.String(), "7 staged files, 3 platforms, 3 user_config keys") {
 		t.Errorf("the gate does not say what it read: %s", out.String())
 	}
 }
@@ -104,13 +104,16 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"an env var the server does not read", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_NOPE"] = "x"
 		}, "sets GITLAB_MCP_NOPE, which the server does not read"},
+		{"the development override", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_TEST_INSTANCE"] = "http://127.0.0.1:1"
+		}, "sets GITLAB_MCP_TEST_INSTANCE, a development override no bundle may carry"},
 		{"a required user_config key missing", func(d map[string]any) {
 			delete(mcpbDig(d, "user_config"), "read_only")
 			delete(mcpbDig(d, "server", "mcp_config", "env"), "GITLAB_MCP_READ_ONLY")
 		}, "user_config does not ask for read_only"},
 		{"a user_config key wired to the wrong variable", func(d map[string]any) {
-			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_PROFILE"] = "${user_config.instance}"
-		}, `mcp_config.env.GITLAB_MCP_PROFILE is "${user_config.instance}"`},
+			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_PROFILE"] = "${user_config.read_only}"
+		}, `mcp_config.env.GITLAB_MCP_PROFILE is "${user_config.read_only}"`},
 		{"description drifts from the constant", func(d map[string]any) { d["description"] = "GitLab tools." },
 			"one constant feeds both"},
 		{"no $schema", func(d map[string]any) { delete(d, "$schema") }, "no $schema"},
