@@ -90,7 +90,9 @@ func (m *rateModel) acquire(ctx context.Context, b Bucket) (func(), error) {
 	m.mu.Unlock()
 
 	if pause > 0 {
-		if dl, ok := ctx.Deadline(); ok && now.Add(pause).After(dl) {
+		// The deadline is on the wall clock and the pause on the model's
+		// clock, so compare the time each leaves rather than the instants.
+		if dl, ok := ctx.Deadline(); ok && pause > time.Until(dl) {
 			return nil, Errf(ClassRateLimited,
 				"GitLab asked this client to wait %s, longer than this call has left; retry after that", roundUp(pause))
 		}

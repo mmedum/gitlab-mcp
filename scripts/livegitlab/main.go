@@ -106,6 +106,10 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 		return fmt.Errorf("read the signed-in account: %w", err)
 	}
 	red.Known(redact.KindUser, user.Username)
+	// The display name and the numeric id identify the person as surely
+	// as the username; commit authors print the name.
+	red.Known(redact.KindUser, user.Name)
+	red.Known(redact.KindID, itoa(user.ID))
 	name, err := newRunName()
 	if err != nil {
 		return err

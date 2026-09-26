@@ -213,7 +213,7 @@ func TestErrors(t *testing.T) {
 	h := newHarness(t, harnessOptions{defs: fakes()})
 	// The hint survives and the class still comes from the wrapped error.
 	if got := h.fails("fake_read", map[string]any{"fail": "hinted"}, "rate_limited"); got !=
-		"[rate_limited] narrow the query (GitLab is rate limiting)" {
+		"[rate_limited] GitLab is rate limiting; narrow the query" {
 		t.Errorf("hinted = %q", got)
 	}
 	// Anything unclassified is unexpected, with any URL cut out.

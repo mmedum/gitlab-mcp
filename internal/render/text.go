@@ -176,7 +176,8 @@ func Me(m model.Me, _ Boundary) string {
 // Resolved renders resolve_url. It shows nothing that needs a boundary.
 func Resolved(r model.Resolved, _ Boundary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "A %s in %s", strings.ReplaceAll(r.Kind, "_", " "), Ident(r.Project))
+	kind := strings.ReplaceAll(r.Kind, "_", " ")
+	fmt.Fprintf(&b, "%s %s in %s", article(kind), kind, Ident(r.Project))
 	switch {
 	case r.IID != nil:
 		fmt.Fprintf(&b, ", iid %d", *r.IID)
@@ -613,4 +614,13 @@ func notShownReason(r string) string {
 		return "over the budget"
 	}
 	return r
+}
+
+// article is "An" before a vowel sound and "A" otherwise, for the kinds
+// resolve_url names.
+func article(word string) string {
+	if word != "" && strings.ContainsRune("aeiou", rune(word[0])) {
+		return "An"
+	}
+	return "A"
 }

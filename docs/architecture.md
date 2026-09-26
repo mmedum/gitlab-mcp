@@ -1,7 +1,7 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 0 built on a topic branch, 2026-09-26; its live run and
-spikes are owed. Nothing is tagged.** This document holds the platform
+**Status: phase 0 built on a topic branch and run live, 2026-09-26;
+some of its spikes are owed. Nothing is tagged.** This document holds the platform
 facts, the design bets, a verdict on every API operation group, the
 phase plan and the spikes that must answer before the phases that
 depend on them. What phase 0 still owes is at the end of its entry in
@@ -1180,14 +1180,21 @@ application for everyone.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-None has run.
+A and B have run on gitlab.com (2026-09-26); the rest have not.
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
   send `http://127.0.0.1:<random>/callback`, `http://[::1]:<random>/…`
   and `http://localhost:<random>/…`. Expect the first two accepted and
   the third refused. On gitlab.com and on the floor version. §2.1.
+  *Verdict, gitlab.com, 2026-09-26: a random `127.0.0.1` port was
+  accepted against the registered `http://127.0.0.1/callback`, through
+  the real `login`. `[::1]`, `localhost` and the floor version are
+  still open.*
 - **Spike B — public client.** Code exchange, refresh and
   `/oauth/revoke` with only `client_id`, on gitlab.com. §2.2.
+  *Verdict, gitlab.com, 2026-09-26: code exchange and refresh work
+  with no secret on a non-confidential application; `doctor` then read
+  the token's scopes and the account. Revocation is still open.*
 - **Spike C — concurrent refresh.** Two refreshes with one token: one
   `invalid_grant`, and the old access token dead at once. §10's lock is
   built from this.
@@ -1248,13 +1255,13 @@ it, and nothing writes yet. `gitlabtest`. The OpenAPI snapshot and
 The untrusted-content rendering of §4.1 and the budget of §4.8. Spikes
 A, B, C, D, F, I, L. A live run whose transcript is read.
 
-*Built 2026-09-26, reviewed (§16a) and simplified. Owed before the tag,
-and each needs the maintainer: an OAuth application registered on
-gitlab.com for spikes A–D and the live run (`CLAUDE.md` "Ask before
-doing"); a namespace for the live driver's scratch project; a container
-of the floor version for spike I; then `make live`, the transcript read,
-and the live-coverage record it writes committed, which is the one gate
-`make check` still fails.*
+*Built 2026-09-26, reviewed (§16a) and simplified. The live run passed
+on gitlab.com the same day and its transcript was read: it found the
+signed-in person's display name and user id unmasked in the driver's
+output (fixed and re-run clean), a sha256 labeled as a client id by the
+shape mask (safe, left), and two wording defects (fixed). Spikes A and B
+answered on gitlab.com. Still owed before the tag: spikes C, D, F and L
+on gitlab.com, and spike I with A on a container of the floor version.*
 
 **Phase 1 — the rest of reading (v0.2.0).** `list_mr_files`,
 `get_mr_diff`, `list_mr_commits`, `compare_refs`, `list_tags`, the CI

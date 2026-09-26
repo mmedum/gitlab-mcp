@@ -54,7 +54,7 @@ func classOf(err error) string {
 func message(err error) string {
 	var h *hinted
 	if errors.As(err, &h) {
-		return h.hint + " (" + message(h.err) + ")"
+		return message(h.err) + "; " + h.hint
 	}
 	var e *gapi.Error
 	if errors.As(err, &e) {
