@@ -3,11 +3,14 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -173,14 +176,55 @@ func TestLoginAcceptsAnyLoopbackPort(t *testing.T) {
 	}
 }
 
-func TestLoginRefusesAStateMismatch(t *testing.T) {
+// TestLoginIgnoresACallbackWithoutItsState: a request to the callback
+// that does not carry this login's state came from somewhere other than
+// the authorization, so it is refused on its own and the login keeps
+// waiting for the real redirect.
+func TestLoginIgnoresACallbackWithoutItsState(t *testing.T) {
 	srv := gitlabtest.New(t, gitlabtest.Options{})
 	app := newApp(t, srv, nil)
-	b := newBrowser()
-	b.callback = func(q url.Values) url.Values { q.Set("state", "forged"); return q }
-	_, err := app.Login(context.Background(), []string{"api"}, LoginOptions{OpenBrowser: b.open})
-	if err == nil || !strings.Contains(err.Error(), "state mismatch") {
-		t.Fatalf("err = %v, want a state mismatch", err)
+	statuses := make(chan []int, 1)
+	open := func(raw string) error {
+		go func() {
+			stop := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			resp, err := stop.Get(raw) //nolint:noctx // test browser
+			if err != nil {
+				statuses <- nil
+				return
+			}
+			_ = resp.Body.Close()
+			loc, _ := url.Parse(resp.Header.Get("Location"))
+			real := loc.Query()
+			var got []int
+			for _, q := range []url.Values{
+				{"state": {"forged"}, "code": {real.Get("code")}},
+				{"error": {"access_denied"}},
+				{"state": {"forged"}, "error": {"access_denied"}},
+				real,
+			} {
+				u := *loc
+				u.RawQuery = q.Encode()
+				resp, err := http.Get(u.String()) //nolint:noctx // test browser
+				if err != nil {
+					got = append(got, 0)
+					continue
+				}
+				_ = resp.Body.Close()
+				got = append(got, resp.StatusCode)
+			}
+			statuses <- got
+		}()
+		return nil
+	}
+	g, err := app.Login(context.Background(), []string{"api"}, LoginOptions{OpenBrowser: open, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if g.Token.AccessToken == "" {
+		t.Error("no token")
+	}
+	if got := <-statuses; !slices.Equal(got, []int{400, 400, 400, 200}) {
+		t.Errorf("callback statuses = %v, want three refused and the real one accepted", got)
 	}
 }
 
@@ -382,6 +426,42 @@ func TestAnApplicationNeedsAnIDAndAnInstance(t *testing.T) {
 	} {
 		if _, err := app.Refresh(context.Background(), "r"); err == nil {
 			t.Errorf("%s: refresh went ahead", name)
+		}
+	}
+}
+
+// failWith is a transport that fails every request with err, as a
+// dialer or a TLS handshake would.
+type failWith struct{ err error }
+
+func (f failWith) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+// TestTransportErrorsCarryNoHostName: a failed lookup names the host it
+// looked up, and a certificate for the wrong host names both hosts.
+// Neither name may reach the error text, which reaches logs.
+func TestTransportErrorsCarryNoHostName(t *testing.T) {
+	inst, err := instance.Parse("https://canary-host.example.net", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, cause := range map[string]error{
+		"lookup": &net.OpError{Op: "dial", Net: "tcp",
+			Err: &net.DNSError{Name: "canary-host.example.net", Server: "10.9.8.7:53", Err: "no such host", IsNotFound: true}},
+		"certificate host": &tls.CertificateVerificationError{Err: x509.HostnameError{
+			Certificate: &x509.Certificate{DNSNames: []string{"canary-cert.example.net"}}, Host: "canary-host.example.net"}},
+	} {
+		app := &Application{Instance: inst, ClientID: gitlabtest.ClientID,
+			HTTPClient: &http.Client{Transport: failWith{cause}}}
+		_, err := app.Refresh(context.Background(), "test-refresh-secret")
+		var te *TransportError
+		if !errors.As(err, &te) {
+			t.Errorf("%s: err = %v, want a TransportError", name, err)
+			continue
+		}
+		for _, leak := range []string{"canary", "10.9.8.7"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("%s: %q carries %q", name, err, leak)
+			}
 		}
 	}
 }

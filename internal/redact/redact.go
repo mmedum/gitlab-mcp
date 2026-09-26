@@ -13,6 +13,9 @@
 package redact
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"net"
 	"net/url"
 	"regexp"
@@ -213,6 +216,51 @@ func ID(id string) string {
 		return "[id]"
 	}
 	return string(r[:6]) + "…"
+}
+
+// NetError renders a transport error without the host names and
+// addresses net and crypto/x509 put in it, which logs may not carry
+// (§9.2): a lookup names the host it looked up, a dial the address, and
+// a certificate for the wrong host names both hosts.
+func NetError(err error) string {
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return "lookup: " + dns.Err
+	}
+	var op *net.OpError
+	if errors.As(err, &op) && op.Err != nil {
+		return op.Op + ": " + NetError(op.Err)
+	}
+	var verify *tls.CertificateVerificationError
+	if errors.As(err, &verify) {
+		return "tls: failed to verify certificate: " + certificate(verify.Err)
+	}
+	var hostname x509.HostnameError
+	var unknown x509.UnknownAuthorityError
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &hostname) || errors.As(err, &unknown) || errors.As(err, &invalid) {
+		return certificate(err)
+	}
+	return err.Error()
+}
+
+// certificate describes why a certificate was refused in words of its
+// own: x509's text quotes the certificate's names.
+func certificate(err error) string {
+	var hostname x509.HostnameError
+	var unknown x509.UnknownAuthorityError
+	var invalid x509.CertificateInvalidError
+	switch {
+	case errors.As(err, &hostname):
+		return "x509: the certificate is not valid for the instance's host name"
+	case errors.As(err, &unknown):
+		return "x509: certificate signed by unknown authority"
+	case errors.As(err, &invalid) && invalid.Reason == x509.Expired:
+		return "x509: certificate has expired or is not yet valid"
+	case errors.As(err, &invalid):
+		return "x509: the certificate is not valid for this use"
+	}
+	return "the certificate was not accepted"
 }
 
 // mask keeps the first rune and replaces the rest with an ellipsis, so

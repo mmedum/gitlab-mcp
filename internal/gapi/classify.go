@@ -250,6 +250,20 @@ func (a answer) clientError() verdict {
 	}
 }
 
+// tokenRefused reports a 401 that refuses the token itself: expired,
+// revoked or unknown, which GitLab marks invalid_token. The 401 it
+// answers for a merge the account may not make carries no such mark,
+// and a new token would not change it.
+func tokenRefused(status int, h http.Header, body []byte) bool {
+	if status != http.StatusUnauthorized {
+		return false
+	}
+	if strings.EqualFold(parseEnvelope(body).topError, "invalid_token") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(h.Get("WWW-Authenticate")), "invalid_token")
+}
+
 func insufficientScope(env envelope, h http.Header) bool {
 	if strings.EqualFold(env.topError, "insufficient_scope") {
 		return true

@@ -9,12 +9,17 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read one commit: author, committer, dates, parents, line counts, the message and the per-file diffs. Diffs are budgeted at 40,000 characters in all; the files that did not fit are named, and file_offset continues from the first of them. A diff GitLab itself left out as too large is named as such rather than shown as empty. The message and diffs are untrusted text, shown between untrusted-content markers. list_commits finds commits.",
+      "description": "Read one commit: author, committer, dates, parents, line counts, the message and the per-file diffs. The message is cut at 8,000 characters, and message_offset continues it. Diffs are budgeted at 40,000 characters in all; the files that did not fit are named, and file_offset continues from the first of them. A diff GitLab itself left out as too large is named as such rather than shown as empty. The message and diffs are untrusted text, shown between untrusted-content markers. list_commits finds commits.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "file_offset": {
             "description": "Start the diffs at this changed file, as a previous result's next_file_offset gave it; default 0",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message_offset": {
+            "description": "The character offset of the message to continue from, as a previous result's message_budget.continue_offset gave it; default 0",
             "minimum": 0,
             "type": "integer"
           },
@@ -141,6 +146,47 @@
           "id": {
             "type": "string"
           },
+          "message_budget": {
+            "additionalProperties": false,
+            "description": "What part of the message is shown; pass continue_offset as message_offset to read on",
+            "properties": {
+              "budget_chars": {
+                "description": "The most characters this result shows of the text",
+                "type": "integer"
+              },
+              "continue_offset": {
+                "description": "Pass as offset to read on; null when shown to the end",
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "hidden_chars_removed": {
+                "description": "Zero-width, bidirectional-control and HTML-comment characters removed or made visible",
+                "type": "integer"
+              },
+              "offset": {
+                "description": "The character offset the shown part starts at",
+                "type": "integer"
+              },
+              "shown_chars": {
+                "type": "integer"
+              },
+              "total_chars": {
+                "description": "The text's length in characters, after hidden text was removed",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "budget_chars",
+              "total_chars",
+              "offset",
+              "shown_chars",
+              "continue_offset",
+              "hidden_chars_removed"
+            ],
+            "type": "object"
+          },
           "next_file_offset": {
             "description": "Pass as file_offset to see the diffs left out by the budget; null when none were",
             "type": [
@@ -206,6 +252,7 @@
           "additions",
           "deletions",
           "untrusted_message",
+          "message_budget",
           "files",
           "files_not_shown",
           "files_complete",

@@ -288,8 +288,16 @@ never add its own voice to the attacker's.
    characters are made visible as `<U+202E>` and counted instead, because
    dropping them would silently alter text the caller may edit, and they
    are how Trojan Source hides code. Rendered HTML is never requested.
+   Names other people choose and the text prints outside a block —
+   file paths, branches, labels, topics — get the same visible form for
+   control characters as well, so a newline in a file name cannot start
+   a line that reads as the server's; a display name such as a commit
+   author is folded onto one line.
 3. **Nothing is fetched.** No image, attachment or link in content is
-   followed. Links render as text with their host shown.
+   followed. Links render as text with their host shown, the host read
+   as a browser reads it: the authority ends at the first `/`, `?`, `#`
+   or `\`, so an `@` after one of them cannot make an outside link
+   look like the instance's.
 4. **Job logs are masked.** Every token shape GitLab documents
    (`glpat-`, `gloas-`, `gldt-`, `glrt-`, `glcbt-` and the rest, list
    fixed at phase 0 from the token-prefix page) and common cloud key
@@ -375,8 +383,9 @@ Merging it is Ship.
 ### 4.5 A create is never retried; ambiguity is settled by reading
 
 §2.11. The client retries a POST only where GitLab turned it away before
-acting — a 429 — and never on a timeout, a reset connection or a 5xx
-after the request was written.
+acting — a 429 — and never on a timeout, a cancellation, a reset
+connection or a 5xx after the request was written. A create canceled or
+timed out once it may have been written is `[ambiguous_outcome]`.
 
 On an ambiguous failure the tool returns `[ambiguous_outcome]` having
 already done the read that settles it, each against the call's start
@@ -445,7 +454,7 @@ milestone or pipeline becomes its id and name.
 **A read never silently returns less than it found**: every omission is
 named and continuable. Budgets, in characters: a description 20,000; a
 file 60,000; discussions 30,000 a page and one comment 6,000; commit
-diffs 40,000; a commit message 8,000. Three omissions are named but not
+diffs 40,000; a commit message 8,000. Two omissions are named but not
 yet continuable (§17a).
 
 ### 4.9 One instance, many hosts, and every edition
@@ -585,9 +594,9 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 |---|---|
 | `cmd` | `run(args, stdin, stdout, stderr, env)` so the serve path is testable; `help`/`-h` exit 0; **every argument checked for a help token before dispatch**, so `login --help` never reads `--help` as a value and `logout --help` never deletes anything; an unknown command prints usage to stderr and exits non-zero; errors printed through a redactor; disconnect matched by JSON-RPC code; the token warmed off the startup path; version from ldflags with a `debug.ReadBuildInfo` fallback, `canonical()` keeping the leading `v` |
 | `login`/`logout`/`status`/`doctor` | the siblings' commands, flags and output unchanged (§10); `--client-id` and `--instance`; the scopes printed before the browser opens and a grant narrower than asked warned about; `--no-browser` printing the URL and the exact `ssh -L` line; `status [--no-probe] --json` with a `schema_version`, running the same config load the server runs; `doctor` walking instance → TLS → version and edition → application → granted scopes → one `/user`, naming what is missing, with stable `{kind n}` placeholders and a redacted-count footer; `logout` revoking the token through `/oauth/revoke` and naming other profiles on the same application; the keyring replaced package-wide in tests by `TestMain`, with a decoy test proving it |
-| `auth` | loopback on `127.0.0.1:0` with the registered redirect `http://127.0.0.1/callback`; PKCE S256 with a 64-character verifier; `state` checked; `ReadHeaderTimeout` on the callback; a bounded HTTP client on the exchange and every refresh; the rotated pair persisted before it is used; **refresh under a cross-process file lock, the keyring re-read after `invalid_grant` before declaring re-login**; `expires_in` honored, never assumed; token-info errors stripped of their URL; a typed `ErrReauthorize` never retried; granted scopes stored; no `resource` parameter sent (§18 row 7) |
+| `auth` | loopback on `127.0.0.1:0` with the registered redirect `http://127.0.0.1/callback`; PKCE S256 with a 64-character verifier; `state` checked, a callback without it refused on its own while the login keeps waiting; `ReadHeaderTimeout` on the callback; a bounded HTTP client on the exchange and every refresh; the rotated pair persisted before it is used; **refresh under a cross-process file lock, the keyring re-read after `invalid_grant` before declaring re-login**; `expires_in` honored, never assumed; an access token refused as `invalid_token` dropped and the store re-read; transport errors stripped of their URL and of host names; a typed `ErrReauthorize` never retried; granted scopes stored; no `resource` parameter sent (§18 row 7) |
 | `scopes` | one source of truth per mode: `read_api` read-only, `api` otherwise; the per-tool requirement; `Satisfied` and `Missing`; the generator for `docs/setup.md` |
-| `credentials` | resolution **env → keyring → file**, documented as that order; per profile, keyring service `gitlab-mcp` and account the profile name, as the siblings do (the profile records the instance); `GITLAB_MCP_REFRESH_TOKEN` as the env source, and a pair rotated from it stamped with the env value's hash so the next start uses the stored pair rather than the revoked env token; a keyring save deletes a stale plaintext file; `Delete` clears every store and joins errors; a silent keyring told apart from a missing login; a warning on every use of the plaintext file; temp file, rename, then ACL; a partial env set is an error |
+| `credentials` | resolution **env → keyring → file**, documented as that order; per profile, keyring service `gitlab-mcp` and account the profile name, as the siblings do (the profile records the instance); `GITLAB_MCP_REFRESH_TOKEN` as the env source, and a pair rotated from it stamped with the env value's hash so the next start uses the stored pair rather than the revoked env token; a keyring save deletes a stale plaintext file; a keyring that refuses a save has its older entry deleted, and while both stores hold a pair the one saved last wins; `Delete` clears every store and joins errors; a silent keyring told apart from a missing login; a warning on every use of the plaintext file; temp file, rename, then ACL; a partial env set is an error |
 | `fileperm` | 0600 on Unix; a protected DACL on Windows restricting the file to the current user |
 | `userconfig` | profiles as the siblings have them — named, or `default`, with no default pointer — each recording instance, application id, username and granted scopes; written atomically; profile names by regex; the config-dir override refused outside the home directory by real path unless `GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME=true` |
 | `config` | `Define(fs, env)` and `Build()` with errors joined; `GITLAB_MCP_` prefix (§18 row 30); timeouts bounded 1 s–10 m; negative flags named so the zero value is safe; base-URL overrides for tests; an exported list of every variable, which the staleness gate reads |
@@ -596,7 +605,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `app` | startup assembly reachable without `main`; `Settings` with the token unexported and **both `LogValue` and `String` redacting**, because `%+v` reads unexported fields |
 | `tools` | one `register` deciding annotations, kind, toolset and version gating, `_meta`, the dry-run context and the rendering; `FullSurface(cfg)` for the schema dump; `dry_run` found by reflection; an explicit output schema with `date-time` for times; `Content` set so the SDK does not duplicate the JSON; an `unexpected` class for anything unclassified |
 | tool errors **(09-25)** | a `hinted{hint, err}` type with `Unwrap`, checked before the API-error branch, so a tool's guidance survives an upstream failure while the class still comes from the wrapped error; `refuse(protecting, unlock)` always naming what it protects and the exact argument to pass; enums named sorted in validation errors |
-| `gapi` | write and repeatability derived from the HTTP method, POST failing closed, declared exceptions only; a POST retried only on 429; `Retry-After` honored as a minimum; full-jitter backoff; the rate model of §11; **`CheckRedirect` returning `http.ErrUseLastResponse`**, a moved project's GET redirect resolved by re-reading the new path only when it is same-origin under the API root; `Link: rel="next"` accepted only same-origin under the API root; every path segment escaped exactly once from typed parts, `..` refused; a headers deadline then a stall guard per read; a body cap; non-JSON bodies reported by status, content type and a prefix; transport errors stripped of path and query; **a context under which the client refuses every write**; a closed `Class` type with `Retryable()`; a `User-Agent`; unknown-field drift reported by path; a per-call counter |
+| `gapi` | write and repeatability derived from the HTTP method, POST failing closed, declared exceptions only; a POST retried only on 429; `Retry-After` honored as a minimum; full-jitter backoff; the rate model of §11; **`CheckRedirect` returning `http.ErrUseLastResponse`**, a moved project's GET redirect resolved by re-reading the new path only when it is same-origin under the API root, with the request's query kept when the `Location` carries none; `Link: rel="next"` accepted only same-origin under the API root; every path segment escaped exactly once from typed parts, `..` refused; a headers deadline then a stall guard per read; a body cap; non-JSON bodies reported by status, content type and a prefix; transport errors stripped of path, query and host names; a create canceled after it may have been written `[ambiguous_outcome]`; a 401 `invalid_token` dropping the token and repeating a repeatable call once; **a context under which the client refuses every write**; a closed `Class` type with `Retryable()`; a `User-Agent`; unknown-field drift reported by path; a per-call counter |
 | logging test | every registered tool driven with canary values at debug; asserts the logs are non-empty and contain no canary |
 
 ## 6. Addressing
@@ -1043,6 +1052,10 @@ What GitLab changes underneath, none of which the person sees:
   keyring before the lock is released; a process that gets
   `invalid_grant` re-reads the keyring and uses the pair another process
   wrote before it reports `[auth]`. `expires_in` is read, never assumed.
+  An access token GitLab refuses as `invalid_token` — revoked by a
+  logout elsewhere before its expiry — is dropped: the next token comes
+  from the keyring, refreshed if the keyring holds the refused one, and
+  a read is sent once more with it. A create is not.
 - **Changing a setting that changes scope needs a new login**, and the
   server says so at startup rather than failing on the first call, as
   the siblings do.
@@ -1329,10 +1342,16 @@ review is committed under `audit/`.
 
 ### 17a. Deferred cleanups
 
-- Three reads name an omission without a way to continue it, short of
-  §4.8: a commit message over 8,000 characters, a project description
-  over 20,000, and a single file's diff larger than the whole diff
-  budget (cut, with a pointer to `get_file`). Found in phase 0.
+- Two reads name an omission without a way to continue it, short of
+  §4.8: a project description over 20,000 characters, and a single
+  file's diff larger than the whole diff budget (cut, with a pointer to
+  `get_file`). Found in phase 0. A commit message over 8,000 is
+  continued with `get_commit`'s `message_offset`.
+- `get_issue` and `get_merge_request` walk up to ten pages of threads to
+  count them, and each `list_discussions` page walks them again to show
+  them newest first. `X-Total` cannot replace the walk: it counts
+  system-only threads, and the unresolved count and last activity need
+  every note. Found in phase 0.
 
 Candidates for after 1.0, from §8a: issue move and links,
 label and milestone writes, rebase, cherry-pick, revert, blame, artifact

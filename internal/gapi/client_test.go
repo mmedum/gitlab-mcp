@@ -3,9 +3,13 @@ package gapi
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -605,6 +609,25 @@ func TestMovedProjectFollowedOnceForGet(t *testing.T) {
 	}
 }
 
+// TestMovedProjectKeepsTheQuery: a redirect that names only the new path
+// must not drop the filters and the ref the request carried.
+func TestMovedProjectKeepsTheQuery(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{MoveDropsQuery: true})
+	_, _, err := f.client.SearchIssues(context.Background(), ItemQuery{Project: mustProject(t, gitlabtest.ProjectMoved),
+		State: "closed", Search: "flaky"}, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqs := f.srv.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %+v", reqs)
+	}
+	if reqs[1].EscapedPath != "/api/v4/projects/example-group%2Falpha/issues" || reqs[1].RawQuery != reqs[0].RawQuery ||
+		!strings.Contains(reqs[1].RawQuery, "state=closed") {
+		t.Errorf("followed request = %+v, want the query %q", reqs[1], reqs[0].RawQuery)
+	}
+}
+
 func TestRedirectsElsewhereAreNeverFollowed(t *testing.T) {
 	for _, loc := range []string{
 		"https://other.invalid/api/v4/user",
@@ -662,6 +685,24 @@ func TestHeaderTimeout(t *testing.T) {
 	err := f.client.Do(context.Background(), Call{Method: "POST", Path: "projects/{}/issues/{}/notes",
 		Args: []string{"2001", "1"}, Body: map[string]string{"body": "x"}, Name: "add_comment"}, nil)
 	wantClass(t, err, ClassAmbiguousOutcome)
+}
+
+// TestCanceledCreateIsAmbiguous: a create canceled after it was sent may
+// have landed, so it is [ambiguous_outcome], not a plain failure (§4.5).
+// A canceled read is [unavailable].
+func TestCanceledCreateIsAmbiguous(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{}, func(o *Options) { o.MaxAttempts = 1 })
+	f.srv.Inject(gitlabtest.Fault{Path: "/projects/2001/issues/1/notes", Status: 201, Body: "{}", Delay: 300 * time.Millisecond})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := f.client.Do(ctx, Call{Method: "POST", Path: "projects/{}/issues/{}/notes",
+		Args: []string{"2001", "1"}, Body: map[string]string{"body": "x"}, Name: "add_comment"}, nil)
+	wantClass(t, err, ClassAmbiguousOutcome)
+
+	f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: 200, Body: "{}", Delay: 300 * time.Millisecond})
+	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	wantClass(t, errOf(f.client.GetCurrentUser(ctx)), ClassUnavailable)
 }
 
 func TestStalledBodyIsCut(t *testing.T) {
@@ -859,5 +900,109 @@ func TestTokenNeverLeavesTheInstance(t *testing.T) {
 	_, err := f.client.attempt(context.Background(), "GET", u, nil, "secret")
 	if !errors.Is(err, errOffInstance) {
 		t.Errorf("err = %v, want errOffInstance", err)
+	}
+}
+
+// failWith is a transport that fails every request with err, as a
+// dialer or a TLS handshake would.
+type failWith struct{ err error }
+
+func (f failWith) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+// TestTransportErrorsCarryNoHostName: a failed lookup names the host it
+// looked up, and a certificate for the wrong host names both hosts.
+// Neither name may reach the error text, which reaches logs.
+func TestTransportErrorsCarryNoHostName(t *testing.T) {
+	for name, c := range map[string]struct {
+		cause error
+		class Class
+	}{
+		"lookup": {&net.OpError{Op: "dial", Net: "tcp",
+			Err: &net.DNSError{Name: "canary-host.example.net", Server: "10.9.8.7:53", Err: "no such host", IsNotFound: true}},
+			ClassUnavailable},
+		"certificate host": {&tls.CertificateVerificationError{Err: x509.HostnameError{
+			Certificate: &x509.Certificate{DNSNames: []string{"canary-cert.example.net"}}, Host: "canary-host.example.net"}},
+			ClassUnavailable},
+		"unknown authority": {&tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{
+			Cert: &x509.Certificate{Subject: pkix.Name{CommonName: "canary-ca.example.net"}}}},
+			ClassUnavailable},
+	} {
+		s := &sleeps{}
+		cl, err := New(Options{Instance: mustInstance(t, "https://canary-host.example.net"), Tokens: staticToken("t"),
+			HTTPClient: &http.Client{Transport: failWith{c.cause}}, Sleep: s.sleep, MaxAttempts: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = cl.GetMergeRequest(context.Background(), ProjectByID(2001), 1)
+		e := wantClass(t, err, c.class)
+		for _, leak := range []string{"canary", "10.9.8.7"} {
+			if strings.Contains(e.Error(), leak) {
+				t.Errorf("%s: %q carries %q", name, e.Error(), leak)
+			}
+		}
+	}
+}
+
+// rotating hands out the token it holds and counts the tokens dropped.
+type rotating struct {
+	mu      sync.Mutex
+	current string
+	next    string
+	dropped []string
+}
+
+func (r *rotating) Token(context.Context) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.current, nil
+}
+
+func (r *rotating) Invalidate(rejected string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dropped = append(r.dropped, rejected)
+	if r.current == rejected {
+		r.current = r.next
+	}
+}
+
+// TestARefusedTokenIsDroppedOnce: invalid_token drops the token, and a
+// read is sent once more with the next one. A 401 without that mark,
+// such as GitLab's answer to a merge the account may not make, keeps it.
+func TestARefusedTokenIsDroppedOnce(t *testing.T) {
+	invalid := `{"error":"invalid_token","error_description":"Token was revoked."}`
+	for _, c := range []struct {
+		name     string
+		body     string
+		times    int
+		wantDrop int
+		wantReqs int
+		wantErr  bool
+	}{
+		{"invalid_token, then accepted", invalid, 1, 1, 2, false},
+		{"invalid_token twice", invalid, 2, 1, 2, true},
+		{"a 401 about something else", `{"message":"401 Unauthorized"}`, 1, 0, 1, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var tokens *rotating
+			f := newFixture(t, gitlabtest.Options{}, func(o *Options) { o.MaxAttempts = 3 })
+			tokens = &rotating{current: "old-token", next: f.token}
+			f.client.tokens = tokens
+			f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: 401, Body: c.body, Times: c.times,
+				Header: http.Header{"Content-Type": {"application/json"}}})
+			_, err := f.client.GetCurrentUser(context.Background())
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err = %v, want error %v", err, c.wantErr)
+			}
+			if err != nil {
+				wantClass(t, err, ClassAuth)
+			}
+			if len(tokens.dropped) != c.wantDrop {
+				t.Errorf("dropped %v, want %d", tokens.dropped, c.wantDrop)
+			}
+			if n := len(f.srv.Requests()); n != c.wantReqs {
+				t.Errorf("%d requests, want %d", n, c.wantReqs)
+			}
+		})
 	}
 }

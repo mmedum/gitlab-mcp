@@ -112,8 +112,9 @@ func (s *Service) ListCommits(ctx context.Context, raw string, q gapi.CommitQuer
 
 // GetCommit reads a commit and its diffs under the budget, starting at
 // the fileOffset-th changed file. A diff that does not fit is named, and
-// file_offset continues from it.
-func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset int) (model.Commit, error) {
+// file_offset continues from it. The message is shown from
+// messageOffset, and a cut one says where to continue.
+func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, messageOffset int) (model.Commit, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
 		return model.Commit{}, err
@@ -130,11 +131,16 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset int
 		return model.Commit{}, gapi.Errf(gapi.ClassInvalid, "file_offset %d is past the %d changed files read", fileOffset, len(diffs))
 	}
 	msg, hiddenMsg := render.Code(c.Message)
-	msg, _ = render.Cut(msg, 0, render.CommitMessageBudget)
+	msg, msgBudget := render.Cut(msg, messageOffset, render.CommitMessageBudget)
+	if messageOffset > msgBudget.TotalChars {
+		return model.Commit{}, gapi.Errf(gapi.ClassInvalid, "message_offset %d is past the end of the message, which has %d characters",
+			messageOffset, msgBudget.TotalChars)
+	}
+	msgBudget.HiddenRemoved = hiddenMsg
 	out := model.Commit{Project: ref, ID: c.ID, ShortID: c.ShortID, WebURL: c.WebURL, AuthorName: c.AuthorName,
 		AuthoredAt: c.AuthoredDate, CommitterName: c.CommitterName, CommittedAt: c.CommittedDate,
-		ParentIDs: nonNil(c.ParentIDs), UntrustedMessage: msg, Files: []model.FileDiff{}, NotShown: []model.FileChange{},
-		FilesComplete: complete, DiffBudget: render.DiffBudget, HiddenRemoved: hiddenMsg}
+		ParentIDs: nonNil(c.ParentIDs), UntrustedMessage: msg, MessageBudget: msgBudget, Files: []model.FileDiff{},
+		NotShown: []model.FileChange{}, FilesComplete: complete, DiffBudget: render.DiffBudget, HiddenRemoved: hiddenMsg}
 	if c.Stats != nil {
 		out.Additions, out.Deletions = c.Stats.Additions, c.Stats.Deletions
 	}

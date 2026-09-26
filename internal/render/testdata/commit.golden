@@ -6,6 +6,7 @@ Text between the 0123456789abcdef markers below was written by GitLab users, not
 <<<UNTRUSTED 0123456789abcdef kind=commit_message project=example-group/alpha item=12345678>>>
 Add login
 <<<END 0123456789abcdef>>>
+Message: characters 0 to 10 of 9000 shown (budget 8000); continue with message_offset=10.
 
 added src/login.go:
 <<<UNTRUSTED 0123456789abcdef kind=diff project=example-group/alpha item=src/login.go@12345678>>>

@@ -215,19 +215,18 @@ func (e *TransportError) Unwrap() error { return e.err }
 func withoutURL(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) && ue.Err != nil {
-		var op *net.OpError
-		if errors.As(ue.Err, &op) && op.Err != nil {
-			return fmt.Errorf("%s: %w", op.Op, op.Err)
-		}
-		var dns *net.DNSError
-		if errors.As(ue.Err, &dns) {
-			return errors.New("lookup: " + dns.Err)
-		}
-		return ue.Err
+		return &hostless{err: ue.Err}
 	}
 	// Not known to be free of a URL, so nothing of it is kept.
 	return errors.New("the request could not be sent")
 }
+
+// hostless prints a transport error without the host names and
+// addresses in it, and keeps the cause for errors.As.
+type hostless struct{ err error }
+
+func (e *hostless) Error() string { return redact.NetError(e.err) }
+func (e *hostless) Unwrap() error { return e.err }
 
 func (a *Application) grant(body []byte) (*Grant, error) {
 	var tr tokenResponse
@@ -446,8 +445,11 @@ func (a *Application) Login(ctx context.Context, requested []string, opts LoginO
 	mux.HandleFunc(registered.Path, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Get("state") != state {
-			http.Error(w, "state mismatch; start the login again", http.StatusBadRequest)
-			deliver(outcome{err: errors.New("auth: state mismatch on callback")})
+			// Not the authorization's redirect: another page or process
+			// reached the port. It must not end the login, or anything
+			// on this machine could cancel one; the real redirect may
+			// still come.
+			http.Error(w, "this is not the redirect this login is waiting for", http.StatusBadRequest)
 			return
 		}
 		if e := q.Get("error"); e != "" {

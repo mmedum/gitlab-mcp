@@ -353,6 +353,47 @@ func TestKeyringSaveDropsAStalePlaintextCopy(t *testing.T) {
 	}
 }
 
+// TestFailedKeyringSaveDoesNotLeaveAnOlderPairInCharge: a pair that
+// lands in the file because the keyring refused it must be the pair read
+// back, whether or not the older keyring entry could be removed.
+func TestFailedKeyringSaveDoesNotLeaveAnOlderPairInCharge(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		failDelete error
+		wantEntry  bool
+	}{
+		{"stale entry deleted", nil, false},
+		{"stale entry undeletable", errors.New("locked"), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			kr := newFake()
+			s, warnings := store(t, kr, false)
+			if src, err := s.Save(tok("old", "old")); err != nil || src != SourceKeyring {
+				t.Fatalf("Save old = %q, %v", src, err)
+			}
+			kr.failSet = errors.New("unavailable")
+			kr.failDelete = c.failDelete
+			if src, err := s.Save(tok("new", "new")); err != nil || src != SourceFile {
+				t.Fatalf("Save new = %q, %v", src, err)
+			}
+			if len(*warnings) == 0 {
+				t.Error("the plaintext save did not warn")
+			}
+			if _, ok := kr.items["gitlab-mcp/default"]; ok != c.wantEntry {
+				t.Errorf("keyring entry present = %v, want %v", ok, c.wantEntry)
+			}
+			got, src, err := s.Resolve()
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if src != SourceFile {
+				t.Errorf("source = %q, want file", src)
+			}
+			sameToken(t, got, tok("new", "new"))
+		})
+	}
+}
+
 func TestDeleteRemovesEverythingAndIsIdempotent(t *testing.T) {
 	kr := newFake()
 	s, _ := store(t, kr, false)

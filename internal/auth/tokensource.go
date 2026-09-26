@@ -66,9 +66,15 @@ type TokenSource struct {
 	// a different refresh token, which a new login writes.
 	dead        error
 	deadRefresh string
+	// rejected is the access token GitLab last refused. It is never
+	// fresh again, whatever its expiry says.
+	rejected string
 }
 
-var _ gapi.TokenSource = (*TokenSource)(nil)
+var (
+	_ gapi.TokenSource = (*TokenSource)(nil)
+	_ gapi.Invalidator = (*TokenSource)(nil)
+)
 
 // NewTokenSource builds a token source over a store. Nothing is read
 // until the first Token call.
@@ -103,7 +109,7 @@ func (s *TokenSource) warn(msg string) {
 // no expiry is taken as not expiring: GitLab always sends expires_in on
 // the tokens it issues now.
 func (s *TokenSource) fresh(tok *oauth2.Token) bool {
-	if tok == nil || tok.AccessToken == "" {
+	if tok == nil || tok.AccessToken == "" || tok.AccessToken == s.rejected {
 		return false
 	}
 	return tok.Expiry.IsZero() || s.now().Add(s.opts.Margin).Before(tok.Expiry)
@@ -131,6 +137,18 @@ func (s *TokenSource) Token(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return s.cur.AccessToken, nil
+}
+
+// Invalidate drops an access token GitLab refused with 401. The next
+// Token reads the store again, where a login in another process leaves
+// its pair, and refreshes if the store holds the refused token too.
+func (s *TokenSource) Invalidate(rejected string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rejected = rejected
+	if s.cur != nil && s.cur.AccessToken == rejected {
+		s.cur = nil
+	}
 }
 
 // load reads the stored pair.

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/mmedum/gitlab-mcp/internal/instance"
+	"github.com/mmedum/gitlab-mcp/internal/redact"
 )
 
 // Defaults for Options.
@@ -52,6 +53,14 @@ const maxRetryAfter = 64 * time.Second
 // the client asks once per call.
 type TokenSource interface {
 	Token(ctx context.Context) (string, error)
+}
+
+// Invalidator is a TokenSource that can drop an access token GitLab
+// refused as invalid_token, so its next Token reads the store again or
+// refreshes. A logout and a login in another process revoke the token
+// held here long before its expiry says so.
+type Invalidator interface {
+	Invalidate(rejected string)
 }
 
 // Options configure a Client. Only Instance is required.
@@ -322,7 +331,7 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 
 // send makes the attempts.
 func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, error) {
-	redirected := false
+	redirected, reauthorized := false, false
 	var last verdict
 	for attempt := 1; attempt <= c.maxAttempts; attempt++ {
 		if attempt > 1 {
@@ -365,6 +374,18 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 
 		v := c.decide(ctx, p.call, p.name, p.repeatable, res, sendErr)
 		logAttempt(v.outcome())
+		if res != nil && !reauthorized && tokenRefused(res.status, res.header, res.body) {
+			reauthorized = true
+			next, ok, err := c.reauthorize(ctx, p)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				p.token = next
+				attempt-- // a refused token is not a failure of the call
+				continue
+			}
+		}
 		if v.err == nil {
 			if err := c.decode(res, p.name, out); err != nil {
 				return nil, err
@@ -381,6 +402,26 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 		last = v
 	}
 	return nil, last.err
+}
+
+// reauthorize drops a token GitLab refused and, for a call that may
+// repeat, returns a different one to try once more. A 401 means GitLab
+// did nothing, but a create still is not sent twice (§4.5): the next
+// call gets the new token.
+func (c *Client) reauthorize(ctx context.Context, p *prepared) (string, bool, error) {
+	inv, ok := c.tokens.(Invalidator)
+	if !ok {
+		return "", false, nil
+	}
+	inv.Invalidate(p.token)
+	if !p.repeatable {
+		return "", false, nil
+	}
+	next, err := c.token(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return next, next != p.token, nil
 }
 
 // followMove handles a redirect. A moved project answers a GET with a
@@ -553,6 +594,11 @@ func (c *Client) movedTo(call Call, from *url.URL, location string) (*url.URL, b
 	if projectSegment(c.apiRoot, from) == "" || projectSegment(c.apiRoot, loc) == "" {
 		return nil, false
 	}
+	// A Location naming only the new path would drop the ref and the
+	// filters the request carried.
+	if loc.RawQuery == "" {
+		loc.RawQuery = from.RawQuery
+	}
 	return loc, true
 }
 
@@ -677,12 +723,14 @@ func classifyTransport(ctx context.Context, name string, repeatable bool, err er
 	case badCertificate(err):
 		return verdict{err: Wrap(ClassUnavailable, err,
 			"the instance's TLS certificate was not trusted for %s: %s. For a private CA, set GITLAB_MCP_CA_FILE", name, err)}
-	case ctx.Err() != nil:
+	case ctx.Err() != nil && (repeatable || neverSent(err)):
 		return verdict{err: Wrap(ClassUnavailable, err, "%s was canceled or ran out of time", name)}
 	case neverSent(err):
 		// The connection was never made, so nothing reached GitLab.
 		return verdict{err: Wrap(ClassUnavailable, err, "could not reach GitLab for %s: %s", name, err), retry: true}
 	case !repeatable:
+		// Canceled or not, a create that may have been written may have
+		// landed (§4.5).
 		return verdict{err: Wrap(ClassAmbiguousOutcome, err, ambiguousText+" (%s)", name, err)}
 	default:
 		return verdict{err: Wrap(ClassUnavailable, err, "GitLab did not answer %s: %s", name, err), retry: true}
@@ -761,21 +809,8 @@ type strippedError struct {
 	err error
 }
 
-func (e *strippedError) Error() string { return e.op + ": " + stripURL(withoutAddress(e.err)) }
+func (e *strippedError) Error() string { return e.op + ": " + stripURL(redact.NetError(e.err)) }
 
-// withoutAddress renders a network error without the addresses and host
-// names net puts in it, which logs may not carry (§9.2).
-func withoutAddress(err error) string {
-	var dns *net.DNSError
-	if errors.As(err, &dns) {
-		return "lookup: " + dns.Err
-	}
-	var op *net.OpError
-	if errors.As(err, &op) && op.Err != nil {
-		return op.Op + ": " + withoutAddress(op.Err)
-	}
-	return err.Error()
-}
 func (e *strippedError) Unwrap() error { return e.err }
 
 // stripURL cuts anything URL-shaped out of free text.

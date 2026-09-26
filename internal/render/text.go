@@ -43,6 +43,23 @@ func list(xs []string) string {
 	return strings.Join(xs, ", ")
 }
 
+// idents lists names someone else chose, such as labels, each through
+// Ident.
+func idents(xs []string) string {
+	out := make([]string, len(xs))
+	for i, x := range xs {
+		out[i] = Ident(x)
+	}
+	return list(out)
+}
+
+// person is a display name someone else chose, such as a commit author,
+// on one line.
+func person(s string) string {
+	v, _ := Line(s, 200)
+	return v
+}
+
 func yesNo(b bool) string {
 	if b {
 		return "yes"
@@ -78,7 +95,10 @@ func listingLine(noun string, l model.Listing) string {
 }
 
 // budgetLine says what part of a text was shown.
-func budgetLine(what string, b model.Budget) string {
+func budgetLine(what string, b model.Budget) string { return budgetLineFor(what, "offset", b) }
+
+// budgetLineFor is budgetLine for a text continued by the input param.
+func budgetLineFor(what, param string, b model.Budget) string {
 	var s string
 	switch {
 	case b.TotalChars == 0:
@@ -89,8 +109,8 @@ func budgetLine(what string, b model.Budget) string {
 		s = fmt.Sprintf("%s: characters %d to %d of %d shown, to the end (budget %d).",
 			what, b.Offset, b.Offset+b.ShownChars, b.TotalChars, b.BudgetChars)
 	default:
-		s = fmt.Sprintf("%s: characters %d to %d of %d shown (budget %d); continue with offset=%d.",
-			what, b.Offset, b.Offset+b.ShownChars, b.TotalChars, b.BudgetChars, *b.ContinueOffset)
+		s = fmt.Sprintf("%s: characters %d to %d of %d shown (budget %d); continue with %s=%d.",
+			what, b.Offset, b.Offset+b.ShownChars, b.TotalChars, b.BudgetChars, param, *b.ContinueOffset)
 	}
 	if b.HiddenRemoved > 0 {
 		s += fmt.Sprintf(" %d hidden characters were removed or made visible.", b.HiddenRemoved)
@@ -103,7 +123,7 @@ func budgetLine(what string, b model.Budget) string {
 // Me renders get_me.
 func Me(m model.Me) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Signed in as @%s (%s), user id %d", m.User.Username, m.User.Name, m.User.ID)
+	fmt.Fprintf(&b, "Signed in as @%s (%s), user id %d", m.User.Username, person(m.User.Name), m.User.ID)
 	if m.User.Bot {
 		b.WriteString(", a bot account")
 	}
@@ -145,24 +165,24 @@ func Me(m model.Me) string {
 // Resolved renders resolve_url.
 func Resolved(r model.Resolved) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "A %s in %s", strings.ReplaceAll(r.Kind, "_", " "), r.Project)
+	fmt.Fprintf(&b, "A %s in %s", strings.ReplaceAll(r.Kind, "_", " "), Ident(r.Project))
 	switch {
 	case r.IID != nil:
 		fmt.Fprintf(&b, ", iid %d", *r.IID)
 	case r.ID != nil:
 		fmt.Fprintf(&b, ", id %d", *r.ID)
 	case r.SHA != "":
-		fmt.Fprintf(&b, ", commit %s", r.SHA)
+		fmt.Fprintf(&b, ", commit %s", Ident(r.SHA))
 	case r.From != "":
-		fmt.Fprintf(&b, ", from %s to %s", r.From, r.To)
+		fmt.Fprintf(&b, ", from %s to %s", Ident(r.From), Ident(r.To))
 	case r.Slug != "":
-		fmt.Fprintf(&b, ", page %s", r.Slug)
+		fmt.Fprintf(&b, ", page %s", Ident(r.Slug))
 	}
 	if r.Ref != "" {
-		fmt.Fprintf(&b, ", ref %s", r.Ref)
+		fmt.Fprintf(&b, ", ref %s", Ident(r.Ref))
 	}
 	if r.Path != "" {
-		fmt.Fprintf(&b, ", path %s", r.Path)
+		fmt.Fprintf(&b, ", path %s", Ident(r.Path))
 	}
 	if r.Line != nil {
 		fmt.Fprintf(&b, ", line %d", *r.Line)
@@ -177,7 +197,7 @@ func Resolved(r model.Resolved) string {
 	if len(r.RefCandidates) > 0 {
 		b.WriteString("\nThe ref could not be told from the path; other ways to split them:")
 		for _, c := range r.RefCandidates {
-			fmt.Fprintf(&b, "\n- ref %s, path %s", c.Ref, orNone(c.Path))
+			fmt.Fprintf(&b, "\n- ref %s, path %s", Ident(c.Ref), orNone(Ident(c.Path)))
 		}
 	}
 	if r.Tool == "" {
@@ -215,7 +235,7 @@ func ProjectList(l model.ProjectList, bd Boundary) string {
 		b.WriteString("\n" + bd.Notice())
 	}
 	for _, p := range l.Projects {
-		fmt.Fprintf(&b, "\n- %d %s: %s, default branch %s", p.ID, p.Path, p.Visibility, orNone(p.DefaultBranch))
+		fmt.Fprintf(&b, "\n- %d %s: %s, default branch %s", p.ID, p.Path, p.Visibility, orNone(Ident(p.DefaultBranch)))
 		if p.Archived {
 			b.WriteString(", archived")
 		}
@@ -232,13 +252,13 @@ func Project(p model.Project, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Project %s\n", projectLine(p.Project))
 	fmt.Fprintf(&b, "%s, %s; default branch %s; archived %s; empty repository %s.\n",
-		p.WebURL, p.Visibility, orNone(p.DefaultBranch), yesNo(p.Archived), yesNo(p.EmptyRepo))
+		p.WebURL, p.Visibility, orNone(Ident(p.DefaultBranch)), yesNo(p.Archived), yesNo(p.EmptyRepo))
 	fmt.Fprintf(&b, "Under %s (%s). Created %s, last activity %s.\n", p.Namespace, p.NamespaceKind, when(p.CreatedAt), whenPtr(p.LastActivityAt))
 	fmt.Fprintf(&b, "Stars %d, forks %d", p.Stars, p.Forks)
 	if p.OpenIssues != nil {
 		fmt.Fprintf(&b, ", open issues %d", *p.OpenIssues)
 	}
-	fmt.Fprintf(&b, "; topics %s.\n", list(p.Topics))
+	fmt.Fprintf(&b, "; topics %s.\n", idents(p.Topics))
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Name: %s\n", bd.Inline(p.UntrustedName))
 	o := Origin{Kind: "project_description", Project: p.Project.Path}
@@ -264,7 +284,7 @@ func ItemList(l model.ItemList, noun string, bd Boundary) string {
 		fmt.Fprintf(&b, "\n- %s (project id %d, iid %d): %s, by @%s, updated %s", it.Reference, it.Project.ID, it.IID,
 			state, it.Author, when(it.UpdatedAt))
 		if len(it.Labels) > 0 {
-			fmt.Fprintf(&b, ", labels %s", strings.Join(it.Labels, ", "))
+			fmt.Fprintf(&b, ", labels %s", idents(it.Labels))
 		}
 		fmt.Fprintf(&b, "; title %s", bd.Inline(it.UntrustedTitle))
 	}
@@ -295,7 +315,7 @@ func Issue(is model.Issue, bd Boundary) string {
 	fmt.Fprintf(&b, "Issue %s, iid %d, in %s\n", is.Reference, is.IID, projectLine(is.Project))
 	fmt.Fprintf(&b, "%s; %s; type %s; confidential %s.\n", is.WebURL, is.State, is.Type, yesNo(is.Confidential))
 	fmt.Fprintf(&b, "Author @%s; assignees %s; labels %s; milestone %s.\n", is.Author.Username, users(is.Assignees),
-		list(is.Labels), milestone(is.Milestone))
+		idents(is.Labels), milestone(is.Milestone))
 	fmt.Fprintf(&b, "Created %s; updated %s", when(is.CreatedAt), when(is.UpdatedAt))
 	if is.ClosedAt != nil {
 		fmt.Fprintf(&b, "; closed %s", when(*is.ClosedAt))
@@ -327,7 +347,7 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	if mr.Draft {
 		state += ", draft"
 	}
-	fmt.Fprintf(&b, "%s; %s; %s into %s", mr.WebURL, state, mr.SourceBranch, mr.TargetBranch)
+	fmt.Fprintf(&b, "%s; %s; %s into %s", mr.WebURL, state, Ident(mr.SourceBranch), Ident(mr.TargetBranch))
 	if mr.SourceProjectID != mr.Project.ID {
 		fmt.Fprintf(&b, " (from the fork with project id %d)", mr.SourceProjectID)
 	}
@@ -352,7 +372,7 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 		b.WriteString(".\n")
 	}
 	fmt.Fprintf(&b, "Author @%s; assignees %s; reviewers %s; labels %s; milestone %s.\n", mr.Author.Username,
-		users(mr.Assignees), users(mr.Reviewers), list(mr.Labels), milestone(mr.Milestone))
+		users(mr.Assignees), users(mr.Reviewers), idents(mr.Labels), milestone(mr.Milestone))
 	fmt.Fprintf(&b, "Created %s; updated %s", when(mr.CreatedAt), when(mr.UpdatedAt))
 	if mr.MergedAt != nil {
 		fmt.Fprintf(&b, "; merged %s", when(*mr.MergedAt))
@@ -411,7 +431,7 @@ func Discussions(d model.Discussions, bd Boundary) string {
 			b.WriteString(" (unresolved)")
 		}
 		if p := t.Position; p != nil {
-			fmt.Fprintf(&b, " on %s", p.NewPath)
+			fmt.Fprintf(&b, " on %s", Ident(p.NewPath))
 			switch {
 			case p.NewLine != nil:
 				fmt.Fprintf(&b, " new line %d", *p.NewLine)
@@ -454,7 +474,7 @@ func Discussions(d model.Discussions, bd Boundary) string {
 // File renders get_file.
 func File(f model.File, bd Boundary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "File %s at %s in %s\n", f.Path, f.Ref, projectLine(f.Project))
+	fmt.Fprintf(&b, "File %s at %s in %s\n", Ident(f.Path), Ident(f.Ref), projectLine(f.Project))
 	fmt.Fprintf(&b, "%d bytes; blob %s; last commit %s; ref resolved to %s; sha256 %s.\n", f.Size, f.BlobID,
 		f.LastCommitID, f.CommitID, f.SHA256)
 	if f.Binary {
@@ -470,7 +490,7 @@ func File(f model.File, bd Boundary) string {
 // Tree renders list_tree.
 func Tree(t model.Tree, _ Boundary) string {
 	var b strings.Builder
-	where := t.Path
+	where := Ident(t.Path)
 	if where == "" {
 		where = "the root"
 	}
@@ -481,7 +501,7 @@ func Tree(t model.Tree, _ Boundary) string {
 		if kind == "" {
 			kind = e.Type
 		}
-		fmt.Fprintf(&b, "\n%-9s %s", kind, e.Path)
+		fmt.Fprintf(&b, "\n%-9s %s", kind, Ident(e.Path))
 	}
 	return b.String()
 }
@@ -490,7 +510,7 @@ func orDefault(ref string) string {
 	if ref == "" {
 		return "the default branch"
 	}
-	return ref
+	return Ident(ref)
 }
 
 // Branches renders list_branches.
@@ -511,7 +531,7 @@ func Branches(l model.Branches, bd Boundary) string {
 				flags = append(flags, f.name)
 			}
 		}
-		fmt.Fprintf(&b, "\n- %s", br.Name)
+		fmt.Fprintf(&b, "\n- %s", Ident(br.Name))
 		if len(flags) > 0 {
 			fmt.Fprintf(&b, " (%s)", strings.Join(flags, ", "))
 		}
@@ -531,7 +551,7 @@ func Commits(l model.Commits, bd Boundary) string {
 		b.WriteString("\n" + bd.Notice())
 	}
 	for _, c := range l.Commits {
-		fmt.Fprintf(&b, "\n- %s %s by %s", c.ID, when(c.CommittedAt), c.AuthorName)
+		fmt.Fprintf(&b, "\n- %s %s by %s", c.ID, when(c.CommittedAt), person(c.AuthorName))
 		if c.Parents > 1 {
 			b.WriteString(", a merge")
 		}
@@ -544,12 +564,16 @@ func Commits(l model.Commits, bd Boundary) string {
 func Commit(c model.Commit, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Commit %s in %s\n", c.ID, projectLine(c.Project))
-	fmt.Fprintf(&b, "%s\nAuthored by %s at %s; committed by %s at %s; parents %s.\n", c.WebURL, c.AuthorName,
-		when(c.AuthoredAt), c.CommitterName, when(c.CommittedAt), list(c.ParentIDs))
+	fmt.Fprintf(&b, "%s\nAuthored by %s at %s; committed by %s at %s; parents %s.\n", c.WebURL, person(c.AuthorName),
+		when(c.AuthoredAt), person(c.CommitterName), when(c.CommittedAt), list(c.ParentIDs))
 	fmt.Fprintf(&b, "%d lines added, %d removed.\n", c.Additions, c.Deletions)
 	b.WriteString(bd.Notice() + "\n")
 	o := Origin{Kind: "commit_message", Project: c.Project.Path, Item: c.ShortID, Author: ""}
-	b.WriteString(bd.Block(o, c.UntrustedMessage))
+	b.WriteString(bd.Block(o, c.UntrustedMessage) + "\n")
+	// The commit's hidden-character count is reported once, below.
+	mb := c.MessageBudget
+	mb.HiddenRemoved = 0
+	b.WriteString(budgetLineFor("Message", "message_offset", mb))
 	for _, f := range c.Files {
 		fmt.Fprintf(&b, "\n\n%s %s", f.Status, fileName(f.OldPath, f.NewPath))
 		b.WriteString(":\n" + bd.Block(Origin{Kind: "diff", Project: c.Project.Path, Item: f.NewPath + "@" + c.ShortID}, f.UntrustedDiff))
@@ -578,9 +602,9 @@ func Commit(c model.Commit, bd Boundary) string {
 
 func fileName(oldPath, newPath string) string {
 	if oldPath != "" && oldPath != newPath {
-		return oldPath + " -> " + newPath
+		return Ident(oldPath) + " -> " + Ident(newPath)
 	}
-	return newPath
+	return Ident(newPath)
 }
 
 func notShownReason(r string) string {

@@ -197,6 +197,11 @@ func (s *Store) readStored() (record, Source, error) {
 		switch {
 		case err == nil && raw != "":
 			r, err := decode([]byte(raw), "the keyring entry")
+			if err == nil {
+				if f, ok := s.newerFile(r.SavedAt); ok {
+					return f, SourceFile, nil
+				}
+			}
 			return r, SourceKeyring, err
 		case err != nil && !IsKeyringNotFound(err):
 			keyringErr = err
@@ -219,6 +224,26 @@ func (s *Store) readStored() (record, Source, error) {
 		return record{}, "", ErrKeyringSilent
 	}
 	return record{}, "", ErrNotFound
+}
+
+// newerFile returns the file's pair when it was saved after the keyring
+// entry. Both exist only when a save failed half way: a keyring save
+// that could not remove the file (the file is older), or a keyring that
+// refused a save and would not delete its old entry either (the file is
+// newer). The pair saved last is the live one.
+func (s *Store) newerFile(than time.Time) (record, bool) {
+	if s.FilePath == "" {
+		return record{}, false
+	}
+	data, err := os.ReadFile(s.FilePath)
+	if err != nil {
+		return record{}, false
+	}
+	r, err := decode(data, s.FilePath)
+	if err != nil || !r.SavedAt.After(than) {
+		return record{}, false
+	}
+	return r, true
 }
 
 func decode(data []byte, where string) (record, error) {
@@ -280,6 +305,12 @@ func (s *Store) Save(tok *oauth2.Token) (Source, error) {
 		return "", fmt.Errorf("credentials: %w", err)
 	}
 	if keyringErr != nil {
+		// An older pair left in the keyring would be read before the file.
+		// If it cannot be removed either, readStored still prefers the
+		// file, being saved later.
+		if err := s.Keyring.Delete(ServiceName, s.Profile); err != nil && !IsKeyringNotFound(err) {
+			s.warn(fmt.Sprintf("an older token remains in the keyring and could not be removed: %v", err))
+		}
 		s.warn(fmt.Sprintf("keyring unavailable (%v); token saved in plaintext at %s (%s)",
 			keyringErr, s.FilePath, FileProtection()))
 	} else {

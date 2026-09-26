@@ -108,6 +108,40 @@ func Line(s string, max int) (string, int) {
 	return out, n
 }
 
+// Ident prepares a name someone else chose — a file path, a branch, a
+// label, a topic — for one line of text. Nothing is dropped, folded or
+// cut, since the name may be passed back to a tool; each control or
+// hidden character is written out as <U+000A> instead, so a newline in a
+// file name cannot start a line that reads as the server's.
+func Ident(s string) string {
+	clean := true
+	for _, r := range s {
+		if hidden(r) || control(r) || r == utf8.RuneError {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var out strings.Builder
+	for _, r := range strings.ToValidUTF8(s, "\uFFFD") {
+		if hidden(r) || control(r) {
+			fmt.Fprintf(&out, "<U+%04X>", r)
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
+}
+
+// control reports a C0 or C1 control character or a Unicode line or
+// paragraph separator: anything that can break a line or move the
+// cursor.
+func control(r rune) bool {
+	return r < 0x20 || (r >= 0x7f && r < 0xa0) || r == 0x2028 || r == 0x2029
+}
+
 // dropComments removes HTML comments outside fenced code blocks and
 // counts the characters removed. An unterminated comment runs to the
 // end, as CommonMark reads it and GitLab hides it.
@@ -211,6 +245,9 @@ func Links(s, self string) string {
 // destination describes a link target without its path, unless it is
 // on this instance.
 func destination(dest, self string) string {
+	// A browser reads a backslash as a slash in an http(s) link, so /\host
+	// is another host and the authority can end at a backslash.
+	dest = strings.ReplaceAll(dest, `\`, "/")
 	lower := strings.ToLower(dest)
 	switch {
 	case strings.HasPrefix(lower, "mailto:"):
@@ -228,13 +265,20 @@ func destination(dest, self string) string {
 			return "relative link: " + dest
 		}
 	}
-	host, path, _ := strings.Cut(rest, "/")
+	// The authority ends at the first of / ? #, and userinfo runs to the
+	// last @ inside it, as a browser reads it. An @ past the authority is
+	// path, query or fragment and says nothing about the host.
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	host, path := rest[:end], rest[end:]
 	if at := strings.LastIndex(host, "@"); at >= 0 {
 		host = host[at+1:]
 	}
 	host = strings.ToLower(host)
 	if self != "" && host == strings.ToLower(self) {
-		return "link on this instance: /" + path
+		return "link on this instance: /" + strings.TrimPrefix(path, "/")
 	}
 	if scheme != "" && scheme != "http" && scheme != "https" {
 		return scheme + " link to " + host

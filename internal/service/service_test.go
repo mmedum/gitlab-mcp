@@ -187,7 +187,7 @@ func TestCommitDiffBudget(t *testing.T) {
 	body, _ := json.Marshal(diffs)
 	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/diff", alphaID, sha),
 		Status: http.StatusOK, Body: string(body)})
-	out, err := s.GetCommit(t.Context(), "2001", sha, 0)
+	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,6 +195,45 @@ func TestCommitDiffBudget(t *testing.T) {
 	if len(out.Files) != 2 || len(out.NotShown) != 2 || out.NotShown[0].Reason != "too_large" ||
 		out.NotShown[1].Reason != "budget" || out.NextFileOffset == nil || *out.NextFileOffset != 3 {
 		t.Errorf("files %d, not shown %+v, next %v", len(out.Files), out.NotShown, out.NextFileOffset)
+	}
+}
+
+// TestCommitMessageBudget: a message cut at the budget says so, with its
+// length and where to continue, so it is never mistaken for a short one.
+func TestCommitMessageBudget(t *testing.T) {
+	s, gl := newService(t, gitlabtest.Options{}, config.Config{})
+	c, _, err := s.client.ListCommits(t.Context(), gapi.ProjectByID(alphaID), gapi.CommitQuery{}, gapi.ListOptions{PerPage: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := c[0].ID
+	message := strings.Repeat("A line of the message.\n", 500) // 11,500 characters
+	body, _ := json.Marshal(gitlab.Commit{ID: sha, ShortID: sha[:8], Message: message})
+	inject := func() {
+		gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s", alphaID, sha),
+			Status: http.StatusOK, Body: string(body)})
+	}
+	inject()
+	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := out.MessageBudget
+	if b.TotalChars != 11500 || b.BudgetChars != render.CommitMessageBudget || b.ShownChars != len([]rune(out.UntrustedMessage)) ||
+		b.ShownChars > render.CommitMessageBudget || b.ContinueOffset == nil || *b.ContinueOffset != b.ShownChars {
+		t.Fatalf("message budget = %+v, shown %d characters", b, len([]rune(out.UntrustedMessage)))
+	}
+	inject()
+	rest, err := s.GetCommit(t.Context(), "2001", sha, 0, *b.ContinueOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.UntrustedMessage+rest.UntrustedMessage != message || rest.MessageBudget.ContinueOffset != nil {
+		t.Errorf("continued message budget = %+v", rest.MessageBudget)
+	}
+	inject()
+	if _, err := s.GetCommit(t.Context(), "2001", sha, 0, 20000); class(err) != gapi.ClassInvalid {
+		t.Errorf("offset past the end: %v", err)
 	}
 }
 

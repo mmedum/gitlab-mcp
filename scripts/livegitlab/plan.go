@@ -127,7 +127,7 @@ func plan(s scratch) []step {
 			"since": yesterday, "until": tomorrow}, paged: true},
 		{tool: "list_commits", args: map[string]any{"project": p, "path": s.File, "author": s.User}},
 		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.SHA}},
-		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.Feature, "file_offset": 1}},
+		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.Feature, "file_offset": 1, "message_offset": 7}},
 	}
 }
 

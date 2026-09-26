@@ -469,6 +469,7 @@ type Commit struct {
 	Additions        int          `json:"additions"`
 	Deletions        int          `json:"deletions"`
 	UntrustedMessage string       `json:"untrusted_message"`
+	MessageBudget    Budget       `json:"message_budget" jsonschema:"What part of the message is shown; pass continue_offset as message_offset to read on"`
 	Files            []FileDiff   `json:"files" jsonschema:"Changed files whose diff fit the budget"`
 	NotShown         []FileChange `json:"files_not_shown" jsonschema:"Changed files left out by the budget or cut by GitLab"`
 	FilesComplete    bool         `json:"files_complete" jsonschema:"False when the commit changes more files than were read"`

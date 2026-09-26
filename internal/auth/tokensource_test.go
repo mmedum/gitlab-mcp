@@ -344,3 +344,95 @@ func TestTheLockWaitIsBounded(t *testing.T) {
 	}
 	again()
 }
+
+// TestARejectedTokenIsDroppedAndTheStoreReread: after a logout and a
+// login in another process, the access token held here is revoked
+// while its expiry says it is fresh. The 401 it earns drops it, the
+// next token comes from the store, and a read is tried once more.
+func TestARejectedTokenIsDroppedAndTheStoreReread(t *testing.T) {
+	f := newFixture(t, time.Hour)
+	old := f.signedIn(t)
+	ts := f.source(fileStore(f.dir))
+	ctx := context.Background()
+	if _, err := ts.Token(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.Revoke(old.AccessToken)
+	f.srv.Revoke(old.RefreshToken)
+	relogin := f.signedIn(t)
+
+	c, err := gapi.New(gapi.Options{Instance: f.app.Instance, Tokens: ts, MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetCurrentUser(ctx); err != nil {
+		t.Fatalf("a read after a login elsewhere: %v", err)
+	}
+	reqs := f.srv.Requests()
+	if len(reqs) < 2 || reqs[len(reqs)-2].Authorization != "Bearer "+old.AccessToken ||
+		reqs[len(reqs)-1].Authorization != "Bearer "+relogin.AccessToken {
+		t.Errorf("requests = %+v, want the old token refused and the new one used once", reqs)
+	}
+	if f.srv.Refreshes() != 0 {
+		t.Errorf("%d refreshes, want none: the store held a fresh pair", f.srv.Refreshes())
+	}
+}
+
+// TestARejectedTokenWithNoSuccessorAsksForLogin: a revoked pair still
+// in the store is refreshed once, refused, and the call says to log in.
+// Nothing loops.
+func TestARejectedTokenWithNoSuccessorAsksForLogin(t *testing.T) {
+	f := newFixture(t, time.Hour)
+	old := f.signedIn(t)
+	ts := f.source(fileStore(f.dir))
+	f.srv.Revoke(old.AccessToken)
+	f.srv.Revoke(old.RefreshToken)
+
+	c, err := gapi.New(gapi.Options{Instance: f.app.Instance, Tokens: ts, MaxAttempts: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.srv.Requests())
+	_, err = c.GetCurrentUser(context.Background())
+	if class, _ := gapi.ClassOf(err); class != gapi.ClassAuth || !strings.Contains(err.Error(), "gitlab-mcp login") {
+		t.Fatalf("err = %v, want [auth] asking for login", err)
+	}
+	// One read refused, one refresh refused, nothing more.
+	if n := len(f.srv.Requests()) - before; n != 2 {
+		t.Errorf("%d requests, want 2: %+v", n, f.srv.Requests()[before:])
+	}
+}
+
+// TestARejectedCreateIsNotRepeated: a create refused with 401 is not
+// sent again, but the next call uses the token from the store.
+func TestARejectedCreateIsNotRepeated(t *testing.T) {
+	f := newFixture(t, time.Hour)
+	old := f.signedIn(t)
+	ts := f.source(fileStore(f.dir))
+	ctx := context.Background()
+	if _, err := ts.Token(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.Revoke(old.AccessToken)
+	relogin := f.signedIn(t)
+
+	c, err := gapi.New(gapi.Options{Instance: f.app.Instance, Tokens: ts, MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.srv.Requests())
+	err = c.Do(ctx, gapi.Call{Method: "POST", Path: "projects/{}/issues/{}/notes", Args: []string{"2001", "1"},
+		Body: map[string]string{"body": "x"}, Name: "add_comment"}, nil)
+	if class, _ := gapi.ClassOf(err); class != gapi.ClassAuth {
+		t.Fatalf("err = %v, want [auth]", err)
+	}
+	if n := len(f.srv.Requests()) - before; n != 1 {
+		t.Fatalf("%d requests, want the create sent once", n)
+	}
+	if _, err := c.GetCurrentUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.srv.Requests()[len(f.srv.Requests())-1].Authorization; got != "Bearer "+relogin.AccessToken {
+		t.Errorf("next call sent %q, want the new token", got)
+	}
+}

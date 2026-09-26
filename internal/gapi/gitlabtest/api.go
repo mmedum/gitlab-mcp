@@ -269,7 +269,7 @@ func (s *Server) projectFor(w http.ResponseWriter, r *http.Request, seg, user st
 			rest = ""
 		}
 		loc := s.URL + prefix + url.PathEscape(to) + rest
-		if r.URL.RawQuery != "" {
+		if r.URL.RawQuery != "" && !s.opts.MoveDropsQuery {
 			loc += "?" + r.URL.RawQuery
 		}
 		w.Header().Set("Location", loc)
