@@ -131,3 +131,90 @@ func TestGoldens(t *testing.T) {
 		golden(t, name, got)
 	}
 }
+
+// The phase-1 renderers.
+func TestGoldensPhase1(t *testing.T) {
+	bob := model.User{Username: "bob", Name: "Bob Example"}
+	yes := true
+	diffs := model.Diffs{Files: []model.FileDiff{{NewPath: "src/login.go", Status: "added",
+		UntrustedDiff: "@@ -0,0 +1 @@\n+package main\n"}},
+		NotShown:      []model.FileChange{{NewPath: "vendor/big.txt", Status: "modified", Reason: "too_large"}},
+		FilesComplete: false, DiffBudget: 40000, HiddenRemoved: 1}
+	job := model.JobRow{ID: 70002, Name: "unit tests", Stage: "test", Status: "failed", FailureReason: "script_failure",
+		CreatedAt: t0, StartedAt: tp(t0), FinishedAt: tp(t1), Duration: func() *float64 { d := 120.5; return &d }()}
+	cases := map[string]string{
+		"mr_files": MRFiles(model.MRFiles{Project: alpha, IID: 3, Files: []model.MRFile{
+			{OldPath: "src/login.go", NewPath: "src/login.go", Status: "added", Additions: 4},
+			{OldPath: "docs/old.md", NewPath: "docs/new.md", Status: "renamed"},
+			{OldPath: "gen/api.pb.go", NewPath: "gen/api.pb.go", Status: "modified", Collapsed: true, Generated: &yes},
+			{OldPath: "vendor/big.txt", NewPath: "vendor/big.txt", Status: "modified", TooLarge: true}},
+			Listing: model.Listing{Returned: 4, Complete: true, Total: intp(4)}}, bd),
+		"mr_diff": MRDiff(model.MRDiff{Project: alpha, IID: 3, Diffs: diffs}, bd),
+		"mr_commits": MRCommits(model.MRCommits{Project: alpha, IID: 3, Commits: []model.CommitRow{{ID: "1234567890abcdef",
+			AuthorName: "Bob Example", CommittedAt: t0, Parents: 1, UntrustedTitle: "Add login stub"}},
+			Listing: model.Listing{Returned: 1, Complete: true, Total: intp(1)}}, bd),
+		"drafts": DraftNotes(model.DraftNotes{Project: alpha, IID: 3, Budget: 30000, Drafts: []model.DraftNote{
+			{ID: 80001, Position: &model.DiffPosition{NewPath: "src/login.go", NewLine: intp(3)}, UntrustedBody: "Rename this.",
+				Budget: model.Budget{BudgetChars: 6000, TotalChars: 12, ShownChars: 12}},
+			{ID: 80002, DiscussionID: "aaaa", ResolveDiscussion: true, UntrustedBody: "Agreed.",
+				Budget: model.Budget{BudgetChars: 6000, TotalChars: 7, ShownChars: 7}}},
+			NotShown: []int64{80003}, Listing: model.Listing{Returned: 2, Total: intp(3), NextPageToken: strp("tok")}}, bd),
+		"compare": Compare(model.Compare{Project: alpha, From: "main", To: "feature/login",
+			WebURL: "https://gitlab.example.com/example-group/alpha/-/compare/main...feature%2Flogin", CommitsTotal: 101,
+			Commits: []model.CommitRow{{ID: "1234567890abcdef", AuthorName: "Bob Example", CommittedAt: t0, Parents: 1,
+				UntrustedTitle: "Add login stub"}}, NextCommitOffset: intp(100), Diffs: diffs}, bd),
+		"tags": Tags(model.Tags{Project: alpha, Tags: []model.Tag{
+			{Name: "v1.0", CommitID: "1234567890abcdef", CommittedAt: t0, CreatedAt: tp(t1), Protected: true, Release: true,
+				UntrustedMessage: "Release 1.0", UntrustedCommitTitle: "Prepare release"},
+			{Name: "v0.9", CommitID: "fedcba0987654321", CommittedAt: t0, UntrustedCommitTitle: "Update"}},
+			Listing: model.Listing{Returned: 2, Complete: true, Total: intp(2)}}, bd),
+		"pipelines": Pipelines(model.Pipelines{Project: alpha, Pipelines: []model.PipelineRow{{ID: 61001, IID: 4,
+			Status: "failed", Ref: "main", SHA: "1234567890abcdef", Source: "push", CreatedAt: t0, UpdatedAt: t1}},
+			Listing: model.Listing{Returned: 1, NextPageToken: strp("tok"), Total: intp(4)}}, bd),
+		"pipeline": Pipeline(model.PipelineDetail{Project: alpha, ID: 61001, IID: 4, Status: "failed",
+			DetailedStatus: "failed", Ref: "main", SHA: "1234567890abcdef", Source: "push", User: &bob, CreatedAt: t0,
+			StartedAt: tp(t0), FinishedAt: tp(t1), Duration: func() *int64 { d := int64(480); return &d }(),
+			WebURL:              "https://gitlab.example.com/example-group/alpha/-/pipelines/61001",
+			UntrustedYAMLErrors: "jobs:build config contains unknown keys", FailedJobs: []model.JobRow{job}}, bd),
+		"jobs": Jobs(model.Jobs{Project: alpha, PipelineID: 61001, Jobs: []model.JobRow{job,
+			{ID: 70003, Name: "lint", Stage: "test", Status: "failed", AllowFailure: true, CreatedAt: t0}},
+			Listing: model.Listing{Returned: 2, Complete: true, Total: intp(2)}}, bd),
+		"job_log": JobLog(model.JobLog{Project: alpha, Job: job, TotalBytes: 90000, ByteOffset: 50000, ByteEnd: 90000,
+			PrevByteOffset: intp(10000), Section: "step_script", SecretsMasked: 1,
+			UntrustedLog: "§ section step_script: Executing\ntoken [MASKED gitlab-token]\nERROR: Job failed: exit code 1\n"}, bd),
+		"lint": Lint(model.Lint{Project: alpha, Ref: "main", Simulate: true, Valid: false,
+			UntrustedErrors:     []string{"jobs:build:script config should be a string"},
+			UntrustedWarnings:   []string{"jobs:deploy may allow multiple pipelines"},
+			Jobs:                []model.LintJob{{Name: "deploy", Stage: "deploy", When: "manual"}},
+			UntrustedMergedYAML: "build:\n  script: 42\n",
+			MergedYAMLBudget:    model.Budget{BudgetChars: 60000, TotalChars: 22, ShownChars: 22}}, bd),
+		"labels": Labels(model.Labels{Project: alpha, Labels: []model.Label{
+			{ID: 96004, Name: "priority::high", Color: "#428bca", ProjectOnly: true, Priority: intp(1), OpenIssues: intp(3),
+				ClosedIssues: intp(1), OpenMergeRequests: intp(0), UntrustedDescription: "Do these first."},
+			{ID: 96100, Name: "group-wide", Color: "#ff0000"}},
+			Listing: model.Listing{Returned: 2, Complete: true, Total: intp(2)}}, bd),
+		"milestones": Milestones(model.Milestones{Project: &alpha, Milestones: []model.MilestoneRow{
+			{ID: 90001, IID: 2, State: "active", StartDate: strp("2026-01-12"), DueDate: strp("2026-01-23"), UpdatedAt: t0,
+				UntrustedTitle: "Sprint 2"},
+			{ID: 90002, IID: 1, State: "closed", Expired: true, UpdatedAt: t0, UntrustedTitle: "Sprint 1"}},
+			Listing: model.Listing{Returned: 2, Complete: true, Total: intp(2)}}, bd),
+		"members": Members(model.Members{Project: alpha, Members: []model.Member{
+			{ID: 1001, Username: "alice", Name: "Alice Example", State: "active", AccessLevel: 40, Role: "maintainer"},
+			{ID: 1003, Username: "carol", Name: "Carol Example", State: "blocked", AccessLevel: 50, Role: "owner",
+				ExpiresAt: strp("2026-12-31")}},
+			Listing: model.Listing{Returned: 2, Complete: true, Total: intp(2)}}, bd),
+		"users": Users(model.Users{Users: []model.UserRow{{ID: 1002, Username: "bob", Name: "Bob Example", State: "active"}},
+			Listing: model.Listing{Returned: 1, Complete: true, Total: intp(1)}}, bd),
+		"todos": Todos(model.Todos{Todos: []model.Todo{{ID: 95002, Project: &alpha, Action: "review_requested",
+			TargetType: "MergeRequest", TargetIID: func() *int64 { n := int64(1); return &n }(), State: "pending", Author: "carol",
+			CreatedAt: t0, UntrustedTitle: "Add login", UntrustedBody: "@alice please review"}},
+			Listing: model.Listing{Returned: 1, Complete: true, Total: intp(1)}}, bd),
+		"search": Search(model.Search{Scope: "blobs", Where: "project", Rows: []model.SearchRow{
+			{Kind: "blob", ProjectID: func() *int64 { n := int64(2001); return &n }(), Ref: "main", Path: "src/util/strings.go",
+				StartLine: intp(2), UntrustedExcerpt: "// Upper is a stub.\nfunc Upper(s string) string { return s }", ExcerptCut: true}},
+			Listing: model.Listing{Returned: 1, Complete: true, Total: intp(1)}}, bd),
+	}
+	for name, got := range cases {
+		golden(t, name, got)
+	}
+}

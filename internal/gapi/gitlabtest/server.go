@@ -19,6 +19,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 )
 
 // Options shape the instance. Zero values take the defaults.
@@ -74,6 +76,13 @@ type Server struct {
 	nextIssueID   int64
 	nextMRID      int64
 	nextNoteID    int64
+
+	// Planning state outside any one project: group milestones and
+	// labels, group members' access levels, and each user's to-do items.
+	groupMilestones map[int64][]gitlab.ProjectMilestone
+	groupLabels     map[int64][]gitlab.Label
+	groupLevels     map[int64]map[string]int
+	todos           []todo
 
 	faults   []*Fault
 	requests []Request

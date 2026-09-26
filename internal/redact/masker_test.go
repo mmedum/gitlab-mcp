@@ -52,6 +52,24 @@ func TestMaskerWholeWordsOnly(t *testing.T) {
 	}
 }
 
+// A numeric id ends at any non-digit, since a runner writes the project's
+// id into its host name.
+func TestMaskerNumbersInsideNames(t *testing.T) {
+	m := NewMasker()
+	m.Known(KindID, "2001")
+	tests := map[string]string{
+		"project 2001":                       "project {id 1}",
+		"runner-x-project-2001-concurrent-0": "runner-x-project-{id 1}-concurrent-0",
+		"12001 and 20011":                    "12001 and 20011",
+		"id2001x":                            "id{id 1}x",
+	}
+	for in, want := range tests {
+		if got := m.Text(in); got != want {
+			t.Errorf("Text(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestMaskerLeavesItsOwnPlaceholdersAlone: a registered value that is
 // also a placeholder's kind name must not rewrite the placeholder.
 func TestMaskerLeavesItsOwnPlaceholdersAlone(t *testing.T) {

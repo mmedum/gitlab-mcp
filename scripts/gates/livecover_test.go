@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,8 +35,9 @@ func TestLiveCoverHoldsAFullRun(t *testing.T) {
 	if len(problems) > 0 {
 		t.Fatalf("%s", strings.Join(problems, "\n"))
 	}
-	// 11 tools called, 11 project options, 1 iid.
-	if !strings.Contains(report, "23 of 23 tools and options sent") {
+	// Every tool called and its project option sent, get_issue's iid too.
+	n := 2*(surfaceFloor+1) + 1
+	if !strings.Contains(report, fmt.Sprintf("%d of %d tools and options sent", n, n)) {
 		t.Errorf("report = %s", report)
 	}
 }

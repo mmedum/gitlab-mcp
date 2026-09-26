@@ -43,6 +43,12 @@ var fixtureText = []string{
 	"alice@example.com",            // an email address
 	"Update README.md",             // a commit title
 	"fixture-secret-never-decoded", // a secret GitLab leaks through project reads
+	"Consider naming this",         // a draft review comment
+	"Release 1.0",                  // a tag message
+	"Sprint 2",                     // a milestone title
+	"Generated label",              // a label description
+	"make test",                    // a job log line
+	gitlabtest.FakeToken,           // a secret a job log prints
 }
 
 func TestLogsNeverCarryThePayload(t *testing.T) {
@@ -61,8 +67,21 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 	// before any payload is read. nil drops the input.
 	_, branches := h.ok("list_branches", map[string]any{"project": gitlabtest.ProjectAlpha, "search": "main"})
 	deep := map[string]map[string]any{
-		"get_file":   {"path": "src/main.go", "ref": nil},
-		"get_commit": {"sha": get(branches, "branches", 0, "commit_id")},
+		"get_file":        {"path": "src/main.go", "ref": nil},
+		"get_commit":      {"sha": get(branches, "branches", 0, "commit_id")},
+		"get_mr_diff":     {"paths": nil},
+		"compare_refs":    {"from": "main", "to": "feature/login"},
+		"list_tags":       {"search": nil},
+		"list_pipelines":  {"ref": nil, "sha": nil, "status": nil, "source": nil, "username": nil},
+		"get_pipeline":    {"pipeline_id": gitlabtest.PipelineFailed},
+		"list_jobs":       {"pipeline_id": gitlabtest.PipelineFailed, "scope": nil},
+		"get_job_log":     {"job_id": gitlabtest.JobFailed, "byte_offset": nil, "byte_limit": nil},
+		"lint_ci":         {"ref": nil},
+		"list_labels":     {"search": nil},
+		"list_milestones": {"group": nil, "search": nil, "title": nil, "state": nil},
+		"list_members":    {"query": nil},
+		"list_todos":      {"action": nil, "type": nil},
+		"search":          {"group": nil, "search": "package", "state": nil, "ref": nil},
 	}
 	for _, tool := range list.Tools {
 		schema := tool.InputSchema.(map[string]any)
@@ -72,6 +91,8 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 				if _, ok := args["project"]; ok {
 					args["project"] = project
 				}
+				// A canary page token is refused before anything is read.
+				delete(args, "page_token")
 				for k, v := range deep[tool.Name] {
 					if v == nil {
 						delete(args, k)
@@ -103,7 +124,9 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 		t.Fatalf("the per-call line or the request line is missing:\n%s", out)
 	}
 	// The second pass went deep: GitLab answered the payload reads.
-	for _, call := range []string{"get_issue", "list_discussions", "get_merge_request", "get_file", "get_commit_diff"} {
+	for _, call := range []string{"get_issue", "list_discussions", "get_merge_request", "get_file", "get_commit_diff",
+		"list_mr_diffs", "list_draft_notes", "compare_refs", "list_tags", "get_pipeline", "get_job_log", "lint_ci",
+		"list_labels", "list_milestones", "list_members", "list_todos", "search"} {
 		if !strings.Contains(out, `"call":"`+call+`","attempt":1,"status":200`) {
 			t.Errorf("no successful %s request was logged; the canaries never reached a payload", call)
 		}

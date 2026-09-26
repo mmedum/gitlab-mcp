@@ -33,6 +33,8 @@ type harnessOptions struct {
 	noClient bool
 	granted  []string
 	defs     []definition // nil: every definition
+	// token signs in as someone other than alice.
+	token func(*gitlabtest.Server) string
 }
 
 func newHarness(t *testing.T, o harnessOptions) *harness {
@@ -44,7 +46,11 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	}
 	var client *gapi.Client
 	if !o.noClient {
-		client, err = gapi.New(gapi.Options{Instance: inst, Tokens: gapi.StaticToken(gl.Token()), Logger: o.logger,
+		tok := gl.Token()
+		if o.token != nil {
+			tok = o.token(gl)
+		}
+		client, err = gapi.New(gapi.Options{Instance: inst, Tokens: gapi.StaticToken(tok), Logger: o.logger,
 			Sleep: func(context.Context, time.Duration) error { return nil }})
 		if err != nil {
 			t.Fatalf("client: %v", err)
@@ -60,7 +66,9 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	if defs == nil {
 		defs = definitions()
 	}
-	reg := register(s, Deps{Service: svc, Config: cfg, Granted: o.granted, Logger: o.logger}, defs)
+	deps := Deps{Service: svc, Config: cfg, Granted: o.granted, Logger: o.logger}
+	reg := register(s, deps, defs)
+	RegisterResources(s, deps)
 	ct, st := mcp.NewInMemoryTransports()
 	ss, err := s.Connect(t.Context(), st, nil)
 	if err != nil {

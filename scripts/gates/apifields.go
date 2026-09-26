@@ -38,7 +38,7 @@ const (
 // fieldsFloors are the least the gate must have compared.
 type fieldsFloors struct{ ops, sent, decoded, rows int }
 
-var realFieldsFloors = fieldsFloors{ops: 20, sent: 40, decoded: 400, rows: 20}
+var realFieldsFloors = fieldsFloors{ops: 40, sent: 180, decoded: 900, rows: 100}
 
 var fieldVerdicts = []string{"verified-live", "reasoned"}
 
@@ -215,7 +215,7 @@ func (fc *fieldChecker) body(c clientCall, op apiOperation) {
 
 // response holds every field the call decodes to a 2xx schema.
 func (fc *fieldChecker) response(c clientCall, op apiOperation) {
-	if c.Out == nil {
+	if c.Out == nil || rawBody(c) {
 		return
 	}
 	fields, err := exprFields(c.Out, c, fc.client, fc.structs)
@@ -495,6 +495,25 @@ func exprFields(e ast.Expr, c clientCall, client parsedPackage, structs map[stri
 	out := map[string]string{}
 	flattenStruct(st, "", structs, 0, out)
 	return out, ""
+}
+
+// rawBody reports a call that takes its answer as bytes, as a job log is
+// taken: text, with no fields to hold against the snapshot.
+func rawBody(c clientCall) bool {
+	e := c.Out
+	if u, ok := e.(*ast.UnaryExpr); ok {
+		e = u.X
+	}
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	arr, ok := declaredType(c.fn, id.Name).(*ast.ArrayType)
+	if !ok || arr.Len != nil {
+		return false
+	}
+	elt, ok := arr.Elt.(*ast.Ident)
+	return ok && elt.Name == "byte"
 }
 
 // localStruct finds a struct declared in the client package itself, for

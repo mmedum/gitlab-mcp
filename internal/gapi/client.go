@@ -728,6 +728,11 @@ func (c *Client) recordMove(ctx context.Context, from, to *url.URL) {
 // does not model. An empty body decodes to nothing: a write that
 // answers 204 landed, and telling the caller otherwise invites a retry.
 func (c *Client) decode(ctx context.Context, res *attemptResult, name string, out any) error {
+	// A *[]byte takes the body as it is: a job log is text, not JSON.
+	if raw, ok := out.(*[]byte); ok {
+		*raw = res.body
+		return nil
+	}
 	if out == nil || len(bytes.TrimSpace(res.body)) == 0 {
 		return nil
 	}

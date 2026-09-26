@@ -62,8 +62,12 @@ func (m *Masker) Text(s string) string {
 	s = address.ReplaceAllStringFunc(s, func(v string) string { return m.placeholder(KindEmail, strings.ToLower(v)) })
 	s = clientID.ReplaceAllStringFunc(s, func(v string) string { return m.placeholder(KindClientID, v) })
 	for _, k := range m.known {
+		with := func() string { return m.placeholder(k.kind, asciiLower(k.value)) }
 		s = outsidePlaceholders(s, func(seg string) string {
-			return replaceWord(seg, k.value, func() string { return m.placeholder(k.kind, asciiLower(k.value)) })
+			if k.kind == KindID {
+				return replaceNumber(seg, k.value, with)
+			}
+			return replaceWord(seg, k.value, with)
 		})
 	}
 	return s
@@ -99,6 +103,31 @@ func replaceWord(s, word string, with func() string) string {
 		}
 		start, end := i+j, i+j+len(lw)
 		if (start == 0 || !nameByte(s[start-1])) && (end == len(s) || !nameByte(s[end]) || endsName(s, end)) {
+			b.WriteString(s[i:start])
+			b.WriteString(with())
+		} else {
+			b.WriteString(s[i:end])
+		}
+		i = end
+	}
+}
+
+// replaceNumber replaces each occurrence of the digits num in s that is
+// not part of a longer number. A numeric id is found inside a name too:
+// a runner names its host after the project,
+// "runner-x-project-86939373-concurrent-0".
+func replaceNumber(s, num string, with func() string) string {
+	var b strings.Builder
+	i := 0
+	for {
+		j := strings.Index(s[i:], num)
+		if j < 0 {
+			b.WriteString(s[i:])
+			return b.String()
+		}
+		start, end := i+j, i+j+len(num)
+		digit := func(k int) bool { return k >= 0 && k < len(s) && s[k] >= '0' && s[k] <= '9' }
+		if !digit(start-1) && !digit(end) {
 			b.WriteString(s[i:start])
 			b.WriteString(with())
 		} else {

@@ -500,3 +500,365 @@ type FileDiff struct {
 	// at it; get_file reads the file itself.
 	Truncated bool `json:"truncated" jsonschema:"True when this one diff was over the whole budget and was cut; get_file reads the file"`
 }
+
+// ------------------------------------------------------------ review
+
+// MRFile is one changed file of list_mr_files.
+type MRFile struct {
+	OldPath   string `json:"old_path"`
+	NewPath   string `json:"new_path"`
+	Status    string `json:"status" jsonschema:"added, deleted, renamed or modified"`
+	Additions int    `json:"additions" jsonschema:"Lines added, counted from the diff; 0 when GitLab sent no diff"`
+	Deletions int    `json:"deletions" jsonschema:"Lines removed, counted from the diff; 0 when GitLab sent no diff"`
+	// The markers say why a diff may be absent or not worth reading.
+	TooLarge  bool  `json:"too_large" jsonschema:"GitLab did not send this file's diff: too large"`
+	Collapsed bool  `json:"collapsed" jsonschema:"GitLab collapsed this file's diff"`
+	Generated *bool `json:"generated_file" jsonschema:"GitLab marks the file generated; null when it did not say"`
+	Binary    bool  `json:"binary" jsonschema:"The diff says binary files differ; there are no lines to read"`
+}
+
+// MRFiles is list_mr_files' result.
+type MRFiles struct {
+	Project ProjectRef `json:"project"`
+	IID     int64      `json:"iid"`
+	Files   []MRFile   `json:"files"`
+	Listing Listing    `json:"listing"`
+}
+
+// Diffs is the budgeted diffs of get_mr_diff and compare_refs, as
+// get_commit carries them.
+type Diffs struct {
+	Files          []FileDiff   `json:"files" jsonschema:"Changed files whose diff fit the budget"`
+	NotShown       []FileChange `json:"files_not_shown" jsonschema:"Changed files left out by the budget or cut by GitLab"`
+	FilesComplete  bool         `json:"files_complete" jsonschema:"False when there are more changed files than were read"`
+	NextFileOffset *int         `json:"next_file_offset" jsonschema:"Pass as file_offset to see the diffs left out by the budget; null when none were"`
+	DiffBudget     int          `json:"diff_budget_chars"`
+	HiddenRemoved  int          `json:"hidden_chars_removed" jsonschema:"Zero-width and bidirectional-control characters in the diffs shown, made visible"`
+}
+
+// MRDiff is get_mr_diff's result.
+type MRDiff struct {
+	Project ProjectRef `json:"project"`
+	IID     int64      `json:"iid"`
+	Diffs
+}
+
+// MRCommits is list_mr_commits' result.
+type MRCommits struct {
+	Project ProjectRef  `json:"project"`
+	IID     int64       `json:"iid"`
+	Commits []CommitRow `json:"commits" jsonschema:"Newest first"`
+	Listing Listing     `json:"listing"`
+}
+
+// DraftNote is one of the signed-in account's unpublished review
+// comments.
+type DraftNote struct {
+	ID int64 `json:"id"`
+	// DiscussionID is the thread it replies to, empty for a new one.
+	DiscussionID      string        `json:"discussion_id" jsonschema:"The thread this draft replies to; empty for a new thread"`
+	ResolveDiscussion bool          `json:"resolve_discussion" jsonschema:"Publishing it resolves the thread it replies to"`
+	Position          *DiffPosition `json:"position" jsonschema:"Where an inline draft sits; null for a general one"`
+	UntrustedBody     string        `json:"untrusted_body"`
+	Budget            Budget        `json:"body_budget"`
+}
+
+// DraftNotes is list_review_comments' result.
+type DraftNotes struct {
+	Project ProjectRef  `json:"project"`
+	IID     int64       `json:"iid"`
+	Drafts  []DraftNote `json:"drafts"`
+	// NotShown names the drafts the page budget left out.
+	NotShown []int64 `json:"not_shown" jsonschema:"Ids of drafts left out by the character budget; the next page starts with them"`
+	Budget   int     `json:"budget_chars"`
+	Listing  Listing `json:"listing"`
+}
+
+// Compare is compare_refs' result.
+type Compare struct {
+	Project  ProjectRef `json:"project"`
+	From     string     `json:"from"`
+	To       string     `json:"to"`
+	Straight bool       `json:"straight" jsonschema:"True: from and to compared directly; false: from their merge base, as a merge request compares"`
+	WebURL   string     `json:"web_url"`
+	SameRef  bool       `json:"same_ref" jsonschema:"from and to are the same commit"`
+	// Timeout is GitLab giving up on the comparison: the commits and
+	// diffs are then empty, not absent.
+	Timeout bool        `json:"timeout" jsonschema:"GitLab gave up on the comparison; the commits and diffs it returned are not the whole answer"`
+	Commits []CommitRow `json:"commits" jsonschema:"Commits in to that are not in from, from commit_offset"`
+	// CommitsTotal counts every commit GitLab returned.
+	CommitsTotal     int  `json:"commits_total"`
+	NextCommitOffset *int `json:"next_commit_offset" jsonschema:"Pass as commit_offset to see more commits; null when none are left"`
+	Diffs
+}
+
+// Tag is one row of list_tags.
+type Tag struct {
+	Name        string     `json:"name"`
+	CommitID    string     `json:"commit_id"`
+	CommittedAt time.Time  `json:"committed_at"`
+	CreatedAt   *time.Time `json:"created_at" jsonschema:"When an annotated tag was made; null for a lightweight tag"`
+	Protected   bool       `json:"protected"`
+	Release     bool       `json:"release" jsonschema:"A release is attached"`
+	// UntrustedMessage is an annotated tag's message on one line.
+	UntrustedMessage     string `json:"untrusted_message"`
+	UntrustedCommitTitle string `json:"untrusted_commit_title"`
+}
+
+// Tags is list_tags' result.
+type Tags struct {
+	Project ProjectRef `json:"project"`
+	Tags    []Tag      `json:"tags"`
+	Listing Listing    `json:"listing"`
+}
+
+// ------------------------------------------------------------ CI
+
+// PipelineRow is one row of list_pipelines.
+type PipelineRow struct {
+	ID        int64     `json:"id"`
+	IID       int64     `json:"iid" jsonschema:"The pipeline's number in its project; tools take id, not this"`
+	Status    string    `json:"status"`
+	Ref       string    `json:"ref"`
+	SHA       string    `json:"sha"`
+	Source    string    `json:"source" jsonschema:"What started it: push, merge_request_event, schedule, web and others"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	WebURL    string    `json:"web_url"`
+}
+
+// Pipelines is list_pipelines' result.
+type Pipelines struct {
+	Project   ProjectRef    `json:"project"`
+	Pipelines []PipelineRow `json:"pipelines"`
+	Listing   Listing       `json:"listing"`
+}
+
+// JobRow is one job.
+type JobRow struct {
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	Stage         string     `json:"stage"`
+	Status        string     `json:"status"`
+	AllowFailure  bool       `json:"allow_failure" jsonschema:"A failure of this job does not fail the pipeline"`
+	FailureReason string     `json:"failure_reason" jsonschema:"GitLab's reason for a failure, such as script_failure; empty otherwise"`
+	CreatedAt     time.Time  `json:"created_at"`
+	StartedAt     *time.Time `json:"started_at"`
+	FinishedAt    *time.Time `json:"finished_at"`
+	Duration      *float64   `json:"duration_seconds"`
+	WebURL        string     `json:"web_url"`
+}
+
+// PipelineDetail is get_pipeline's result.
+type PipelineDetail struct {
+	Project        ProjectRef `json:"project"`
+	ID             int64      `json:"id"`
+	IID            int64      `json:"iid"`
+	Status         string     `json:"status"`
+	DetailedStatus string     `json:"detailed_status" jsonschema:"The status as GitLab shows it, such as passed with warnings"`
+	Ref            string     `json:"ref"`
+	Tag            bool       `json:"tag" jsonschema:"ref is a tag"`
+	SHA            string     `json:"sha"`
+	BeforeSHA      string     `json:"before_sha"`
+	Source         string     `json:"source"`
+	User           *User      `json:"user" jsonschema:"Who started it"`
+	CreatedAt      time.Time  `json:"created_at"`
+	StartedAt      *time.Time `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	Duration       *int64     `json:"duration_seconds"`
+	QueuedDuration *int64     `json:"queued_seconds"`
+	WebURL         string     `json:"web_url"`
+	// UntrustedYAMLErrors is GitLab's message about a configuration it
+	// could not read, which quotes the configuration.
+	UntrustedYAMLErrors string `json:"untrusted_yaml_errors"`
+	// FailedJobs lists the failed jobs, the latest attempt of each.
+	FailedJobs         []JobRow `json:"failed_jobs"`
+	FailedJobsComplete bool     `json:"failed_jobs_complete" jsonschema:"False when more jobs failed than were read; list_jobs with scope failed lists them"`
+}
+
+// Jobs is list_jobs' result.
+type Jobs struct {
+	Project    ProjectRef `json:"project"`
+	PipelineID int64      `json:"pipeline_id"`
+	Jobs       []JobRow   `json:"jobs"`
+	Listing    Listing    `json:"listing"`
+}
+
+// JobLog is get_job_log's result: a window of the log, by bytes of the
+// log as GitLab stores it.
+type JobLog struct {
+	Project ProjectRef `json:"project"`
+	Job     JobRow     `json:"job"`
+	// TotalBytes is the stored log's size.
+	TotalBytes int `json:"total_bytes"`
+	// ByteOffset and ByteEnd bound the window shown, in the stored log.
+	ByteOffset int `json:"byte_offset" jsonschema:"Where the window starts in the stored log"`
+	ByteEnd    int `json:"byte_end" jsonschema:"Where the window ends in the stored log"`
+	// PrevByteOffset and NextByteOffset continue backwards and forwards.
+	PrevByteOffset *int `json:"prev_byte_offset" jsonschema:"Pass as byte_offset to read the part before this window; null at the start"`
+	NextByteOffset *int `json:"next_byte_offset" jsonschema:"Pass as byte_offset to read the part after this window; null at the end"`
+	// Section names the section failed_only jumped to.
+	Section string `json:"section" jsonschema:"With failed_only, the log section the job failed in; empty otherwise"`
+	// FailureNotFound is failed_only finding no failure line.
+	FailureNotFound bool `json:"failure_not_found" jsonschema:"With failed_only, true when the log has no failure line and the tail is shown instead"`
+	// SecretsMasked counts the secret shapes replaced with [MASKED …].
+	SecretsMasked int    `json:"secrets_masked" jsonschema:"Token and key shapes replaced with [MASKED kind] in the window shown"`
+	HiddenRemoved int    `json:"hidden_chars_removed" jsonschema:"Zero-width and bidirectional-control characters made visible"`
+	UntrustedLog  string `json:"untrusted_log"`
+}
+
+// LintJob is one job a linted configuration defines.
+type LintJob struct {
+	Name         string `json:"name"`
+	Stage        string `json:"stage"`
+	When         string `json:"when"`
+	AllowFailure bool   `json:"allow_failure"`
+}
+
+// Lint is lint_ci's result.
+type Lint struct {
+	Project  ProjectRef `json:"project"`
+	Ref      string     `json:"ref" jsonschema:"The ref whose configuration was linted; empty for the default branch"`
+	Simulate bool       `json:"simulated" jsonschema:"True when GitLab simulated creating a pipeline"`
+	Valid    bool       `json:"valid"`
+	// Errors and warnings quote the configuration, which people other
+	// than the caller wrote.
+	UntrustedErrors   []string  `json:"untrusted_errors"`
+	UntrustedWarnings []string  `json:"untrusted_warnings"`
+	Jobs              []LintJob `json:"jobs" jsonschema:"The jobs the configuration defines, with include_jobs"`
+	// UntrustedMergedYAML is the configuration with every include
+	// expanded, under the file budget.
+	UntrustedMergedYAML string `json:"untrusted_merged_yaml"`
+	MergedYAMLBudget    Budget `json:"merged_yaml_budget"`
+}
+
+// ------------------------------------------------------------ planning
+
+// Label is one row of list_labels.
+type Label struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name" jsonschema:"The exact name to pass as a label, scoped labels such as priority::high included"`
+	Color       string `json:"color"`
+	ProjectOnly bool   `json:"project_label" jsonschema:"Defined in the project rather than inherited from a group"`
+	Priority    *int   `json:"priority"`
+	// The counts are null unless with_counts was asked for.
+	OpenIssues           *int   `json:"open_issues"`
+	ClosedIssues         *int   `json:"closed_issues"`
+	OpenMergeRequests    *int   `json:"open_merge_requests"`
+	UntrustedDescription string `json:"untrusted_description"`
+}
+
+// Labels is list_labels' result.
+type Labels struct {
+	Project ProjectRef `json:"project"`
+	Labels  []Label    `json:"labels"`
+	Listing Listing    `json:"listing"`
+}
+
+// MilestoneRow is one row of list_milestones.
+type MilestoneRow struct {
+	ID             int64     `json:"id"`
+	IID            int64     `json:"iid"`
+	State          string    `json:"state"`
+	DueDate        *string   `json:"due_date" jsonschema:"A date, not an instant: 2026-10-01"`
+	StartDate      *string   `json:"start_date" jsonschema:"A date, not an instant: 2026-10-01"`
+	Expired        bool      `json:"expired"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	WebURL         string    `json:"web_url"`
+	UntrustedTitle string    `json:"untrusted_title" jsonschema:"The title, which is what issues and merge requests are filtered by"`
+}
+
+// Milestones is list_milestones' result.
+type Milestones struct {
+	// Project or Group names where they were listed, the other null.
+	Project    *ProjectRef    `json:"project"`
+	Group      *string        `json:"group"`
+	Milestones []MilestoneRow `json:"milestones"`
+	Listing    Listing        `json:"listing"`
+}
+
+// Member is one row of list_members.
+type Member struct {
+	ID          int64   `json:"id"`
+	Username    string  `json:"username"`
+	Name        string  `json:"name"`
+	State       string  `json:"state"`
+	AccessLevel int     `json:"access_level" jsonschema:"GitLab's number: 5 minimal access, 10 guest, 15 planner, 20 reporter, 30 developer, 40 maintainer, 50 owner"`
+	Role        string  `json:"role" jsonschema:"The access level's name"`
+	ExpiresAt   *string `json:"expires_at" jsonschema:"A date, not an instant; null when the access does not expire"`
+}
+
+// Members is list_members' result.
+type Members struct {
+	Project ProjectRef `json:"project"`
+	Members []Member   `json:"members"`
+	Listing Listing    `json:"listing"`
+}
+
+// UserRow is one row of find_users.
+type UserRow struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	WebURL   string `json:"web_url"`
+}
+
+// Users is find_users' result.
+type Users struct {
+	Users   []UserRow `json:"users"`
+	Listing Listing   `json:"listing"`
+}
+
+// Todo is one row of list_todos.
+type Todo struct {
+	ID         int64       `json:"id"`
+	Project    *ProjectRef `json:"project" jsonschema:"Null for an item outside a project"`
+	Action     string      `json:"action" jsonschema:"Why it is on the list: assigned, mentioned, review_requested, build_failed and others"`
+	TargetType string      `json:"target_type" jsonschema:"Issue, MergeRequest and others"`
+	TargetIID  *int64      `json:"target_iid" jsonschema:"The issue's or merge request's iid, when the item points at one"`
+	State      string      `json:"state"`
+	Author     string      `json:"author" jsonschema:"The username of whoever caused it"`
+	CreatedAt  time.Time   `json:"created_at"`
+	TargetURL  string      `json:"target_url"`
+	// UntrustedTitle and UntrustedBody are one line each.
+	UntrustedTitle string `json:"untrusted_title"`
+	UntrustedBody  string `json:"untrusted_body"`
+}
+
+// Todos is list_todos' result.
+type Todos struct {
+	Todos   []Todo  `json:"todos"`
+	Listing Listing `json:"listing"`
+}
+
+// SearchRow is one search result. Kind says which fields it fills.
+type SearchRow struct {
+	Kind      string     `json:"kind" jsonschema:"issue, merge_request, project, milestone, user, blob, commit, note or wiki_blob"`
+	ProjectID *int64     `json:"project_id"`
+	ID        *int64     `json:"id" jsonschema:"A project, milestone, user or note id"`
+	IID       *int64     `json:"iid" jsonschema:"An issue's or merge request's iid, or the iid of the item a note is on"`
+	SHA       string     `json:"sha" jsonschema:"A commit"`
+	Ref       string     `json:"ref" jsonschema:"The ref a blob was found at"`
+	Path      string     `json:"path" jsonschema:"A blob's or wiki page's path, or a project's full path"`
+	StartLine *int       `json:"start_line" jsonschema:"The first line of a blob excerpt"`
+	State     string     `json:"state"`
+	Author    string     `json:"author" jsonschema:"A username, or a commit author's name"`
+	UpdatedAt *time.Time `json:"updated_at"`
+	WebURL    string     `json:"web_url"`
+	// UntrustedTitle is a title, a name or a commit title, on one line.
+	UntrustedTitle string `json:"untrusted_title"`
+	// UntrustedExcerpt is a blob's matching lines or a note's body, cut
+	// at the per-row budget.
+	UntrustedExcerpt string `json:"untrusted_excerpt"`
+	ExcerptCut       bool   `json:"excerpt_cut" jsonschema:"The excerpt was longer than the per-row budget and was cut"`
+}
+
+// Search is search's result.
+type Search struct {
+	Scope   string      `json:"scope"`
+	Where   string      `json:"where" jsonschema:"instance, group or project"`
+	Rows    []SearchRow `json:"rows"`
+	Listing Listing     `json:"listing"`
+}

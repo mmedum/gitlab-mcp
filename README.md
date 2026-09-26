@@ -37,19 +37,39 @@ read tools below are being built; nothing writes yet.
 | Tool | What it does |
 |---|---|
 | `get_me` | Who is signed in, with which scopes, and what GitLab reports about itself |
-| `resolve_url` | Turn a GitLab web URL into the project, issue, merge request, file or commit it names |
+| `resolve_url` | Turn a GitLab web URL into the arguments another tool takes, and name that tool |
 | `search_projects` | Find projects by name, or within a group |
 | `get_project` | One project: default branch, visibility, what it has turned on |
+| `list_members` | Who has access to a project, and with which role |
+| `find_users` | Accounts by exact username or by name |
 | `search_issues` | Find issues across gitlab.com, a group or a project |
 | `get_issue` | One issue, its description marked as untrusted content |
 | `list_discussions` | The comment threads on an issue or a merge request |
 | `search_merge_requests` | Find merge requests across gitlab.com or a project |
 | `get_merge_request` | One merge request with its approvals |
+| `list_mr_files` | The files a merge request changes, with line counts and GitLab's markers |
+| `get_mr_diff` | A merge request's diffs, file by file, bounded |
+| `list_mr_commits` | A merge request's commits |
+| `list_review_comments` | Your unpublished review comments on a merge request |
 | `get_file` | A file at a ref, bounded |
 | `list_tree` | A directory listing at a ref |
 | `list_branches` | A project's branches |
 | `list_commits` | Commits on a ref or a path |
 | `get_commit` | One commit and its diff, bounded |
+| `compare_refs` | The commits and diffs between two refs, bounded |
+| `list_tags` | A project's tags |
+| `list_pipelines` | A project's CI pipelines |
+| `get_pipeline` | One pipeline with the jobs that failed |
+| `list_jobs` | A pipeline's jobs |
+| `get_job_log` | A window of a job's log, secrets masked; the failing section on request |
+| `lint_ci` | Check a project's CI configuration at a ref |
+| `list_labels` | The labels a project's issues and merge requests can carry |
+| `list_milestones` | A project's or a group's milestones |
+| `search` | Code, commits, comments and more, in a project, a group or everywhere |
+| `list_todos` | Your to-do items |
+
+Three resources carry the same text for clients that attach rather
+than call: an issue, a merge request and a job log.
 
 ## Install
 

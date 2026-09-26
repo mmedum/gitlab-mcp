@@ -53,6 +53,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, rest string) {
 		s.listIssues(w, r, user, s.visibleProjects(user), "created_by_me")
 	case get && match(seg, "merge_requests"):
 		s.listMRs(w, r, user, s.visibleProjects(user), "created_by_me")
+	case get && s.servePlanningTop(w, r, user, seg):
 	case get && len(seg) == 3 && seg[0] == "groups":
 		s.serveGroup(w, r, user, seg[1], seg[2])
 	case len(seg) >= 2 && seg[0] == "projects":
@@ -92,7 +93,9 @@ func (s *Server) serveGroup(w http.ResponseWriter, r *http.Request, user, id, wh
 	case "merge_requests":
 		s.listMRs(w, r, user, s.groupProjects(user, g, true), "all")
 	default:
-		routeNotFound(w)
+		if !s.serveGroupPlanning(w, r, user, g, what) {
+			routeNotFound(w)
+		}
 	}
 }
 
@@ -108,13 +111,12 @@ func (s *Server) serveProject(w http.ResponseWriter, r *http.Request, p *project
 	case get && match(seg, "merge_requests"):
 		s.listMRs(w, r, user, []*project{p}, "all")
 	case get && len(seg) >= 2 && seg[0] == "merge_requests":
-		s.serveMR(w, r, p, seg[1], seg[2:])
+		s.serveMR(w, r, p, user, seg[1], seg[2:])
 	case get && len(seg) >= 2 && seg[0] == "repository":
 		s.serveRepository(w, r, p, seg[1:])
 	case get && match(seg, "protected_branches"):
-		if start, end, ok := s.offsetPage(w, r, len(p.protected), false); ok {
-			writeJSON(w, http.StatusOK, p.protected[start:end])
-		}
+		writePage(s, w, r, p.protected)
+	case get && (s.serveCI(w, r, p, seg) || s.servePlanning(w, r, p, seg)):
 	default:
 		routeNotFound(w)
 	}
@@ -139,7 +141,7 @@ func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, 
 	}
 }
 
-func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, iid string, rest []string) {
+func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, user, iid string, rest []string) {
 	mr := findMR(p, iid)
 	if mr == nil {
 		message(w, http.StatusNotFound, "404 Merge Request Not Found")
@@ -152,6 +154,7 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, iid
 		s.approvals(w, p, mr)
 	case match(rest, "discussions"):
 		s.listDiscussions(w, r, p.discussions["mr:"+iid])
+	case s.serveMRReview(w, r, p, mr, user, rest):
 	default:
 		routeNotFound(w)
 	}
@@ -174,6 +177,10 @@ func (s *Server) serveRepository(w http.ResponseWriter, r *http.Request, p *proj
 			return
 		}
 		message(w, http.StatusNotFound, "404 Commit Not Found")
+	case match(seg, "compare"):
+		s.compare(w, r, p)
+	case match(seg, "tags"):
+		s.listTags(w, r, p)
 	case match(seg, "commits", "*", "diff"):
 		c := findCommit(p, seg[1])
 		if c == nil {
@@ -181,9 +188,7 @@ func (s *Server) serveRepository(w http.ResponseWriter, r *http.Request, p *proj
 			return
 		}
 		diffs := p.diffs[c.ID]
-		if start, end, ok := s.offsetPage(w, r, len(diffs), false); ok {
-			writeJSON(w, http.StatusOK, diffs[start:end])
-		}
+		writePage(s, w, r, diffs)
 	default:
 		routeNotFound(w)
 	}
@@ -516,9 +521,7 @@ func (s *Server) listIssues(w http.ResponseWriter, r *http.Request, user string,
 		}
 	}
 	sortByTime(rows, q, func(i *gitlab.Issue) time.Time { return i.CreatedAt }, func(i *gitlab.Issue) time.Time { return i.UpdatedAt })
-	if start, end, ok := s.offsetPage(w, r, len(rows), false); ok {
-		writeJSON(w, http.StatusOK, rows[start:end])
-	}
+	writePage(s, w, r, rows)
 }
 
 func (s *Server) listMRs(w http.ResponseWriter, r *http.Request, user string, projects []*project, defaultScope string) {
@@ -570,12 +573,7 @@ func (s *Server) approvals(w http.ResponseWriter, p *project, mr *gitlab.MergeRe
 }
 
 func (s *Server) listDiscussions(w http.ResponseWriter, r *http.Request, list []gitlab.Discussion) {
-	if list == nil {
-		list = []gitlab.Discussion{}
-	}
-	if start, end, ok := s.offsetPage(w, r, len(list), false); ok {
-		writeJSON(w, http.StatusOK, list[start:end])
-	}
+	writePage(s, w, r, list)
 }
 
 // ------------------------------------------------------------ repository
@@ -690,9 +688,7 @@ func (s *Server) listTree(w http.ResponseWriter, r *http.Request, p *project) {
 		writeJSON(w, http.StatusOK, rows[start:end])
 		return
 	}
-	if start, end, ok := s.offsetPage(w, r, len(rows), false); ok {
-		writeJSON(w, http.StatusOK, rows[start:end])
-	}
+	writePage(s, w, r, rows)
 }
 
 func (s *Server) listBranches(w http.ResponseWriter, r *http.Request, p *project) {
@@ -704,24 +700,28 @@ func (s *Server) listBranches(w http.ResponseWriter, r *http.Request, p *project
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
-	if rows == nil {
-		rows = []gitlab.Branch{}
-	}
-	if start, end, ok := s.offsetPage(w, r, len(rows), false); ok {
-		writeJSON(w, http.StatusOK, rows[start:end])
-	}
+	writePage(s, w, r, rows)
 }
 
 func findCommit(p *project, sha string) *gitlab.Commit {
 	for _, commits := range p.commits {
-		for _, c := range commits {
-			if c.ID == sha || (len(sha) >= 7 && strings.HasPrefix(c.ID, sha)) {
-				copied := c
-				return &copied
-			}
+		if i := commitIndex(commits, sha); i >= 0 {
+			copied := commits[i]
+			return &copied
 		}
 	}
 	return nil
+}
+
+// commitIndex finds a commit by its id or a prefix of at least seven
+// characters, as GitLab resolves an abbreviated SHA.
+func commitIndex(commits []gitlab.Commit, sha string) int {
+	for i, c := range commits {
+		if c.ID == sha || (len(sha) >= 7 && strings.HasPrefix(c.ID, sha)) {
+			return i
+		}
+	}
+	return -1
 }
 
 func (s *Server) listCommits(w http.ResponseWriter, r *http.Request, p *project) {
@@ -752,12 +752,7 @@ func (s *Server) listCommits(w http.ResponseWriter, r *http.Request, p *project)
 		c.Stats = nil // only the single read carries stats
 		rows = append(rows, c)
 	}
-	if rows == nil {
-		rows = []gitlab.Commit{}
-	}
-	if start, end, ok := s.offsetPage(w, r, len(rows), false); ok {
-		writeJSON(w, http.StatusOK, rows[start:end])
-	}
+	writePage(s, w, r, rows)
 }
 
 func touches(diffs []gitlab.Diff, path string) bool {

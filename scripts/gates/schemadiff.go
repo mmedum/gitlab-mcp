@@ -30,9 +30,9 @@ import (
 
 const (
 	baselineFile = "testdata/schema-baseline.json"
-	// surfaceFloor is the fewest tools a real dump carries: fourteen in
-	// phase 0, sixty-six planned.
-	surfaceFloor = 10
+	// surfaceFloor is the fewest tools a real dump carries: thirty-one
+	// since phase 1, sixty-six planned.
+	surfaceFloor = 28
 )
 
 // surfaceChanges is what moved between two dumps.

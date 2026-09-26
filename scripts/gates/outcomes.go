@@ -46,7 +46,7 @@ type outcomesFloors struct{ files, boolFields, writes int }
 
 // realOutcomesFloors: the service's files, the boolean request fields it
 // branches on, and the writes. Phase 2 raises writes with the first one.
-var realOutcomesFloors = outcomesFloors{files: 4, boolFields: 3, writes: 0}
+var realOutcomesFloors = outcomesFloors{files: 7, boolFields: 12, writes: 0}
 
 func outcomes(out io.Writer, _ []string) error {
 	service, err := parsePackageDir(serviceDir)

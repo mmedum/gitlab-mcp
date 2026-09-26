@@ -25,7 +25,7 @@ func TestGetMe(t *testing.T) {
 		"instance.edition":          "Community",
 		"instance.known":            true,
 		"token.kind":                "oauth",
-		"registered.tools":          float64(14),
+		"registered.tools":          float64(31),
 		"registered.read_only":      false,
 		"write_namespaces.confined": false,
 	} {
@@ -75,7 +75,11 @@ func TestResolveURL(t *testing.T) {
 			map[string]any{"project": gitlabtest.ProjectAlpha, "ref": "feature/login", "path": "src/login.go"}},
 		{base + "/-/tree/main/docs", "project", "list_tree", map[string]any{"project": gitlabtest.ProjectAlpha, "ref": "main", "path": "docs"}},
 		{base, "project", "get_project", map[string]any{"project": gitlabtest.ProjectAlpha}},
-		{base + "/-/pipelines/9", "pipeline", "", nil},
+		{base + "/-/pipelines/9", "pipeline", "get_pipeline", map[string]any{"project": gitlabtest.ProjectAlpha, "pipeline_id": float64(9)}},
+		{base + "/-/jobs/7", "job", "get_job_log", map[string]any{"project": gitlabtest.ProjectAlpha, "job_id": float64(7)}},
+		{base + "/-/compare/v1.0...main", "compare", "compare_refs",
+			map[string]any{"project": gitlabtest.ProjectAlpha, "from": "v1.0", "to": "main"}},
+		{base + "/-/wikis/home", "wiki", "", nil},
 	}
 	for _, c := range cases {
 		text, out := h.ok("resolve_url", map[string]any{"url": c.url})
@@ -434,9 +438,9 @@ func TestSurfaceCounts(t *testing.T) {
 		cfg  config.Config
 		want int
 	}{
-		{"default", config.Config{}, 14},
-		{"read-only", config.Config{ReadOnly: true}, 14},
-		{"full", FullSurface(config.Config{}), 14},
+		{"default", config.Config{}, 31},
+		{"read-only", config.Config{ReadOnly: true}, 31},
+		{"full", FullSurface(config.Config{}), 31},
 	}
 	for _, c := range cases {
 		if got := len(Surface(c.cfg, nil)); got != c.want {

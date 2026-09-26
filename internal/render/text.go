@@ -400,7 +400,7 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	b.WriteString(discussionLine(mr.Discussions) + "\n")
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Title: %s\n", bd.Inline(mr.UntrustedTitle))
-	o := Origin{Kind: "merge_request_description", Project: mr.Project.Path, Item: "!" + strconv.FormatInt(mr.IID, 10), Author: mr.Author.Username}
+	o := Origin{Kind: "merge_request_description", Project: mr.Project.Path, Item: mrItem(mr.IID), Author: mr.Author.Username}
 	b.WriteString(bd.Block(o, mr.UntrustedDescription) + "\n")
 	b.WriteString(budgetLine("Description", mr.DescriptionBudget))
 	return b.String()
@@ -547,16 +547,7 @@ func Commits(l model.Commits, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Commits on %s in %s\n", orDefault(l.Ref), projectLine(l.Project))
 	b.WriteString(listingLine("commits", l.Listing))
-	if len(l.Commits) > 0 {
-		b.WriteString("\n" + bd.Notice())
-	}
-	for _, c := range l.Commits {
-		fmt.Fprintf(&b, "\n- %s %s by %s", Ident(c.ID), when(c.CommittedAt), person(c.AuthorName))
-		if c.Parents > 1 {
-			b.WriteString(", a merge")
-		}
-		fmt.Fprintf(&b, ": %s", bd.Inline(c.UntrustedTitle))
-	}
+	writeCommitRows(&b, l.Commits, bd)
 	return b.String()
 }
 
@@ -571,30 +562,40 @@ func Commit(c model.Commit, bd Boundary) string {
 	o := Origin{Kind: "commit_message", Project: c.Project.Path, Item: c.ShortID, Author: ""}
 	b.WriteString(bd.Block(o, c.UntrustedMessage) + "\n")
 	b.WriteString(budgetLineFor("Message", "message_offset", c.MessageBudget))
-	for _, f := range c.Files {
-		fmt.Fprintf(&b, "\n\n%s %s", Ident(f.Status), fileName(f.OldPath, f.NewPath))
-		b.WriteString(":\n" + bd.Block(Origin{Kind: "diff", Project: c.Project.Path, Item: f.NewPath + "@" + c.ShortID}, f.UntrustedDiff))
+	writeDiffs(&b, model.Diffs{Files: c.Files, NotShown: c.NotShown, FilesComplete: c.FilesComplete,
+		NextFileOffset: c.NextFileOffset, DiffBudget: c.DiffBudget, HiddenRemoved: c.HiddenRemoved},
+		c.Project.Path, "@"+c.ShortID, "The commit changes more files than were read.", bd)
+	return b.String()
+}
+
+// writeDiffs renders budgeted diffs: each shown file in a boundary, then
+// what was not shown and how to continue. at names the version the diffs
+// are of, "@abc123"; incomplete is the sentence for more files than were
+// read.
+func writeDiffs(b *strings.Builder, d model.Diffs, project, at, incomplete string, bd Boundary) {
+	for _, f := range d.Files {
+		fmt.Fprintf(b, "\n\n%s %s", Ident(f.Status), fileName(f.OldPath, f.NewPath))
+		b.WriteString(":\n" + bd.Block(Origin{Kind: "diff", Project: project, Item: f.NewPath + at}, f.UntrustedDiff))
 		if f.Truncated {
 			b.WriteString("\nThis diff was cut at the budget; get_file reads the file itself.")
 		}
 	}
-	fmt.Fprintf(&b, "\n\nDiffs are budgeted at %d characters.", c.DiffBudget)
-	if len(c.NotShown) > 0 {
+	fmt.Fprintf(b, "\n\nDiffs are budgeted at %d characters.", d.DiffBudget)
+	if len(d.NotShown) > 0 {
 		b.WriteString(" Not shown:")
-		for _, f := range c.NotShown {
-			fmt.Fprintf(&b, "\n- %s %s (%s)", Ident(f.Status), fileName(f.OldPath, f.NewPath), notShownReason(f.Reason))
+		for _, f := range d.NotShown {
+			fmt.Fprintf(b, "\n- %s %s (%s)", Ident(f.Status), fileName(f.OldPath, f.NewPath), notShownReason(f.Reason))
 		}
 	}
-	if c.NextFileOffset != nil {
-		fmt.Fprintf(&b, "\nContinue with file_offset=%d.", *c.NextFileOffset)
+	if d.NextFileOffset != nil {
+		fmt.Fprintf(b, "\nContinue with file_offset=%d.", *d.NextFileOffset)
 	}
-	if !c.FilesComplete {
-		b.WriteString("\nThe commit changes more files than were read.")
+	if !d.FilesComplete {
+		b.WriteString("\n" + incomplete)
 	}
-	if c.HiddenRemoved > 0 {
-		fmt.Fprintf(&b, "\n%d hidden characters in the diffs were made visible.", c.HiddenRemoved)
+	if d.HiddenRemoved > 0 {
+		fmt.Fprintf(b, "\n%d hidden characters in the diffs were made visible.", d.HiddenRemoved)
 	}
-	return b.String()
 }
 
 func fileName(oldPath, newPath string) string {

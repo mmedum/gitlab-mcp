@@ -101,11 +101,16 @@ func (s *Service) ListCommits(ctx context.Context, raw string, q gapi.CommitQuer
 	}
 	out := model.Commits{Project: ref, Ref: q.Ref, Commits: make([]model.CommitRow, 0, len(rows)), Listing: listing(len(rows), page)}
 	for _, c := range rows {
-		title, _ := render.Line(c.Title, render.TitleChars)
-		out.Commits = append(out.Commits, model.CommitRow{ID: c.ID, ShortID: c.ShortID, AuthorName: c.AuthorName,
-			AuthoredAt: c.AuthoredDate, CommittedAt: c.CommittedDate, Parents: len(c.ParentIDs), UntrustedTitle: title})
+		out.Commits = append(out.Commits, commitRow(c))
 	}
 	return out, nil
+}
+
+// commitRow is a commit as a listing shows it.
+func commitRow(c gitlab.Commit) model.CommitRow {
+	title, _ := render.Line(c.Title, render.TitleChars)
+	return model.CommitRow{ID: c.ID, ShortID: c.ShortID, AuthorName: c.AuthorName, AuthoredAt: c.AuthoredDate,
+		CommittedAt: c.CommittedDate, Parents: len(c.ParentIDs), UntrustedTitle: title}
 }
 
 // GetCommit reads a commit and its diffs under the budget, starting at
@@ -125,8 +130,9 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, me
 	if err != nil {
 		return model.Commit{}, err
 	}
-	if fileOffset > len(diffs) {
-		return model.Commit{}, gapi.Errf(gapi.ClassInvalid, "file_offset %d is past the %d changed files read", fileOffset, len(diffs))
+	d, err := budgetDiffs(diffs, complete, fileOffset)
+	if err != nil {
+		return model.Commit{}, err
 	}
 	msg, hiddenMsg := render.Code(c.Message)
 	msg, msgBudget, err := cut(msg, hiddenMsg, messageOffset, render.CommitMessageBudget, "the message", "message_offset")
@@ -137,11 +143,26 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, me
 	// diffs' in HiddenRemoved: each once.
 	out := model.Commit{Project: ref, ID: c.ID, ShortID: c.ShortID, WebURL: c.WebURL, AuthorName: c.AuthorName,
 		AuthoredAt: c.AuthoredDate, CommitterName: c.CommitterName, CommittedAt: c.CommittedDate,
-		ParentIDs: nonNil(c.ParentIDs), UntrustedMessage: msg, MessageBudget: msgBudget, Files: []model.FileDiff{},
-		NotShown: []model.FileChange{}, FilesComplete: complete, DiffBudget: render.DiffBudget}
+		ParentIDs: nonNil(c.ParentIDs), UntrustedMessage: msg, MessageBudget: msgBudget, Files: d.Files,
+		NotShown: d.NotShown, FilesComplete: d.FilesComplete, NextFileOffset: d.NextFileOffset, DiffBudget: d.DiffBudget,
+		HiddenRemoved: d.HiddenRemoved}
 	if c.Stats != nil {
 		out.Additions, out.Deletions = c.Stats.Additions, c.Stats.Deletions
 	}
+	return out, nil
+}
+
+// budgetDiffs shows the diffs from the fileOffset-th under the diff
+// budget (§4.8). A diff that does not fit is named, and file_offset
+// continues from it; a diff GitLab itself left out is named with GitLab's
+// reason rather than shown as empty. complete says whether diffs is every
+// changed file.
+func budgetDiffs(diffs []gitlab.Diff, complete bool, fileOffset int) (model.Diffs, error) {
+	if fileOffset > len(diffs) {
+		return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "file_offset %d is past the %d changed files read", fileOffset, len(diffs))
+	}
+	out := model.Diffs{Files: []model.FileDiff{}, NotShown: []model.FileChange{}, FilesComplete: complete,
+		DiffBudget: render.DiffBudget}
 	used := 0
 	for i, d := range diffs[fileOffset:] {
 		status := diffStatus(d)

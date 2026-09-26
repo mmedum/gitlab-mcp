@@ -1,0 +1,3 @@
+Pipelines of example-group/alpha (project id 2001)
+1 pipelines shown of 4; more: pass page_token="tok".
+- pipeline 61001 (#4): failed on main at 1234567890ab, from push, updated 2026-01-06T11:00:00Z

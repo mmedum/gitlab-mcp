@@ -239,7 +239,7 @@ func (c *Client) SearchIssues(ctx context.Context, q ItemQuery, opts ListOptions
 // GetIssue reads one issue by project and iid.
 func (c *Client) GetIssue(ctx context.Context, p Project, iid int64) (*gitlab.Issue, error) {
 	var out gitlab.Issue
-	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}", Args: []string{p.segment(), iidArg(iid)},
+	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}", Args: []string{p.segment(), idArg(iid)},
 		Name: "get_issue"}, &out)
 	return &out, err
 }
@@ -249,7 +249,7 @@ func (c *Client) GetIssue(ctx context.Context, p Project, iid int64) (*gitlab.Is
 func (c *Client) ListIssueDiscussions(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.Discussion, Page, error) {
 	var out []gitlab.Discussion
 	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}/discussions",
-		Args: []string{p.segment(), iidArg(iid)}, Name: "list_discussions"}, opts, &out)
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_discussions"}, opts, &out)
 	return out, page, err
 }
 
@@ -279,7 +279,7 @@ func (c *Client) SearchMergeRequests(ctx context.Context, q ItemQuery, opts List
 // GetMergeRequest reads one merge request by project and iid.
 func (c *Client) GetMergeRequest(ctx context.Context, p Project, iid int64) (*gitlab.MergeRequest, error) {
 	var out gitlab.MergeRequest
-	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}", Args: []string{p.segment(), iidArg(iid)},
+	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}", Args: []string{p.segment(), idArg(iid)},
 		Name: "get_merge_request"}, &out)
 	return &out, err
 }
@@ -288,7 +288,7 @@ func (c *Client) GetMergeRequest(ctx context.Context, p Project, iid int64) (*gi
 func (c *Client) GetMergeRequestApprovals(ctx context.Context, p Project, iid int64) (*gitlab.Approvals, error) {
 	var out gitlab.Approvals
 	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/approvals",
-		Args: []string{p.segment(), iidArg(iid)}, Name: "get_merge_request_approvals"}, &out)
+		Args: []string{p.segment(), idArg(iid)}, Name: "get_merge_request_approvals"}, &out)
 	return &out, err
 }
 
@@ -296,7 +296,7 @@ func (c *Client) GetMergeRequestApprovals(ctx context.Context, p Project, iid in
 func (c *Client) ListMergeRequestDiscussions(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.Discussion, Page, error) {
 	var out []gitlab.Discussion
 	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/discussions",
-		Args: []string{p.segment(), iidArg(iid)}, Name: "list_discussions"}, opts, &out)
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_discussions"}, opts, &out)
 	return out, page, err
 }
 
@@ -393,13 +393,13 @@ func (c *Client) ListProtectedBranches(ctx context.Context, p Project, opts List
 
 // ------------------------------------------------------------ helpers
 
-// iidArg renders an iid; a non-positive one becomes "" and is refused by
-// fillPath as empty.
-func iidArg(iid int64) string {
-	if iid <= 0 {
+// idArg renders an iid, or a pipeline or job id; a non-positive one
+// becomes "" and is refused by fillPath as empty.
+func idArg(id int64) string {
+	if id <= 0 {
 		return ""
 	}
-	return strconv.FormatInt(iid, 10)
+	return strconv.FormatInt(id, 10)
 }
 
 func setString(v url.Values, k, s string) {

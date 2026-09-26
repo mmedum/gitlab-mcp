@@ -76,6 +76,24 @@ type project struct {
 	commits   map[string][]gitlab.Commit // branch → newest first
 	diffs     map[string][]gitlab.Diff   // sha → diffs
 	protected []gitlab.ProtectedBranch
+
+	// Review: each merge request's diffs, and the default user's drafts.
+	mrDiffs map[int64][]gitlab.Diff
+	drafts  map[int64][]gitlab.DraftNote
+	tags    []gitlab.Tag
+
+	// CI: pipelines newest last, their jobs, each job's stored log, and
+	// the CI configuration per branch.
+	pipelines []*gitlab.PipelineDetail
+	jobs      map[int64][]gitlab.Job
+	traces    map[int64]string
+	ciConfig  map[string]string
+
+	// Planning: the project's own labels and milestones, and each
+	// member's access level; members above says only who may see it.
+	labels     []gitlab.Label
+	milestones []gitlab.ProjectMilestone
+	levels     map[string]int
 }
 
 // fakeSHA is a stable 40-hex id for a name.
@@ -151,9 +169,20 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		trees:       map[string]map[string]string{},
 		commits:     map[string][]gitlab.Commit{},
 		diffs:       map[string][]gitlab.Diff{},
+		mrDiffs:     map[int64][]gitlab.Diff{},
+		drafts:      map[int64][]gitlab.DraftNote{},
+		jobs:        map[int64][]gitlab.Job{},
+		traces:      map[int64]string{},
+		ciConfig:    map[string]string{},
+		levels:      map[string]int{},
 	}
-	for _, m := range members {
+	// The first member maintains the project; the rest develop it.
+	for i, m := range members {
 		p.members[m] = true
+		p.levels[m] = 30
+		if i == 0 {
+			p.levels[m] = 40
+		}
 	}
 	s.projects = append(s.projects, p)
 	return p
@@ -215,8 +244,10 @@ func (s *Server) fillAlpha(p *project) {
 
 	head := p.commits["feature/login"][0]
 	base := p.commits["main"][0]
+	s.fillTags(p)
 	for i := range s.opts.AlphaMergeRequests {
 		mr := s.addMR(p, fmt.Sprintf("Generated change %d", i+1), "feature/login", "main", authors[(i+1)%len(authors)], base.ID, head.ID)
+		s.fillReview(p, mr)
 		pos := &gitlab.Position{BaseSHA: base.ID, StartSHA: base.ID, HeadSHA: head.ID, PositionType: "text",
 			OldPath: "src/login.go", NewPath: "src/login.go", NewLine: intPtr(3)}
 		s.addDiscussions(p, "mr", mr.IID, mr.ID, "MergeRequest", mr.CreatedAt, pos)
@@ -225,6 +256,8 @@ func (s *Server) fillAlpha(p *project) {
 			p.approvals[mr.IID].ApprovedBy = []gitlab.Approver{{User: s.user("carol")}}
 		}
 	}
+	s.fillCI(p)
+	s.fillPlanning(p)
 }
 
 func intPtr(n int) *int { return &n }

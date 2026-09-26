@@ -423,8 +423,8 @@ func outputSchema[T any]() *jsonschema.Schema {
 
 // inputSchema builds a tool's input schema and applies the rules every
 // input with a given name shares, so they cannot differ between tools:
-// max is 1 to 100, iid is positive, offsets are not negative, and a time
-// filter is a date-time.
+// max is 1 to 100, iid and the pipeline and job ids are positive,
+// offsets are not negative, and a time filter is a date-time.
 func inputSchema[T any](sp spec) *jsonschema.Schema {
 	s, err := jsonschema.For[T](timeSchema)
 	if err != nil {
@@ -434,7 +434,7 @@ func inputSchema[T any](sp spec) *jsonschema.Schema {
 		switch {
 		case name == "max":
 			p.Minimum, p.Maximum = ptr(1.0), ptr(float64(gapi.MaxPerPage))
-		case name == "iid":
+		case name == "iid" || name == "pipeline_id" || name == "job_id":
 			p.Minimum = ptr(1.0)
 		case name == "offset" || strings.HasSuffix(name, "_offset"):
 			p.Minimum = ptr(0.0)

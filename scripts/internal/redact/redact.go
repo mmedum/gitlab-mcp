@@ -36,7 +36,7 @@ const (
 	KindUser = core.KindUser
 	// KindID is a numeric id the run learned from the instance: the
 	// scratch project's, a user's.
-	KindID = "id"
+	KindID = core.KindID
 )
 
 // A Redactor replaces instance-specific values with stable placeholders.

@@ -58,7 +58,9 @@ func New(opts Options) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: Name, Version: opts.Version}, so)
 	s.AddReceivingMiddleware(logMethods(logger))
 	svc := service.New(service.Options{Client: opts.Client, Config: opts.Config, Granted: opts.Granted})
-	tools.Register(s, tools.Deps{Service: svc, Config: opts.Config, Granted: opts.Granted, Logger: logger})
+	deps := tools.Deps{Service: svc, Config: opts.Config, Granted: opts.Granted, Logger: logger}
+	tools.Register(s, deps)
+	tools.RegisterResources(s, deps)
 	return s
 }
 
@@ -117,12 +119,17 @@ func DumpSchemas(w io.Writer, version string) error {
 		return fmt.Errorf("list tools: %w", err)
 	}
 	slices.SortFunc(list.Tools, func(a, b *mcp.Tool) int { return strings.Compare(a.Name, b.Name) })
+	templates, err := cs.ListResourceTemplates(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("list resource templates: %w", err)
+	}
+	slices.SortFunc(templates.ResourceTemplates, func(a, b *mcp.ResourceTemplate) int {
+		return strings.Compare(a.URITemplate, b.URITemplate)
+	})
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	// No resources yet; the field is written so the shape does not
-	// change when they arrive.
 	return enc.Encode(Dump{Server: Name, Version: version, SDK: sdkVersion(), Tools: list.Tools,
-		ResourceTemplates: []*mcp.ResourceTemplate{}})
+		ResourceTemplates: templates.ResourceTemplates})
 }
 
 // sdkVersion is the MCP SDK version from the build info, so a diff an

@@ -46,28 +46,29 @@ GET /projects/{id}/repository/commits/{sha}/diff	used	1	Client.GetCommitDiff: ge
 GET /projects/{id}/protected_branches	used	1	Client.ListProtectedBranches: create_commit's protected-branch guard (§4.4) reads it
 
 # Phase 1: the rest of reading (§16)
-GET /projects/{id}/merge_requests/{merge_request_iid}/diffs	deferred	1	phase 1 (§16): list_mr_files and get_mr_diff
-GET /projects/{id}/merge_requests/{merge_request_iid}/commits	deferred	1	phase 1 (§16): list_mr_commits
-GET /projects/{id}/repository/compare	deferred	1	phase 1 (§16): compare_refs
-GET /projects/{id}/repository/tags	deferred	1	phase 1 (§16): list_tags
-GET /projects/{id}/pipelines	deferred	1	phase 1 (§16): list_pipelines
-GET /projects/{id}/pipelines/{pipeline_id}	deferred	1	phase 1 (§16): get_pipeline
-GET /projects/{id}/pipelines/{pipeline_id}/jobs	deferred	1	phase 1 (§16): list_jobs
-GET /projects/{id}/jobs/{job_id}/trace	deferred	1	phase 1 (§16): get_job_log and its resource
-GET /projects/{id}/ci/lint	deferred	1	phase 1 (§16): lint_ci on the project's own configuration
-POST /projects/{id}/ci/lint	deferred	1	phase 1 (§16): lint_ci on a configuration the caller passes; a POST that writes nothing, registered only when writes are on
-GET /search	deferred	1	phase 1 (§16): search across the instance
-GET /groups/{id}/(-/)search	deferred	1	phase 1 (§16): search inside one group
-GET /projects/{id}/(-/)search	deferred	1	phase 1 (§16): search inside one project
-GET /projects/{id}/labels	deferred	1	phase 1 (§16): list_labels
-GET /projects/{id}/milestones	deferred	1	phase 1 (§16): list_milestones
-GET /groups/{id}/milestones	deferred	1	phase 1 (§16): list_milestones, the group's milestones
-GET /projects/{id}/members/all	deferred	1	phase 1 (§16): list_members
-GET /users	deferred	1	phase 1 (§16): find_users
-GET /todos	deferred	1	phase 1 (§16): list_todos
-GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	deferred	1	phase 1 (§16): list_review_comments
+GET /projects/{id}/merge_requests/{merge_request_iid}/diffs	used	1	Client.ListMergeRequestDiffs: list_mr_files counts each file's lines, and get_mr_diff shows the diffs
+GET /projects/{id}/merge_requests/{merge_request_iid}/commits	used	1	Client.ListMergeRequestCommits: list_mr_commits
+GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	used	1	Client.ListDraftNotes: list_review_comments, the signed-in account's own drafts
+GET /projects/{id}/repository/compare	used	1	Client.Compare: compare_refs
+GET /projects/{id}/repository/tags	used	1	Client.ListTags: list_tags
+GET /projects/{id}/pipelines	used	1	Client.ListPipelines: list_pipelines
+GET /projects/{id}/pipelines/{pipeline_id}	used	1	Client.GetPipeline: get_pipeline
+GET /projects/{id}/pipelines/{pipeline_id}/jobs	used	1	Client.ListPipelineJobs: list_jobs, and get_pipeline's failed jobs
+GET /projects/{id}/jobs/{job_id}	used	1	Client.GetJob: get_job_log and its resource name the job they show
+GET /projects/{id}/jobs/{job_id}/trace	used	1	Client.GetJobTrace: get_job_log and its resource
+GET /projects/{id}/ci/lint	used	1	Client.LintCI: lint_ci on the project's own configuration at a ref
+GET /search	used	1	Client.Search and Client.SearchCommits: search across the instance
+GET /groups/{id}/(-/)search	used	1	Client.Search and Client.SearchCommits: search inside one group
+GET /projects/{id}/(-/)search	used	1	Client.Search and Client.SearchCommits: search inside one project
+GET /projects/{id}/labels	used	1	Client.ListLabels: list_labels
+GET /projects/{id}/milestones	used	1	Client.ListMilestones: list_milestones in a project
+GET /groups/{id}/milestones	used	1	Client.ListMilestones: list_milestones in a group
+GET /projects/{id}/members/all	used	1	Client.ListProjectMembers: list_members
+GET /users	used	1	Client.ListUsers: find_users
+GET /todos	used	1	Client.ListTodos: list_todos
 
 # Phase 2: the write path (§16)
+POST /projects/{id}/ci/lint	deferred	1	phase 2 (§16): lint_ci on a configuration the caller passes; a POST that writes nothing, registered only when writes are on, and built with the write path so its gates hold it
 POST /projects/{id}/issues	deferred	1	phase 2 (§16): create_issue
 PUT /projects/{id}/issues/{issue_iid}	deferred	1	phase 2 (§16): update_issue, with the updated_at witness (§4.6)
 POST /projects/{id}/issues/{noteable_id}/notes	deferred	1	phase 2 (§16): add_comment on an issue
@@ -358,7 +359,7 @@ DELETE /projects/{id}/protected_branches/{name}	written-off	1	branch protection 
 # CI (§8a): pipelines, jobs and lint used; schedules, triggers, variables and secure files written off
 DELETE /projects/{id}/pipelines/{pipeline_id}	written-off	1	pipeline delete destroys logs and artifacts, and is no assistant task (§8a)
 GET /projects/{id}/pipelines/latest	deferred	1	the latest pipeline; list_pipelines ordered by id covers it
-GET /projects/{id}/pipelines/{pipeline_id}/bridges	deferred	1	deprecated bridge-job listing; list_jobs covers the task
+GET /projects/{id}/pipelines/{pipeline_id}/bridges	deferred	1	the trigger jobs the job listing leaves out, which name the downstream pipeline that failed one (§17a); a deprecated listing to judge before it is used
 GET /projects/{id}/pipelines/{pipeline_id}/trigger_jobs	deferred	1	trigger jobs of a pipeline (§17a)
 PUT /projects/{id}/pipelines/{pipeline_id}/metadata	deferred	1	renaming a pipeline (§17a)
 GET /projects/{id}/pipelines/{pipeline_id}/test_report	deferred	1	test reports (§17a)
@@ -366,7 +367,6 @@ GET /projects/{id}/pipelines/{pipeline_id}/test_report_summary	deferred	1	test r
 GET /projects/{id}/pipelines/{pipeline_id}/variables	written-off	1	pipeline variables: CI configuration and secrets (§8a)
 GET /pipelines	deferred	1	pipelines the account triggered; list_pipelines per project covers the task
 GET /projects/{id}/jobs	deferred	1	every job in a project; list_jobs per pipeline covers the task
-GET /projects/{id}/jobs/{job_id}	deferred	1	one job; list_jobs carries the same fields
 GET /projects/{id}/jobs/{job_id}/runtime_environment_key	written-off	1	a runner-side key: infrastructure (§8a)
 POST /projects/{id}/jobs/{job_id}/cancel	deferred	1	cancelling one job: a Ship candidate; cancel_pipeline covers the task
 POST /projects/{id}/jobs/{job_id}/erase	written-off	1	erasing a job destroys its log and artifacts (§8a)

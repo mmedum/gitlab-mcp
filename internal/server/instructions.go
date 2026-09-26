@@ -31,14 +31,21 @@ type phrase struct {
 var toolPhrases = []phrase{
 	{lead: "", tools: []string{"get_me"}, tail: " says who is signed in, what the instance supports and which tools are on."},
 	{lead: "", tools: []string{"resolve_url"}, tail: " turns any GitLab link into the arguments the other tools take; use it rather than taking a URL apart."},
-	{lead: "Find with ", tools: []string{"search_projects", "search_issues", "search_merge_requests"}, tail: "."},
+	{lead: "Find with ", tools: []string{"search_projects", "search_issues", "search_merge_requests", "search"}, tail: "."},
 	{lead: "Read one with ", tools: []string{"get_project", "get_issue", "get_merge_request"}, tail: "."},
 	{lead: "", tools: []string{"list_discussions"}, tail: " reads the comment threads of an issue or a merge request."},
-	{lead: "The repository: ", tools: []string{"get_file", "list_tree", "list_branches", "list_commits", "get_commit"}, tail: "."},
+	{lead: "Review a merge request with ", tools: []string{"list_mr_files", "get_mr_diff", "list_mr_commits", "list_review_comments"},
+		tail: ": the files first, then the diffs that matter."},
+	{lead: "The repository: ", tools: []string{"get_file", "list_tree", "list_branches", "list_commits", "get_commit",
+		"compare_refs", "list_tags"}, tail: "."},
+	{lead: "CI: ", tools: []string{"list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "lint_ci"},
+		tail: "; a red pipeline is read from get_pipeline to the failed job's log."},
+	{lead: "Planning and people: ", tools: []string{"list_labels", "list_milestones", "list_members", "find_users", "list_todos"},
+		tail: "."},
 }
 
 const (
-	lead = "GitLab tools for the projects the signed-in account can see: issues, merge requests, reviews and the repository."
+	lead = "GitLab tools for the projects the signed-in account can see: issues, merge requests, reviews, the repository and CI."
 
 	addressing = "A project is its numeric id, its full path or its web URL, and results carry both the id and the path; " +
 		"an issue or merge request is a project plus iid, the number shown as #12 or !12. " +

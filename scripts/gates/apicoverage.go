@@ -43,7 +43,7 @@ const (
 // input cannot pass as a clean one.
 type coverageFloors struct{ rows, calls, used int }
 
-var realCoverageFloors = coverageFloors{rows: 300, calls: 20, used: 20}
+var realCoverageFloors = coverageFloors{rows: 300, calls: 40, used: 40}
 
 // offSnapshotCalls are client calls outside the REST API the OpenAPI
 // file describes, each with the reason. A call in this list that the

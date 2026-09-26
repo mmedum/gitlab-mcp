@@ -23,6 +23,13 @@ lifted verbatim.
 - Read tools: `get_me`, `resolve_url`, `search_projects`, `get_project`, `search_issues`, `get_issue`, `list_discussions`, `search_merge_requests`, `get_merge_request`, `get_file`, `list_tree`, `list_branches`, `list_commits`, `get_commit`.
 - GitLab content rendered inside untrusted-content boundaries, within a reply budget that says what it left out.
 - `get_commit` continues a long commit message with `message_offset`, as every cut read can be continued.
+- Review reads: `list_mr_files`, `get_mr_diff`, `list_mr_commits` and `list_review_comments`, your own unpublished drafts.
+- History reads: `compare_refs` and `list_tags`.
+- CI reads: `list_pipelines`, `get_pipeline` with its failed jobs, `list_jobs`, `get_job_log` and `lint_ci` at a ref.
+- `get_job_log` reads a log in byte windows, the tail by default or the failing section, cleaned of colors and section markers, with token and key shapes masked.
+- Planning and navigation reads: `list_labels`, `list_milestones`, `list_members`, `find_users`, `list_todos` and `search`.
+- Resources for an issue, a merge request and a job log, carrying the same text as their tools.
+- `resolve_url` names `get_pipeline`, `get_job_log` and `compare_refs` for pipeline, job and compare links.
 - Read-only mode (`GITLAB_MCP_READ_ONLY`) registers only the read tools and requests only `read_api`.
 - The quick-action guard every later write goes through.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.

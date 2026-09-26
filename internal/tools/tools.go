@@ -16,10 +16,12 @@ import (
 func definitions() []definition {
 	return []definition{
 		getMe(), resolveURL(),
-		searchProjects(), getProject(),
+		searchProjects(), getProject(), listMembers(), findUsers(),
 		searchIssues(), getIssue(), listDiscussions(),
-		searchMergeRequests(), getMergeRequest(),
-		getFile(), listTree(), listBranches(), listCommits(), getCommit(),
+		searchMergeRequests(), getMergeRequest(), listMRFiles(), getMRDiff(), listMRCommits(), listReviewComments(),
+		getFile(), listTree(), listBranches(), listCommits(), getCommit(), compareRefs(), listTags(),
+		listPipelines(), getPipeline(), listJobs(), getJobLog(), lintCI(),
+		listLabels(), listMilestones(), search(), listTodos(),
 	}
 }
 

@@ -1,6 +1,6 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 0 done and in review, 2026-09-26; phase 1 is next.
+**Status: phase 1 done and in review, 2026-09-27; phase 2 is next.
 Nothing is tagged.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
@@ -460,9 +460,13 @@ milestone or pipeline becomes its id and name.
 
 **A read never silently returns less than it found**: every omission is
 named and continuable. Budgets, in characters: a description 20,000; a
-file 60,000; discussions 30,000 a page and one comment 6,000; commit
-diffs 40,000; a commit message 8,000. Two omissions are named but not
-yet continuable (§17a).
+file or a merged CI configuration 60,000; discussions or review drafts
+30,000 a page and one comment 6,000; the diffs of a commit, a merge
+request or a comparison 40,000; a commit message 8,000; one search
+excerpt 1,000. A job log is windowed in bytes of the stored log: 40,000
+by default, at most 100,000, each window widened to whole lines so no
+secret straddles its edge. A comparison lists 100 commits at a time. Two
+omissions are named but not yet continuable (§17a).
 
 ### 4.9 gitlab.com, and nothing else
 
@@ -772,7 +776,16 @@ commit and the branch head afterwards.
 `list_jobs`, `get_job_log` (tail by default; `byte_offset` and
 `byte_limit` to page; `failed_only`; ANSI stripped; collapsible sections
 folded to one line each; masked per §4.1), `lint_ci` (the project's
-configuration at a ref, by GET; supplied content by POST, Write only).
+configuration at a ref, by GET; supplied content by POST, Write only,
+in phase 2 with the write path, whose gates hold every POST).
+
+A section's markers fold to one line naming the section where it
+starts, and nothing inside is hidden: folding the content would be an
+omission no offset continues. A line a carriage return overwrote shows
+as it was left, as GitLab's job page shows it. `failed_only` ends the
+window at the runner's `ERROR: Job failed` line and starts it at the
+section the job failed in, the last one of the job's own before that
+line, or as far back as the window allows.
 
 Ship: `run_pipeline` (ref, variables and inputs; variables named in the
 result, values masked), `retry_pipeline`, `retry_job`, `play_job`,
@@ -1199,8 +1212,8 @@ gated. It covers gitlab.com, the only instance.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-A, B, C, D, F and L have run on gitlab.com (2026-09-26); the rest have
-not. Spike I, the floor version, was dropped with self-managed support
+A, B, C, D, F, H, J and L have run on gitlab.com (2026-09-26); the rest
+have not. Spike I, the floor version, was dropped with self-managed support
 (§14, 2026-09-26).
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
@@ -1252,8 +1265,19 @@ not. Spike I, the floor version, was dropped with self-managed support
   comments (§2.6).
 - **Spike H — conditional reads.** Whether `If-None-Match` returns 304 on
   API GETs and whether a 304 is counted against the rate limit.
+  *Verdict, gitlab.com, 2026-09-26: a single read and a listing both
+  send an ETag and answer a conditional GET with 304 and no body, and
+  every 304 lowered `RateLimit-Remaining` by one. Conditional reads save
+  bytes, not rate budget, so the client does not send them.*
 - **Spike J — job log windows.** `byte_offset` and `byte_limit` on
   gitlab.com.
+  *Verdict, gitlab.com, 2026-09-26: both work on the trace endpoint and
+  return the exact bytes of the stored log, with no `Content-Range`;
+  `byte_limit` alone starts at 0, and an offset past the end is an empty
+  200. The whole log is one `text/plain` answer. `get_job_log` reads the
+  whole log and windows it itself, because a tail needs the size first;
+  server-side windows are the route for a log past the 32 MiB cap
+  (§17a).*
 - **Spike K — inline positions.** Comments computed by `diffpos` on
   added, removed and unchanged lines and a range, read back from the
   web view.
@@ -1314,12 +1338,23 @@ reads with `get_job_log` and its masking, `lint_ci`, `search`,
 `list_labels`, `list_milestones`, `list_members`, `find_users`,
 `list_todos`, `list_review_comments`, the three resources. Spikes H, J.
 
+*Built 2026-09-26 and 2026-09-27, simplified and reviewed (§16a). Two
+live runs on gitlab.com drove every tool and option but two page tokens
+waived as undrivable, and their transcripts were read. The first found
+gitlab.com's timestamped job logs (which also defeated `failed_only`),
+general drafts carrying an empty position in no stable order, gitlab.com's
+own wording for a refused group code search, and ids the driver did not
+mask; each was fixed, and the second run was clean but for three ids the
+driver now also masks. Spikes H and J answered. `lint_ci` on supplied
+content moved to phase 2 with the write path. Owed: nothing; §17a holds
+three new deferrals.*
+
 **Phase 2 — the write path.** The `diffpos` package and its
 tests; `create_issue`, `update_issue` with the witness, `add_comment`,
 `resolve_discussion`, the review tools, `create_merge_request`,
 `update_merge_request`, `create_branch`, `create_commit` with the
-protected-branch guard, `mark_todos_done`; settle-by-reading; the write
-allow-list. Spikes E, K, M. Spike E runs before any write tool is
+protected-branch guard, `mark_todos_done`, `lint_ci` on supplied
+content; settle-by-reading; the write allow-list. Spikes E, K, M. Spike E runs before any write tool is
 registered.
 
 **Phase 3 — Ship, Destructive and toolsets.** The Ship tools
@@ -1353,6 +1388,27 @@ fixed in `637c982`, one recorded:
 | A moved project lost the request's query | `637c982`; the request is kept and only the project segment replaced since `93c49af` |
 | A cut commit message looked complete | `637c982`; `message_offset` and `message_budget` |
 | Discussions walked up to ten pages per read | Not fixed: `X-Total` counts system-only threads, so the proposed fix miscounts; §17a |
+
+**Phase 1.** `/security-review`: no finding at confidence 8 or above
+(`audit/security-reviews/phase-1.md`), two below it recorded there.
+`/simplify`: the advanced-search refusal classified in the client, the
+live driver's confinement made deny-by-default, whole-log regular
+expressions replaced by literal searches, and shared helpers; four
+proposals skipped because a gate reads the shape they would remove.
+`/code-review high`: ten candidates:
+
+| Found | Fixed |
+|---|---|
+| A to-do on a commit carries a SHA as its target id and failed the listing | Phase 1 commit; the id is not decoded |
+| A private key header far back moved every later window to it | Phase 1 commit; the window keeps its size and the block is masked from a restored header |
+| A script printing the runner's failure words steered `failed_only` | Phase 1 commit; the last failure line counts |
+| A failure line with no section read as "no failure line" | Phase 1 commit |
+| A failed pipeline failed by a downstream one said "No job failed." | Phase 1 commit; it says a trigger job may have. Reading trigger jobs is in §17a |
+| Publishing a draft between pages skipped one | Phase 1 commit; the page token names a draft id |
+| The live driver ran its CI steps against an unfinished pipeline | Phase 1 commit; it leaves the ids zero so the steps fail |
+| A job log past 32 MiB cannot be read, and each window re-reads it | Not fixed: §17a |
+| `get_mr_diff` re-reads earlier pages on each continuation | Not fixed: §17a |
+| The driver's confinement accepts a group read without the run's word | Not a defect: every step's `group` argument is held to the run's namespace and word |
 
 ### Closing a phase
 
@@ -1424,6 +1480,18 @@ fixed in `637c982`, one recorded:
   file's diff larger than the whole diff budget (cut, with a pointer to
   `get_file`). Found in phase 0. A commit message over 8,000 is
   continued with `get_commit`'s `message_offset`.
+- `get_job_log` reads a job's whole log to find its size, so a log past
+  the 32 MiB response cap is `[unavailable]`, and each window of a long
+  log downloads all of it again. Spike J showed GitLab serves byte
+  windows; reading only the window needs the size first, which no job
+  read reports. Found in phase 1.
+- `get_mr_diff` without `paths` reads every diff page on each call and
+  shows one budget from `file_offset`, so paging through a merge request
+  of hundreds of files re-reads the pages before. Found in phase 1.
+- `get_pipeline` lists failed jobs from the job listing, which leaves out
+  trigger jobs; a pipeline failed by a downstream pipeline says so
+  rather than naming it (`GET …/pipelines/:id/bridges`, deferred in
+  §8a). Found in phase 1.
 - `get_issue` and `get_merge_request` walk up to ten pages of threads to
   count them, and each `list_discussions` page walks them again to show
   them newest first. `X-Total` cannot replace the walk: it counts
@@ -1512,3 +1580,10 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 42 | Dropping hidden characters is safe everywhere | Trojan Source (CVE-2021-42574) | **Refuted for code.** Dropped from Markdown, made visible in files, diffs and commit messages (§4.1.2) |
 | 43 | A moved project's redirect names its new path | Spike L on gitlab.com | **Refuted (tier 1, live).** It names the numeric id; the client replaces only the project segment, so either works, and the test instance now matches |
 | 44 | Every refused token says `invalid_token` | Spikes C and F on gitlab.com | **Refined (tier 1, live).** A revoked token does, in body and header; a malformed one is a plain 401. The client drops a token only on the marker, which a malformed token would not benefit from anyway |
+| 45 | A conditional read spares the rate limit | Spike H on gitlab.com | **Refuted (tier 1, live).** ETag and 304 are served on single reads and listings, and each 304 is counted. Not adopted: it saves bytes, not budget, and would add a cache to keep |
+| 46 | A job log is read whole or not at all | Spike J on gitlab.com, after row 29 | **Refuted (tier 1, live).** `byte_offset` and `byte_limit` return exact slices, no `Content-Range`, an empty 200 past the end. The server still reads the whole log, since a tail needs its size (§17a) |
+| 47 | A job log holds the lines the script printed | Phase 1 live run on gitlab.com | **Refined (tier 1, live).** gitlab.com's runners prefix each line with its time and stream, `2026-09-26T22:30:07.819673Z 01O `, and `+` after the stream continues the line before, which is how a section header arrives. Stripped and joined, as the job page shows it. GitLab also masks `glpat-` tokens itself; the server's masking still runs for the shapes it does not |
+| 48 | GitLab's compare lists commits newest first | Phase 1 live run | **Refuted (tier 1, live).** Oldest first. `compare_refs` shows them newest first, as every other commit listing |
+| 49 | A general draft note has no position | Phase 1 live run | **Refuted (tier 1, live).** It carries a position object with no paths, and GitLab returns drafts in no stable order. An empty position reads as none; drafts are sorted by id, which the page token counts in |
+| 50 | Code search across a group is refused as `Scope not supported without Elasticsearch!` | Phase 1 live run | **Refined (tier 1, live).** gitlab.com answers 400 `Scope supported only with advanced search or exact code search`. Both wordings map to `[unsupported]` |
+| 51 | A member's `access_level` is a string, as the OpenAPI file types it | Phase 1 live run | **Refuted (tier 1, live).** An integer, 50 for an owner. `testdata/api-fields.tsv` records it |

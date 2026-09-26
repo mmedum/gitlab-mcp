@@ -40,7 +40,7 @@ func TestDumpSchemas(t *testing.T) {
 	if d.Server != "gitlab-mcp" || d.Version != "v0.0.0-test" || d.SDK != "v1.8.0" {
 		t.Errorf("header = %q %q %q", d.Server, d.Version, d.SDK)
 	}
-	if len(d.Tools) != 14 || d.ResourceTemplates == nil {
+	if len(d.Tools) != 31 || len(d.ResourceTemplates) != 3 {
 		t.Fatalf("%d tools, templates %v", len(d.Tools), d.ResourceTemplates)
 	}
 	var names []string

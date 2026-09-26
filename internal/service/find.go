@@ -106,6 +106,16 @@ func (s *Service) suggest(r *model.Resolved) {
 		tool, args["path"], args["ref"] = "get_file", r.Path, r.Ref
 	case instance.KindCommit:
 		tool, args["sha"] = "get_commit", r.SHA
+	case instance.KindCompare:
+		tool, args["from"], args["to"] = "compare_refs", r.From, r.To
+	case instance.KindPipeline:
+		if r.ID != nil {
+			tool, args["pipeline_id"] = "get_pipeline", *r.ID
+		}
+	case instance.KindJob:
+		if r.ID != nil {
+			tool, args["job_id"] = "get_job_log", *r.ID
+		}
 	case instance.KindProject:
 		tool = "get_project"
 		if r.Ref != "" {

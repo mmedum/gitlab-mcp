@@ -56,6 +56,13 @@ type scratch struct {
 	Note      int64 // a comment on Issue
 	User      string
 	Label     string
+	Label2    string // a second label, so a label listing pages
+	Milestone string // the first of two milestones' titles
+	// CI: the default branch's pipeline, which fails, and two of its
+	// jobs. Zero when the pipeline did not finish in time.
+	Pipeline  int64
+	JobFailed int64
+	JobPassed int64
 }
 
 // step is one tool call and what it should do. A refusal that is
@@ -68,12 +75,21 @@ type step struct {
 	// paged sends the step again with the page_token its result gave,
 	// which is how page_token is driven: a token only a result can mint.
 	paged bool
+	// anyOutcome accepts a result or a refusal: what the instance answers
+	// is the finding, and why says what decides it.
+	anyOutcome bool
 }
 
-// plan is every phase-0 tool, every option at least once, against the
-// scratch project. Group and instance-wide searches carry the run's
-// word, so what comes back is the run's own.
+// plan is every tool, every option at least once, against the scratch
+// project. Group and instance-wide searches carry the run's word, so what
+// comes back is the run's own; a listing that could name other people
+// (members, users, labels a group defines, to-do items) is narrowed to
+// the run's account or project.
 func plan(s scratch) []step {
+	return append(phase0(s), phase1(s)...)
+}
+
+func phase0(s scratch) []step {
 	p := s.Path
 	yesterday := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
 	tomorrow := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
@@ -131,6 +147,73 @@ func plan(s scratch) []step {
 	}
 }
 
+// phase1 is the rest of reading (§16 phase 1).
+func phase1(s scratch) []step {
+	p := s.Path
+	yesterday := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	tomorrow := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	return []step{
+		{tool: "resolve_url", args: map[string]any{"url": s.WebURL + "/-/compare/" + s.Default + "..." + s.Feature}},
+		{tool: "resolve_url", args: map[string]any{"url": s.WebURL + "/-/pipelines/" + itoa(s.Pipeline)}},
+		{tool: "resolve_url", args: map[string]any{"url": s.WebURL + "/-/jobs/" + itoa(s.JobFailed)}},
+
+		{tool: "list_members", args: map[string]any{"project": p, "query": s.User, "max": 1}, paged: true},
+		{tool: "find_users", args: map[string]any{"username": s.User, "max": 1}},
+		{tool: "find_users", args: map[string]any{"search": s.Name, "max": 5}, paged: true},
+
+		{tool: "list_mr_files", args: map[string]any{"project": p, "iid": s.MR, "max": 1}, paged: true},
+		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR}},
+		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR, "paths": []any{s.File}, "file_offset": 0}},
+		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR, "file_offset": 1}},
+		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR, "paths": []any{"missing/file.md"}},
+			expectError: true, why: "a path the merge request does not change"},
+		{tool: "list_mr_commits", args: map[string]any{"project": p, "iid": s.MR, "max": 1}, paged: true},
+		{tool: "list_review_comments", args: map[string]any{"project": p, "iid": s.MR}, paged: true},
+
+		{tool: "compare_refs", args: map[string]any{"project": p, "from": s.Default, "to": s.Feature}},
+		{tool: "compare_refs", args: map[string]any{"project": p, "from": s.Default, "to": s.Feature, "straight": true,
+			"commit_offset": 1, "file_offset": 1}},
+		{tool: "list_tags", args: map[string]any{"project": p, "search": "^v0", "order_by": "version", "sort": "asc", "max": 1},
+			paged: true},
+
+		{tool: "list_pipelines", args: map[string]any{"project": p, "max": 1}, paged: true},
+		{tool: "list_pipelines", args: map[string]any{"project": p, "ref": s.Default, "sha": s.SHA, "status": "failed",
+			"source": "push", "username": s.User, "updated_after": yesterday, "updated_before": tomorrow, "order_by": "id",
+			"sort": "desc"}},
+		{tool: "get_pipeline", args: map[string]any{"project": p, "pipeline_id": s.Pipeline}},
+		{tool: "list_jobs", args: map[string]any{"project": p, "pipeline_id": s.Pipeline, "scope": "failed",
+			"include_retried": true, "max": 1}, paged: true},
+		{tool: "get_job_log", args: map[string]any{"project": p, "job_id": s.JobFailed}},
+		{tool: "get_job_log", args: map[string]any{"project": p, "job_id": s.JobFailed, "failed_only": true}},
+		{tool: "get_job_log", args: map[string]any{"project": p, "job_id": s.JobFailed, "byte_offset": 0, "byte_limit": 2000}},
+		{tool: "get_job_log", args: map[string]any{"project": p, "job_id": s.JobPassed}},
+		{tool: "lint_ci", args: map[string]any{"project": p, "ref": s.Default, "simulate": true, "include_jobs": true, "offset": 10}},
+		{tool: "lint_ci", args: map[string]any{"project": p}},
+
+		{tool: "list_labels", args: map[string]any{"project": p, "search": "live-", "project_only": true, "with_counts": true,
+			"max": 1}, paged: true},
+		{tool: "list_milestones", args: map[string]any{"project": p, "include_ancestors": false, "max": 1}, paged: true},
+		{tool: "list_milestones", args: map[string]any{"project": p, "state": "active", "search": "live", "title": s.Milestone}},
+		{tool: "list_milestones", args: map[string]any{"group": s.Namespace, "search": s.Name}},
+		{tool: "list_todos", args: map[string]any{"project": p, "max": 1}, paged: true},
+		{tool: "list_todos", args: map[string]any{"project": p, "state": "pending", "action": "marked", "type": "Issue"}},
+
+		{tool: "search", args: map[string]any{"scope": "issues", "search": s.Name, "project": p, "state": "opened", "max": 1},
+			paged: true},
+		{tool: "search", args: map[string]any{"scope": "merge_requests", "search": s.Name, "project": p}},
+		{tool: "search", args: map[string]any{"scope": "blobs", "search": s.Name, "project": p, "ref": s.Feature}},
+		{tool: "search", args: map[string]any{"scope": "commits", "search": "live file", "project": p}},
+		{tool: "search", args: map[string]any{"scope": "notes", "search": "synthetic comment", "project": p}},
+		{tool: "search", args: map[string]any{"scope": "milestones", "search": "live milestone", "project": p}},
+		{tool: "search", args: map[string]any{"scope": "wiki_blobs", "search": s.Name, "project": p}},
+		{tool: "search", args: map[string]any{"scope": "users", "search": s.Name, "project": p}},
+		{tool: "search", args: map[string]any{"scope": "issues", "search": s.Name, "group": s.Namespace}},
+		{tool: "search", args: map[string]any{"scope": "blobs", "search": s.Name, "group": s.Namespace}, anyOutcome: true,
+			why: "code across a group needs advanced search, which the group's tier decides"},
+		{tool: "search", args: map[string]any{"scope": "projects", "search": s.Name}},
+	}
+}
+
 func itoa(n int64) string { return fmt.Sprint(n) }
 
 // confined refuses a step that could read outside the scratch project:
@@ -157,8 +240,88 @@ func confined(st step, s scratch) error {
 			}
 		}
 	}
+	rule, ok := rules[st.tool]
+	if !ok {
+		return fmt.Errorf("%s has no confinement rule; add one to rules before the plan calls it", st.tool)
+	}
+	return rule(st, s)
+}
+
+// rule is what one tool must be sent to stay inside the run, beyond the
+// argument checks every step gets.
+type rule func(st step, s scratch) error
+
+// rules has an entry for every tool the plan may call, and a tool
+// without one is refused: a new tool that reads group- or instance-wide
+// data cannot slip through by default. TestEveryToolHasARule holds the
+// list against the committed surface.
+var rules = map[string]rule{
+	"get_me":      anything,
+	"resolve_url": anything, // its url is checked with every step
+	"find_users": func(st step, s scratch) error {
+		if st.args["username"] != nil && st.args["username"] != s.User || st.args["search"] != nil && st.args["search"] != s.Name {
+			return fmt.Errorf("%s: users are found by the run's own username or the run's word only", st.tool)
+		}
+		return nil
+	},
+	"list_members": func(st step, s scratch) error {
+		if err := inProject(st, s); err != nil {
+			return err
+		}
+		if st.args["query"] != s.User {
+			return fmt.Errorf("%s: members are listed for the run's own account only; the group's are other people", st.tool)
+		}
+		return nil
+	},
+	"list_labels": func(st step, s scratch) error {
+		if err := inProject(st, s); err != nil {
+			return err
+		}
+		if st.args["project_only"] != true {
+			return fmt.Errorf("%s: labels are listed with project_only; the group's labels are not the run's", st.tool)
+		}
+		return nil
+	},
+	"list_milestones": func(st step, _ scratch) error {
+		if st.args["include_ancestors"] == true {
+			return fmt.Errorf("%s: the group's milestones are not the run's", st.tool)
+		}
+		if st.args["project"] == nil && st.args["group"] == nil {
+			return fmt.Errorf("%s: milestones are listed in the scratch project or with the run's word", st.tool)
+		}
+		return nil
+	},
+	"search_projects":       searchRule,
+	"search_issues":         searchRule,
+	"search_merge_requests": searchRule,
+	"search":                searchRule,
+}
+
+func init() {
+	for _, tool := range []string{"get_project", "get_issue", "list_discussions", "get_merge_request", "list_mr_files",
+		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
+		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "lint_ci",
+		"list_todos"} {
+		rules[tool] = inProject
+	}
+}
+
+func anything(step, scratch) error { return nil }
+
+// inProject: the step names the scratch project, which every step's
+// argument check holds it to.
+func inProject(st step, _ scratch) error {
+	if st.args["project"] == nil {
+		return fmt.Errorf("%s: this tool reads the scratch project only, and the step names none", st.tool)
+	}
+	return nil
+}
+
+// searchRule: a search is scoped to the scratch project or the run's
+// namespace, or carries the run's word.
+func searchRule(st step, s scratch) error {
 	scoped := st.args["project"] != nil || st.args["group"] != nil
-	if strings.HasPrefix(st.tool, "search_") && !scoped && st.args["search"] != s.Name {
+	if !scoped && st.args["search"] != s.Name {
 		return fmt.Errorf("%s: an instance-wide search must carry the run's word", st.tool)
 	}
 	return nil

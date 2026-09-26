@@ -80,6 +80,9 @@ const (
 	KindUser     = "user"
 	KindEmail    = "email"
 	KindClientID = "client-id"
+	// KindID is a numeric id; it is matched as a whole number, even
+	// inside a longer name.
+	KindID = "id"
 )
 
 // replacer turns one found value of a kind into what stands in its

@@ -55,6 +55,15 @@ var byName = map[string]reflect.Type{
 	"Branch": reflect.TypeFor[Branch](), "Commit": reflect.TypeFor[Commit](),
 	"CommitStats": reflect.TypeFor[CommitStats](), "Diff": reflect.TypeFor[Diff](),
 	"ProtectedBranch": reflect.TypeFor[ProtectedBranch](), "AccessLevel": reflect.TypeFor[AccessLevel](),
+	"Compare": reflect.TypeFor[Compare](), "Tag": reflect.TypeFor[Tag](), "TagRelease": reflect.TypeFor[TagRelease](),
+	"Pipeline": reflect.TypeFor[Pipeline](), "PipelineDetail": reflect.TypeFor[PipelineDetail](),
+	"PipelineDetailStatus": reflect.TypeFor[PipelineDetailStatus](),
+	"Job":                  reflect.TypeFor[Job](), "JobPipe": reflect.TypeFor[JobPipe](), "Lint": reflect.TypeFor[Lint](),
+	"LintJob": reflect.TypeFor[LintJob](), "Label": reflect.TypeFor[Label](),
+	"ProjectMilestone": reflect.TypeFor[ProjectMilestone](), "Member": reflect.TypeFor[Member](),
+	"Todo": reflect.TypeFor[Todo](), "TodoProject": reflect.TypeFor[TodoProject](),
+	"TodoTarget": reflect.TypeFor[TodoTarget](), "DraftNote": reflect.TypeFor[DraftNote](),
+	"SearchHit": reflect.TypeFor[SearchHit](), "SearchCommit": reflect.TypeFor[SearchCommit](),
 }
 
 // A field that is never declared is never decoded, so a token GitLab

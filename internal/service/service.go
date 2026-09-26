@@ -165,6 +165,12 @@ func cut(text string, removed, offset, budget int, what, param string) (string, 
 // readPages reads a listing a page of a hundred at a time, up to
 // maxPages; complete is false when there were more.
 func readPages[T any](maxPages int, read func(gapi.ListOptions) ([]T, gapi.Page, error)) ([]T, bool, error) {
+	return readPagesUntil(maxPages, read, nil)
+}
+
+// readPagesUntil is readPages that also stops once done says the rows
+// read so far are enough; complete then says whether the listing ended.
+func readPagesUntil[T any](maxPages int, read func(gapi.ListOptions) ([]T, gapi.Page, error), done func([]T) bool) ([]T, bool, error) {
 	var all []T
 	opts := gapi.ListOptions{PerPage: gapi.MaxPerPage}
 	for range maxPages {
@@ -175,6 +181,9 @@ func readPages[T any](maxPages int, read func(gapi.ListOptions) ([]T, gapi.Page,
 		all = append(all, rows...)
 		if page.Complete() {
 			return all, true, nil
+		}
+		if done != nil && done(all) {
+			return all, false, nil
 		}
 		opts.PageToken = page.NextToken
 	}

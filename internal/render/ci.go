@@ -1,0 +1,176 @@
+package render
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/mmedum/gitlab-mcp/internal/model"
+)
+
+// The readable half of the CI reads.
+
+// Pipelines renders list_pipelines.
+func Pipelines(l model.Pipelines, _ Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Pipelines of %s\n", projectLine(l.Project))
+	b.WriteString(listingLine("pipelines", l.Listing))
+	for _, p := range l.Pipelines {
+		fmt.Fprintf(&b, "\n- pipeline %d (#%d): %s on %s at %s, from %s, updated %s", p.ID, p.IID, Ident(p.Status), Ident(p.Ref),
+			Ident(shortSHA(p.SHA)), Ident(p.Source), when(p.UpdatedAt))
+	}
+	return b.String()
+}
+
+// jobLine is one job on one line.
+func jobLine(j model.JobRow) string {
+	s := fmt.Sprintf("job %d %s (stage %s): %s", j.ID, Ident(j.Name), Ident(j.Stage), Ident(j.Status))
+	if j.FailureReason != "" {
+		s += ", " + Ident(j.FailureReason)
+	}
+	if j.AllowFailure {
+		s += ", allowed to fail"
+	}
+	if j.Duration != nil {
+		s += fmt.Sprintf(", ran %.0fs", *j.Duration)
+	}
+	if j.FinishedAt != nil {
+		s += ", finished " + when(*j.FinishedAt)
+	}
+	return s
+}
+
+// Pipeline renders get_pipeline.
+func Pipeline(p model.PipelineDetail, bd Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Pipeline %d (#%d) in %s\n", p.ID, p.IID, projectLine(p.Project))
+	status := Ident(p.Status)
+	if p.DetailedStatus != "" && p.DetailedStatus != p.Status {
+		status += " (" + Ident(p.DetailedStatus) + ")"
+	}
+	kind := "branch"
+	if p.Tag {
+		kind = "tag"
+	}
+	fmt.Fprintf(&b, "%s; %s on %s %s at %s, from %s", Ident(p.WebURL), status, kind, Ident(p.Ref), Ident(p.SHA), Ident(p.Source))
+	if p.User != nil {
+		fmt.Fprintf(&b, ", started by @%s", Ident(p.User.Username))
+	}
+	b.WriteString(".\n")
+	fmt.Fprintf(&b, "Created %s; started %s; finished %s", when(p.CreatedAt), whenPtr(p.StartedAt), whenPtr(p.FinishedAt))
+	if p.Duration != nil {
+		fmt.Fprintf(&b, "; ran %ds", *p.Duration)
+	}
+	if p.QueuedDuration != nil {
+		fmt.Fprintf(&b, "; queued %ds", *p.QueuedDuration)
+	}
+	b.WriteString(".")
+	if p.UntrustedYAMLErrors != "" {
+		b.WriteString("\n" + bd.Notice())
+		fmt.Fprintf(&b, "\nConfiguration errors: %s", bd.Inline(p.UntrustedYAMLErrors))
+	}
+	switch {
+	case len(p.FailedJobs) == 0 && p.Status == "failed":
+		// Trigger jobs are not in the job listing: a downstream pipeline
+		// that failed fails this one with no job of its own failing.
+		b.WriteString("\nNo job of this pipeline failed; a trigger job's downstream pipeline may have, which this server does not read yet.")
+	case len(p.FailedJobs) == 0:
+		b.WriteString("\nNo job failed.")
+	default:
+		fmt.Fprintf(&b, "\nFailed jobs (%d):", len(p.FailedJobs))
+		for _, j := range p.FailedJobs {
+			b.WriteString("\n- " + jobLine(j))
+		}
+		b.WriteString("\nget_job_log with failed_only reads where a job failed.")
+	}
+	if !p.FailedJobsComplete {
+		b.WriteString("\nMore jobs failed than were read; list_jobs with scope failed lists them all.")
+	}
+	return b.String()
+}
+
+// Jobs renders list_jobs.
+func Jobs(l model.Jobs, _ Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Jobs of pipeline %d in %s\n", l.PipelineID, projectLine(l.Project))
+	b.WriteString(listingLine("jobs", l.Listing))
+	for _, j := range l.Jobs {
+		b.WriteString("\n- " + jobLine(j))
+	}
+	return b.String()
+}
+
+// JobLog renders get_job_log.
+func JobLog(l model.JobLog, bd Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Log of %s in %s\n", jobLine(l.Job), projectLine(l.Project))
+	switch {
+	case l.TotalBytes == 0:
+		b.WriteString("The log is empty.")
+		return b.String()
+	case l.Section != "":
+		fmt.Fprintf(&b, "The job failed in section %s; the window ends at the failure.\n", Ident(l.Section))
+	case l.FailureNotFound:
+		b.WriteString("The log has no failure line; the tail is shown.\n")
+	}
+	fmt.Fprintf(&b, "Bytes %d to %d of %d shown.", l.ByteOffset, l.ByteEnd, l.TotalBytes)
+	if l.PrevByteOffset != nil {
+		fmt.Fprintf(&b, " Earlier: byte_offset=%d.", *l.PrevByteOffset)
+	}
+	if l.NextByteOffset != nil {
+		fmt.Fprintf(&b, " Later: byte_offset=%d.", *l.NextByteOffset)
+	}
+	b.WriteString(" Colors and section markers are removed; § marks where a section starts.")
+	if l.SecretsMasked > 0 {
+		fmt.Fprintf(&b, " %d secret shapes were replaced with [MASKED kind].", l.SecretsMasked)
+	}
+	if l.HiddenRemoved > 0 {
+		fmt.Fprintf(&b, " %d hidden characters were made visible.", l.HiddenRemoved)
+	}
+	b.WriteString("\n" + bd.Notice() + "\n")
+	o := Origin{Kind: "job_log", Project: l.Project.Path, Item: "job " + strconv.FormatInt(l.Job.ID, 10)}
+	b.WriteString(bd.Block(o, l.UntrustedLog))
+	return b.String()
+}
+
+// Lint renders lint_ci.
+func Lint(l model.Lint, bd Boundary) string {
+	var b strings.Builder
+	what := "simulated a pipeline for"
+	if !l.Simulate {
+		what = "checked"
+	}
+	fmt.Fprintf(&b, "CI lint %s the configuration at %s in %s\n", what, orDefault(l.Ref), projectLine(l.Project))
+	if l.Valid {
+		b.WriteString("Valid.")
+	} else {
+		b.WriteString("Not valid.")
+	}
+	quoted := len(l.UntrustedErrors)+len(l.UntrustedWarnings) > 0 || l.UntrustedMergedYAML != ""
+	if quoted {
+		b.WriteString("\n" + bd.Notice())
+	}
+	for _, e := range l.UntrustedErrors {
+		fmt.Fprintf(&b, "\nError: %s", bd.Inline(e))
+	}
+	for _, w := range l.UntrustedWarnings {
+		fmt.Fprintf(&b, "\nWarning: %s", bd.Inline(w))
+	}
+	if len(l.Jobs) > 0 {
+		fmt.Fprintf(&b, "\nJobs (%d):", len(l.Jobs))
+		for _, j := range l.Jobs {
+			fmt.Fprintf(&b, "\n- %s (stage %s, when %s", Ident(j.Name), Ident(j.Stage), orNone(Ident(j.When)))
+			if j.AllowFailure {
+				b.WriteString(", allowed to fail")
+			}
+			b.WriteString(")")
+		}
+	}
+	if l.UntrustedMergedYAML != "" {
+		b.WriteString("\nThe configuration with every include expanded:\n")
+		o := Origin{Kind: "ci_config", Project: l.Project.Path, Item: l.Ref}
+		b.WriteString(bd.Block(o, l.UntrustedMergedYAML) + "\n")
+		b.WriteString(budgetLine("Merged configuration", l.MergedYAMLBudget))
+	}
+	return b.String()
+}

@@ -314,3 +314,11 @@ func fill(v reflect.Value, field, payload string) {
 		}
 	}
 }
+
+// A failed pipeline with no failed job of its own says why that can be.
+func TestPipelineFailedWithoutAFailedJob(t *testing.T) {
+	got := Pipeline(model.PipelineDetail{Status: "failed", FailedJobsComplete: true}, FixedBoundary("0123456789abcdef"))
+	if !strings.Contains(got, "a trigger job's downstream pipeline may have") || strings.Contains(got, "No job failed.") {
+		t.Errorf("text:\n%s", got)
+	}
+}

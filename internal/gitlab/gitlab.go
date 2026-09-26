@@ -406,3 +406,236 @@ type AccessLevel struct {
 	UserID                 *int64 `json:"user_id"`
 	GroupID                *int64 `json:"group_id"`
 }
+
+// Compare is GET /projects/:id/repository/compare. GitLab returns every
+// commit and every diff in one answer, unpaged.
+type Compare struct {
+	Commits        []Commit `json:"commits"`
+	Diffs          []Diff   `json:"diffs"`
+	CompareTimeout bool     `json:"compare_timeout"`
+	CompareSameRef bool     `json:"compare_same_ref"`
+	WebURL         string   `json:"web_url"`
+}
+
+// Tag is one row of GET /projects/:id/repository/tags.
+type Tag struct {
+	Name      string      `json:"name"`
+	Message   string      `json:"message"` // an annotated tag's message, "" for a lightweight tag
+	Target    string      `json:"target"`
+	Protected bool        `json:"protected"`
+	CreatedAt *time.Time  `json:"created_at"`
+	Commit    Commit      `json:"commit"`
+	Release   *TagRelease `json:"release"`
+}
+
+// TagRelease is the release a tag carries, if any.
+type TagRelease struct {
+	TagName string `json:"tag_name"`
+}
+
+// Pipeline is one row of GET /projects/:id/pipelines.
+type Pipeline struct {
+	ID        int64     `json:"id"`
+	IID       int64     `json:"iid"`
+	ProjectID int64     `json:"project_id"`
+	SHA       string    `json:"sha"`
+	Ref       string    `json:"ref"`
+	Status    string    `json:"status"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	WebURL    string    `json:"web_url"`
+}
+
+// PipelineDetail is GET /projects/:id/pipelines/:pipeline_id: a list row's
+// fields and the ones only the single read carries.
+type PipelineDetail struct {
+	ID             int64                 `json:"id"`
+	IID            int64                 `json:"iid"`
+	ProjectID      int64                 `json:"project_id"`
+	SHA            string                `json:"sha"`
+	Ref            string                `json:"ref"`
+	Status         string                `json:"status"`
+	Source         string                `json:"source"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+	WebURL         string                `json:"web_url"`
+	BeforeSHA      string                `json:"before_sha"`
+	Tag            bool                  `json:"tag"`
+	YAMLErrors     *string               `json:"yaml_errors"`
+	User           *UserBasic            `json:"user"`
+	StartedAt      *time.Time            `json:"started_at"`
+	FinishedAt     *time.Time            `json:"finished_at"`
+	Duration       *int64                `json:"duration"`        // seconds
+	QueuedDuration *int64                `json:"queued_duration"` // seconds
+	DetailedStatus *PipelineDetailStatus `json:"detailed_status"`
+}
+
+// PipelineDetailStatus is the status GitLab shows a person: "passed with
+// warnings" where Status says "success".
+type PipelineDetailStatus struct {
+	Text  string `json:"text"`
+	Label string `json:"label"`
+	Group string `json:"group"`
+}
+
+// Job is one row of GET /projects/:id/pipelines/:pipeline_id/jobs.
+type Job struct {
+	ID             int64      `json:"id"`
+	Name           string     `json:"name"`
+	Stage          string     `json:"stage"`
+	Status         string     `json:"status"`
+	Ref            string     `json:"ref"`
+	Tag            bool       `json:"tag"`
+	AllowFailure   bool       `json:"allow_failure"`
+	FailureReason  string     `json:"failure_reason"`
+	CreatedAt      time.Time  `json:"created_at"`
+	StartedAt      *time.Time `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at"`
+	Duration       *float64   `json:"duration"`        // seconds
+	QueuedDuration *float64   `json:"queued_duration"` // seconds
+	WebURL         string     `json:"web_url"`
+	Pipeline       JobPipe    `json:"pipeline"`
+}
+
+// JobPipe is the pipeline a job row names.
+type JobPipe struct {
+	ID int64 `json:"id"`
+}
+
+// Lint is GET /projects/:id/ci/lint.
+type Lint struct {
+	Valid      bool      `json:"valid"`
+	Errors     []string  `json:"errors"`
+	Warnings   []string  `json:"warnings"`
+	MergedYAML string    `json:"merged_yaml"`
+	Jobs       []LintJob `json:"jobs"`
+}
+
+// LintJob is one job of a linted configuration, with include_jobs.
+type LintJob struct {
+	Name         string `json:"name"`
+	Stage        string `json:"stage"`
+	When         string `json:"when"`
+	AllowFailure bool   `json:"allow_failure"`
+}
+
+// Label is one row of GET /projects/:id/labels.
+type Label struct {
+	ID                     int64  `json:"id"`
+	Name                   string `json:"name"`
+	Color                  string `json:"color"`
+	Description            string `json:"description"`
+	OpenIssuesCount        *int   `json:"open_issues_count"`
+	ClosedIssuesCount      *int   `json:"closed_issues_count"`
+	OpenMergeRequestsCount *int   `json:"open_merge_requests_count"`
+	Priority               *int   `json:"priority"`
+	IsProjectLabel         bool   `json:"is_project_label"`
+}
+
+// ProjectMilestone is one row of GET /projects/:id/milestones and
+// GET /groups/:id/milestones.
+type ProjectMilestone struct {
+	ID        int64     `json:"id"`
+	IID       int64     `json:"iid"`
+	Title     string    `json:"title"`
+	State     string    `json:"state"`
+	DueDate   string    `json:"due_date"`   // a date, not an instant
+	StartDate string    `json:"start_date"` // a date, not an instant
+	Expired   *bool     `json:"expired"`
+	UpdatedAt time.Time `json:"updated_at"`
+	WebURL    string    `json:"web_url"`
+}
+
+// Member is one row of GET /projects/:id/members/all. The email an
+// administrator is shown is never declared.
+type Member struct {
+	ID          int64   `json:"id"`
+	Username    string  `json:"username"`
+	Name        string  `json:"name"`
+	State       string  `json:"state"`
+	AccessLevel int     `json:"access_level"`
+	ExpiresAt   *string `json:"expires_at"` // a date, not an instant
+}
+
+// Todo is one row of GET /todos.
+type Todo struct {
+	ID         int64        `json:"id"`
+	Project    *TodoProject `json:"project"`
+	Author     UserBasic    `json:"author"`
+	ActionName string       `json:"action_name"`
+	TargetType string       `json:"target_type"`
+	Target     TodoTarget   `json:"target"`
+	TargetURL  string       `json:"target_url"`
+	Body       string       `json:"body"`
+	State      string       `json:"state"`
+	CreatedAt  time.Time    `json:"created_at"`
+}
+
+// TodoProject is the project a to-do item belongs to.
+type TodoProject struct {
+	ID                int64  `json:"id"`
+	PathWithNamespace string `json:"path_with_namespace"`
+}
+
+// TodoTarget is the issue, merge request or other item a to-do item
+// points at. Its shape depends on TargetType; only what they share is
+// read. The id is not: a commit's is its SHA, an issue's a number.
+type TodoTarget struct {
+	IID   int64  `json:"iid"`
+	Title string `json:"title"`
+	State string `json:"state"`
+}
+
+// DraftNote is one row of GET …/merge_requests/:iid/draft_notes: a
+// review comment the signed-in account has not published.
+type DraftNote struct {
+	ID                int64     `json:"id"`
+	AuthorID          int64     `json:"author_id"`
+	Note              string    `json:"note"`
+	DiscussionID      *string   `json:"discussion_id"`
+	ResolveDiscussion bool      `json:"resolve_discussion"`
+	CommitID          *string   `json:"commit_id"`
+	Position          *Position `json:"position"`
+}
+
+// SearchHit is one row of GET /search and its group and project forms,
+// for every scope but commits. Its shape depends on the scope; this is
+// the union of the fields read, and each scope fills its own.
+type SearchHit struct {
+	// Issues, merge requests, milestones, projects, users, notes.
+	ID        int64      `json:"id"`
+	IID       int64      `json:"iid"`
+	ProjectID int64      `json:"project_id"`
+	Title     string     `json:"title"`
+	State     string     `json:"state"`
+	WebURL    string     `json:"web_url"`
+	UpdatedAt *time.Time `json:"updated_at"`
+	Author    *UserBasic `json:"author"`
+	// Projects.
+	PathWithNamespace string `json:"path_with_namespace"`
+	// Projects and users.
+	Name string `json:"name"`
+	// Users.
+	Username string `json:"username"`
+	// Blobs and wiki blobs.
+	Path      string `json:"path"`
+	Ref       string `json:"ref"`
+	Startline int    `json:"startline"`
+	Data      string `json:"data"`
+	// Notes.
+	Body         string `json:"body"`
+	NoteableType string `json:"noteable_type"` //nolint:misspell // GitLab's wire name
+	NoteableIID  *int64 `json:"noteable_iid"`  //nolint:misspell // GitLab's wire name
+}
+
+// SearchCommit is one row of a commits search: a commit, and the project
+// it is in.
+type SearchCommit struct {
+	ID            string    `json:"id"`
+	Title         string    `json:"title"`
+	AuthorName    string    `json:"author_name"`
+	CommittedDate time.Time `json:"committed_date"`
+	WebURL        string    `json:"web_url"`
+	ProjectID     int64     `json:"project_id"`
+}

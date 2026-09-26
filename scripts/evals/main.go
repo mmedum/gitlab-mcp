@@ -17,8 +17,8 @@ import (
 )
 
 // toolFloor is the fewest tools a model must be offered for a task to
-// mean anything: phase 0 registers fourteen reads.
-const toolFloor = 10
+// mean anything: phase 1 registers thirty-one reads.
+const toolFloor = 28
 
 func main() {
 	selfCheck := flag.Bool("self-check", false,

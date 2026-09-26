@@ -49,6 +49,11 @@ type issueBody struct {
 	Weight string   ` + "`json:\"weight\"`" + `
 }
 
+func (c *Client) GetTrace(id string) error {
+	var out []byte
+	return c.Do(nil, Call{Method: "GET", Path: "issues/{}/trace", Args: []string{id}}, &out)
+}
+
 func (c *Client) CreateIssue(title string) error {
 	var out gitlab.Issue
 	return c.Do(nil, Call{Method: "POST", Path: "issues", Body: &issueBody{Title: title}}, &out)
@@ -93,6 +98,9 @@ func fixtureFieldSnapshot() apiSnapshot {
 			Responses: map[string]map[string]string{"200": issue, "404": nil}},
 		{Verb: "POST", Path: "/issues", Request: map[string]string{"title": "string", "labels": "array<string>", "weight": "integer"},
 			Responses: map[string]map[string]string{"201": issue}},
+		// A text answer the file publishes as if it were JSON, as it
+		// publishes a job log: []byte takes it as it is.
+		{Verb: "GET", Path: "/issues/{id}/trace", Responses: map[string]map[string]string{"200": issue}},
 	}}
 }
 
@@ -145,7 +153,7 @@ func TestTheFixtureFieldsHold(t *testing.T) {
 	if len(problems) > 0 {
 		t.Fatalf("problems on a correct fixture:\n%s", strings.Join(problems, "\n"))
 	}
-	if !strings.Contains(report, "3 operations, 6 sent and 33 decoded fields") {
+	if !strings.Contains(report, "4 operations, 6 sent and 33 decoded fields") {
 		t.Errorf("report = %s", report)
 	}
 }
