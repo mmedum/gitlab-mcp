@@ -167,7 +167,7 @@ var leaksRules = []leaksRule{
 		re:    regexp.MustCompile(`\bgithub\.com/mmedum/([A-Za-z0-9_.\-]+)`),
 		group: 1,
 		allow: []leaksAllow{
-			{regexp.MustCompile(`^gitlab-mcp$`), "this repository"},
+			{regexp.MustCompile(`^gitlab-mcp(?:\.svg|\.git)?$`), "this repository, its badge image or its clone URL"},
 		},
 	},
 	{

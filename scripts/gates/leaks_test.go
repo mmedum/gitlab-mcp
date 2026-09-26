@@ -68,6 +68,8 @@ func TestLeaksFind(t *testing.T) {
 		{"a real namespace", "https://gitlab.com/" + "corp-widgets/app", "gitlab.com/ followed by a namespace"},
 		{"a namespace without the scheme", "at gitlab.com/" + "corp-widgets/app", "gitlab.com/ followed by a namespace"},
 		{"another repository of the owner", "github.com/mmedum/" + "other-server", "another repository of this repository's owner"},
+		{"this repository's badge", "pkg.go.dev/badge/github.com/mmedum/gitlab-mcp.svg", ""},
+		{"another repository's badge", "pkg.go.dev/badge/github.com/mmedum/" + "other-server.svg", "another repository of this repository's owner"},
 		{"a synthetic token", "glpat-EXAMPLE0123456789abcdefghij and GR1348941FAKEabcdefghijklmnopqrst", ""},
 		{"a token", "token glpat-" + strings.Repeat("Ab1", 8), "a GitLab token"},
 		{"a session cookie", "_gitlab_session=" + strings.Repeat("9f", 16), "a GitLab token"},

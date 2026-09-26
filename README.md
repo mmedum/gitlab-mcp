@@ -1,7 +1,9 @@
 # gitlab-mcp
 
+[![CI](https://github.com/mmedum/gitlab-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mmedum/gitlab-mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/mmedum/gitlab-mcp?include_prereleases&sort=semver)](https://github.com/mmedum/gitlab-mcp/releases)
-[![ci](https://github.com/mmedum/gitlab-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mmedum/gitlab-mcp/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/mmedum/gitlab-mcp.svg)](https://pkg.go.dev/github.com/mmedum/gitlab-mcp)
+[![License: Apache 2.0](https://img.shields.io/github/license/mmedum/gitlab-mcp)](./LICENSE)
 
 An MCP server for GitLab. One binary over stdio, signed in as you, on
 gitlab.com or a self-managed instance. It works inside projects: issues,
@@ -9,6 +11,19 @@ merge requests, reviews, the repository and CI. Instance and group
 administration, runners, CI variables and tokens are out of scope.
 
 Unofficial, and not affiliated with GitLab Inc. See `NOTICE`.
+
+## What makes this one different
+
+- **A small surface, gated by registration.** About fifty tools rather
+  than an API mirror, and a tool that is switched off is not registered,
+  so it cannot be called at all.
+- **Nothing it writes runs a quick action.** `/merge` in a comment is
+  refused or escaped, never executed.
+- **Content is marked as untrusted.** Issues, reviews, files and job
+  logs come back inside boundaries the content cannot close.
+- **Signs in like a desktop app.** Your own OAuth application, a browser
+  tab, the token in the OS keyring; gitlab.com and self-managed alike.
+- **Verifiable releases.** Signed checksums, build provenance and SBOMs.
 
 ## Status
 
@@ -81,7 +96,15 @@ and there are no personal access tokens.
    `status` and `logout` do what they say; `--profile` keeps a gitlab.com
    login and a self-managed one side by side.
 
-Then point your MCP client at the binary:
+## Connect a client
+
+Claude Code:
+
+```bash
+claude mcp add gitlab -- gitlab-mcp
+```
+
+Any client that takes a JSON server list:
 
 ```json
 {
@@ -90,6 +113,8 @@ Then point your MCP client at the binary:
   }
 }
 ```
+
+Claude Desktop can instead open the `.mcpb` bundle from a release.
 
 ## Configuration
 
