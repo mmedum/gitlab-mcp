@@ -124,7 +124,7 @@ func TestMovedProject(t *testing.T) {
 	s := New(t, Options{})
 	tok := s.Token()
 	resp, _ := do(t, "GET", s.URL+"/api/v4/projects/example-group%2Fold-alpha/issues?state=opened", tok, nil, "")
-	if resp.StatusCode != 301 || resp.Header.Get("Location") != s.URL+"/api/v4/projects/example-group%2Falpha/issues?state=opened" {
+	if resp.StatusCode != 301 || resp.Header.Get("Location") != s.URL+"/api/v4/projects/2001/issues?state=opened" {
 		t.Errorf("GET = %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	resp, _ = do(t, "POST", s.URL+"/api/v4/projects/example-group%2Fold-alpha/issues/1/notes", tok, strings.NewReader(`{"body":"x"}`), "application/json")

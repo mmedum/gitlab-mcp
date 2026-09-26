@@ -700,11 +700,11 @@ func TestMovedProjectFollowedOnceForGet(t *testing.T) {
 		t.Errorf("issue = %d/%d", iss.ProjectID, iss.IID)
 	}
 	moves := Moves(ctx)
-	if len(moves) != 1 || moves[0] != (Move{From: "example-group/old-alpha", To: "example-group/alpha"}) {
+	if len(moves) != 1 || moves[0] != (Move{From: "example-group/old-alpha", To: "2001"}) {
 		t.Errorf("moves = %+v", moves)
 	}
 	reqs := f.srv.Requests()
-	if len(reqs) != 2 || reqs[1].EscapedPath != "/api/v4/projects/example-group%2Falpha/issues/1" {
+	if len(reqs) != 2 || reqs[1].EscapedPath != "/api/v4/projects/2001/issues/1" {
 		t.Errorf("requests = %+v", reqs)
 	}
 	if Requests(ctx) != 2 {
@@ -719,7 +719,7 @@ func TestMovedProjectFollowedOnceForGet(t *testing.T) {
 	}
 }
 
-// TestMovedProjectKeepsTheQuery: a redirect that names only the new path
+// TestMovedProjectKeepsTheQuery: a redirect that names only the project
 // must not drop the filters and the ref the request carried.
 func TestMovedProjectKeepsTheQuery(t *testing.T) {
 	f := newFixture(t, gitlabtest.Options{MoveDropsQuery: true})
@@ -732,7 +732,7 @@ func TestMovedProjectKeepsTheQuery(t *testing.T) {
 	if len(reqs) != 2 {
 		t.Fatalf("requests = %+v", reqs)
 	}
-	if reqs[1].EscapedPath != "/api/v4/projects/example-group%2Falpha/issues" || reqs[1].RawQuery != reqs[0].RawQuery ||
+	if reqs[1].EscapedPath != "/api/v4/projects/2001/issues" || reqs[1].RawQuery != reqs[0].RawQuery ||
 		!strings.Contains(reqs[1].RawQuery, "state=closed") {
 		t.Errorf("followed request = %+v, want the query %q", reqs[1], reqs[0].RawQuery)
 	}

@@ -1180,7 +1180,7 @@ application for everyone.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-A and B have run on gitlab.com (2026-09-26); the rest have not.
+A, B, C, F and L have run on gitlab.com (2026-09-26); the rest have not.
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
   send `http://127.0.0.1:<random>/callback`, `http://[::1]:<random>/…`
@@ -1198,6 +1198,11 @@ A and B have run on gitlab.com (2026-09-26); the rest have not.
 - **Spike C — concurrent refresh.** Two refreshes with one token: one
   `invalid_grant`, and the old access token dead at once. §10's lock is
   built from this.
+  *Verdict, gitlab.com, 2026-09-26: confirmed. Of two simultaneous
+  refreshes with one token, one was granted and one refused
+  `invalid_grant`; the old access token answered 401 at once, with
+  `invalid_token` in both the body and `WWW-Authenticate` — the marker
+  the client drops a token on.*
 - **Spike D — a Confidential application.** The exact error when the
   application was left Confidential and no secret is sent, so `login`
   and `doctor` can say "untick Confidential" instead of `invalid_client`.
@@ -1209,6 +1214,12 @@ A and B have run on gitlab.com (2026-09-26); the rest have not.
 - **Spike F — error shapes.** The unknown-route 404 against a resource
   404; a licensed feature on Free (epics, approval rules) as 403 or
   404; a Rack::Attack 429 on gitlab.com. §6.5's mapping.
+  *Verdict, gitlab.com, 2026-09-26: a missing resource is
+  `{"message":"404 Project Not Found"}`, an unknown route
+  `{"error":"404 Not Found"}` — the shapes §2.14 distinguishes. Epics
+  and iterations on a Free group are 403 `{"message":"403 Forbidden"}`.
+  A malformed token is a plain 401 `{"message":"401 Unauthorized"}`
+  with no `invalid_token` marker. The 429 was not provoked.*
 - **Spike G — `mcp` scope.** Whether an `mcp`-scoped token can call the
   tagged REST routes directly. Informational: it would not cover
   comments (§2.6).
@@ -1225,6 +1236,12 @@ A and B have run on gitlab.com (2026-09-26); the rest have not.
 - **Spike L — moved projects and encoded paths.** A renamed project's
   GET redirect and its non-GET 405; a full path containing a dot and a
   nested group, percent-encoded once.
+  *Verdict, gitlab.com, 2026-09-26: a renamed project's old path
+  answers GET with 301 and a `Location` naming the project's **numeric
+  id**, not its new path, keeping the sub-path and query; a write
+  answers 405 `Non GET methods are not allowed for moved projects`.
+  The in-memory instance now does the same. The dotted and nested path
+  is still open.*
 - **Spike M — settle by reading.** For each create of §4.5, whether the
   read finds what the create made within a second, or needs a delay.
 
@@ -1260,8 +1277,9 @@ on gitlab.com the same day and its transcript was read: it found the
 signed-in person's display name and user id unmasked in the driver's
 output (fixed and re-run clean), a sha256 labeled as a client id by the
 shape mask (safe, left), and two wording defects (fixed). Spikes A and B
-answered on gitlab.com. Still owed before the tag: spikes C, D, F and L
-on gitlab.com, and spike I with A on a container of the floor version.*
+answered on gitlab.com, then C, F and L. Still owed before the tag:
+spike D on gitlab.com, and spike I with A on a container of the floor
+version.*
 
 **Phase 1 — the rest of reading (v0.2.0).** `list_mr_files`,
 `get_mr_diff`, `list_mr_commits`, `compare_refs`, `list_tags`, the CI
@@ -1467,3 +1485,5 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 40 | A quick-action guard can match GitLab with a regular expression | GitLab's extractor and the Markdown pipeline it calls at `829b21d2`; comrak v0.55.0, the version GitLab's renderer pins; a differential oracle over about 1.3 million generated bodies | **Refined (tier 1).** Detection needs comrak's block structure, so `internal/quickaction` ports it. Zero lines GitLab would run were missed; four deliberate over-detections (any `/word`, both backtick readings, no rendered-text prefilter, description-list terms). Before 16.7 the extractor was regular-expression only and ran commands inside `~~~` fences and lazy lines; spike E checks the floor version |
 | 41 | GitLab's token prefixes are the ones commonly listed | GitLab's token page, fetched 2026-09-26 | **Refined (tier 3).** `glpat-`, `gloas-`, `gldt-`, `glrt-`, `glrtr-`, `glcbt-`, `glptt-`, `glft-`, `glimt-`, `glagent-`, `glwt-`, `glsoat-`, `glffct-`, `_gitlab_session=`, and the runner `GR1348941`; `gloat-` is not listed. A custom personal-access-token prefix cannot be matched by shape |
 | 42 | Dropping hidden characters is safe everywhere | Trojan Source (CVE-2021-42574) | **Refuted for code.** Dropped from Markdown, made visible in files, diffs and commit messages (§4.1.2) |
+| 43 | A moved project's redirect names its new path | Spike L on gitlab.com | **Refuted (tier 1, live).** It names the numeric id; the client replaces only the project segment, so either works, and the test instance now matches |
+| 44 | Every refused token says `invalid_token` | Spikes C and F on gitlab.com | **Refined (tier 1, live).** A revoked token does, in body and header; a malformed one is a plain 401. The client drops a token only on the marker, which a malformed token would not benefit from anyway |

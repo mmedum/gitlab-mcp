@@ -256,7 +256,8 @@ func (s *Server) isAncestor(ancestor, id int64) bool {
 func (s *Server) projectFor(w http.ResponseWriter, r *http.Request, seg, user string) (*project, bool) {
 	if to, ok := s.moved[strings.ToLower(seg)]; ok {
 		if r.Method != http.MethodGet {
-			message(w, http.StatusMethodNotAllowed, "405 Method Not Allowed")
+			// gitlab.com's words, recorded by spike L (2026-09-26).
+			message(w, http.StatusMethodNotAllowed, "Non GET methods are not allowed for moved projects")
 			return nil, true
 		}
 		// The rest of the escaped path after the project segment.
@@ -268,7 +269,16 @@ func (s *Server) projectFor(w http.ResponseWriter, r *http.Request, seg, user st
 		} else {
 			rest = ""
 		}
-		loc := s.URL + prefix + url.PathEscape(to) + rest
+		// gitlab.com redirects to the project's numeric id, not its new
+		// path, keeping the rest of the path and the query (spike L).
+		target := to
+		for _, p := range s.projects {
+			if strings.EqualFold(p.PathWithNamespace, to) {
+				target = strconv.FormatInt(p.ID, 10)
+				break
+			}
+		}
+		loc := s.URL + prefix + url.PathEscape(target) + rest
 		if r.URL.RawQuery != "" && !s.opts.MoveDropsQuery {
 			loc += "?" + r.URL.RawQuery
 		}
