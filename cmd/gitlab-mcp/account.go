@@ -78,6 +78,11 @@ func cmdLogin(args []string, stdout, stderr io.Writer, env func(string) string) 
 	g, err := s.Application().Login(ctx, requested, auth.LoginOptions{
 		Out: stdout, NoBrowser: f.noBrowser, OpenBrowser: openBrowser, Timeout: loginTimeout,
 	})
+	if errors.Is(err, auth.ErrConfidential) {
+		// The instruction is the whole message; the layers it came
+		// through and GitLab's generic wording add nothing to act on.
+		return fail(stderr, "login failed: %v", auth.ErrConfidential)
+	}
 	if err != nil {
 		return fail(stderr, "login failed: %v", err)
 	}

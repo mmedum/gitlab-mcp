@@ -1180,7 +1180,7 @@ application for everyone.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-A, B, C, F and L have run on gitlab.com (2026-09-26); the rest have not.
+A, B, C, D, F and L have run on gitlab.com (2026-09-26); the rest have not.
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
   send `http://127.0.0.1:<random>/callback`, `http://[::1]:<random>/…`
@@ -1206,6 +1206,11 @@ A, B, C, F and L have run on gitlab.com (2026-09-26); the rest have not.
 - **Spike D — a Confidential application.** The exact error when the
   application was left Confidential and no secret is sent, so `login`
   and `doctor` can say "untick Confidential" instead of `invalid_client`.
+  *Verdict, gitlab.com, 2026-09-26: the browser consent succeeds and
+  the code exchange answers 401 `invalid_client` ("Client authentication
+  failed due to unknown client, no client authentication included, or
+  unsupported authentication method."). `login` prints only the
+  instruction to untick Confidential.*
 - **Spike E — quick actions.** Through the API, on issues, merge
   requests and notes: a bare command executes; a backslash-escaped one
   does not and renders as the same text; fenced, indented, quoted and
@@ -1277,9 +1282,9 @@ on gitlab.com the same day and its transcript was read: it found the
 signed-in person's display name and user id unmasked in the driver's
 output (fixed and re-run clean), a sha256 labeled as a client id by the
 shape mask (safe, left), and two wording defects (fixed). Spikes A and B
-answered on gitlab.com, then C, F and L. Still owed before the tag:
-spike D on gitlab.com, and spike I with A on a container of the floor
-version.*
+answered on gitlab.com, then C, D, F and L. Still owed before the tag:
+spike I, with A's `[::1]` and `localhost` halves, on a container of the
+floor version.*
 
 **Phase 1 — the rest of reading (v0.2.0).** `list_mr_files`,
 `get_mr_diff`, `list_mr_commits`, `compare_refs`, `list_tags`, the CI

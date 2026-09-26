@@ -61,7 +61,7 @@ const (
 // ErrConfidential means GitLab refused the application as a public
 // client. The usual cause is the "Confidential" box, which GitLab ticks
 // by default when an application is created.
-var ErrConfidential = errors.New(`auth: GitLab refused the application as a public client (invalid_client). ` +
+var ErrConfidential = errors.New(`GitLab refused the application as a public client (invalid_client). ` +
 	`Open the application in GitLab (user settings > Applications), untick "Confidential", save, and run ` +
 	"`gitlab-mcp login` again. If it is already unticked, check the application id")
 

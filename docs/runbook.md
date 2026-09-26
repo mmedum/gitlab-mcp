@@ -35,7 +35,7 @@ instance. `docs/architecture.md` §6.5 lists every class.
 ## Login fails with `invalid_client`
 
 ```text
-gitlab-mcp: login failed: auth: exchange code: auth: GitLab refused the application as a public client (invalid_client). Open the application in GitLab (user settings > Applications), untick "Confidential", save, and run `gitlab-mcp login` again. ...
+gitlab-mcp: login failed: GitLab refused the application as a public client (invalid_client). Open the application in GitLab (user settings > Applications), untick "Confidential", save, and run `gitlab-mcp login` again. If it is already unticked, check the application id
 ```
 
 The application was saved with **Confidential** ticked, which GitLab

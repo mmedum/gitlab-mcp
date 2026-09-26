@@ -93,6 +93,10 @@ func TestLoginToAConfidentialApplication(t *testing.T) {
 	if r.code != 1 || !strings.Contains(r.stderr, `untick "Confidential"`) {
 		t.Errorf("login to a confidential application: %+v", r)
 	}
+	// The instruction is the message: no layer prefixes, no GitLab boilerplate.
+	if strings.Contains(r.stderr, "auth:") || strings.Contains(r.stderr, "Client authentication failed") {
+		t.Errorf("the refusal carries noise around its instruction: %q", r.stderr)
+	}
 	if _, ok := keyringBackend.(*packageKeyring).get("default"); ok {
 		t.Error("a failed login stored a token")
 	}
