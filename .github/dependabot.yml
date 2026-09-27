@@ -1,0 +1,31 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    # One pull request for the week's minor and patch bumps. A major bump
+    # changes an import path and gets its own.
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "ci"
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # codeql-action is three actions that must run the same version: init
+    # writes a configuration that analyze reads back. Ungrouped, each of
+    # the three bump pull requests fails CodeQL and none can merge first.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
+    commit-message:
+      prefix: "ci"
+      include: scope

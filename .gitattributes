@@ -1,0 +1,5 @@
+# Goldens and fixtures are compared byte for byte, so they arrive with LF
+# on every platform, Windows included.
+* text=auto eol=lf
+*.png binary
+*.pdf binary

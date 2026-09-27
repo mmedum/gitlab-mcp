@@ -1,0 +1,10 @@
+Updated issue #12.
+Project: example-group/alpha (project id 2001), public: anyone can see what is written there.
+Quick-action lines were sent as plain text, each with a leading backslash: description line 3 /close.
+Note: It was already open, so no state change was sent.
+https://gitlab.example.com/example-group/alpha/-/issues/12; closed; confidential no.
+Labels before: bug.
+Labels: bug, priority::high; assignees @bob; milestone "Sprint 2" (active); due 2026-02-01.
+Changed, as read back: state, labels.
+The description was replaced; the old one lost 2 line(s), 42 characters.
+updated_at is 2026-01-06T11:00:00Z; pass it to update_issue for the next change.

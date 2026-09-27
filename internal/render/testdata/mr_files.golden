@@ -1,0 +1,7 @@
+Files changed by !3 in example-group/alpha (project id 2001)
+4 files shown; the listing is complete (total 4).
+- added src/login.go: +4 -0
+- renamed docs/old.md -> docs/new.md: +0 -0
+- modified gen/api.pb.go: +0 -0 (collapsed, generated)
+- modified vendor/big.txt: +0 -0 (too large, no diff sent)
+get_mr_diff shows the diffs of the files named.

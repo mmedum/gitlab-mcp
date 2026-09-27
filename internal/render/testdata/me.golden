@@ -1,0 +1,6 @@
+Signed in as @alice (Alice Example), user id 1001.
+Instance: https://gitlab.example.com, GitLab 19.4.0, Community Edition.
+Token: oauth, scopes api, expires 2026-01-06T11:00:00Z and is refreshed before then.
+Registered: 14 tools; kinds read; optional toolsets none; read-only no.
+Writes are not confined: they may go wherever the token can write.
+Rate limit: 1990 of 2000 requests left, resets 2026-01-06T11:00:00Z (read 2026-01-05T09:00:00Z).

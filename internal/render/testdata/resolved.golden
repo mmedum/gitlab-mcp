@@ -1,0 +1,4 @@
+A file in example-group/alpha, ref feature/login, path src/login.go, line 3 to 5.
+The ref could not be told from the path; other ways to split them:
+- ref feature, path login/src/login.go
+Read it with get_file: path="src/login.go" project="example-group/alpha" ref="feature/login"

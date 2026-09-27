@@ -1,0 +1,628 @@
+# Every operation of testdata/openapi-v3.snapshot.json has one verdict here
+# (docs/architecture.md §8a, CLAUDE.md rule 18). `gates api-coverage` holds it.
+#
+# Columns, tab-separated: operation, verdict, count, reason.
+#
+#   operation  "VERB /path" exactly as the snapshot names it, or a prefix
+#              rule "VERB /path*" whose VERB may be *. A rule covers every
+#              operation it matches that no exact row names; two rules
+#              matching one operation is a failure, not a precedence.
+#   verdict    used         the client calls it; the reason names each
+#                           Client.Method whose Call literal is bound to it
+#              gated        as used, for a tool only a flag registers
+#              deferred     not called yet; the reason says when or why
+#              written-off  never called; the reason says why
+#   count      how many operations the row covers: 1 for an exact row,
+#              the gate's own count for a rule
+#   reason     at least a sentence; "phase N: tool" for the tools §8 plans
+#
+# A new operation from `make api-diff` fails the gate until it has a row
+# or falls under a rule, and a rule whose count moved fails until the
+# count is corrected here, which is when somebody reads what it now covers.
+
+# Phase 0: what the client calls now
+GET /metadata	used	1	Client.GetMetadata: get_me, doctor and startup read the version and edition
+GET /user	used	1	Client.GetCurrentUser: get_me, login and doctor name the signed-in account
+GET /projects	used	1	Client.SearchProjects: search_projects across the instance
+GET /groups/{id}/projects	used	1	Client.SearchProjects: search_projects inside one group
+GET /projects/{id}	used	1	Client.GetProject: get_project, and resolving a path to an id once per call
+GET /issues	used	1	Client.SearchIssues: search_issues across the instance
+GET /groups/{id}/issues	used	1	Client.SearchIssues: search_issues inside one group
+GET /projects/{id}/issues	used	1	Client.SearchIssues: search_issues inside one project
+GET /projects/{id}/issues/{issue_iid}	used	1	Client.GetIssue: get_issue
+GET /projects/{id}/issues/{noteable_id}/discussions	used	1	Client.ListIssueDiscussions: list_discussions and get_issue's summary
+GET /merge_requests	used	1	Client.SearchMergeRequests: search_merge_requests across the instance
+GET /groups/{id}/merge_requests	used	1	Client.SearchMergeRequests: search_merge_requests inside one group
+GET /projects/{id}/merge_requests	used	1	Client.SearchMergeRequests: search_merge_requests inside one project
+GET /projects/{id}/merge_requests/{merge_request_iid}	used	1	Client.GetMergeRequest: get_merge_request; Client.GetMergeRequestRebase: rebase_merge_request reads whether its rebase runs
+GET /projects/{id}/merge_requests/{merge_request_iid}/approvals	used	1	Client.GetMergeRequestApprovals: get_merge_request's approval state
+GET /projects/{id}/merge_requests/{noteable_id}/discussions	used	1	Client.ListMergeRequestDiscussions: list_discussions and get_merge_request's summary
+GET /projects/{id}/repository/files/{file_path}	used	1	Client.GetFile: get_file
+GET /projects/{id}/repository/tree	used	1	Client.ListTree: list_tree
+GET /projects/{id}/repository/branches	used	1	Client.ListBranches: list_branches, and resolve_url telling a branch from a path
+GET /projects/{id}/repository/commits	used	1	Client.ListCommits: list_commits
+GET /projects/{id}/repository/commits/{sha}	used	1	Client.GetCommit: get_commit
+GET /projects/{id}/repository/commits/{sha}/diff	used	1	Client.GetCommitDiff: get_commit's per-file diffs
+GET /projects/{id}/protected_branches	used	1	Client.ListProtectedBranches: create_commit's protected-branch guard (§4.4) reads it
+
+# Phase 1: the rest of reading (§16)
+GET /projects/{id}/merge_requests/{merge_request_iid}/diffs	used	1	Client.ListMergeRequestDiffs: list_mr_files counts each file's lines, and get_mr_diff shows the diffs
+GET /projects/{id}/merge_requests/{merge_request_iid}/commits	used	1	Client.ListMergeRequestCommits: list_mr_commits
+GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	used	1	Client.ListDraftNotes: list_review_comments, the signed-in account's own drafts
+GET /projects/{id}/repository/compare	used	1	Client.Compare: compare_refs
+GET /projects/{id}/repository/tags	used	1	Client.ListTags: list_tags
+GET /projects/{id}/pipelines	used	1	Client.ListPipelines: list_pipelines
+GET /projects/{id}/pipelines/{pipeline_id}	used	1	Client.GetPipeline: get_pipeline
+GET /projects/{id}/pipelines/{pipeline_id}/jobs	used	1	Client.ListPipelineJobs: list_jobs, and get_pipeline's failed jobs
+GET /projects/{id}/jobs/{job_id}	used	1	Client.GetJob: get_job_log and its resource name the job they show
+GET /projects/{id}/jobs/{job_id}/trace	used	1	Client.GetJobTrace: get_job_log and its resource, in ranges
+GET /projects/{id}/ci/lint	used	1	Client.LintCI: lint_ci on the project's own configuration at a ref
+GET /search	used	1	Client.Search and Client.SearchCommits: search across the instance
+GET /groups/{id}/(-/)search	used	1	Client.Search and Client.SearchCommits: search inside one group
+GET /projects/{id}/(-/)search	used	1	Client.Search and Client.SearchCommits: search inside one project
+GET /projects/{id}/labels	used	1	Client.ListLabels: list_labels
+GET /projects/{id}/milestones	used	1	Client.ListMilestones: list_milestones in a project
+GET /groups/{id}/milestones	used	1	Client.ListMilestones: list_milestones in a group
+GET /projects/{id}/members/all	used	1	Client.ListProjectMembers: list_members
+GET /users	used	1	Client.ListUsers: find_users
+GET /todos	used	1	Client.ListTodos: list_todos
+
+# Phase 2: the write path (§16)
+POST /projects/{id}/ci/lint	used	1	Client.LintCIContent: lint_ci on a configuration the caller passes; a POST that writes nothing, refused in read-only mode
+POST /projects/{id}/issues	used	1	Client.CreateIssue: create_issue
+PUT /projects/{id}/issues/{issue_iid}	used	1	Client.UpdateIssue: update_issue, after the updated_at witness is checked (§4.6)
+POST /projects/{id}/issues/{noteable_id}/notes	used	1	Client.CreateIssueNote: add_comment on an issue
+POST /projects/{id}/issues/{noteable_id}/discussions	used	1	Client.CreateIssueDiscussion: add_comment with thread, a resolvable thread on an issue
+POST /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	used	1	Client.ReplyToIssueDiscussion: add_comment replying in an issue thread
+POST /projects/{id}/merge_requests/{noteable_id}/notes	used	1	Client.CreateMergeRequestNote: add_comment on a merge request
+POST /projects/{id}/merge_requests/{noteable_id}/discussions	used	1	Client.CreateMergeRequestDiscussion: add_comment starting a thread, on a line of the diff at a position diffpos computes (§7.4) or with thread
+POST /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes	used	1	Client.ReplyToMergeRequestDiscussion: add_comment replying in a merge request thread
+PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	used	1	Client.ResolveMergeRequestDiscussion: resolve_discussion
+POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	used	1	Client.CreateDraftNote: add_review_comment
+DELETE /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.DeleteDraftNote: delete_review_comment, own drafts only
+POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/bulk_publish	used	1	Client.PublishDraftNotes: submit_review; an approving review needs the Ship flag (§4.3)
+POST /projects/{id}/merge_requests	used	1	Client.CreateMergeRequest: create_merge_request
+PUT /projects/{id}/merge_requests/{merge_request_iid}	used	1	Client.UpdateMergeRequest: update_merge_request, after the updated_at witness is checked (§4.6)
+POST /projects/{id}/repository/branches	used	1	Client.CreateBranch: create_branch
+POST /projects/{id}/repository/commits	used	1	Client.CreateCommit: create_commit, refused on the default and protected branches (§4.4)
+POST /todos/{id}/mark_as_done	used	1	Client.MarkTodoDone: mark_todos_done
+
+# Phase 3: Ship, Destructive and the toolsets (§16): registered only by a flag
+PUT /projects/{id}/merge_requests/{merge_request_iid}/merge	gated	1	Client.MergeMergeRequest: merge_merge_request, Ship, with the sha witness GitLab holds (409)
+POST /projects/{id}/merge_requests/{merge_request_iid}/approve	gated	1	Client.ApproveMergeRequest: approve_merge_request, Ship, with the sha witness GitLab holds (409)
+POST /projects/{id}/merge_requests/{merge_request_iid}/unapprove	gated	1	Client.UnapproveMergeRequest: unapprove_merge_request, Ship
+POST /projects/{id}/pipeline	gated	1	Client.CreatePipeline: run_pipeline, Ship; a lost answer is settled by the pipelines listing (§4.5)
+POST /projects/{id}/pipelines/{pipeline_id}/retry	gated	1	Client.RetryPipeline: retry_pipeline, Ship
+POST /projects/{id}/jobs/{job_id}/retry	gated	1	Client.RetryJob: retry_job, Ship
+POST /projects/{id}/jobs/{job_id}/play	gated	1	Client.PlayJob: play_job, Ship
+POST /projects/{id}/pipelines/{pipeline_id}/cancel	gated	1	Client.CancelPipeline: cancel_pipeline, Ship
+DELETE /projects/{id}/repository/branches/{branch}	gated	1	Client.DeleteBranch: delete_branch, Destructive; refuses the default, protected and unmerged branches
+GET /projects/{id}/issues/{noteable_id}/notes/{note_id}	gated	1	Client.GetIssueNote: delete_comment reads the comment first, for its author and updated_at, and afterwards to confirm it gone
+GET /projects/{id}/merge_requests/{noteable_id}/notes/{note_id}	gated	1	Client.GetMergeRequestNote: delete_comment reads the comment first, for its author and updated_at, and afterwards to confirm it gone
+DELETE /projects/{id}/issues/{noteable_id}/notes/{note_id}	gated	1	Client.DeleteIssueNote: delete_comment on an issue, Destructive, own comments, If-Unmodified-Since held by GitLab (412)
+DELETE /projects/{id}/merge_requests/{noteable_id}/notes/{note_id}	gated	1	Client.DeleteMergeRequestNote: delete_comment on a merge request, Destructive, own comments, If-Unmodified-Since held by GitLab (412)
+GET /projects/{id}/wikis	gated	1	Client.ListWikiPages: list_wiki_pages, wiki toolset; settles a lost page create
+GET /projects/{id}/wikis/{slug}	gated	1	Client.GetWikiPage: get_wiki_page, wiki toolset; the witness read of save_wiki_page and delete_wiki_page
+POST /projects/{id}/wikis	gated	1	Client.CreateWikiPage: save_wiki_page creating a page, wiki toolset
+PUT /projects/{id}/wikis/{slug}	gated	1	Client.UpdateWikiPage: save_wiki_page changing a page, wiki toolset, after the content hash is checked (§4.6)
+DELETE /projects/{id}/wikis/{slug}	gated	1	Client.DeleteWikiPage: delete_wiki_page, Destructive, wiki toolset
+GET /snippets	gated	1	Client.ListSnippets: list_snippets, the account's own, snippets toolset; settles a lost personal snippet create
+GET /projects/{id}/snippets	gated	1	Client.ListProjectSnippets: list_snippets in a project, snippets toolset; settles a lost project snippet create
+GET /snippets/{id}	gated	1	Client.GetSnippet: get_snippet, snippets toolset
+GET /snippets/{id}/raw	gated	1	Client.SnippetRaw: get_snippet's first file, snippets toolset
+GET /snippets/{id}/files/{ref}/{file_path}/raw	gated	1	Client.SnippetFileRaw: get_snippet's other files, at HEAD, snippets toolset
+GET /projects/{id}/snippets/{snippet_id}	gated	1	Client.GetProjectSnippet: get_snippet in a project, snippets toolset
+GET /projects/{id}/snippets/{snippet_id}/raw	gated	1	Client.ProjectSnippetRaw: get_snippet's first file in a project, snippets toolset
+GET /projects/{id}/snippets/{snippet_id}/files/{ref}/{file_path}/raw	gated	1	Client.ProjectSnippetFileRaw: get_snippet's other files in a project, at HEAD, snippets toolset
+POST /snippets	gated	1	Client.CreateSnippet: create_snippet, always private, snippets toolset
+POST /projects/{id}/snippets	gated	1	Client.CreateProjectSnippet: create_snippet in a project, always private, snippets toolset
+GET /projects/{id}/repository/tags/{tag_name}	gated	1	Client.GetTag: create_release looks its tag up, to require ref for a new tag and say whether GitLab made one
+GET /projects/{id}/releases	gated	1	Client.ListReleases: list_releases, releases toolset
+GET /projects/{id}/releases/{tag_name}	gated	1	Client.GetRelease: get_release, releases toolset; settles a lost create_release by the tag (§4.5)
+POST /projects/{id}/releases	gated	1	Client.CreateRelease: create_release, Ship, releases toolset
+GET /projects/{id}/environments	gated	1	Client.ListEnvironments: list_environments, deployments toolset
+GET /projects/{id}/deployments	gated	1	Client.ListDeployments: list_deployments, deployments toolset
+GET /events	gated	1	Client.ListEvents: list_events for the account, activity toolset
+GET /projects/{id}/events	gated	1	Client.ListProjectEvents: list_events in a project, activity toolset
+
+# Account, instance and tokens (§8a row 1)
+GET /version	written-off	1	deprecated for /metadata, which carries the same version and the edition
+GET /personal_access_tokens/self	written-off	1	personal access tokens are not how this server signs in (§10); OAuth token info replaces it
+DELETE /personal_access_tokens/self	written-off	1	personal access tokens are not how this server signs in (§10); logout revokes through /oauth/revoke
+GET /personal_access_tokens/self/associations	written-off	1	personal access tokens are not how this server signs in (§10)
+POST /personal_access_tokens/self/rotate	written-off	1	rotates a token, which is out of scope (§1): personal access tokens are not how this server signs in
+
+# Projects, groups, members and users: read for navigation, never administered (§8a)
+POST /projects	written-off	1	project create: administration of the instance, a group or a project, out of scope (§1, §8a)
+PUT /projects/{id}	written-off	1	project update: administration of the instance, a group or a project, out of scope (§1, §8a)
+DELETE /projects/{id}	written-off	1	project delete: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /projects/{id}/archive	written-off	1	project archive: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /projects/{id}/unarchive	written-off	1	project unarchive: administration of the instance, a group or a project, out of scope (§1, §8a)
+PUT /projects/{id}/transfer	written-off	1	project transfer: administration of the instance, a group or a project, out of scope (§1, §8a)
+GET /projects/{id}/transfer_locations	written-off	1	project transfer locations: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /projects/{id}/restore	written-off	1	project restore: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /projects/{id}/housekeeping	written-off	1	project housekeeping: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /projects/{id}/repository_size	written-off	1	project repository size: administration of the instance, a group or a project, out of scope (§1, §8a)
+GET /projects/{id}/storage	written-off	1	project storage: administration of the instance, a group or a project, out of scope (§1, §8a)
+GET /projects/{id}/share_locations	written-off	1	project share locations: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /projects/{id}/star	written-off	1	project star: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /projects/{id}/unstar	written-off	1	project unstar: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /groups	written-off	1	group post groups: administration of the instance, a group or a project, out of scope (§1, §8a)
+PUT /groups/{id}	written-off	1	group put id: administration of the instance, a group or a project, out of scope (§1, §8a)
+DELETE /groups/{id}	written-off	1	group delete id: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /groups/{id}/archive	written-off	1	group post archive: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /groups/{id}/unarchive	written-off	1	group post unarchive: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /groups/{id}/transfer	written-off	1	group post transfer: administration of the instance, a group or a project, out of scope (§1, §8a)
+GET /groups/{id}/transfer_locations	written-off	1	group get transfer locations: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /groups/{id}/restore	written-off	1	group post restore: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /groups/{id}/projects/{project_id}	written-off	1	group post project id: administration of the instance, a group or a project, out of scope (§1, §8a)
+DELETE /groups/{id}/shared_projects/{project_id}	written-off	1	group delete project id: administration of the instance, a group or a project, out of scope (§1, §8a)
+POST /groups/{id}/transfer_to_organization	written-off	1	experiment lifecycle, and group transfer is administration (§8a)
+* /projects/import*	written-off	4	project import: administration (§8a)
+* /projects/{id}/import*	written-off	3	project import and member import: administration (§8a)
+* /projects/{id}/export*	written-off	6	project export: administration (§8a)
+* /groups/import*	written-off	2	group import: administration (§8a)
+* /groups/{id}/export*	written-off	5	group export: administration (§8a)
+* /projects/{id}/fork*	written-off	3	forking and fork relationships: project creation is administration (§8a)
+* /projects/{id}/share*	written-off	2	sharing a project with a group: administration (§8a)
+* /groups/{id}/share*	written-off	2	sharing a group: administration (§8a)
+GET /groups	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/subgroups	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/descendant_groups	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/groups/shared	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/projects/shared	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/groups	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/forks	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/languages	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/starrers	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/users	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/invited_groups	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/invited_groups	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /users/{id}	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/statistics	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /users/{user_id}/projects	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /users/{user_id}/starred_projects	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /users/{user_id}/contributed_projects	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/members	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/members/all/{user_id}	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /projects/{id}/members/{user_id}	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/members	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/members/all	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/members/all/{user_id}	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /groups/{id}/members/{user_id}	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /namespaces	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /namespaces/{id}	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /users/{user_id}/status	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+GET /users/{id}/events	deferred	1	a navigation read no tool of §8 needs yet; search_projects, get_project and list_members cover the tasks
+* /projects/{id}/members*	written-off	3	adding, changing and removing project members: administration (§8a)
+* /groups/{id}/members*	written-off	8	adding, changing and removing group members and LDAP overrides: administration (§8a)
+* /projects/{id}/invitations*	written-off	4	project invitations: membership administration (§8a)
+* /groups/{id}/invitations*	written-off	4	group invitations: membership administration (§8a)
+* /projects/{id}/access_requests*	written-off	4	project access requests: membership administration (§8a)
+* /groups/{id}/access_requests*	written-off	4	group access requests: membership administration (§8a)
+* /groups/{id}/pending_members*	written-off	1	pending members: membership administration (§8a)
+* /groups/{id}/billable_members*	written-off	4	billing: administration (§8a)
+* /groups/{id}/enterprise_users*	written-off	5	enterprise users: administration (§8a)
+* /groups/{id}/provisioned_users*	written-off	1	provisioned users: administration (§8a)
+* /groups/{id}/saml*	written-off	9	SAML users and links: administration (§8a)
+* /groups/{id}/scim*	written-off	4	SCIM identities: administration (§8a)
+* /groups/{id}/ldap*	written-off	6	LDAP links and sync: administration (§8a)
+* /groups/{id}/service_accounts*	written-off	9	service accounts and their tokens: credential administration (§8a)
+* /projects/{id}/service_accounts*	written-off	9	service accounts and their tokens: credential administration (§8a)
+* /service_accounts*	written-off	3	instance service accounts: administration (§8a)
+* /users/*	written-off	42	user administration, keys, identities, tokens and follows: administration or credentials (§8a); the reads a tool needs have their own rows
+POST /users	written-off	1	creating a user: instance administration (§8a)
+* /user/*	written-off	32	the account's keys, emails, applications, tokens, status and preferences: account administration and credentials (§8a)
+* /user_counts*	deferred	1	badge counts for the web header; list_todos and the searches answer the same questions
+* /namespaces/*	written-off	12	namespace subscriptions, compute minutes and storage exclusions: billing and administration (§8a)
+PUT /namespaces/{id}	written-off	1	namespace update: administration (§8a)
+* /avatar*	deferred	1	an avatar URL for an address; nothing in §8 shows avatars
+* /projects/{id}/avatar*	written-off	1	project avatar: presentation settings, administration (§8a)
+* /groups/{id}/avatar*	written-off	1	group avatar: presentation settings, administration (§8a)
+* /keys*	written-off	2	finding a user by SSH key: credential lookup, out of scope (§8a)
+* /personal_access_tokens*	written-off	4	personal access tokens other than self: credential administration (§8a)
+
+# Issues (§8a): move, clone, subscribe, time tracking, reactions and links deferred to §17a; delete written off
+DELETE /projects/{id}/issues/{issue_iid}	written-off	1	issue delete: Owner-only and permanent (§8a)
+POST /projects/{id}/issues/{issue_iid}/move	gated	1	Client.MoveIssue: move_issue, Ship (§17.13)
+POST /projects/{id}/issues/{issue_iid}/clone	deferred	1	cloning an issue (§17a)
+PUT /projects/{id}/issues/{issue_iid}/reorder	deferred	1	board order, no task in §8 needs it (§17a)
+GET /projects/{id}/issues/{issue_iid}/closed_by	deferred	1	merge requests that close an issue; get_issue may add it (§17a)
+GET /projects/{id}/issues/{issue_iid}/related_merge_requests	deferred	1	related merge requests; get_issue may add it (§17a)
+GET /projects/{id}/issues/{issue_iid}/participants	deferred	1	participants; get_issue may add it (§17a)
+POST /projects/{id}/issues/{issue_iid}/todo	deferred	1	creating a to-do for oneself (§17a)
+GET /projects/{id}/issues/{issue_iid}/user_agent_detail	written-off	1	user agent details: an administrator's spam tooling (§8a)
+* /projects/{id}/issues/{issue_iid}/award_emoji*	deferred	4	emoji reactions on issues (§17a)
+* /projects/{id}/issues/{issue_iid}/notes/{note_id}/award_emoji*	deferred	4	emoji reactions on issue comments (§17a)
+GET /projects/{id}/issues/{issue_iid}/links	used	1	Client.ListIssueLinks: link_issues and unlink_issues find the link first
+POST /projects/{id}/issues/{issue_iid}/links	used	1	Client.CreateIssueLink: link_issues
+DELETE /projects/{id}/issues/{issue_iid}/links/{issue_link_id}	used	1	Client.DeleteIssueLink: unlink_issues
+* /projects/{id}/issues/{issue_iid}/links*	deferred	1	one link by id; the listing carries it (§17a)
+* /projects/{id}/issues/{issue_iid}/metric_images*	deferred	5	incident metric images: operations tooling, not in 1.0
+POST /projects/{id}/issues/{issue_iid}/add_spent_time	deferred	1	issue time tracking (§17a)
+POST /projects/{id}/issues/{issue_iid}/reset_spent_time	deferred	1	issue time tracking (§17a)
+POST /projects/{id}/issues/{issue_iid}/reset_time_estimate	deferred	1	issue time tracking (§17a)
+POST /projects/{id}/issues/{issue_iid}/time_estimate	deferred	1	issue time tracking (§17a)
+GET /projects/{id}/issues/{issue_iid}/time_stats	deferred	1	issue time tracking (§17a)
+* /projects/{id}/issues/{subscribable_id}/*	deferred	2	subscribing to an issue's notifications (§17a)
+* /projects/{id}/issues/{eventable_id}/*	deferred	10	resource events of an issue: label, milestone, state and weight history (§17a)
+GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Client.GetIssueDiscussion: add_comment settles a lost reply by reading its thread
+PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Client.ResolveIssueDiscussion: resolve_discussion on an issue
+GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one issue thread's comments; list_discussions carries them
+GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	one comment; list_discussions carries it
+PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	editing a comment in a thread (§17a)
+DELETE /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	deleting a comment through its thread; delete_comment uses the notes route
+GET /projects/{id}/issues/{noteable_id}/notes	deferred	1	flat note listing; list_discussions carries every note with its thread
+PUT /projects/{id}/issues/{noteable_id}/notes/{note_id}	deferred	1	editing a comment (§17a)
+GET /projects/{id}/issues_statistics	deferred	1	issue counts; search_issues reports X-Total
+GET /groups/{id}/issues_statistics	deferred	1	issue counts; search_issues reports X-Total
+GET /issues_statistics	deferred	1	issue counts; search_issues reports X-Total
+
+# Merge requests (§8a): rebase deferred, /changes and delete written off
+DELETE /projects/{id}/merge_requests/{merge_request_iid}	written-off	1	merge request delete: Owner-only and permanent (§8a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/changes	written-off	1	deprecated for /diffs (§8a)
+PUT /projects/{id}/merge_requests/{merge_request_iid}/rebase	gated	1	Client.RebaseMergeRequest: rebase_merge_request, Ship (§17.13)
+GET /projects/{id}/merge_requests/{merge_request_iid}/raw_diffs	deferred	1	the whole diff as one text; get_mr_diff reads /diffs, which says what GitLab cut
+GET /projects/{id}/merge_requests/{merge_request_iid}/versions	deferred	1	diff versions; diffpos needs only diff_refs (§7.4)
+GET /projects/{id}/merge_requests/{merge_request_iid}/versions/{version_id}	deferred	1	one diff version; diffpos needs only diff_refs (§7.4)
+GET /projects/{id}/merge_requests/{merge_request_iid}/approval_state	written-off	1	approval rules state: governance configuration, Premium (§8a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/approvals	written-off	1	deprecated: changes approval configuration, governance (§8a)
+PUT /projects/{id}/merge_requests/{merge_request_iid}/reset_approvals	written-off	1	resetting approvals: governance, bot-only in GitLab (§8a)
+* /projects/{id}/merge_requests/{merge_request_iid}/approval_rules*	written-off	5	merge request approval rules: governance configuration, Premium (§8a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/cancel_merge_when_pipeline_succeeds	deferred	1	cancelling an auto-merge: a Ship candidate (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/closes_issues	deferred	1	issues a merge closes; get_merge_request may add it (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/related_issues	deferred	1	related issues; get_merge_request may add it (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/participants	deferred	1	participants; get_merge_request may add it (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/reviewers	deferred	1	reviewer states; get_merge_request carries the reviewers
+GET /projects/{id}/merge_requests/{merge_request_iid}/merge_ref	deferred	1	the merge ref commit; no task in §8 needs it
+GET /projects/{id}/merge_requests/{merge_request_iid}/pipelines	deferred	1	a merge request's pipelines; list_pipelines by ref covers it (§17a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/pipelines	deferred	1	running a merge request pipeline: a Ship candidate (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/blockees	deferred	1	merge request dependencies, Premium (§17a)
+* /projects/{id}/merge_requests/{merge_request_iid}/blocks*	deferred	4	merge request dependencies, Premium (§17a)
+* /projects/{id}/merge_requests/{merge_request_iid}/context_commits*	deferred	3	context commits (§17a)
+* /projects/{id}/merge_requests/{merge_request_iid}/award_emoji*	deferred	4	emoji reactions on merge requests (§17a)
+* /projects/{id}/merge_requests/{merge_request_iid}/notes/{note_id}/award_emoji*	deferred	4	emoji reactions on merge request comments (§17a)
+* /projects/{id}/merge_requests/{merge_request_iid}/status_check*	written-off	3	external status checks: a CI integration's surface, Ultimate (§8a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/suggested_reviewers	written-off	1	experiment lifecycle: not a stable API (§8a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/todo	deferred	1	creating a to-do for oneself (§17a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/add_spent_time	deferred	1	merge request time tracking (§17a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/reset_spent_time	deferred	1	merge request time tracking (§17a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/reset_time_estimate	deferred	1	merge request time tracking (§17a)
+POST /projects/{id}/merge_requests/{merge_request_iid}/time_estimate	deferred	1	merge request time tracking (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/time_stats	deferred	1	merge request time tracking (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	deferred	1	one draft; list_review_comments reads them all
+PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	deferred	1	editing a draft; delete and add again (§17a)
+PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}/publish	deferred	1	publishing one draft; submit_review publishes them together
+* /projects/{id}/merge_requests/{subscribable_id}/*	deferred	2	subscribing to a merge request's notifications (§17a)
+* /projects/{id}/merge_requests/{eventable_id}/*	deferred	6	resource events of a merge request: label, milestone and state history (§17a)
+GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	used	1	Client.GetMergeRequestDiscussion: resolve_discussion reads the thread's state before changing it
+GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one thread's comments; list_discussions carries them
+GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	one comment; list_discussions carries it
+PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	editing a comment in a thread (§17a)
+DELETE /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	deleting a comment through its thread; delete_comment uses the notes route
+GET /projects/{id}/merge_requests/{noteable_id}/notes	deferred	1	flat note listing; list_discussions carries every note with its thread
+PUT /projects/{id}/merge_requests/{noteable_id}/notes/{note_id}	deferred	1	editing a comment (§17a)
+* /suggestions*	deferred	2	applying suggestions commits to the source branch: a Ship candidate (§17a)
+
+# Approval configuration (§8a): governance, Premium
+* /projects/{id}/approval_rules*	written-off	5	project approval rules: governance configuration, Premium (§8a)
+* /projects/{id}/approval_settings*	written-off	4	project approval settings: governance configuration, Premium (§8a)
+* /projects/{id}/approvals*	written-off	2	project approval configuration: governance, Premium (§8a)
+* /projects/{id}/merge_request_approval_setting*	written-off	2	merge request approval settings: governance (§8a)
+* /groups/{id}/approval_rules*	written-off	3	group approval rules: governance configuration, Premium (§8a)
+* /groups/{id}/merge_request_approval_setting*	written-off	2	group approval settings: governance (§8a)
+
+# Repository (§8a): blame and archive deferred, cherry-pick and revert Ship candidates, statuses written off
+GET /projects/{id}/repository/files/{file_path}/raw	deferred	1	raw file content; get_file carries it with the witness (§4.6)
+HEAD /projects/{id}/repository/files/{file_path}	deferred	1	file metadata without content; get_file carries it
+GET /projects/{id}/repository/files/{file_path}/blame	used	1	Client.Blame: get_blame
+HEAD /projects/{id}/repository/files/{file_path}/blame	deferred	1	blame metadata (§8a)
+POST /projects/{id}/repository/files/{file_path}	deferred	1	creating one file; create_commit carries every file action in one commit
+PUT /projects/{id}/repository/files/{file_path}	deferred	1	updating one file; create_commit carries every file action in one commit
+DELETE /projects/{id}/repository/files/{file_path}	deferred	1	deleting one file; create_commit carries every file action in one commit
+GET /projects/{id}/repository/archive	deferred	1	raw archive download (§8a)
+GET /projects/{id}/snapshot	deferred	1	a repository snapshot download, like the archive (§8a)
+* /projects/{id}/repository/blobs*	deferred	3	blobs by SHA; get_file reads by path and ref (§17a)
+POST /projects/{id}/repository/commits/{sha}/cherry_pick	used	1	Client.CherryPick: cherry_pick_commit, Write behind the protected-branch guard (§17.13)
+POST /projects/{id}/repository/commits/{sha}/revert	used	1	Client.Revert: revert_commit, Write behind the protected-branch guard (§17.13)
+GET /projects/{id}/repository/commits/{sha}/statuses	written-off	1	commit statuses: a CI integration's surface (§8a)
+POST /projects/{id}/statuses/{sha}	written-off	1	setting a commit status: a CI integration's surface (§8a)
+GET /projects/{id}/repository/commits/{sha}/comments	deferred	1	legacy commit comments; commit discussions supersede them (§17a)
+POST /projects/{id}/repository/commits/{sha}/comments	deferred	1	legacy commit comments; commit discussions supersede them (§17a)
+* /projects/{id}/repository/commits/{noteable_id}/*	deferred	8	commit discussions (§17a)
+GET /projects/{id}/repository/commits/{sha}/merge_requests	deferred	1	merge requests for a commit (§17a)
+GET /projects/{id}/repository/commits/{sha}/refs	deferred	1	refs containing a commit (§17a)
+GET /projects/{id}/repository/commits/{sha}/sequence	deferred	1	a commit's sequence number; no task needs it
+GET /projects/{id}/repository/commits/{sha}/signature	deferred	1	a commit signature (§17a)
+GET /projects/{id}/repository/contributors	deferred	1	contributor counts; no task in §8 needs them
+GET /projects/{id}/repository/merge_base	deferred	1	merge base of refs; compare_refs covers the task
+GET /projects/{id}/repository/health	written-off	1	repository health statistics: administration (§8a)
+GET /projects/{id}/repository/changed_paths	written-off	1	beta lifecycle: not a stable API (§8a)
+GET /projects/{id}/repository/diff_stats	written-off	1	beta lifecycle: not a stable API (§8a)
+GET /projects/{id}/repository/diverging_commits	written-off	1	experiment lifecycle: not a stable API (§8a)
+GET /projects/{id}/repository/changelog	deferred	1	changelog generation, a release-adjacent task (§17a)
+POST /projects/{id}/repository/changelog	deferred	1	committing changelog data: a Ship candidate (§17a)
+PUT /projects/{id}/repository/submodules/{submodule}	deferred	1	updating a submodule commits to a branch (§17a)
+DELETE /projects/{id}/repository/merged_branches	written-off	1	deletes every merged branch at once (§8a)
+GET /projects/{id}/repository/branches/{branch}	used	1	Client.GetBranch: create_commit reads the branch head before and after, and settles a lost answer by it (§4.5)
+HEAD /projects/{id}/repository/branches/{branch}	deferred	1	branch existence; list_branches with search finds it
+PUT /projects/{id}/repository/branches/{branch}/protect	written-off	1	protecting a branch: every protection write is written off (§8a)
+PUT /projects/{id}/repository/branches/{branch}/unprotect	written-off	1	unprotecting a branch: every protection write is written off (§8a)
+POST /projects/{id}/repository/tags	gated	1	Client.CreateTag: create_tag, releases toolset (§17.13)
+DELETE /projects/{id}/repository/tags/{tag_name}	gated	1	Client.DeleteTag: delete_tag, Destructive (§17.13)
+GET /projects/{id}/repository/tags/{tag_name}/signature	deferred	1	a tag signature (§17a)
+
+# Protected branches and tags (§8a): read by create_commit's guard, every write written off
+GET /projects/{id}/protected_branches/{name}	deferred	1	one rule; the guard reads the list, wildcards included
+POST /projects/{id}/protected_branches	written-off	1	branch protection writes are written off (§8a)
+PATCH /projects/{id}/protected_branches/{name}	written-off	1	branch protection writes are written off (§8a)
+DELETE /projects/{id}/protected_branches/{name}	written-off	1	branch protection writes are written off (§8a)
+GET /projects/{id}/protected_tags	gated	1	Client.ListProtectedTags: create_tag refuses a name a rule covers (§17.13)
+* /projects/{id}/protected_tags*	written-off	3	protected tag writes, and one rule, which the listing carries (§8a)
+* /groups/{id}/protected_branches*	written-off	5	group protected branches: governance, Premium (§8a)
+
+# CI (§8a): pipelines, jobs and lint used; schedules, triggers, variables and secure files written off
+DELETE /projects/{id}/pipelines/{pipeline_id}	written-off	1	pipeline delete destroys logs and artifacts, and is no assistant task (§8a)
+GET /projects/{id}/pipelines/latest	deferred	1	the latest pipeline; list_pipelines ordered by id covers it
+GET /projects/{id}/pipelines/{pipeline_id}/bridges	written-off	1	deprecated in GitLab 19.2 for trigger_jobs, which lib/api/ci/pipelines.rb serves with the same handler
+GET /projects/{id}/pipelines/{pipeline_id}/trigger_jobs	used	1	Client.ListPipelineTriggerJobs: get_pipeline's failed trigger jobs and the downstream pipelines that failed them
+PUT /projects/{id}/pipelines/{pipeline_id}/metadata	deferred	1	renaming a pipeline (§17a)
+GET /projects/{id}/pipelines/{pipeline_id}/test_report	deferred	1	test reports (§17a)
+GET /projects/{id}/pipelines/{pipeline_id}/test_report_summary	deferred	1	test report summaries (§17a)
+GET /projects/{id}/pipelines/{pipeline_id}/variables	written-off	1	pipeline variables: CI configuration and secrets (§8a)
+GET /pipelines	deferred	1	pipelines the account triggered; list_pipelines per project covers the task
+GET /projects/{id}/jobs	deferred	1	every job in a project; list_jobs per pipeline covers the task
+GET /projects/{id}/jobs/{job_id}/runtime_environment_key	written-off	1	a runner-side key: infrastructure (§8a)
+POST /projects/{id}/jobs/{job_id}/cancel	deferred	1	cancelling one job: a Ship candidate; cancel_pipeline covers the task
+POST /projects/{id}/jobs/{job_id}/erase	written-off	1	erasing a job destroys its log and artifacts (§8a)
+DELETE /projects/{id}/jobs/{job_id}/artifacts	written-off	1	artifact delete (§8a)
+DELETE /projects/{id}/artifacts	written-off	1	artifact delete (§8a)
+POST /projects/{id}/jobs/{job_id}/artifacts/keep	written-off	1	artifact retention: CI storage administration (§8a)
+GET /projects/{id}/jobs/{job_id}/artifacts	deferred	1	artifact download (§8a)
+GET /projects/{id}/jobs/{job_id}/artifacts/tree	used	1	Client.ListArtifacts: list_job_artifacts
+GET /projects/{id}/jobs/{job_id}/artifacts/{artifact_path}	used	1	Client.GetArtifact: get_job_artifact, one file as Workhorse extracts it
+GET /projects/{id}/jobs/artifacts/{ref_name}/download	deferred	1	artifact download (§8a)
+GET /projects/{id}/jobs/artifacts/{ref_name}/raw/{artifact_path}	deferred	1	artifact download (§8a)
+* /projects/{id}/pipeline_schedules*	written-off	12	pipeline schedules: CI configuration (§8a)
+* /projects/{id}/triggers*	written-off	5	pipeline triggers: CI configuration and tokens (§8a)
+* /projects/{id}/trigger/*	written-off	1	triggering by token: CI configuration and tokens (§8a)
+* /projects/{id}/ref/*	written-off	1	triggering by token: CI configuration and tokens (§8a)
+* /projects/{id}/variables*	written-off	5	CI variables: configuration and secrets (§8a)
+* /groups/{id}/variables*	written-off	5	CI variables: configuration and secrets (§8a)
+* /projects/{id}/secure_files*	written-off	5	secure files: CI secrets (§8a)
+* /projects/{id}/job_token_scope*	written-off	8	job token scope: CI configuration and credentials (§8a)
+* /projects/{id}/resource_groups*	written-off	5	resource groups: CI configuration (§8a)
+* /projects/{id}/create_ci_config*	deferred	1	generating a CI configuration (§17a)
+* /projects/{id}/merge_trains*	deferred	4	merge trains, Premium: a Ship candidate (§17a)
+* /job*	written-off	12	the runner's job API, authenticated by job token: infrastructure (§8a)
+* /projects/{id}/catalog*	written-off	1	CI/CD catalog publishing: a Ship-like release of CI components, administration (§8a)
+
+# Labels and milestones (§8a): read used, create, update and delete deferred to §17a
+GET /projects/{id}/labels/{name}	gated	1	Client.GetLabel: update_label and delete_label read the label they hold to its version, planning toolset
+PUT /projects/{id}/labels/{name}	gated	1	Client.UpdateLabel: update_label, planning toolset (§17.13)
+DELETE /projects/{id}/labels/{name}	gated	1	Client.DeleteLabel: delete_label, Destructive (§17.13)
+* /projects/{id}/labels/*	deferred	4	label promote and subscribe (§17a)
+POST /projects/{id}/labels	gated	1	Client.CreateLabel: create_label, planning toolset (§17.13)
+PUT /projects/{id}/labels	written-off	1	deprecated in GitLab 12.4 for PUT /projects/{id}/labels/{name}
+DELETE /projects/{id}/labels	written-off	1	deprecated in GitLab 12.4 for DELETE /projects/{id}/labels/{name}
+GET /groups/{id}/labels	deferred	1	group labels; list_labels lists the project's, ancestors included (§17a)
+* /groups/{id}/labels*	deferred	8	group label create, update, delete and subscribe (§17a)
+GET /projects/{id}/milestones/{milestone_id}	gated	1	Client.GetMilestone: update_milestone and delete_milestone hold the milestone to its updated_at, planning toolset
+PUT /projects/{id}/milestones/{milestone_id}	gated	1	Client.UpdateMilestone: update_milestone, planning toolset (§17.13)
+DELETE /projects/{id}/milestones/{milestone_id}	gated	1	Client.DeleteMilestone: delete_milestone, Destructive (§17.13)
+* /projects/{id}/milestones/*	deferred	4	a milestone's issues and merge requests, burndown and promote (§17a)
+POST /projects/{id}/milestones	gated	1	Client.CreateMilestone: create_milestone, planning toolset (§17.13)
+* /groups/{id}/milestones/*	deferred	6	one group milestone, its lists, update and delete (§17a)
+POST /groups/{id}/milestones	deferred	1	group milestone create (§17a)
+
+# Search, todos, events (§8a)
+GET /projects/{id}/(-/)search/semantic	written-off	1	beta lifecycle: not a stable API (§8a)
+POST /todos/mark_as_done	deferred	1	marking every to-do done at once; mark_todos_done takes ids (§17a)
+* /groups/{id}/wikis*	deferred	6	group wikis, Premium (§8a)
+POST /projects/{id}/wikis/attachments	deferred	1	wiki attachments (§17a)
+* /groups/{id}/wiki_pages*	deferred	5	group wiki page API, Premium (§8a)
+* /projects/{id}/wiki_pages*	deferred	5	wiki page API; the wikis routes carry save and read (§17a)
+
+# Snippets (§8a): used under the toolset, update and delete deferred
+PUT /snippets/{id}	deferred	1	snippet update (§8a)
+DELETE /snippets/{id}	deferred	1	snippet delete (§8a)
+PUT /projects/{id}/snippets/{snippet_id}	deferred	1	snippet update (§8a)
+DELETE /projects/{id}/snippets/{snippet_id}	deferred	1	snippet delete (§8a)
+GET /snippets/all	written-off	1	every snippet on the instance: an administrator's listing (§8a)
+GET /snippets/public	deferred	1	public snippets; list_snippets covers the account's own
+GET /snippets/{id}/user_agent_detail	written-off	1	user agent details: an administrator's spam tooling (§8a)
+GET /projects/{id}/snippets/{snippet_id}/user_agent_detail	written-off	1	user agent details: an administrator's spam tooling (§8a)
+* /snippets/{id}/repository_storage_moves*	written-off	3	storage moves: administration (§8a)
+* /projects/{id}/snippets/{snippet_id}/award_emoji*	deferred	4	emoji reactions on snippets (§17a)
+* /projects/{id}/snippets/{snippet_id}/notes/*	deferred	4	emoji reactions on snippet comments (§17a)
+* /projects/{id}/snippets/{noteable_id}/*	deferred	13	snippet comments and threads (§17a)
+
+# Releases (§8a): used under the toolset, update and delete written off
+PUT /projects/{id}/releases/{tag_name}	written-off	1	release update (§8a)
+DELETE /projects/{id}/releases/{tag_name}	written-off	1	release delete (§8a)
+GET /projects/{id}/releases/permalink/latest	deferred	1	the latest release; list_releases covers it
+GET /projects/{id}/releases/permalink/latest/{suffix_path}	deferred	1	a path under the latest release (§17a)
+GET /projects/{id}/releases/{tag_name}/downloads/{direct_asset_path}	deferred	1	release asset download, like artifact download (§8a)
+POST /projects/{id}/releases/{tag_name}/evidence	written-off	1	release evidence: compliance tooling (§8a)
+GET /projects/{id}/releases/{tag_name}/assets/links	deferred	1	release links; get_release carries them
+GET /projects/{id}/releases/{tag_name}/assets/links/{link_id}	deferred	1	one release link; get_release carries it
+POST /projects/{id}/releases/{tag_name}/assets/links	written-off	1	release link create changes a published release (§8a)
+PUT /projects/{id}/releases/{tag_name}/assets/links/{link_id}	written-off	1	release link update (§8a)
+DELETE /projects/{id}/releases/{tag_name}/assets/links/{link_id}	written-off	1	release link delete (§8a)
+GET /groups/{id}/releases	deferred	1	releases across a group (§17a)
+
+# Environments and deployments (§8a): read used, everything that acts on infrastructure written off
+GET /projects/{id}/environments/{environment_id}	deferred	1	one environment; list_environments carries it
+GET /projects/{id}/deployments/{deployment_id}	deferred	1	one deployment; list_deployments carries it
+GET /projects/{id}/deployments/{deployment_id}/merge_requests	deferred	1	merge requests in a deployment (§17a)
+POST /projects/{id}/environments	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+PUT /projects/{id}/environments/{environment_id}	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+DELETE /projects/{id}/environments/{environment_id}	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+POST /projects/{id}/environments/{environment_id}/stop	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+POST /projects/{id}/environments/stop_stale	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+DELETE /projects/{id}/environments/review_apps	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+POST /projects/{id}/deployments	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+PUT /projects/{id}/deployments/{deployment_id}	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+DELETE /projects/{id}/deployments/{deployment_id}	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	acts on running infrastructure: create, update, stop, delete or approve (§8a)
+* /projects/{id}/protected_environments*	written-off	5	protected environments: governance, Premium (§8a)
+* /groups/{id}/protected_environments*	written-off	5	protected environments: governance, Premium (§8a)
+* /projects/{id}/freeze_periods*	written-off	5	deploy freeze periods: CI configuration (§8a)
+* /projects/{id}/dora*	deferred	1	DORA metrics, Ultimate (§17.11)
+* /groups/{id}/dora*	deferred	1	DORA metrics, Ultimate (§17.11)
+
+# Premium and Ultimate planning, security and compliance (§8a): deferred to §17.11
+* /groups/{id}/epics*	deferred	33	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /groups/{id}/(-/)epics*	deferred	11	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /groups/{id}/-/epics*	deferred	3	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /groups/{id}/epic_boards*	deferred	4	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /groups/{id}/related_epic_links*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /groups/{id}/iterations*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/iterations*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/vulnerabilities*	deferred	7	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/vulnerability_findings*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /vulnerabilities/*	deferred	9	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /occurrences/*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /security/*	deferred	8	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/security_settings*	deferred	2	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /groups/{id}/security_settings*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/security_scans*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /audit_events*	deferred	2	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/audit_events*	deferred	2	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /groups/{id}/audit_events*	deferred	2	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/compliance_external_controls*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/external_status_checks*	deferred	4	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/dependencies*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /dependency_list_exports*	deferred	2	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/dependency_list_exports*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /groups/{id}/dependency_list_exports*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/attestations*	deferred	2	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /analytics/*	deferred	4	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/analytics*	deferred	1	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+* /projects/{id}/managed_licenses*	deferred	5	epics, iterations, vulnerabilities, audit events, compliance and security policies: Premium or Ultimate, several GraphQL-first (§17.11)
+
+# Registries and packages (§8a): deferred
+* /projects/{id}/packages*	deferred	137	container registry, packages, dependency proxy and virtual registries (§8a)
+* /projects/{project_id}/packages*	deferred	3	container registry, packages, dependency proxy and virtual registries (§8a)
+* /groups/{id}/packages*	deferred	1	container registry, packages, dependency proxy and virtual registries (§8a)
+* /groups/{id}/-/packages*	deferred	27	container registry, packages, dependency proxy and virtual registries (§8a)
+* /group/{id}/-/packages*	deferred	4	container registry, packages, dependency proxy and virtual registries (§8a)
+* /packages/*	deferred	33	container registry, packages, dependency proxy and virtual registries (§8a)
+* /projects/{id}/registry*	deferred	14	container registry, packages, dependency proxy and virtual registries (§8a)
+* /groups/{id}/registry*	deferred	1	container registry, packages, dependency proxy and virtual registries (§8a)
+* /registry/*	deferred	1	container registry, packages, dependency proxy and virtual registries (§8a)
+* /container_registry_event*	deferred	1	container registry, packages, dependency proxy and virtual registries (§8a)
+* /projects/{id}/dependency_proxy*	deferred	2	container registry, packages, dependency proxy and virtual registries (§8a)
+* /groups/{id}/dependency_proxy*	deferred	1	container registry, packages, dependency proxy and virtual registries (§8a)
+* /projects/{id}/debian_distributions*	deferred	6	container registry, packages, dependency proxy and virtual registries (§8a)
+* /groups/{id}/-/debian_distributions*	deferred	6	container registry, packages, dependency proxy and virtual registries (§8a)
+* /groups/{id}/manage*	deferred	8	container registry, packages, dependency proxy and virtual registries (§8a)
+
+# Infrastructure (§8a): runners, clusters, agents, Kubernetes, written off
+* /runners*	written-off	16	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /projects/{id}/runners*	written-off	4	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /groups/{id}/runners*	written-off	2	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /runner_controllers*	written-off	15	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /projects/{id}/clusters*	written-off	5	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /groups/{id}/clusters*	written-off	5	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /discover-cert-based-clusters*	written-off	1	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /projects/{id}/cluster_agents*	written-off	12	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /projects/{id}/terraform*	written-off	12	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+* /projects/{id}/google_cloud*	written-off	2	runners, clusters, agents, Kubernetes and infrastructure state: infrastructure administration (§8a)
+
+# Credentials (§8a): deploy keys, deploy tokens and access tokens, written off
+* /deploy_keys*	written-off	2	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /projects/{id}/deploy_keys*	written-off	6	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /deploy_tokens*	written-off	1	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /projects/{id}/deploy_tokens*	written-off	4	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /groups/{id}/deploy_tokens*	written-off	4	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /projects/{id}/access_tokens*	written-off	6	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /groups/{id}/access_tokens*	written-off	6	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /groups/{id}/ssh_certificates*	written-off	3	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /token_exchange*	written-off	1	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /iam/*	written-off	1	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+* /web_commits/*	written-off	1	deploy keys, deploy tokens, access tokens and signing keys: credential administration (§8a)
+
+# Administration (§8a): written off
+* /hooks*	written-off	10	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/hooks*	written-off	12	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/hooks*	written-off	12	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /integrations*	written-off	9	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/integrations*	written-off	55	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/integrations*	written-off	54	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/services*	written-off	55	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /admin*	written-off	49	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /application/*	written-off	7	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /applications*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /license*	written-off	7	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /broadcast_messages*	written-off	5	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /geo*	written-off	26	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /sidekiq*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /features*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /bulk_imports*	written-off	8	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /import/*	written-off	5	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /offline_exports*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /offline_imports*	written-off	1	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/mirror*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/remote_mirrors*	written-off	7	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /project_repository_storage_moves*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /group_repository_storage_moves*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /snippet_repository_storage_moves*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/repository_storage_moves*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/repository_storage_moves*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/push_rule*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/push_rule*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/custom_attributes*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/custom_attributes*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/badges*	written-off	6	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/badges*	written-off	6	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/notification_settings*	written-off	2	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/notification_settings*	written-off	2	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /notification_settings*	written-off	2	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/pages*	written-off	10	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /pages/*	written-off	1	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /usage_data*	written-off	8	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /databases/*	written-off	1	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /experiments*	written-off	5	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /member_roles*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/member_roles*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /elasticsearch_indexed_namespaces*	written-off	2	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /organizations*	written-off	2	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/placeholder_reassignments*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/uploads*	written-off	7	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /groups/{id}/uploads*	written-off	7	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /topics*	written-off	6	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /project_aliases*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /rollouts/*	written-off	1	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /swagger_doc*	written-off	2	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /internal/*	written-off	11	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+
+# GitLab's own AI and editor features: written off
+* /ai/*	written-off	30	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /code_suggestions/*	written-off	4	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /chat/*	written-off	1	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /duo_code_review/*	written-off	1	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /vscode/*	written-off	10	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /projects/{id}/ai_agent*	written-off	5	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /mcp*	written-off	2	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /glql*	written-off	2	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /projects/{id}/ml*	written-off	30	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+* /slack/*	written-off	1	GitLab's own AI, editor, chat and query features: another product's surface, not project work (§1)
+
+# Remaining reads with no task in §8
+GET /issues/{id}	written-off	1	an issue by its global id; issues are addressed by project and iid (§6.1)
+* /ldap/*	written-off	2	LDAP groups: administration (§8a)
+* /pipelines/{id}/dependency_list_exports*	deferred	1	dependency list exports, Ultimate (§17.11)
+* /projects/remote-import*	written-off	2	project import: administration (§8a)
+* /projects/{id}/relation-imports*	written-off	1	project import: administration (§8a)
+POST /markdown	deferred	1	rendering Markdown server-side; a body is shown as its source (§4.1)
+* /templates/*	deferred	8	instance templates for new files (§17a)
+* /projects/{id}/templates/*	deferred	2	project templates for new files (§17a)
+* /projects/{id}/boards*	deferred	10	issue boards (§17a)
+* /groups/{id}/boards*	deferred	10	issue boards (§17a)
+* /projects/{id}/error_tracking*	deferred	6	error tracking: operations tooling, not in 1.0
+* /projects/{id}/alert_management_alerts*	deferred	5	alert management: operations tooling, not in 1.0
+* /projects/{id}/feature_flags*	written-off	12	feature flags: runtime configuration of the deployed product (§8a)
+* /feature_flags/*	written-off	5	feature flags: runtime configuration of the deployed product (§8a)
+* /projects/user/*	written-off	1	creating a project for another user: administration (§8a)

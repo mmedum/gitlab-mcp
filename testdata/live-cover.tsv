@@ -1,0 +1,13 @@
+# Tool options the live driver does not send, and why (docs/architecture.md
+# §13). `gates live-cover` holds it against the surface and against
+# testdata/live-cover-record.tsv, which scripts/livegitlab writes at the
+# end of a run from what actually went out.
+#
+# Columns, tab-separated: tool.option (tool.* for the tool itself),
+# verdict, reason.
+#
+#   undrivable  something outside the driver's reach blocks it; say what
+#   undriven    a step could send it and none does yet; say what closing
+#               it takes. The count has a ceiling that only goes down.
+find_users.page_token	undrivable	a second page needs two accounts that match one search, and the driver may find no account but the signed-in one (§9.1); gitlabtest pages it
+list_members.page_token	undrivable	the driver lists members by the signed-in username only, since everyone else a group gives access is another person (§9.1); a second page needs a second match, and gitlabtest pages it

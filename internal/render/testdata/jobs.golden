@@ -1,0 +1,4 @@
+Jobs of pipeline 61001 in example-group/alpha (project id 2001)
+2 jobs shown; the listing is complete (total 2).
+- job 70002 unit tests (stage test): failed, script_failure, ran 120s, finished 2026-01-06T11:00:00Z
+- job 70003 lint (stage test): failed, allowed to fail

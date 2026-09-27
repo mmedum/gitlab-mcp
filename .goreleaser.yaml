@@ -1,0 +1,122 @@
+version: 2
+
+project_name: gitlab-mcp
+
+before:
+  hooks:
+    # Download, never tidy. A hook that rewrites go.mod or go.sum dirties
+    # the tree, and goreleaser refuses to release from a dirty one, while
+    # `--snapshot` runs the hook and skips that check. A rehearsal would
+    # stay green and the tag would fail. CI runs `go mod tidy -diff` on
+    # the commit the release is cut from.
+    - go mod download
+
+builds:
+  - id: gitlab-mcp
+    main: ./cmd/gitlab-mcp
+    binary: gitlab-mcp
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    # The commit's time rather than the build's, so rebuilding a tag
+    # produces byte-identical binaries. release.yml builds one target
+    # twice and compares the hashes to hold this.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # {{ .Version }} rather than {{ .Tag }}: in a --snapshot rehearsal
+    # .Tag is v0.0.0 while everything else carries the snapshot version.
+    ldflags:
+      - -s -w -X github.com/mmedum/gitlab-mcp/internal/version.Version={{ .Version }}
+
+# The macOS universal binary exists for the Claude Desktop bundle alone.
+# A manifest names one command per platform, not per architecture, so
+# the macOS entry has to run on both. `ids` on the archives keeps it out
+# of them.
+universal_binaries:
+  - id: gitlab-mcp-universal
+    ids: [gitlab-mcp]
+    replace: false
+    hooks:
+      # The one point where every binary exists and checksums.txt has not
+      # been written yet, so the bundle can be hashed and signed with the
+      # rest. Packing it here is half of that: goreleaser hashes only what
+      # it built, so `checksum.extra_files` and `release.extra_files` name
+      # the bundle too.
+      #
+      # `go run` rather than `make`, so a rehearsal needs only the Go
+      # toolchain. `gates release` holds this output path against the
+      # Makefile's MCPB_OUT.
+      post: go run ./scripts/gates mcpb-pack dist {{ .Version }} dist/gitlab-mcp_{{ .Version }}.mcpb
+
+archives:
+  - id: archive
+    ids: [gitlab-mcp]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # NOTICE travels with the binary, as Apache-2.0 section 4(d) asks.
+    files: [LICENSE, NOTICE, README.md]
+
+checksum:
+  name_template: checksums.txt
+  # Being in checksums.txt is what gets the bundle signed, because the
+  # signature is over this file.
+  extra_files:
+    - glob: ./dist/*.mcpb
+
+# One SBOM per archive.
+sboms:
+  - artifacts: archive
+
+# The checksum file is signed with a keyless Sigstore certificate tied to
+# the release workflow's OIDC identity. `--bundle` is required by cosign
+# 3: a config carrying only --output-signature and --output-certificate
+# fails with "create bundle file: open : no such file or directory".
+signs:
+  - cmd: cosign
+    signature: "${artifact}.bundle"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "--yes"
+      - "${artifact}"
+    artifacts: checksum
+    output: true
+
+# No changelog block, deliberately. The release body is the CHANGELOG.md
+# section for the tag, written by `gates release-notes` and passed with
+# --release-notes. Never write `changelog: disable: true` for the same
+# effect: it skips the pipe that reads the notes file, and the body
+# collapses to the footer while every step stays green.
+
+release:
+  draft: false
+  # A tag carrying a suffix such as -rc1 is marked pre-release.
+  prerelease: auto
+  # Checksummed is not uploaded. Without this the bundle is named in
+  # checksums.txt and missing from the release.
+  extra_files:
+    - glob: ./dist/*.mcpb
+  footer: |
+    ---
+
+    Built by GoReleaser from the tag. Each archive carries the binary,
+    LICENSE, NOTICE and README, with an SBOM beside it.
+
+    Verify a download before you run it:
+
+    ```bash
+    sha256sum -c checksums.txt --ignore-missing
+    cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
+      --certificate-identity 'https://github.com/mmedum/gitlab-mcp/.github/workflows/release.yml@refs/tags/{{ .Tag }}' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    gh attestation verify gitlab-mcp_{{ .Version }}_linux_amd64.tar.gz --repo mmedum/gitlab-mcp
+    gh attestation verify gitlab-mcp_{{ .Version }}.mcpb --repo mmedum/gitlab-mcp
+    ```
+
+    `gitlab-mcp_{{ .Version }}.mcpb` is the Claude Desktop bundle. Its
+    SHA-256 is in the same signed `checksums.txt`. It does **not** log
+    you in: install the binary as well and run
+    `gitlab-mcp login --client-id <application id>` once from a terminal.

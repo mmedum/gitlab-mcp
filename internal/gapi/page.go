@@ -1,0 +1,250 @@
+package gapi
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"maps"
+	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// Pagination (§2.12, §7.1). GitLab pages by offset or by keyset; both
+// advertise the next page in a Link header, offset also in X-Next-Page.
+// The client turns the next page into an opaque token bound to the query
+// it came from, so a token is never replayed against another query and
+// never names a URL the client would call.
+
+// DefaultPerPage and MaxPerPage are GitLab's own.
+const (
+	DefaultPerPage = 20
+	MaxPerPage     = 100
+)
+
+// ListOptions select one page of a listing.
+type ListOptions struct {
+	// PerPage is the page size, 1 to 100; zero takes 20.
+	PerPage int
+	// PageToken is the NextToken of the previous page, or empty for the
+	// first.
+	PageToken string
+	// Page asks for one offset page by number, 1 first, for a caller
+	// that jumps rather than walks: the newest thread is on the last
+	// page. It is not used with PageToken, and only on an endpoint that
+	// pages by offset.
+	Page int
+}
+
+// Page describes one page of a listing.
+type Page struct {
+	// NextToken continues the listing; empty means it is complete.
+	NextToken string
+	// Total is X-Total, or -1 when GitLab did not say. It stops saying
+	// once a count passes 10,000, and never says on keyset endpoints.
+	Total int
+	// Pages is X-Total-Pages, or -1 when GitLab did not say, which it
+	// stops saying with Total.
+	Pages int
+}
+
+// Complete reports whether there is no further page.
+func (p Page) Complete() bool { return p.NextToken == "" }
+
+// TotalKnown reports whether Total is GitLab's count.
+func (p Page) TotalKnown() bool { return p.Total >= 0 }
+
+// paginationKeys are the query parameters that move a listing forward.
+// They are left out of a token's binding, so the binding names the
+// query and not the position in it.
+var paginationKeys = []string{"page", "per_page", "cursor", "id_after", "id_before", "page_token"}
+
+// boundToken is what every page token encodes: a position, and the
+// query it belongs to.
+type boundToken struct {
+	// B binds the token to the query it was issued for.
+	B string `json:"b"`
+	// P is the position: for a GitLab listing, the parameters that
+	// select the next page.
+	P json.RawMessage `json:"p"`
+}
+
+// EncodeToken makes an opaque page token carrying position, bound to
+// the query binding names. A listing this server pages itself uses it
+// too, so every page_token has one shape and one set of refusals.
+func EncodeToken(binding string, position any) string {
+	p, _ := json.Marshal(position)
+	raw, _ := json.Marshal(boundToken{B: binding, P: p})
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// DecodeToken reads a token EncodeToken made into position. It refuses
+// [invalid] a token it cannot read, and one bound to another query.
+func DecodeToken(s, binding string, position any) error {
+	var tok boundToken
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err == nil {
+		err = json.Unmarshal(raw, &tok)
+	}
+	if err == nil && (tok.B == "" || len(tok.P) == 0) {
+		err = errNotIssued()
+	}
+	if err == nil {
+		err = json.Unmarshal(tok.P, position)
+	}
+	if err != nil {
+		return errNotIssued()
+	}
+	if tok.B != binding {
+		return Errf(ClassInvalid,
+			"page_token was issued for a different query: repeat the call that returned it with the same arguments, or start again without it")
+	}
+	return nil
+}
+
+func errNotIssued() error {
+	return Errf(ClassInvalid, "page_token is not one this server issued: pass it exactly as returned, or start again without it")
+}
+
+// binding hashes a call's method, path and query, less the pagination
+// parameters, which are all a token may set.
+func binding(call Call, path string) string {
+	q := url.Values{}
+	for k, v := range call.Query {
+		if slices.Contains(paginationKeys, k) {
+			continue
+		}
+		q[k] = v
+	}
+	sum := sha256.Sum256([]byte(call.Method + " " + strconv.Itoa(int(call.Root)) + " " + path + "?" + q.Encode()))
+	return hex.EncodeToString(sum[:12])
+}
+
+// list sends a GET for one page and returns where the next one is.
+func (c *Client) list(ctx context.Context, call Call, opts ListOptions, out any) (Page, error) {
+	if call.Method != http.MethodGet {
+		return Page{}, Errf(ClassUnexpected, "a listing must be a GET")
+	}
+	path, err := fillPath(call.Path, call.Args)
+	if err != nil {
+		return Page{}, err
+	}
+	q := url.Values{}
+	maps.Copy(q, call.Query)
+	call.Query = q
+
+	if opts.Page > 0 && opts.PageToken != "" {
+		return Page{}, Errf(ClassUnexpected, "a listing takes a page number or a page token, not both")
+	}
+	if opts.Page > 0 {
+		q.Set("page", strconv.Itoa(opts.Page))
+	}
+	if opts.PageToken != "" {
+		var next map[string]string
+		if err := DecodeToken(opts.PageToken, binding(call, path), &next); err != nil {
+			return Page{}, err
+		}
+		// Only a pagination parameter may move, whatever the token says.
+		if len(next) == 0 {
+			return Page{}, errNotIssued()
+		}
+		for k, v := range next {
+			if k == "per_page" || !slices.Contains(paginationKeys, k) {
+				return Page{}, errNotIssued()
+			}
+			q.Set(k, v)
+		}
+	}
+	perPage := opts.PerPage
+	switch {
+	case perPage <= 0:
+		perPage = DefaultPerPage
+	case perPage > MaxPerPage:
+		perPage = MaxPerPage
+	}
+	q.Set("per_page", strconv.Itoa(perPage))
+
+	res, err := c.do(ctx, call, out)
+	if err != nil {
+		return Page{}, err
+	}
+	page := Page{Total: -1, Pages: -1}
+	if n, err := strconv.Atoi(strings.TrimSpace(res.header.Get("X-Total"))); err == nil && n >= 0 {
+		page.Total = n
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(res.header.Get("X-Total-Pages"))); err == nil && n >= 0 {
+		page.Pages = n
+	}
+	next, err := c.nextParams(res, q)
+	if err != nil {
+		return Page{}, err
+	}
+	if len(next) > 0 {
+		page.NextToken = EncodeToken(binding(call, path), next)
+	}
+	return page, nil
+}
+
+// nextParams reads the next page from Link rel="next", or from
+// X-Next-Page when there is no Link. A Link is followed only when it is
+// on this instance under the API root and names the same endpoint; the
+// parameters it changes are what the token carries.
+func (c *Client) nextParams(res *response, sent url.Values) (map[string]string, error) {
+	if raw := linkNext(res.header.Values("Link")); raw != "" {
+		u, err := res.request.Parse(raw)
+		// Compared decoded: GitLab may spell a %2F-encoded project path
+		// differently in the link than the request did.
+		if err != nil || !c.inst.UnderAPIRoot(u) || u.Path != res.request.Path {
+			return nil, Errf(ClassUnexpected,
+				"GitLab offered a next page outside this endpoint, which is never followed; the listing stops here incomplete")
+		}
+		next := map[string]string{}
+		for k, vs := range u.Query() {
+			// Only a pagination parameter may move: a Link that changed a
+			// filter would page through a different query.
+			if k == "per_page" || len(vs) != 1 || !slices.Contains(paginationKeys, k) {
+				continue
+			}
+			if sent.Get(k) != vs[0] || !sent.Has(k) {
+				next[k] = vs[0]
+			}
+		}
+		if len(next) == 0 {
+			return nil, Errf(ClassUnexpected, "GitLab's next page is the page just read; the listing stops here incomplete")
+		}
+		return next, nil
+	}
+	if p := strings.TrimSpace(res.header.Get("X-Next-Page")); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			return map[string]string{"page": p}, nil
+		}
+	}
+	return nil, nil
+}
+
+// linkNext finds rel="next" in RFC 8288 Link headers.
+func linkNext(values []string) string {
+	for _, v := range values {
+		for part := range strings.SplitSeq(v, ",") {
+			target, params, ok := strings.Cut(strings.TrimSpace(part), ";")
+			if !ok {
+				continue
+			}
+			target = strings.TrimSpace(target)
+			if !strings.HasPrefix(target, "<") || !strings.HasSuffix(target, ">") {
+				continue
+			}
+			for p := range strings.SplitSeq(params, ";") {
+				k, val, _ := strings.Cut(strings.TrimSpace(p), "=")
+				if strings.EqualFold(k, "rel") && slices.Contains(strings.Fields(strings.ToLower(strings.Trim(val, `"`))), "next") {
+					return target[1 : len(target)-1]
+				}
+			}
+		}
+	}
+	return ""
+}

@@ -1,0 +1,72 @@
+# Nothing deployer-specific may enter this repository: no GitLab token of
+# any kind, no OAuth application id or secret. gitleaks covers what has a
+# credential's shape; `make leaks` covers identifiers and instance
+# content, which are not secrets and pass a credential scanner.
+#
+# The prefixes are GitLab's own list, from
+# https://docs.gitlab.com/security/tokens/#token-prefixes. The default
+# rules cover most of them at their current lengths; these match any
+# length, so an older or longer format is still a finding.
+title = "gitlab-mcp"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "gitlab-prefixed-token"
+description = "A GitLab token, identified by its prefix"
+regex = '''\b(?:glpat|gloas|gldt|glrt|glrtr|glcbt|glptt|glft|glimt|glagent|glwt|glsoat|glffct)-[0-9A-Za-z_.\-]{16,}'''
+keywords = ["glpat-", "gloas-", "gldt-", "glrt-", "glrtr-", "glcbt-", "glptt-", "glft-", "glimt-", "glagent-", "glwt-", "glsoat-", "glffct-"]
+
+[[rules]]
+id = "gitlab-runner-registration-token"
+description = "A GitLab runner registration token"
+regex = '''\bGR1348941[0-9A-Za-z_\-]{20,}'''
+keywords = ["gr1348941"]
+
+[[rules]]
+id = "gitlab-session-cookie"
+description = "A GitLab session cookie"
+regex = '''_gitlab_session=[0-9A-Za-z]{16,}'''
+keywords = ["_gitlab_session="]
+
+# An OAuth application's id and an unprefixed secret or token are 64
+# lowercase hex characters, which is also the shape of a SHA-256. They
+# are findings only beside a name that says what they are.
+[[rules]]
+id = "gitlab-oauth-application-id"
+description = "A GitLab OAuth application id"
+regex = '''(?i)(?:client[_-]?id|application[_ -]?id|app[_-]?id)["'`]?\s*[:=]?\s*["'`]?([0-9a-f]{64})\b'''
+secretGroup = 1
+keywords = ["client_id", "client-id", "clientid", "application", "app_id", "app-id", "appid"]
+
+[[rules]]
+id = "gitlab-oauth-secret-or-token"
+description = "A GitLab OAuth application secret, access token or refresh token"
+regex = '''(?i)(?:client[_-]?secret|secret|access[_-]?token|refresh[_-]?token)["'`]?\s*[:=]?\s*["'`]?([0-9a-f]{64})\b'''
+secretGroup = 1
+keywords = ["secret", "access_token", "access-token", "accesstoken", "refresh_token", "refresh-token", "refreshtoken"]
+
+[[allowlists]]
+description = "Module checksums, reserved example domains, and synthetic values"
+paths = [
+  '''(?:^|/)go\.sum$''',
+]
+# Allowed as literal values rather than by path, so a real credential in
+# the same file is still a finding. An inline `gitleaks:allow` does not
+# serve: the history scan reads every commit, and a comment clears only
+# the commit that carries it.
+regexTarget = "match"
+regexes = [
+  # RFC 2606 and RFC 6761 reserve these; they never resolve.
+  '''[A-Za-z0-9._%+\-]+@([A-Za-z0-9.\-]+\.)?(example|test|invalid)(\.[A-Za-z]{2,})?''',
+  # Synthetic tokens: a GitLab prefix followed by EXAMPLE, FAKE or TEST.
+  # Fixtures and tests use these, and the scanners must contain an
+  # example of every shape they catch.
+  '''\b(?:glpat|gloas|gldt|glrt|glrtr|glcbt|glptt|glft|glimt|glagent|glwt|glsoat|glffct)-(?:EXAMPLE|FAKE|TEST)[0-9A-Za-z_.\-]*''',
+  '''\bGR1348941(?:EXAMPLE|FAKE|TEST)[0-9A-Za-z_\-]*''',
+  '''_gitlab_session=(?:EXAMPLE|FAKE|TEST)[0-9A-Za-z]*''',
+  # Synthetic 64-hex ids and secrets: one repeated character, or
+  # 0123456789abcdef four times.
+  '''\b(?:0{64}|1{64}|a{64}|f{64}|(?:0123456789abcdef){4})\b''',
+]
