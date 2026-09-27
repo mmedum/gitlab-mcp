@@ -106,6 +106,10 @@ func TestATokenStaysWithTheInstanceThatIssuedIt(t *testing.T) {
 		{"another test port", "http://127.0.0.1:10", fake, fake, true},
 		{"a host an older build accepted", "https://gitlab.example.com", "", "https://gitlab.com", true},
 		{"an unreadable record", "http://gitlab.example.com", "", "https://gitlab.com", true},
+		// The keyring is keyed by profile alone, so a stored token under a
+		// profile that records no instance may be gitlab.com's.
+		{"no record on gitlab.com", "", "", "https://gitlab.com", false},
+		{"no record, override set", "", fake, fake, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e, k := setup(t, tc.override)
@@ -134,6 +138,21 @@ func TestATokenStaysWithTheInstanceThatIssuedIt(t *testing.T) {
 				t.Errorf("token for another instance: %v", err)
 			}
 		})
+	}
+}
+
+// A token given in the environment was given for this run, so a profile
+// that records no instance still sends it to the test instance.
+func TestAnEnvironmentTokenReachesTheTestInstance(t *testing.T) {
+	e, k := setup(t, "http://127.0.0.1:9")
+	e[credentials.EnvVar] = "test-refresh-from-env"
+	e[config.EnvClientID] = gitlabtest.ClientID
+	s, err := Resolve(load(t, e), Options{Env: e.get, Keyring: k})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CredentialsErr != nil {
+		t.Errorf("an environment token was withheld: %v", s.CredentialsErr)
 	}
 }
 

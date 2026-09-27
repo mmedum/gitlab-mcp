@@ -316,6 +316,15 @@ func discussionLine(d model.DiscussionSummary) string {
 	return s + "; list_discussions reads them."
 }
 
+// milestoneIn renders a milestone inside the boundary: its title is
+// prose someone else wrote, up to 200 characters of it.
+func milestoneIn(m *model.Milestone, bd Boundary) string {
+	if m == nil {
+		return "none"
+	}
+	return fmt.Sprintf("%s (%s)", bd.Inline(m.Title), Ident(m.State))
+}
+
 func milestone(m *model.Milestone) string {
 	if m == nil {
 		return "none"
@@ -328,8 +337,8 @@ func Issue(is model.Issue, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Issue %s, iid %d, in %s\n", Ident(is.Reference), is.IID, projectLine(is.Project))
 	fmt.Fprintf(&b, "%s; %s; type %s; confidential %s.\n", Ident(is.WebURL), Ident(is.State), Ident(is.Type), yesNo(is.Confidential))
-	fmt.Fprintf(&b, "Author @%s; assignees %s; labels %s; milestone %s.\n", Ident(is.Author.Username), users(is.Assignees),
-		idents(is.Labels), milestone(is.Milestone))
+	fmt.Fprintf(&b, "Author @%s; assignees %s; labels %s.\n", Ident(is.Author.Username), users(is.Assignees),
+		idents(is.Labels))
 	fmt.Fprintf(&b, "Created %s; updated %s", when(is.CreatedAt), when(is.UpdatedAt))
 	if is.ClosedAt != nil {
 		fmt.Fprintf(&b, "; closed %s", when(*is.ClosedAt))
@@ -347,6 +356,7 @@ func Issue(is model.Issue, bd Boundary) string {
 	b.WriteString(discussionLine(is.Discussions) + "\n")
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Title: %s\n", bd.Inline(is.UntrustedTitle))
+	fmt.Fprintf(&b, "Milestone: %s.\n", milestoneIn(is.Milestone, bd))
 	o := Origin{Kind: "issue_description", Project: is.Project.Path, Item: "#" + strconv.FormatInt(is.IID, 10), Author: is.Author.Username}
 	b.WriteString(bd.Block(o, is.UntrustedDescription) + "\n")
 	b.WriteString(budgetLine("Description", is.DescriptionBudget))
@@ -385,8 +395,8 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 		}
 		b.WriteString(".\n")
 	}
-	fmt.Fprintf(&b, "Author @%s; assignees %s; reviewers %s; labels %s; milestone %s.\n", Ident(mr.Author.Username),
-		users(mr.Assignees), users(mr.Reviewers), idents(mr.Labels), milestone(mr.Milestone))
+	fmt.Fprintf(&b, "Author @%s; assignees %s; reviewers %s; labels %s.\n", Ident(mr.Author.Username),
+		users(mr.Assignees), users(mr.Reviewers), idents(mr.Labels))
 	fmt.Fprintf(&b, "Created %s; updated %s", when(mr.CreatedAt), when(mr.UpdatedAt))
 	if mr.MergedAt != nil {
 		fmt.Fprintf(&b, "; merged %s", when(*mr.MergedAt))
@@ -401,6 +411,7 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	b.WriteString(discussionLine(mr.Discussions) + "\n")
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Title: %s\n", bd.Inline(mr.UntrustedTitle))
+	fmt.Fprintf(&b, "Milestone: %s.\n", milestoneIn(mr.Milestone, bd))
 	o := Origin{Kind: "merge_request_description", Project: mr.Project.Path, Item: mrItem(mr.IID), Author: mr.Author.Username}
 	b.WriteString(bd.Block(o, mr.UntrustedDescription) + "\n")
 	b.WriteString(budgetLine("Description", mr.DescriptionBudget))

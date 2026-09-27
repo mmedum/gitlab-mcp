@@ -502,10 +502,11 @@ func (s *Server) deleteTag(w http.ResponseWriter, p *project, name string) {
 // ----------------------------------------------------------- artifacts
 
 // Artifacts JobFailed keeps: a report that prints the synthetic token,
-// and a binary.
+// a summary that prints it in color, as a teed terminal log does, and a
+// binary.
 var artifactFiles = map[string]string{
 	"reports/junit.xml":   "<testsuite name=\"login\">\n<failure>the server refused token " + FakeToken + "</failure>\n</testsuite>\n",
-	"reports/summary.txt": "1 failed, 2499 passed\n",
+	"reports/summary.txt": "1 failed, 2499 passed\n\x1b[31m" + FakeToken + "\x1b[0m\n",
 	"bin/app":             "\x7fELF\x00\x01\x02\x03",
 }
 

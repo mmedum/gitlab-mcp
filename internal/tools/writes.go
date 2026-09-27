@@ -65,7 +65,7 @@ type updateIssueIn struct {
 	State           string   `json:"state,omitempty" jsonschema:"close or reopen"`
 	DueDate         *string  `json:"due_date,omitempty" jsonschema:"A new due day, YYYY-MM-DD"`
 	ClearDueDate    bool     `json:"clear_due_date,omitempty" jsonschema:"Remove the due date"`
-	Confidential    *bool    `json:"confidential,omitempty" jsonschema:"Make the issue confidential, or not"`
+	Confidential    *bool    `json:"confidential,omitempty" jsonschema:"true makes the issue confidential; false makes a confidential issue public, which needs GITLAB_MCP_ENABLE_SHIP=true"`
 	EscapeCommands  bool     `json:"escape_commands,omitempty" jsonschema:"GitLab runs a line starting with a slash, such as /close or /merge, as a command. By default such a line refuses the call; true sends each one as plain text instead, with a leading backslash that renders the same. There is no way to run them"`
 	DryRun          bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent, and what the quick-action guard would do to the text, without writing anything"`
 }

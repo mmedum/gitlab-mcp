@@ -365,7 +365,10 @@ counts. §2.6 rules out the scope as the control, and the standard's §3
 already says an annotation is not a control and a registered tool can
 run unattended. A submitted review that would approve (`reviewer_state:
 approved`) is Ship-dependent: without the flag the call is `[blocked]`
-naming it.
+naming it. So is `update_issue` making a confidential issue public
+(`confidential: false`), which shows it to everyone who can see the
+project's issues, the widening `move_issue` refuses; an injected "it was
+confidential by mistake" asks for exactly that (1.0 security review).
 
 The standard's rule that destructive tools are unregistered is held.
 One sibling registers deletions and refuses per call, arguing that a
@@ -1803,6 +1806,24 @@ Its `/code-review high` found:
 | `manual` is not cancelable | Refuted: `CANCELABLE_STATUSES` includes it, for the pipeline and its jobs (§18 row 91) |
 | `get_me` could read the expiry the token source holds instead of GitLab's answer | Left: `get_me` reports what GitLab says of the token it was sent, which is what a revoked or replaced token needs |
 
+**The 1.0 security review** read the whole tree in five parts: sign-in
+and secrets, the REST client, the write guards, untrusted content, and
+the release chain (`audit/security-reviews/v1.0.0.md`). It found:
+
+| Found | Fixed |
+|---|---|
+| Medium: `update_issue` with `confidential: false` made a confidential issue public, the widening `move_issue` refuses | Ship's to allow, as an approving review is (§4.3) |
+| Medium: a tool call canceled after GitLab rotated the pair dropped the only copy of the new one | The refresh runs on a context the caller cannot cancel, bounded by the HTTP timeout; a test cancels mid-answer |
+| A stored token under a profile that records no instance could reach the loopback test instance | Withheld unless the token came from the environment |
+| `logout` could revoke a pair a server had just replaced, and the server saved the new one after the delete | `logout` holds the profile's refresh lock |
+| A create's answer over 32 MiB read as retryable `[unavailable]` | `[ambiguous_outcome]`, settled by reading (§4.5) |
+| A color code before a token in a job artifact hid it from the masks | Artifacts lose terminal escapes before masking, as job logs do |
+| `[//]: # (text)` and a backtick in a fence's info string hid text from the page but not from the model | Unused reference definitions are dropped and counted; that line opens no fence |
+| A milestone title, free prose, printed outside the boundary in `get_issue` and `get_merge_request` | Its own line, inside the boundary |
+| Snippet file names reached an error message as written | Made plain, as paths are |
+| A manual registry publish could send a prerelease | `server-json` publishes `X.Y.Z` only |
+| `update_label` and `update_milestone` said empty clears a field; §17.7 reads it as absent | The descriptions no longer say so; clearing is deferred (§17a) |
+
 ### Closing a phase
 
 1. `make check` green; the live driver run and its transcript read.
@@ -1926,6 +1947,13 @@ REST call can close:
   `run_pipeline` on the same ref in that window reads as this one. The
   pipeline's variables would tell them apart, and reading them reads
   their values (§18 row 82). Found in phase 3.
+
+The 1.0 security review added one, which is additive:
+
+- `update_label` and `update_milestone` cannot clear a description or a
+  date: §17.7 reads `""` as absent, and their descriptions no longer say
+  empty clears. `clear_*` inputs, as `update_issue` has, are additive
+  and wait for after 1.0.
 
 Operations `testdata/api-coverage.tsv` defers with a citation of §17a
 are deferred past 1.0, each for the reason its row gives. The feature

@@ -188,6 +188,10 @@ func TestJobArtifacts(t *testing.T) {
 	if strings.Contains(content+text, gitlabtest.FakeToken) || get(report, "secrets_masked") != float64(1) {
 		t.Errorf("report: %v\n%s", report, text)
 	}
+	_, summary := h.ok("get_job_artifact", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed, "path": "reports/summary.txt"})
+	if c := get(summary, "untrusted_content").(string); strings.Contains(c, gitlabtest.FakeToken) || strings.Contains(c, "\x1b") {
+		t.Errorf("a colored token escaped the masks: %q", c)
+	}
 	if _, bin := h.ok("get_job_artifact", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed, "path": "bin/app"}); get(bin, "binary") != true {
 		t.Errorf("binary: %v", bin)
 	}

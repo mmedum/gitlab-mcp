@@ -266,8 +266,10 @@ func phase2(s scratch) []step {
 		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{issue}}", "updated_at": "{{issue_at}}",
 			"title": "Written issue, retitled " + s.Name, "description": "Replaced by the live run.\n\n/label ~x\n", "escape_commands": true,
 			"add_labels": []any{s.Label2}, "remove_labels": []any{s.Label}, "milestone": milestone2, "due_date": "2030-02-28",
-			"confidential": false, "state": "close"},
+			"state": "close"},
 			save: map[string]string{"issue_at2": "updated_at"}},
+		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{issue}}", "updated_at": "{{issue_at2}}", "confidential": false},
+			expectError: true, why: "making a confidential issue public, without GITLAB_MCP_ENABLE_SHIP"},
 		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{issue}}", "updated_at": "{{issue_at}}", "title": "Stale"},
 			expectError: true, why: "a witness from before the last update"},
 		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{issue}}", "updated_at": "{{issue_at2}}", "state": "reopen",
@@ -410,6 +412,11 @@ func planShip(s scratch) []step {
 	now := time.Now().UTC()
 	yesterday, tomorrow := now.Add(-24*time.Hour).Format(time.RFC3339), now.Add(24*time.Hour).Format(time.RFC3339)
 	return slices.Concat([]step{
+		// Making a confidential issue public is Ship's to allow.
+		{tool: "create_issue", args: map[string]any{"project": p, "title": "A confidential issue " + s.Name, "confidential": true},
+			save: map[string]string{"secret_issue": "iid", "secret_at": "updated_at"}},
+		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{secret_issue}}", "updated_at": "{{secret_at}}",
+			"confidential": false}},
 		// A merge request to approve and merge.
 		{tool: "create_branch", args: map[string]any{"project": p, "branch": branch, "ref": s.Default}},
 		{tool: "create_commit", args: map[string]any{"project": p, "branch": branch, "message": "A change to merge",

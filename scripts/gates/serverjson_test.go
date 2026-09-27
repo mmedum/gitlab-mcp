@@ -177,4 +177,11 @@ func TestServerJSONPublish(t *testing.T) {
 	if err := serverJSONPublish(&s, root, "v"+gatekit.PlaceholderVersion, write(archive)); err == nil {
 		t.Error("the placeholder was published")
 	}
+	// A manual publish does not pass release.yml's prerelease check.
+	for _, tag := range []string{"v1.2.3-rc1", "", "v1.2", "vmain"} {
+		if err := serverJSONPublish(&s, root, tag, write(archive)); err == nil ||
+			!strings.Contains(err.Error(), "releases only") {
+			t.Errorf("tag %q: %v, want refused", tag, err)
+		}
+	}
 }

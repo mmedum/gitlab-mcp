@@ -40,6 +40,7 @@ lifted verbatim.
 - A line GitLab would run as a quick action refuses the write, or is sent as text with `escape_commands`.
 - Every write takes `dry_run`, and names the project's visibility in its result.
 - Updates to issues and merge requests require the `updated_at` you read, and are refused `[stale]` if it moved.
+- `update_issue` makes a confidential issue public only with `GITLAB_MCP_ENABLE_SHIP=true`.
 - `create_commit` refuses the default branch and every protected branch, and `create_branch` refuses a name a protected-branch rule covers; code reaches them through a merge request.
 - A create whose answer is lost is never repeated: the server reads to say whether it happened.
 - `GITLAB_MCP_WRITE_NAMESPACES` confines writes to the groups and projects it names.

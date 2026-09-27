@@ -214,11 +214,17 @@ func serverJSONCheck(out io.Writer, root string) error {
 	return nil
 }
 
-// serverJSONPublish prints the entry for a release.
+// serverJSONRelease is a release version the registry may carry: no
+// prerelease suffix, since an entry cannot be withdrawn.
+var serverJSONRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// serverJSONPublish prints the entry for a release. The tag is refused
+// unless it is a release, because a manual publish does not pass through
+// release.yml's prerelease check.
 func serverJSONPublish(out io.Writer, root, tag, checksums string) error {
 	version := strings.TrimPrefix(tag, "v")
-	if version == "" || version == gatekit.PlaceholderVersion {
-		return fmt.Errorf("server-json needs a release tag; got %q", tag)
+	if version == gatekit.PlaceholderVersion || !serverJSONRelease.MatchString(version) {
+		return fmt.Errorf("server-json publishes releases only, never a prerelease; got %q", tag)
 	}
 	bundle, sum, err := serverJSONBundleRow(checksums)
 	if err != nil {

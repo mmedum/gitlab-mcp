@@ -93,8 +93,8 @@ Every tool has one kind, and the kind decides whether it is registered:
 | Ship | merge, approve, unapprove, rebase, run, retry, play and cancel CI, create a release, move an issue to another project | only with `GITLAB_MCP_ENABLE_SHIP=true` |
 | Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
 
-A review that would approve counts as Ship: without the flag the call
-is `[blocked]`.
+A review that would approve counts as Ship, and so does making a
+confidential issue public: without the flag the call is `[blocked]`.
 
 **The default token can merge, approve and run pipelines.** GitLab's
 `api` scope covers every write, and it has no narrower scope that

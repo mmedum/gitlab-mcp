@@ -17404,7 +17404,7 @@
             "type": "boolean"
           },
           "confidential": {
-            "description": "Make the issue confidential, or not",
+            "description": "true makes the issue confidential; false makes a confidential issue public, which needs GITLAB_MCP_ENABLE_SHIP=true",
             "type": [
               "null",
               "boolean"
@@ -17767,7 +17767,7 @@
             "type": "string"
           },
           "description": {
-            "description": "A new description; empty clears it",
+            "description": "A new description",
             "type": [
               "null",
               "string"
@@ -18479,7 +18479,7 @@
         "additionalProperties": false,
         "properties": {
           "description": {
-            "description": "What the milestone is for, in Markdown; empty clears it",
+            "description": "What the milestone is for, in Markdown",
             "type": [
               "null",
               "string"
@@ -18490,7 +18490,7 @@
             "type": "boolean"
           },
           "due_date": {
-            "description": "The day it is due, YYYY-MM-DD; empty clears it",
+            "description": "The day it is due, YYYY-MM-DD",
             "type": [
               "null",
               "string"
@@ -18509,7 +18509,7 @@
             ]
           },
           "start_date": {
-            "description": "The day it starts, YYYY-MM-DD; empty clears it",
+            "description": "The day it starts, YYYY-MM-DD",
             "type": [
               "null",
               "string"
