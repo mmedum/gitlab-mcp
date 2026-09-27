@@ -127,9 +127,8 @@ replace it with a `read_api` one.
 - **`GITLAB_MCP_WRITE_NAMESPACES`**, when set, confines every Write,
   Ship and Destructive call to projects under the listed groups or
   projects. Any other target is `[blocked]` naming the setting. Unset,
-  a write can go anywhere your account can write. `mark_todos_done` is
-  outside it: it changes only your own to-do list, which nobody else
-  sees.
+  a write can go anywhere your account can write. `mark_todos_done`
+  refuses a to-do item whose project is outside it.
 - Every write result names the target project's visibility, so a write
   to a public project shows as one.
 - **Code reaches a protected branch only through a merge request.**

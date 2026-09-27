@@ -37,8 +37,7 @@ Examined and holding:
   `GITLAB_MCP_ENABLE_SHIP`, before anything is read.
 - **The allow-list.** It is held against the path GitLab returns for
   the project, and every later request uses the numeric id from that
-  answer. `mark_todos_done` is outside it by design: it changes only the
-  account's own list.
+  answer. `mark_todos_done` is held to it by each item's project.
 - **Dry runs.** No write reaches the network under a dry run; the one
   POST allowed through declares itself read-only on its `Call`.
 - **Retries.** No create is repeated; a lost one is settled by a read
@@ -53,4 +52,4 @@ Examined and holding:
 Recorded as a decision rather than a finding: a commit, a new branch or
 a new merge request on an unprotected branch starts the pipelines a push
 starts, with the account's own permissions and unprotected variables
-only (`docs/security.md`). §17 asks whether that should stay Write.
+only (`docs/security.md`). §17.12 decides it stays Write.

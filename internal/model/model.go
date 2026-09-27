@@ -964,7 +964,7 @@ type CommentWrite struct {
 	// Kind is comment, thread, reply or draft.
 	Kind         string        `json:"kind" jsonschema:"comment (a standalone comment), thread (a new resolvable thread), reply, or draft (an unpublished review comment)"`
 	NoteID       int64         `json:"note_id" jsonschema:"The comment's id; for a draft, the draft's id"`
-	DiscussionID string        `json:"discussion_id" jsonschema:"The thread it is in; empty for a draft that starts one"`
+	DiscussionID string        `json:"discussion_id" jsonschema:"The thread it is in, for a reply or a new thread; empty for a standalone comment, whose thread list_discussions names, and for a draft that starts one"`
 	Position     *DiffPosition `json:"position" jsonschema:"Where on the diff it landed, as GitLab stored it; null for a comment not on a line"`
 	LineRange    *LineSpan     `json:"line_range" jsonschema:"The lines a multi-line comment covers; null for one line"`
 }
@@ -1038,6 +1038,6 @@ type TodosDone struct {
 // TodoDone is one to-do item mark_todos_done was given.
 type TodoDone struct {
 	ID      int64  `json:"id"`
-	Outcome string `json:"outcome" jsonschema:"done, not_found, or would_mark in a dry run"`
+	Outcome string `json:"outcome" jsonschema:"done, not_found, blocked (outside GITLAB_MCP_WRITE_NAMESPACES), failed, or would_mark in a dry run"`
 	Error   string `json:"error" jsonschema:"Why it was not marked; empty when it was"`
 }

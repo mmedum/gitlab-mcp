@@ -273,8 +273,10 @@ func phase2(s scratch) []step {
 		// Comments and threads, and where an inline comment lands (spike K).
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A comment the live run wrote.",
 			"dry_run": true}},
-		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A comment the live run wrote."},
-			save: map[string]string{"issue_thread": "discussion_id"}},
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A comment the live run wrote."}},
+		// A standalone comment does not name its thread; the newest one is it.
+		{tool: "list_discussions", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue},
+			save: map[string]string{"issue_thread": "threads.0.id"}},
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A reply the live run wrote.",
 			"discussion_id": "{{issue_thread}}"}},
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "body": "Done.\n\n/merge"},

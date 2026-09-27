@@ -201,9 +201,6 @@ func (s *Service) AddComment(ctx context.Context, in Comment) (model.CommentWrit
 			return s.findNote(ctx, t.p, in.IID, mr, in.DiscussionID, in.Body, start)
 		})
 	}
-	if discussionID == "" {
-		discussionID = s.discussionOf(ctx, t.p, in.IID, mr, note.ID)
-	}
 	out := model.CommentWrite{Outcome: "created", Kind: kind, Write: model.Write{Target: t.ref}, NoteID: note.ID, DiscussionID: discussionID}
 	out.Position, out.LineRange = landed(note.Position)
 	return out, nil
@@ -230,22 +227,6 @@ func (s *Service) newestThreads(ctx context.Context, p gapi.Project, iid int64, 
 	}
 	rows, _, err = read(gapi.ListOptions{PerPage: gapi.MaxPerPage, Page: page.Pages})
 	return rows, false, err
-}
-
-// discussionOf finds the thread a new standalone comment was filed in,
-// which the note's own answer does not name: the newest threads hold it.
-// Best effort: "" when a read fails, since the comment exists either way.
-func (s *Service) discussionOf(ctx context.Context, p gapi.Project, iid int64, mr bool, noteID int64) string {
-	rows, _, err := s.newestThreads(ctx, p, iid, mr)
-	if err != nil {
-		return ""
-	}
-	for i := len(rows) - 1; i >= 0; i-- {
-		if slices.ContainsFunc(rows[i].Notes, func(n gitlab.Note) bool { return n.ID == noteID }) {
-			return rows[i].ID
-		}
-	}
-	return ""
 }
 
 // findNote settles an ambiguous comment: one by this account with the

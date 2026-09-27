@@ -379,7 +379,8 @@ func markTodosDone() definition {
 	return tool[markTodosDoneIn, model.TodosDone]{
 		sp: spec{Name: "mark_todos_done", Kind: Write, Idempotent: true,
 			Description: "Mark your own to-do items done, by id, at most 100 at a time. Each id gets its own outcome: done, or " +
-				"not_found for one that is not yours or does not exist. Only you see your to-do list."},
+				"not_found for one that is not yours or does not exist, or blocked for one whose project GITLAB_MCP_WRITE_NAMESPACES " +
+				"leaves out."},
 		run: func(ctx context.Context, svc *service.Service, in markTodosDoneIn) (model.TodosDone, error) {
 			return svc.MarkTodosDone(ctx, in.IDs)
 		},

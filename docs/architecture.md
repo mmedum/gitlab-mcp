@@ -444,9 +444,8 @@ to post what it read. Two layers:
 1. **`GITLAB_MCP_WRITE_NAMESPACES`**, when set, confines every Write,
    Ship and Destructive call to projects under those namespaces; any
    other target is `[blocked]` naming the setting. This is the control.
-   `doctor` says whether it is set. `mark_todos_done` is outside it: it
-   changes only the account's own to-do list, which nobody else sees,
-   and a to-do item is not a place content can be written to (phase 2).
+   `doctor` says whether it is set. `mark_todos_done` is held to it by
+   each item's project, read once for that when the setting is on.
 2. Every write result names the target project's visibility, so a write
    to a public project is visible as one.
 
@@ -1398,8 +1397,7 @@ their transcripts were read: they found a new merge request's
 `updated_at` moving a second after the create, a commit's move emptying
 the file it moved, and an assignee change leaving `updated_at` in place
 (§18 rows 56–58); each is fixed or accounted for. Owed: nothing; §17.12
-asks whether pipelines a write starts stay Write, and §17a holds three
-new deferrals.*
+is decided, and §17a holds three new deferrals.*
 
 **Phase 3 — Ship, Destructive and toolsets.** The Ship tools
 with `sha` witnesses; `delete_branch`, `delete_comment`; the `wiki`,
@@ -1440,7 +1438,8 @@ fixed in phase 2 with a bound and a test. Four are in `gitlabtest`, which
 only tests link: three redirects that model GitLab's own (the OAuth
 callback to a registered loopback URI, checked before redirecting, and a
 moved project to the instance's own URL), and SHA-1 over fixture names
-to make fake commit ids. They are not defects.
+to make fake commit ids. They are not defects, and were dismissed on
+GitHub as used in tests, 2026-09-27.
 
 **Phase 1.** `/security-review`: no finding at confidence 8 or above
 (`audit/security-reviews/phase-1.md`), two below it recorded there.
@@ -1472,7 +1471,7 @@ read for `resolve_discussion`; the commit guard trusting an existing
 branch's `protected` flag; independent reads in parallel; the lint POST
 declared read-only on its `Call`. `/security-review`: two findings at
 confidence 8, both fixed (`audit/security-reviews/phase-2.md`).
-`/code-review high`: ten findings; nine fixed, the behavior ones with a
+`/code-review high`: ten findings, all fixed, the behavior ones with a
 test that failed before the fix:
 
 | Found | Fixed |
@@ -1486,7 +1485,7 @@ test that failed before the fix:
 | `due_date` with `clear_due_date` cleared silently | Phase 2 commit; refused, as the milestone pair is |
 | To-do items and label checks ran one at a time | Phase 2 commit; in parallel, paced by the client |
 | A doc comment slipped from its function | Phase 2 commit |
-| Every standalone comment reads threads to name its thread | Not changed: at most two reads, the first page and the last, shared with the settling read; the thread id is what a reply needs |
+| Every standalone comment reads threads to name its thread | Phase 2 commit; it no longer does: a reply or a thread names its own, and `list_discussions` names a standalone comment's |
 
 ### Closing a phase
 
@@ -1555,11 +1554,11 @@ test that failed before the fix:
     request on an unprotected branch starts the pipelines a push
     starts, with the account's own permissions and the project's
     unprotected variables only; Write never reaches a protected branch
-    (§4.4). Proposed: keep them Write, as the account's own push would
-    run them, and say so (`docs/security.md`). The alternative is to
-    append `[skip ci]` without Ship, which would stop the checks a
-    merge request is reviewed by. Raised by the phase 2 security review.
-    **Open.**
+    (§4.4). **Decided 2026-09-27 (maintainer): they stay Write**, as the
+    account's own push would run them, and `docs/security.md` says so.
+    Appending `[skip ci]` without Ship was rejected: it would stop the
+    checks a merge request is reviewed by. Raised by the phase 2
+    security review.
 
 ### 17a. Deferred cleanups
 

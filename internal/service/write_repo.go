@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 	"github.com/mmedum/gitlab-mcp/internal/model"
@@ -264,8 +265,9 @@ func protectedMatch(rule, branch string) bool {
 const MaxTodos = 100
 
 // MarkTodosDone marks the signed-in account's to-do items done by id.
-// They are the account's own list, seen by nobody else, so the write
-// allow-list, which is about projects, does not apply.
+// Under GITLAB_MCP_WRITE_NAMESPACES an item whose project is outside it
+// is refused like any other write (§4.7); the items' projects are read
+// once for that, and only then.
 func (s *Service) MarkTodosDone(ctx context.Context, ids []int64) (model.TodosDone, error) {
 	if _, err := s.api(); err != nil {
 		return model.TodosDone{}, err
@@ -280,9 +282,17 @@ func (s *Service) MarkTodosDone(ctx context.Context, ids []int64) (model.TodosDo
 		return model.TodosDone{}, gapi.Errf(gapi.ClassInvalid, "a to-do item id is a positive number")
 	}
 	out := model.TodosDone{Outcome: "none_done", Items: make([]model.TodoDone, 0, len(ids))}
+	refused, err := s.todosOutside(ctx, ids)
+	if err != nil {
+		return model.TodosDone{}, err
+	}
 	if gapi.IsDryRun(ctx) {
 		for _, id := range ids {
-			out.Items = append(out.Items, model.TodoDone{ID: id, Outcome: "would_mark"})
+			item := model.TodoDone{ID: id, Outcome: "would_mark"}
+			if why := refused[id]; why != "" {
+				item = model.TodoDone{ID: id, Outcome: "blocked", Error: why}
+			}
+			out.Items = append(out.Items, item)
 		}
 		out.Outcome, out.DryRun = "dry_run", true
 		out.WouldSend = preview("POST", fmt.Sprintf("mark %d to-do item(s) done", len(ids)), nil)
@@ -294,6 +304,10 @@ func (s *Service) MarkTodosDone(ctx context.Context, ids []int64) (model.TodosDo
 	marks := make([]func() error, len(ids))
 	for i, id := range ids {
 		marks[i] = func() error {
+			if why := refused[id]; why != "" {
+				items[i] = model.TodoDone{ID: id, Outcome: "blocked", Error: why}
+				return nil
+			}
 			t, err := s.client.MarkTodoDone(ctx, id)
 			switch {
 			case gapi.IsClass(err, gapi.ClassNotFound):
@@ -320,6 +334,37 @@ func (s *Service) MarkTodosDone(ctx context.Context, ids []int64) (model.TodosDo
 		out.Outcome = "done"
 	} else if done > 0 {
 		out.Outcome = "partly_done"
+	}
+	return out, nil
+}
+
+// maxTodoPages bounds the read that finds the projects of to-do items.
+const maxTodoPages = 10
+
+// todosOutside names, per id, why an item may not be marked under the
+// write allow-list: its project is outside it, or it was not among the
+// pending items read, so its project could not be told. An item already
+// done is not pending, and marking it again changes nothing, so it is
+// let through. Without the allow-list nothing is read.
+func (s *Service) todosOutside(ctx context.Context, ids []int64) (map[int64]string, error) {
+	if len(s.cfg.WriteNamespaces) == 0 {
+		return nil, nil
+	}
+	pending, complete, err := readPages(maxTodoPages, func(o gapi.ListOptions) ([]gitlab.Todo, gapi.Page, error) {
+		return s.client.ListTodos(ctx, gapi.TodoQuery{State: "pending"}, o)
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64]string{}
+	for _, id := range ids {
+		i := slices.IndexFunc(pending, func(t gitlab.Todo) bool { return t.ID == id })
+		switch {
+		case i < 0 && !complete:
+			out[id] = "not among the pending items read, so whether its project is inside " + config.EnvWriteNamespaces + " could not be told"
+		case i >= 0 && (pending[i].Project == nil || !s.writeAllowed(pending[i].Project.PathWithNamespace)):
+			out[id] = "its project is outside " + config.EnvWriteNamespaces
+		}
 	}
 	return out, nil
 }

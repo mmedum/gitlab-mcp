@@ -247,13 +247,14 @@ func TestA202FromANoteIsADefect(t *testing.T) {
 func TestAddComment(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	text, out := h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "A comment."})
-	if get(out, "kind") != "comment" || get(out, "note_id") == float64(0) || get(out, "discussion_id") == "" {
+	if get(out, "kind") != "comment" || get(out, "note_id") == float64(0) || get(out, "discussion_id") != "" {
 		t.Errorf("comment: %v", out)
 	}
 	if !strings.Contains(text, "Posted comment") {
 		t.Errorf("text:\n%s", text)
 	}
-	thread := get(out, "discussion_id").(string)
+	threads := h.gl.Discussions(alpha, "issue", 1)
+	thread := threads[len(threads)-1].ID
 	_, out = h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "A reply.", "discussion_id": thread})
 	if get(out, "kind") != "reply" || get(out, "discussion_id") != thread {
 		t.Errorf("reply: %v", out)
@@ -335,8 +336,9 @@ func TestResolveDiscussion(t *testing.T) {
 		t.Errorf("reopen: %v", out)
 	}
 	h.fails("resolve_discussion", map[string]any{"project": alpha, "iid": 1, "discussion_id": "no-such-thread"}, "not_found")
-	_, out = h.ok("add_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "body": "Standalone."})
-	h.fails("resolve_discussion", map[string]any{"project": alpha, "iid": 1, "discussion_id": get(out, "discussion_id")}, "invalid")
+	h.ok("add_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "body": "Standalone."})
+	threads := h.gl.Discussions(alpha, "mr", 1)
+	h.fails("resolve_discussion", map[string]any{"project": alpha, "iid": 1, "discussion_id": threads[len(threads)-1].ID}, "invalid")
 }
 
 // ------------------------------------------------------------- reviews
@@ -597,47 +599,14 @@ func TestALostCommentIsSettledOnTheNewestThreads(t *testing.T) {
 
 	// A lost reply is found in its own thread, however many there are.
 	h := newHarness(t, harnessOptions{})
-	_, out := h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "First."})
+	h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "First."})
+	threads := h.gl.Discussions(alpha, "issue", 1)
 	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/1/discussions/", AfterApply: true,
 		Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
 	text := h.fails("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "A reply.",
-		"discussion_id": get(out, "discussion_id")}, "ambiguous_outcome")
+		"discussion_id": threads[len(threads)-1].ID}, "ambiguous_outcome")
 	if !strings.Contains(text, "a read shows it was created") {
 		t.Errorf("reply: %s", text)
-	}
-}
-
-// A new comment's thread is found on the last page of threads, with two
-// reads however many pages there are.
-func TestANewCommentsThreadIsFoundOnTheLastPage(t *testing.T) {
-	h := newHarness(t, harnessOptions{})
-	// The filler goes straight to the instance: through the tool, the
-	// notes rate model would pace 120 comments over two minutes.
-	for i := range 120 {
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, h.gl.URL+"/api/v4/projects/2001/issues/3/notes",
-			strings.NewReader(fmt.Sprintf(`{"body":"Filler %d."}`, i)))
-		req.Header.Set("Authorization", "Bearer "+h.gl.Token())
-		req.Header.Set("Content-Type", "application/json")
-		res, err := http.DefaultClient.Do(req)
-		if err != nil || res.StatusCode != http.StatusCreated {
-			t.Fatalf("filler %d: %v %v", i, res, err)
-		}
-		_ = res.Body.Close()
-	}
-	h.gl.ResetRequests()
-	_, out := h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 3, "body": "The newest."})
-	threads := h.gl.Discussions(alpha, "issue", 3)
-	if want := threads[len(threads)-1].ID; get(out, "discussion_id") != want {
-		t.Errorf("discussion_id = %v, want the newest thread %s", get(out, "discussion_id"), want)
-	}
-	reads := 0
-	for _, r := range h.gl.Requests() {
-		if r.Method == http.MethodGet && strings.HasSuffix(r.EscapedPath, "/issues/3/discussions") {
-			reads++
-		}
-	}
-	if reads != 2 {
-		t.Errorf("%d thread pages read, want 2", reads)
 	}
 }
 
@@ -657,5 +626,28 @@ func TestALostDraftIsNotAnOlderOne(t *testing.T) {
 	text = h.fails("add_review_comment", map[string]any{"project": alpha, "iid": 1, "body": "nit: typo"}, "ambiguous_outcome")
 	if !strings.Contains(text, "a read shows it was created: draft") {
 		t.Errorf("a new draft: %s", text)
+	}
+}
+
+// Under the write allow-list a to-do item in a project outside it is
+// refused, and nothing is sent for it.
+func TestTodosAreHeldToTheAllowList(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: config.Config{WriteNamespaces: []string{gitlabtest.GroupSub}}})
+	sent := writesSent(h)
+	_, out := h.ok("mark_todos_done", map[string]any{"ids": []int{gitlabtest.TodoAssigned}})
+	if get(out, "items", 0, "outcome") != "blocked" || get(out, "outcome") != "none_done" ||
+		!strings.Contains(fmt.Sprint(get(out, "items", 0, "error")), config.EnvWriteNamespaces) {
+		t.Errorf("outside: %v", out)
+	}
+	if writesSent(h) != sent || h.gl.TodoState(gitlabtest.TodoAssigned) != "pending" {
+		t.Error("a to-do item outside the allow-list was marked")
+	}
+	_, out = h.ok("mark_todos_done", map[string]any{"ids": []int{gitlabtest.TodoAssigned}, "dry_run": true})
+	if get(out, "items", 0, "outcome") != "blocked" {
+		t.Errorf("dry run: %v", out)
+	}
+	in := newHarness(t, harnessOptions{cfg: config.Config{WriteNamespaces: []string{gitlabtest.GroupTop}}})
+	if _, out := in.ok("mark_todos_done", map[string]any{"ids": []int{gitlabtest.TodoAssigned}}); get(out, "outcome") != "done" {
+		t.Errorf("inside: %v", out)
 	}
 }
