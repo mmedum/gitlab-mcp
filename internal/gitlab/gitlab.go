@@ -518,6 +518,41 @@ type Job struct {
 	QueuedDuration *float64   `json:"queued_duration"` // seconds
 	WebURL         string     `json:"web_url"`
 	Pipeline       JobPipe    `json:"pipeline"`
+	// Artifacts holds the archived log as file_type "trace", once GitLab
+	// has archived it; its size is the log's.
+	Artifacts []JobArtifact `json:"artifacts"`
+}
+
+// JobArtifact is one file a job keeps.
+type JobArtifact struct {
+	FileType string `json:"file_type"`
+	Size     int64  `json:"size"`
+}
+
+// Bridge is a trigger job: it starts a downstream pipeline and takes
+// that pipeline's outcome. The job listing leaves it out.
+type Bridge struct {
+	ID                 int64               `json:"id"`
+	Name               string              `json:"name"`
+	Stage              string              `json:"stage"`
+	Status             string              `json:"status"`
+	AllowFailure       bool                `json:"allow_failure"`
+	FailureReason      string              `json:"failure_reason"`
+	CreatedAt          time.Time           `json:"created_at"`
+	StartedAt          *time.Time          `json:"started_at"`
+	FinishedAt         *time.Time          `json:"finished_at"`
+	Duration           *float64            `json:"duration"` // seconds
+	WebURL             string              `json:"web_url"`
+	DownstreamPipeline *DownstreamPipeline `json:"downstream_pipeline"`
+}
+
+// DownstreamPipeline is the pipeline a trigger job started, in its own
+// project or another.
+type DownstreamPipeline struct {
+	ID        int64  `json:"id"`
+	ProjectID int64  `json:"project_id"`
+	Status    string `json:"status"`
+	WebURL    string `json:"web_url"`
 }
 
 // JobPipe is the pipeline a job row names.
@@ -619,6 +654,9 @@ type DraftNote struct {
 	ResolveDiscussion bool      `json:"resolve_discussion"`
 	CommitID          *string   `json:"commit_id"`
 	Position          *Position `json:"position"`
+	// LineCode is the line a draft on the diff is on, as GitLab computed
+	// it from the position; null for a general draft.
+	LineCode *string `json:"line_code"`
 }
 
 // SearchHit is one row of GET /search and its group and project forms,
@@ -732,7 +770,15 @@ type ReleaseMilestone struct {
 
 // ReleaseAssets counts a release's assets: its links and source archives.
 type ReleaseAssets struct {
-	Count int `json:"count"`
+	Count int           `json:"count"`
+	Links []ReleaseLink `json:"links"`
+}
+
+// ReleaseLink is an asset link of a release.
+type ReleaseLink struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	LinkType string `json:"link_type"`
 }
 
 // Environment is one row of GET /projects/:id/environments.

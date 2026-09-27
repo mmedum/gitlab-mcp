@@ -8,3 +8,4 @@ Name: <<<0123456789abcdef>>>Alpha<<</0123456789abcdef>>>
 <<<UNTRUSTED 0123456789abcdef kind=project_description project=example-group/alpha>>>
 A generated project.
 <<<END 0123456789abcdef>>>
+Description: all 20 characters shown (budget 20000).

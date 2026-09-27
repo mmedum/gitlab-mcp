@@ -51,6 +51,16 @@ lifted verbatim.
 - The `deployments` toolset (`list_environments`, `list_deployments`) and the `activity` toolset (`list_events`).
 - `resolve_url` names `get_wiki_page` for a wiki page's link, and `list_wiki_pages` for the wiki's index, when the `wiki` toolset is on.
 - `make evals` scores a model against the tool surface, including four instructions planted in content that it must not follow.
+- `get_job_log` reads only the window it shows, so a log of any size can be read, and each window no longer downloads the whole log.
+- `get_mr_diff` reads from the page that holds `file_offset`, so paging through a large merge request reads each page about once.
+- `get_project` continues a long description with `offset`.
+- `get_mr_diff`, `get_commit` and `compare_refs` continue one file's diff larger than the budget with `diff_offset`.
+- `get_pipeline` names its failed trigger jobs and the downstream pipeline each started.
+- `add_comment` starts a resolvable thread with `thread`, and `resolve_discussion` resolves issue threads with `type: issue`.
+- A lost comment is settled however many threads were started after it.
+- `add_review_comment` reports the `line_code` GitLab computed for a draft on a line.
+- `retry_job` and `play_job` take values for the inputs a job declares.
+- `create_release` takes asset links, only to the project's own pages and packages.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 

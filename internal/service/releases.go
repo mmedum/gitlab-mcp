@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,6 +99,53 @@ type ReleaseCreate struct {
 	Description string
 	Milestones  []string
 	ReleasedAt  *time.Time
+	Links       []gapi.ReleaseLink
+}
+
+// maxReleaseLinks bounds the asset links of one release.
+const maxReleaseLinks = 20
+
+// releaseLinkTypes are the kinds of asset link GitLab knows.
+var releaseLinkTypes = []string{"other", "runbook", "image", "package"}
+
+// checkLinks refuses an asset link that points outside the release's own
+// project: a link is published on the release page for everyone who
+// reads it, so one a model was steered to write must lead only to what
+// the project itself serves (§4.1). The URL must be the instance's
+// origin, https on gitlab.com, with no credentials in it, under the
+// project's web path or its API path, where its packages are.
+func (s *Service) checkLinks(project *gitlab.Project, links []gapi.ReleaseLink) ([]gapi.ReleaseLink, error) {
+	web := strings.TrimSuffix(s.inst.WebBase().EscapedPath(), "/") + "/" + project.PathWithNamespace + "/"
+	api := strings.TrimSuffix(s.inst.APIRoot().EscapedPath(), "/") + "/projects/"
+	roots := []string{web, api + strconv.FormatInt(project.ID, 10) + "/", api + url.PathEscape(project.PathWithNamespace) + "/"}
+	if len(links) > maxReleaseLinks {
+		return nil, gapi.Errf(gapi.ClassInvalid, "a release takes at most %d asset links", maxReleaseLinks)
+	}
+	out := make([]gapi.ReleaseLink, 0, len(links))
+	for i, l := range links {
+		name := strings.TrimSpace(l.Name)
+		if name == "" {
+			return nil, gapi.Errf(gapi.ClassInvalid, "asset link %d has no name", i+1)
+		}
+		u, err := url.Parse(l.URL)
+		inProject := err == nil && slices.ContainsFunc(roots, func(r string) bool {
+			return strings.HasPrefix(u.EscapedPath(), r) && !slices.Contains(strings.Split(u.Path, "/"), "..")
+		})
+		if err != nil || !u.IsAbs() || u.User != nil || u.Host == "" || !s.inst.SameOrigin(u) || !inProject {
+			return nil, gapi.Errf(gapi.ClassBlocked, "asset link %q must be a URL in this project, under %s/%s or its API "+
+				"path, with no credentials in it: a release page sends its readers wherever its links point", name,
+				strings.TrimSuffix(s.inst.WebBase().String(), "/"), project.PathWithNamespace)
+		}
+		if l.LinkType != "" && !slices.Contains(releaseLinkTypes, l.LinkType) {
+			return nil, gapi.Errf(gapi.ClassInvalid, "asset link %q has link_type %q; it is one of %s", name, l.LinkType,
+				strings.Join(releaseLinkTypes, ", "))
+		}
+		if p := l.DirectAssetPath; p != "" && (!strings.HasPrefix(p, "/") || slices.Contains(strings.Split(p, "/"), "..")) {
+			return nil, gapi.Errf(gapi.ClassInvalid, "asset link %q has direct_asset_path %q; it starts with / and has no .. segment", name, p)
+		}
+		out = append(out, gapi.ReleaseLink{Name: name, URL: u.String(), LinkType: l.LinkType, DirectAssetPath: l.DirectAssetPath})
+	}
+	return out, nil
 }
 
 // CreateRelease creates a release, and its tag at ref when the tag does
@@ -109,6 +159,13 @@ func (s *Service) CreateRelease(ctx context.Context, in ReleaseCreate) (model.Re
 	t, err := s.writeTarget(ctx, in.Project)
 	if err != nil {
 		return model.ReleaseWrite{}, err
+	}
+	links, err := s.checkLinks(t.project, in.Links)
+	if err != nil {
+		return model.ReleaseWrite{}, err
+	}
+	if len(links) > 0 {
+		body.Assets = &gapi.ReleaseLinks{Links: links}
 	}
 	exists, err := s.tagExists(ctx, t.p, in.TagName)
 	if err != nil {
@@ -124,8 +181,9 @@ func (s *Service) CreateRelease(ctx context.Context, in ReleaseCreate) (model.Re
 	}
 	milestones := nonNil(in.Milestones)
 	if gapi.IsDryRun(ctx) {
-		return model.ReleaseWrite{Outcome: "dry_run", TagName: in.TagName, TagCreated: !exists, Milestones: milestones, Write: model.Write{
-			DryRun: true, Target: t.ref, WouldSend: preview("POST", "create a release", fieldsOf(body))}}, nil
+		return model.ReleaseWrite{Outcome: "dry_run", TagName: in.TagName, TagCreated: !exists, Milestones: milestones,
+			Links: linkRows(links), Write: model.Write{
+				DryRun: true, Target: t.ref, WouldSend: preview("POST", "create a release", fieldsOf(body))}}, nil
 	}
 	r, err := s.client.CreateRelease(ctx, t.p, body)
 	if err != nil {
@@ -141,11 +199,25 @@ func (s *Service) CreateRelease(ctx context.Context, in ReleaseCreate) (model.Re
 		})
 	}
 	out := model.ReleaseWrite{Outcome: "created", Write: model.Write{Target: t.ref}, TagName: r.TagName, TagCreated: !exists,
-		ReleasedAt: r.ReleasedAt, Milestones: releaseMilestones(r)}
+		ReleasedAt: r.ReleasedAt, Milestones: releaseMilestones(r), Links: []model.LinkRow{}}
+	if r.Assets != nil {
+		for _, l := range r.Assets.Links {
+			out.Links = append(out.Links, model.LinkRow{Name: l.Name, URL: l.URL, LinkType: l.LinkType})
+		}
+	}
 	if r.Commit != nil {
 		out.CommitSHA = r.Commit.ID
 	}
 	return out, nil
+}
+
+// linkRows are the links a dry run would send.
+func linkRows(links []gapi.ReleaseLink) []model.LinkRow {
+	out := make([]model.LinkRow, 0, len(links))
+	for _, l := range links {
+		out = append(out, model.LinkRow{Name: l.Name, URL: l.URL, LinkType: l.LinkType})
+	}
+	return out
 }
 
 // tagExists looks a tag up by its name.

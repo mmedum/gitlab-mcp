@@ -119,6 +119,7 @@ func phase0(s scratch) []step {
 		{tool: "get_project", args: map[string]any{"project": p}},
 		{tool: "get_project", args: map[string]any{"project": s.ID}},
 		{tool: "get_project", args: map[string]any{"project": s.WebURL}},
+		{tool: "get_project", args: map[string]any{"project": s.ID, "offset": 10}},
 
 		{tool: "search_issues", args: map[string]any{"project": p, "state": "opened", "labels": []any{s.Label},
 			"author": s.User, "search": s.Name, "order_by": "created_at", "sort": "asc", "max": 1,
@@ -155,6 +156,7 @@ func phase0(s scratch) []step {
 		{tool: "list_commits", args: map[string]any{"project": p, "path": s.File, "author": s.User}},
 		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.SHA}},
 		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.Feature, "file_offset": 1, "message_offset": 7}},
+		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.Feature, "file_offset": 0, "diff_offset": 5}},
 	}
 }
 
@@ -176,12 +178,14 @@ func phase1(s scratch) []step {
 		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR}},
 		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR, "paths": []any{s.File}, "file_offset": 0}},
 		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR, "file_offset": 1}},
+		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR, "diff_offset": 5}},
 		{tool: "get_mr_diff", args: map[string]any{"project": p, "iid": s.MR, "paths": []any{"missing/file.md"}},
 			expectError: true, why: "a path the merge request does not change"},
 		{tool: "list_mr_commits", args: map[string]any{"project": p, "iid": s.MR, "max": 1}, paged: true},
 		{tool: "list_review_comments", args: map[string]any{"project": p, "iid": s.MR}, paged: true},
 
 		{tool: "compare_refs", args: map[string]any{"project": p, "from": s.Default, "to": s.Feature}},
+		{tool: "compare_refs", args: map[string]any{"project": p, "from": s.Default, "to": s.Feature, "diff_offset": 5}},
 		{tool: "compare_refs", args: map[string]any{"project": p, "from": s.Default, "to": s.Feature, "straight": true,
 			"commit_offset": 1, "file_offset": 1}},
 		{tool: "list_tags", args: map[string]any{"project": p, "search": "^v0", "order_by": "version", "sort": "asc", "max": 1},
@@ -297,6 +301,15 @@ func phase2(s scratch) []step {
 		{tool: "resolve_discussion", args: map[string]any{"project": p, "iid": s.MR, "discussion_id": "{{mr_thread}}", "dry_run": true}},
 		{tool: "resolve_discussion", args: map[string]any{"project": p, "iid": s.MR, "discussion_id": "{{mr_thread}}"}},
 		{tool: "resolve_discussion", args: map[string]any{"project": p, "iid": s.MR, "discussion_id": "{{mr_thread}}", "reopen": true}},
+		// A resolvable thread on an issue, resolved and reopened.
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A thread the live run started.",
+			"thread": true}, save: map[string]string{"issue_new_thread": "discussion_id"}},
+		{tool: "resolve_discussion", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue,
+			"discussion_id": "{{issue_new_thread}}"}},
+		{tool: "resolve_discussion", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue,
+			"discussion_id": "{{issue_new_thread}}", "reopen": true}},
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "body": "A general thread.",
+			"thread": true}},
 
 		// A review: drafts, one deleted, then submitted.
 		{tool: "add_review_comment", args: map[string]any{"project": p, "iid": s.MR, "body": "A draft on a range.", "file": s.File,
@@ -445,12 +458,15 @@ func planShip(s scratch) []step {
 		{tool: "cancel_pipeline", args: map[string]any{"project": p, "pipeline_id": "{{run_pipeline}}"}},
 		{tool: "retry_pipeline", args: map[string]any{"project": p, "pipeline_id": s.Pipeline, "dry_run": true}},
 		{tool: "retry_pipeline", args: map[string]any{"project": p, "pipeline_id": s.Pipeline}},
-		{tool: "retry_job", args: map[string]any{"project": p, "job_id": s.JobPassed, "dry_run": true}},
-		{tool: "retry_job", args: map[string]any{"project": p, "job_id": s.JobPassed}},
+		{tool: "retry_job", args: map[string]any{"project": p, "job_id": s.JobPassed, "inputs": map[string]any{"undeclared": "x"}},
+			expectError: true, why: "an input the job's inputs do not include"},
+		{tool: "retry_job", args: map[string]any{"project": p, "job_id": s.JobPassed, "dry_run": true,
+			"inputs": map[string]any{"target": "retried"}}},
+		{tool: "retry_job", args: map[string]any{"project": p, "job_id": s.JobPassed, "inputs": map[string]any{"target": "retried"}}},
 		{tool: "play_job", args: map[string]any{"project": p, "job_id": s.JobManual, "dry_run": true,
-			"variables": []any{map[string]any{"key": "LIVE_PLAY", "value": "played-" + w}}}},
+			"variables": []any{map[string]any{"key": "LIVE_PLAY", "value": "played-" + w}}, "inputs": map[string]any{"target": "played"}}},
 		{tool: "play_job", args: map[string]any{"project": p, "job_id": s.JobManual,
-			"variables": []any{map[string]any{"key": "LIVE_PLAY", "value": "played-" + w}}}},
+			"variables": []any{map[string]any{"key": "LIVE_PLAY", "value": "played-" + w}}, "inputs": map[string]any{"target": "played"}}},
 		{tool: "play_job", args: map[string]any{"project": p, "job_id": s.JobManual}, expectError: true,
 			why: "a job no longer waiting to be started"},
 
@@ -498,7 +514,11 @@ func planShip(s scratch) []step {
 			"name": "Live release " + w, "description": "Release notes.\n/close stays text.\n", "milestones": []any{s.Milestone},
 			"released_at": now.Format(time.RFC3339)}},
 		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag}, expectError: true, why: "a second release of one tag"},
-		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag2, "ref": s.Default}},
+		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag2, "ref": s.Default,
+			"links": []any{map[string]any{"name": "https://example.invalid/steer", "url": "https://example.invalid/steer"}}},
+			expectError: true, why: "an asset link off the instance"},
+		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag2, "ref": s.Default, "links": []any{
+			map[string]any{"name": "The releases", "url": s.WebURL + "/-/releases", "link_type": "other", "direct_asset_path": "/releases"}}}},
 		{tool: "list_releases", args: map[string]any{"project": p, "order_by": "created_at", "sort": "desc", "max": 1}, paged: true},
 		{tool: "get_release", args: map[string]any{"project": p, "tag_name": tag, "offset": 0}},
 

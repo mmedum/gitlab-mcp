@@ -47,8 +47,8 @@ evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
 | `create_issue` | Create an issue; labels, assignees and milestone checked first |
 | `update_issue` | Change an issue's fields, refused if it changed since you read it |
 | `list_discussions` | The comment threads on an issue or a merge request |
-| `add_comment` | Comment on an issue or merge request, reply in a thread, or start one on a diff line |
-| `resolve_discussion` | Resolve or reopen a merge request thread |
+| `add_comment` | Comment on an issue or merge request, reply in a thread, or start one, on a diff line or not |
+| `resolve_discussion` | Resolve or reopen a thread on a merge request or an issue |
 | `search_merge_requests` | Find merge requests across gitlab.com or a project |
 | `get_merge_request` | One merge request with its approvals |
 | `list_mr_files` | The files a merge request changes, with line counts and GitLab's markers |
@@ -70,7 +70,7 @@ evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
 | `create_branch` | Create a branch from a ref |
 | `create_commit` | Commit file changes to a branch; never the default or a protected one |
 | `list_pipelines` | A project's CI pipelines |
-| `get_pipeline` | One pipeline with the jobs that failed |
+| `get_pipeline` | One pipeline with the jobs that failed, trigger jobs included |
 | `list_jobs` | A pipeline's jobs |
 | `get_job_log` | A window of a job's log, secrets masked; the failing section on request |
 | `lint_ci` | Check a project's CI configuration at a ref, or configuration you pass |
@@ -84,8 +84,8 @@ evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
 | `unapprove_merge_request` | Withdraw your approval (Ship) |
 | `run_pipeline` | Run a pipeline for a ref, with variables whose values are never shown (Ship) |
 | `retry_pipeline` | Retry a pipeline's failed and canceled jobs (Ship) |
-| `retry_job` | Run a finished job again (Ship) |
-| `play_job` | Start a manual job (Ship) |
+| `retry_job` | Run a finished job again, with inputs (Ship) |
+| `play_job` | Start a manual job, with variables and inputs (Ship) |
 | `cancel_pipeline` | Cancel a running pipeline (Ship) |
 | `delete_branch` | Delete a branch; never the default, a protected or an unmerged one unless asked (Destructive) |
 | `delete_comment` | Delete one of your own comments (Destructive) |
@@ -98,7 +98,7 @@ evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
 | `create_snippet` | Create a snippet, always private (`snippets` toolset) |
 | `list_releases` | A project's releases (`releases` toolset) |
 | `get_release` | One release and its notes (`releases` toolset) |
-| `create_release` | Create a release, and its tag at a ref (`releases` toolset, Ship) |
+| `create_release` | Create a release, and its tag at a ref, with asset links to the project's own pages (`releases` toolset, Ship) |
 | `list_environments` | A project's environments and their last deployment (`deployments` toolset) |
 | `list_deployments` | What was deployed where, and by which job (`deployments` toolset) |
 | `list_events` | Recent activity, yours or a project's (`activity` toolset) |

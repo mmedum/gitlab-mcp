@@ -206,6 +206,7 @@ type Project struct {
 	NamespaceKind        string     `json:"namespace_kind" jsonschema:"group or user"`
 	UntrustedName        string     `json:"untrusted_name"`
 	UntrustedDescription string     `json:"untrusted_description"`
+	DescriptionBudget    Budget     `json:"description_budget"`
 }
 
 // ---------------------------------------------------------------- issues
@@ -496,9 +497,12 @@ type FileDiff struct {
 	NewPath       string `json:"new_path"`
 	Status        string `json:"status"`
 	UntrustedDiff string `json:"untrusted_diff"`
+	// DiffOffset is where the text shown starts in this file's diff.
+	DiffOffset int `json:"diff_offset" jsonschema:"Where the text shown starts in this file's diff, in characters; 0 unless diff_offset was passed"`
 	// Truncated marks a single diff larger than the whole budget, cut
-	// at it; get_file reads the file itself.
-	Truncated bool `json:"truncated" jsonschema:"True when this one diff was over the whole budget and was cut; get_file reads the file"`
+	// at it; ContinueDiffOffset reads on.
+	Truncated          bool `json:"truncated" jsonschema:"True when this one diff was over the whole budget and was cut"`
+	ContinueDiffOffset *int `json:"continue_diff_offset" jsonschema:"When truncated, pass as diff_offset, with the same file_offset, to read the rest of this diff; null otherwise"`
 }
 
 // ------------------------------------------------------------ review
@@ -675,6 +679,24 @@ type PipelineDetail struct {
 	// FailedJobs lists the failed jobs, the latest attempt of each.
 	FailedJobs         []JobRow `json:"failed_jobs"`
 	FailedJobsComplete bool     `json:"failed_jobs_complete" jsonschema:"False when more jobs failed than were read; list_jobs with scope failed lists them"`
+	// FailedTriggerJobs are the failed trigger jobs, which the job
+	// listing leaves out.
+	FailedTriggerJobs         []TriggerJobRow `json:"failed_trigger_jobs" jsonschema:"Trigger jobs that failed, each with the downstream pipeline it started, whose failure is its own"`
+	FailedTriggerJobsComplete bool            `json:"failed_trigger_jobs_complete" jsonschema:"False when more trigger jobs failed than were read, or they could not be read"`
+}
+
+// TriggerJobRow is a trigger job and the pipeline it started.
+type TriggerJobRow struct {
+	JobRow
+	Downstream *DownstreamRow `json:"downstream_pipeline" jsonschema:"The pipeline this trigger job started; null when it started none"`
+}
+
+// DownstreamRow is a pipeline a trigger job started.
+type DownstreamRow struct {
+	ID        int64  `json:"id"`
+	ProjectID int64  `json:"project_id" jsonschema:"The project it ran in, which may be another; get_pipeline with this id reads it"`
+	Status    string `json:"status"`
+	WebURL    string `json:"web_url"`
 }
 
 // Jobs is list_jobs' result.
@@ -967,6 +989,7 @@ type CommentWrite struct {
 	DiscussionID string        `json:"discussion_id" jsonschema:"The thread it is in, for a reply or a new thread; empty for a standalone comment, whose thread list_discussions names, and for a draft that starts one"`
 	Position     *DiffPosition `json:"position" jsonschema:"Where on the diff it landed, as GitLab stored it; null for a comment not on a line"`
 	LineRange    *LineSpan     `json:"line_range" jsonschema:"The lines a multi-line comment covers; null for one line"`
+	LineCode     string        `json:"line_code" jsonschema:"For a draft on a line, GitLab's code for that line, which its web view places the draft by; empty otherwise"`
 }
 
 // LineSpan is the first and last line of a multi-line diff comment on
@@ -1103,6 +1126,7 @@ type JobWrite struct {
 	PipelineID int64    `json:"pipeline_id"`
 	WebURL     string   `json:"web_url"`
 	Variables  []string `json:"variables" jsonschema:"The keys of the variables sent; their values are never shown"`
+	Inputs     []string `json:"inputs" jsonschema:"The names of the job inputs sent"`
 }
 
 // ----------------------------------------------------------- destructive
@@ -1266,6 +1290,14 @@ type ReleaseWrite struct {
 	CommitSHA  string     `json:"commit_sha"`
 	ReleasedAt *time.Time `json:"released_at"`
 	Milestones []string   `json:"milestones"`
+	Links      []LinkRow  `json:"links" jsonschema:"The asset links the release was created with"`
+}
+
+// LinkRow is an asset link of a release.
+type LinkRow struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	LinkType string `json:"link_type"`
 }
 
 // ----------------------------------------------------------- deployments

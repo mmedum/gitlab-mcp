@@ -141,15 +141,20 @@ type Comment struct {
 	Body         string
 	DiscussionID string
 	Location     *DiffLocation
+	// Thread starts a resolvable thread rather than a standalone comment.
+	Thread bool
 }
 
 // AddComment posts a comment now: on an issue or a merge request, as a
-// reply in a thread, or as a new thread on a line of a merge request's
-// diff.
+// reply in a thread, as a new resolvable thread, or as a new thread on a
+// line of a merge request's diff.
 func (s *Service) AddComment(ctx context.Context, in Comment) (model.CommentWrite, error) {
 	mr := in.Type == "merge_request"
 	if in.Location != nil && !mr {
 		return model.CommentWrite{}, gapi.Errf(gapi.ClassInvalid, "an inline comment is on a merge request's diff: pass type merge_request")
+	}
+	if in.Thread && in.DiscussionID != "" {
+		return model.CommentWrite{}, gapi.Errf(gapi.ClassInvalid, "thread starts a new thread and discussion_id replies in one: pass one of them")
 	}
 	if err := checkComment(in.Body, in.DiscussionID, in.Location); err != nil {
 		return model.CommentWrite{}, err
@@ -168,6 +173,8 @@ func (s *Service) AddComment(ctx context.Context, in Comment) (model.CommentWrit
 		if pos, err = s.place(ctx, t.p, in.IID, *in.Location); err != nil {
 			return model.CommentWrite{}, err
 		}
+	case in.Thread:
+		kind, operation = "thread", "start a thread on the "+strings.ReplaceAll(in.Type, "_", " ")
 	}
 	if gapi.IsDryRun(ctx) {
 		out := model.CommentWrite{Outcome: "dry_run", Kind: kind, Write: model.Write{DryRun: true, Target: t.ref,
@@ -183,9 +190,14 @@ func (s *Service) AddComment(ctx context.Context, in Comment) (model.CommentWrit
 		note, err = s.client.ReplyToMergeRequestDiscussion(ctx, t.p, in.IID, in.DiscussionID, in.Body)
 	case in.DiscussionID != "":
 		note, err = s.client.ReplyToIssueDiscussion(ctx, t.p, in.IID, in.DiscussionID, in.Body)
-	case pos != nil:
+	case pos != nil || in.Thread:
 		var d *gitlab.Discussion
-		if d, err = s.client.CreateMergeRequestDiscussion(ctx, t.p, in.IID, in.Body, pos); err == nil {
+		if mr {
+			d, err = s.client.CreateMergeRequestDiscussion(ctx, t.p, in.IID, in.Body, pos)
+		} else {
+			d, err = s.client.CreateIssueDiscussion(ctx, t.p, in.IID, in.Body)
+		}
+		if err == nil {
 			if len(d.Notes) == 0 {
 				return model.CommentWrite{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the new thread with no comment in it")
 			}
@@ -206,27 +218,12 @@ func (s *Service) AddComment(ctx context.Context, in Comment) (model.CommentWrit
 	return out, nil
 }
 
-// newestThreads reads the page of an item's threads that holds the
-// newest: page 1, then the last page by number when there are more.
-// Threads list oldest first. all is true when the threads read are every
-// one.
-func (s *Service) newestThreads(ctx context.Context, p gapi.Project, iid int64, mr bool) (rows []gitlab.Discussion, all bool, err error) {
-	read := func(o gapi.ListOptions) ([]gitlab.Discussion, gapi.Page, error) {
-		if mr {
-			return s.client.ListMergeRequestDiscussions(ctx, p, iid, o)
-		}
-		return s.client.ListIssueDiscussions(ctx, p, iid, o)
+// thread reads one thread of a merge request, or of an issue.
+func (s *Service) thread(ctx context.Context, p gapi.Project, iid int64, mr bool, id string) (*gitlab.Discussion, error) {
+	if mr {
+		return s.client.GetMergeRequestDiscussion(ctx, p, iid, id)
 	}
-	rows, page, err := read(gapi.ListOptions{PerPage: gapi.MaxPerPage})
-	if err != nil || page.Complete() {
-		return rows, err == nil, err
-	}
-	if page.Pages < 1 {
-		// GitLab did not say how many pages: the newest is not known.
-		return nil, false, errors.New("GitLab did not say how many pages of threads there are")
-	}
-	rows, _, err = read(gapi.ListOptions{PerPage: gapi.MaxPerPage, Page: page.Pages})
-	return rows, false, err
+	return s.client.GetIssueDiscussion(ctx, p, iid, id)
 }
 
 // findNote settles an ambiguous comment: one by this account with the
@@ -243,12 +240,7 @@ func (s *Service) findNote(ctx context.Context, p gapi.Project, iid int64, mr bo
 		return n.Author.Username == me.Username && !n.CreatedAt.Before(since) && sameText(n.Body, body)
 	}
 	if discussionID != "" {
-		var thread *gitlab.Discussion
-		if mr {
-			thread, err = s.client.GetMergeRequestDiscussion(ctx, p, iid, discussionID)
-		} else {
-			thread, err = s.client.GetIssueDiscussion(ctx, p, iid, discussionID)
-		}
+		thread, err := s.thread(ctx, p, iid, mr, discussionID)
 		if err != nil {
 			return "", err
 		}
@@ -257,22 +249,46 @@ func (s *Service) findNote(ctx context.Context, p gapi.Project, iid int64, mr bo
 		}
 		return "", nil
 	}
-	rows, all, err := s.newestThreads(ctx, p, iid, mr)
+	// Threads list oldest first, so the newest are on the last page, and
+	// the walk goes back a page at a time until one starts before the
+	// call: a comment made then is on it or after it.
+	read := func(page int) ([]gitlab.Discussion, gapi.Page, error) {
+		o := gapi.ListOptions{PerPage: gapi.MaxPerPage, Page: page}
+		if mr {
+			return s.client.ListMergeRequestDiscussions(ctx, p, iid, o)
+		}
+		return s.client.ListIssueDiscussions(ctx, p, iid, o)
+	}
+	pageOne, first, err := read(1)
 	if err != nil {
 		return "", err
 	}
-	for i := len(rows) - 1; i >= 0; i-- {
-		if j := slices.IndexFunc(rows[i].Notes, ours); j >= 0 {
-			return fmt.Sprintf("comment %d in thread %s", rows[i].Notes[j].ID, rows[i].ID), nil
+	rows, page := pageOne, 1
+	if !first.Complete() {
+		if first.Pages < 1 {
+			return "", errors.New("GitLab did not say how many pages of threads there are")
+		}
+		page = first.Pages
+		if rows, _, err = read(page); err != nil {
+			return "", err
 		}
 	}
-	// Absent from the newest threads is "not created" only when the page
-	// reaches back past the call: had a full page of threads been started
-	// since, it could sit on the page before.
-	if all || (len(rows) > 0 && len(rows[0].Notes) > 0 && rows[0].Notes[0].CreatedAt.Before(since)) {
-		return "", nil
+	for {
+		for i := len(rows) - 1; i >= 0; i-- {
+			if j := slices.IndexFunc(rows[i].Notes, ours); j >= 0 {
+				return fmt.Sprintf("comment %d in thread %s", rows[i].Notes[j].ID, rows[i].ID), nil
+			}
+		}
+		if page == 1 || (len(rows) > 0 && len(rows[0].Notes) > 0 && rows[0].Notes[0].CreatedAt.Before(since)) {
+			return "", nil
+		}
+		page--
+		if page == 1 {
+			rows = pageOne
+		} else if rows, _, err = read(page); err != nil {
+			return "", err
+		}
 	}
-	return "", errors.New("more threads were started since the call than one page shows")
 }
 
 // ReviewComment is add_review_comment's request.
@@ -325,6 +341,9 @@ func (s *Service) AddReviewComment(ctx context.Context, in ReviewComment) (model
 	out := model.CommentWrite{Outcome: "created", Kind: "draft", Write: model.Write{Target: t.ref}, NoteID: draft.ID}
 	if draft.DiscussionID != nil {
 		out.DiscussionID = *draft.DiscussionID
+	}
+	if draft.LineCode != nil {
+		out.LineCode = *draft.LineCode
 	}
 	out.Position, out.LineRange = landed(draft.Position)
 	return out, nil
@@ -447,13 +466,18 @@ func (s *Service) SubmitReview(ctx context.Context, in Review) (model.ReviewSubm
 	return out, nil
 }
 
-// ResolveDiscussion resolves or reopens a merge request's thread.
-func (s *Service) ResolveDiscussion(ctx context.Context, raw string, iid int64, discussionID string, resolve bool) (model.DiscussionWrite, error) {
+// ResolveDiscussion resolves or reopens a thread of a merge request, or
+// of an issue when typ is issue.
+func (s *Service) ResolveDiscussion(ctx context.Context, raw, typ string, iid int64, discussionID string, resolve bool) (model.DiscussionWrite, error) {
+	if typ != "" && typ != "issue" && typ != "merge_request" {
+		return model.DiscussionWrite{}, gapi.Errf(gapi.ClassInvalid, "type is issue or merge_request")
+	}
 	t, err := s.writeTarget(ctx, raw)
 	if err != nil {
 		return model.DiscussionWrite{}, err
 	}
-	thread, err := s.client.GetMergeRequestDiscussion(ctx, t.p, iid, discussionID)
+	mr := typ != "issue"
+	thread, err := s.thread(ctx, t.p, iid, mr, discussionID)
 	if err != nil {
 		return model.DiscussionWrite{}, err
 	}
@@ -475,7 +499,12 @@ func (s *Service) ResolveDiscussion(ctx context.Context, raw string, iid int64, 
 		out.WouldSend = preview("PUT", verb, []string{"resolved"})
 		return out, nil
 	}
-	d, err := s.client.ResolveMergeRequestDiscussion(ctx, t.p, iid, discussionID, resolve)
+	var d *gitlab.Discussion
+	if mr {
+		d, err = s.client.ResolveMergeRequestDiscussion(ctx, t.p, iid, discussionID, resolve)
+	} else {
+		d, err = s.client.ResolveIssueDiscussion(ctx, t.p, iid, discussionID, resolve)
+	}
 	if err != nil {
 		return model.DiscussionWrite{}, err
 	}

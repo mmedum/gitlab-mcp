@@ -123,7 +123,7 @@ func commitRow(c gitlab.Commit) model.CommitRow {
 // the fileOffset-th changed file. A diff that does not fit is named, and
 // file_offset continues from it. The message is shown from
 // messageOffset, and a cut one says where to continue.
-func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, messageOffset int) (model.Commit, error) {
+func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, diffOffset, messageOffset int) (model.Commit, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
 		return model.Commit{}, err
@@ -136,7 +136,7 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, me
 	if err != nil {
 		return model.Commit{}, err
 	}
-	d, err := budgetDiffs(diffs, complete, fileOffset)
+	d, err := budgetDiffs(diffs, complete, fileOffset, diffOffset)
 	if err != nil {
 		return model.Commit{}, err
 	}
@@ -163,9 +163,13 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, me
 // continues from it; a diff GitLab itself left out is named with GitLab's
 // reason rather than shown as empty. complete says whether diffs is every
 // changed file.
-func budgetDiffs(diffs []gitlab.Diff, complete bool, fileOffset int) (model.Diffs, error) {
+func budgetDiffs(diffs []gitlab.Diff, complete bool, fileOffset, diffOffset int) (model.Diffs, error) {
 	if fileOffset > len(diffs) {
 		return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "file_offset %d is past the %d changed files read", fileOffset, len(diffs))
+	}
+	if diffOffset < 0 || (diffOffset > 0 && fileOffset == len(diffs)) {
+		return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "diff_offset continues the diff of the file at file_offset: "+
+			"pass both as a truncated result gave them")
 	}
 	out := model.Diffs{Files: []model.FileDiff{}, NotShown: []model.FileChange{}, FilesComplete: complete,
 		DiffBudget: render.DiffBudget}
@@ -173,6 +177,9 @@ func budgetDiffs(diffs []gitlab.Diff, complete bool, fileOffset int) (model.Diff
 	for i, d := range diffs[fileOffset:] {
 		status := diffStatus(d)
 		change := model.FileChange{OldPath: d.OldPath, NewPath: d.NewPath, Status: status}
+		if i == 0 && diffOffset > 0 && (d.TooLarge || d.Collapsed) {
+			return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "the file at file_offset %d has no diff to continue: GitLab left it out", fileOffset)
+		}
 		switch {
 		case d.TooLarge:
 			change.Reason = "too_large"
@@ -191,6 +198,17 @@ func budgetDiffs(diffs []gitlab.Diff, complete bool, fileOffset int) (model.Diff
 			continue
 		}
 		text, visible := render.Code(d.Diff)
+		fd := model.FileDiff{OldPath: d.OldPath, NewPath: d.NewPath, Status: status}
+		if i == 0 && diffOffset > 0 {
+			// A diff continued: from where the last result cut it.
+			total := utf8.RuneCountInString(text)
+			if diffOffset > total {
+				return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "diff_offset %d is past the end of this file's diff, which has %d characters",
+					diffOffset, total)
+			}
+			text, _ = render.Cut(text, diffOffset, total)
+			fd.DiffOffset = diffOffset
+		}
 		size := utf8.RuneCountInString(text)
 		if used+size > render.DiffBudget && len(out.Files) > 0 {
 			next := fileOffset + i
@@ -199,14 +217,22 @@ func budgetDiffs(diffs []gitlab.Diff, complete bool, fileOffset int) (model.Diff
 			out.NotShown = append(out.NotShown, change)
 			continue
 		}
-		fd := model.FileDiff{OldPath: d.OldPath, NewPath: d.NewPath, Status: status}
 		if size > render.DiffBudget {
 			// The first diff alone is over the budget: it is cut, and
-			// the file itself can be read with get_file.
-			text, _ = render.Cut(text, 0, render.DiffBudget)
+			// diff_offset reads on from the cut.
+			var b model.Budget
+			text, b = render.Cut(text, 0, render.DiffBudget)
 			fd.Truncated = true
+			if b.ContinueOffset != nil {
+				next := fd.DiffOffset + *b.ContinueOffset
+				fd.ContinueDiffOffset = &next
+			}
 		}
 		fd.UntrustedDiff = text
+		if fd.DiffOffset > 0 || fd.Truncated {
+			// Only part is shown: count what render.Code marked in it.
+			visible = strings.Count(text, "<U+")
+		}
 		out.HiddenRemoved += visible
 		used += size
 		out.Files = append(out.Files, fd)

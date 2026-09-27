@@ -178,6 +178,9 @@ func ReleaseWrite(w model.ReleaseWrite, _ Boundary) string {
 	if !w.DryRun {
 		fmt.Fprintf(&b, "\nCommit %s; released %s; milestones %s.", Ident(w.CommitSHA), whenPtr(w.ReleasedAt), idents(w.Milestones))
 	}
+	for _, l := range w.Links {
+		fmt.Fprintf(&b, "\nAsset link %s (%s): %s", Ident(l.Name), Ident(orNone(l.LinkType)), Ident(l.URL))
+	}
 	return b.String()
 }
 

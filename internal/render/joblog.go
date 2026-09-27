@@ -70,15 +70,17 @@ func untimestamp(raw []byte) []byte {
 const endMark = 0
 
 // LogSection is one section of a stored log, by byte offsets: Start is
-// where its start marker begins, End where its end marker ends, or -1
-// when the log has no end marker for it.
+// where its start marker begins, or -1 when it began before the stretch
+// read; End is where its end marker ends, or -1 when the stretch has no
+// end marker for it.
 type LogSection struct {
 	Name       string
 	Start, End int
 }
 
-// LogSections finds the sections of a stored log, in the order they
-// start.
+// LogSections finds the sections of a stretch of a stored log, in the
+// order their markers appear. A section whose end marker is in the
+// stretch and whose start is not began before it.
 func LogSections(raw []byte) []LogSection {
 	var out []LogSection
 	open := map[string]int{}
@@ -92,7 +94,9 @@ func LogSections(raw []byte) []LogSection {
 		if i, ok := open[name]; ok {
 			out[i].End = m[1]
 			delete(open, name)
+			continue
 		}
+		out = append(out, LogSection{Name: name, Start: -1, End: m[1]})
 	}
 	return out
 }

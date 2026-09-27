@@ -2,7 +2,6 @@ package tools
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -51,8 +50,14 @@ func TestGetPipeline(t *testing.T) {
 			t.Errorf("text lacks %q:\n%s", want, text)
 		}
 	}
+	// The trigger job the job listing leaves out, and what it started.
+	if get(out, "failed_trigger_jobs", 0, "id") != float64(gitlabtest.BridgeFailed) ||
+		get(out, "failed_trigger_jobs", 0, "downstream_pipeline", "id") != float64(gitlabtest.DownstreamFailed) ||
+		!strings.Contains(text, fmt.Sprintf("started pipeline %d in project id 2002, failed", gitlabtest.DownstreamFailed)) {
+		t.Errorf("trigger jobs = %v\n%s", get(out, "failed_trigger_jobs"), text)
+	}
 	_, green := h.ok("get_pipeline", map[string]any{"project": gitlabtest.ProjectAlpha, "pipeline_id": 60001})
-	if len(get(green, "failed_jobs").([]any)) != 0 {
+	if len(get(green, "failed_jobs").([]any)) != 0 || len(get(green, "failed_trigger_jobs").([]any)) != 0 {
 		t.Errorf("a passing pipeline lists failed jobs: %v", get(green, "failed_jobs"))
 	}
 	h.fails("get_pipeline", map[string]any{"project": gitlabtest.ProjectAlpha, "pipeline_id": 1}, "not_found")
@@ -220,8 +225,7 @@ func TestLintCI(t *testing.T) {
 func TestGetJobLogMasksAKeyOpenedEarlier(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	log := "start\n-----BEGIN " + "RSA PRIVATE KEY-----\n" + strings.Repeat("MIIEowIBAAKCAQEA0000000000\n", 5000) + "tail line\n"
-	h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/jobs/%d/trace", alphaID, gitlabtest.JobPassed),
-		Status: http.StatusOK, Body: log, Header: http.Header{"Content-Type": {"text/plain"}}})
+	h.gl.SetJobLog(gitlabtest.ProjectAlpha, gitlabtest.JobPassed, "success", log, true)
 	_, out := h.ok("get_job_log", map[string]any{"project": alphaID, "job_id": gitlabtest.JobPassed, "byte_limit": 1000})
 	shown := get(out, "untrusted_log").(string)
 	if strings.Contains(shown, "MIIE") || !strings.HasPrefix(shown, "[MASKED private-key]") || get(out, "secrets_masked") != float64(1) {
@@ -229,5 +233,140 @@ func TestGetJobLogMasksAKeyOpenedEarlier(t *testing.T) {
 	}
 	if n := get(out, "byte_end").(float64) - get(out, "byte_offset").(float64); n > 1000+4096 {
 		t.Errorf("the window grew to %v bytes", n)
+	}
+}
+
+// traceCalls lists the job log requests since the last reset, as
+// method and query.
+func traceCalls(h *harness, job int64) []string {
+	var out []string
+	suffix := fmt.Sprintf("/jobs/%d/trace", job)
+	for _, r := range h.gl.Requests() {
+		if strings.HasSuffix(r.EscapedPath, suffix) {
+			out = append(out, r.Method+" "+r.RawQuery)
+		}
+	}
+	return out
+}
+
+func TestGetJobLogReadsOnlyTheWindow(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	// Past the 32 MiB a whole read could take: the old limit.
+	line := "ok  \texample.test/pkg\t0.01s\n"
+	big := strings.Repeat(line, (33<<20)/len(line)) + "the last line\n"
+	for _, c := range []struct {
+		name, status string
+		archived     bool
+		// first is the request that learns the size.
+		first string
+	}{
+		{"an archived log, sized by its artifact", "success", true, ""},
+		{"a finished log not archived yet, sized by reading past its end", "success", false, "GET byte_limit=512000"},
+		{"a running log, sized by reading past its end", "running", false, "GET byte_limit=512000"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h.gl.SetJobLog(gitlabtest.ProjectAlpha, gitlabtest.JobPassed, c.status, big, c.archived)
+			h.gl.ResetRequests()
+			_, out := h.ok("get_job_log", map[string]any{"project": alphaID, "job_id": gitlabtest.JobPassed})
+			if get(out, "total_bytes") != float64(len(big)) || get(out, "byte_end") != float64(len(big)) ||
+				!strings.HasSuffix(get(out, "untrusted_log").(string), "the last line\n") {
+				t.Fatalf("total %v, end %v", get(out, "total_bytes"), get(out, "byte_end"))
+			}
+			calls := traceCalls(h, gitlabtest.JobPassed)
+			if c.first != "" && (len(calls) == 0 || calls[0] != c.first) {
+				t.Errorf("sized by %v, want %q first", calls, c.first)
+			}
+			if len(calls) > 20 {
+				t.Errorf("%d requests: %v", len(calls), calls)
+			}
+			for _, call := range calls {
+				if strings.HasPrefix(call, "GET") && !strings.Contains(call, "byte_offset=") && !strings.Contains(call, "byte_limit=") {
+					t.Errorf("the whole log was read: %q", call)
+				}
+			}
+			// From an offset in the middle, one ranged read.
+			h.gl.ResetRequests()
+			mid := len(big) / 2
+			_, out = h.ok("get_job_log", map[string]any{"project": alphaID, "job_id": gitlabtest.JobPassed, "byte_offset": mid})
+			if s := int(get(out, "byte_offset").(float64)); s > mid || mid-s > len(line) {
+				t.Errorf("the window starts at %d for an offset of %d", s, mid)
+			}
+			if !c.archived {
+				return
+			}
+			if calls := traceCalls(h, gitlabtest.JobPassed); len(calls) > 1 {
+				t.Errorf("an offset read made %d requests: %v", len(calls), calls)
+			}
+		})
+	}
+}
+
+func TestGetJobLogFailedOnlyInALongLog(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	sec := func(kind, name string) string { return "\x1b[0Ksection_" + kind + ":1:" + name + "\r\x1b[0K" }
+	filler := strings.Repeat("ok  \texample.test/pkg\t0.01s\n", 100000)
+	log := sec("start", "step_script") + filler + "--- FAIL: TestLogin\n" + sec("end", "step_script") + "\n" +
+		sec("start", "cleanup_file_variables") + "tidy\n" + sec("end", "cleanup_file_variables") + "\n" +
+		"\x1b[31;1mERROR: Job failed: exit code 1\n\x1b[0;m\n"
+	h.gl.SetJobLog(gitlabtest.ProjectAlpha, gitlabtest.JobPassed, "failed", log, true)
+	h.gl.ResetRequests()
+	_, out := h.ok("get_job_log", map[string]any{"project": alphaID, "job_id": gitlabtest.JobPassed, "failed_only": true,
+		"byte_limit": 2000})
+	shown := get(out, "untrusted_log").(string)
+	if get(out, "section") != "step_script" || !strings.Contains(shown, "--- FAIL: TestLogin") ||
+		!strings.HasSuffix(strings.TrimSpace(shown), "ERROR: Job failed: exit code 1") {
+		t.Errorf("section %v, shown:\n%s", get(out, "section"), shown)
+	}
+	if calls := traceCalls(h, gitlabtest.JobPassed); len(calls) > 2 {
+		t.Errorf("%d requests: %v", len(calls), calls)
+	}
+}
+
+// A log shorter than one ranged read, not archived yet, costs one read,
+// as a whole read did.
+func TestGetJobLogOfAShortLogIsOneRead(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.ResetRequests()
+	h.ok("get_job_log", map[string]any{"project": alphaID, "job_id": gitlabtest.JobFailed, "failed_only": true})
+	if calls := traceCalls(h, gitlabtest.JobFailed); len(calls) != 1 {
+		t.Errorf("%d reads: %v", len(calls), calls)
+	}
+}
+
+// A key printed indented, as a YAML block, that opened before the window
+// is masked whole too.
+func TestGetJobLogMasksAnIndentedKeyOpenedEarlier(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	log := "start\ntls.key: |\n    -----BEGIN " + "RSA PRIVATE KEY-----\n" + strings.Repeat("    MIIEowIBAAKCAQEA0000000000\n", 5000) +
+		"    -----END RSA PRIVATE KEY-----\ntail line\n"
+	h.gl.SetJobLog(gitlabtest.ProjectAlpha, gitlabtest.JobPassed, "success", log, true)
+	_, out := h.ok("get_job_log", map[string]any{"project": alphaID, "job_id": gitlabtest.JobPassed, "byte_limit": 1000})
+	shown := get(out, "untrusted_log").(string)
+	if strings.Contains(shown, "MIIE") || !strings.Contains(shown, "tail line") {
+		t.Errorf("shown:\n%s", shown)
+	}
+}
+
+// A section known only by its end marker starts before what was read; on
+// a short log the window starts at 0 rather than before it.
+func TestGetJobLogFailedOnlyWithAStrayEndMarker(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	log := "\x1b[0Ksection_end:1:stray\r\x1b[0K\nboom\n\x1b[31;1mERROR: Job failed: exit code 1\n\x1b[0;m\n"
+	h.gl.SetJobLog(gitlabtest.ProjectAlpha, gitlabtest.JobPassed, "failed", log, true)
+	_, out := h.ok("get_job_log", map[string]any{"project": alphaID, "job_id": gitlabtest.JobPassed, "failed_only": true})
+	if get(out, "byte_offset") != float64(0) || !strings.Contains(get(out, "untrusted_log").(string), "boom") {
+		t.Errorf("window %v: %v", get(out, "byte_offset"), get(out, "untrusted_log"))
+	}
+}
+
+// Trigger jobs that cannot be read leave the pipeline readable, and say so.
+func TestGetPipelineWhenTriggerJobsCannotBeRead(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: "GET", Path: fmt.Sprintf("/projects/%d/pipelines/%d/trigger_jobs", alphaID, gitlabtest.PipelineFailed),
+		Status: 403, Body: `{"message":"403 Forbidden"}`})
+	text, out := h.ok("get_pipeline", map[string]any{"project": alphaID, "pipeline_id": gitlabtest.PipelineFailed})
+	if len(get(out, "failed_jobs").([]any)) != 2 || get(out, "failed_trigger_jobs_complete") != false ||
+		!strings.Contains(text, "The trigger jobs could not be read") {
+		t.Errorf("out %v\n%s", out, text)
 	}
 }

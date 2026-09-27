@@ -3,6 +3,8 @@ package tools
 import (
 	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -341,6 +343,45 @@ func TestResolveDiscussion(t *testing.T) {
 	h.fails("resolve_discussion", map[string]any{"project": alpha, "iid": 1, "discussion_id": threads[len(threads)-1].ID}, "invalid")
 }
 
+// An issue takes a resolvable thread as a merge request does, and
+// resolve_discussion resolves it with type issue.
+func TestAnIssueThreadIsStartedAndResolved(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, out := h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "Is this still open?",
+		"thread": true})
+	thread, _ := get(out, "discussion_id").(string)
+	if get(out, "kind") != "thread" || thread == "" {
+		t.Fatalf("thread: %v", out)
+	}
+	threads := h.gl.Discussions(alpha, "issue", 1)
+	if last := threads[len(threads)-1]; last.ID != thread || !last.Notes[0].Resolvable {
+		t.Fatalf("the thread stored is %+v", last)
+	}
+	_, out = h.ok("resolve_discussion", map[string]any{"project": alpha, "type": "issue", "iid": 1, "discussion_id": thread})
+	if get(out, "outcome") != "resolved" || get(out, "resolved") != true {
+		t.Errorf("resolve: %v", out)
+	}
+	_, out = h.ok("resolve_discussion", map[string]any{"project": alpha, "type": "issue", "iid": 1, "discussion_id": thread,
+		"reopen": true})
+	if get(out, "outcome") != "reopened" {
+		t.Errorf("reopen: %v", out)
+	}
+	// A standalone comment cannot be resolved; a reply cannot start a thread.
+	h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "Standalone."})
+	threads = h.gl.Discussions(alpha, "issue", 1)
+	h.fails("resolve_discussion", map[string]any{"project": alpha, "type": "issue", "iid": 1,
+		"discussion_id": threads[len(threads)-1].ID}, "invalid")
+	h.fails("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "Both.", "thread": true,
+		"discussion_id": thread}, "invalid")
+	// A general thread on a merge request is resolvable too.
+	_, out = h.ok("add_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "body": "A question.",
+		"thread": true})
+	_, out = h.ok("resolve_discussion", map[string]any{"project": alpha, "iid": 1, "discussion_id": get(out, "discussion_id")})
+	if get(out, "outcome") != "resolved" {
+		t.Errorf("merge request thread: %v", out)
+	}
+}
+
 // ------------------------------------------------------------- reviews
 
 func TestAReviewIsDraftedThenSubmitted(t *testing.T) {
@@ -350,6 +391,9 @@ func TestAReviewIsDraftedThenSubmitted(t *testing.T) {
 		"line": 3, "side": "new"})
 	if get(out, "kind") != "draft" || get(out, "position", "new_line") != float64(3) {
 		t.Fatalf("draft: %v", out)
+	}
+	if code, _ := get(out, "line_code").(string); !regexp.MustCompile(`^[0-9a-f]{40}_[0-9]+_3$`).MatchString(code) {
+		t.Errorf("line_code = %q", code)
 	}
 
 	if len(h.gl.Drafts(alpha, 1)) != drafts+1 {
@@ -563,8 +607,8 @@ func TestLintSuppliedContent(t *testing.T) {
 	ro.ok("lint_ci", map[string]any{"project": alpha})
 }
 
-// A lost comment is looked for on the newest page of threads, and is
-// "not created" only when that page reaches back past the call.
+// A lost comment is looked for from the newest page of threads back, and
+// is "not created" only once a page reaches back past the call.
 func TestALostCommentIsSettledOnTheNewestThreads(t *testing.T) {
 	thread := func(created string) string {
 		return `[{"id":"t1","individual_note":true,"notes":[{"id":1,"body":"Older.","author":{"username":"bob"},"created_at":"` + created + `"}]}]`
@@ -584,8 +628,8 @@ func TestALostCommentIsSettledOnTheNewestThreads(t *testing.T) {
 		want   string
 	}{
 		{"no page count", http.Header{"X-Next-Page": {"2"}}, thread("2026-01-01T00:00:00Z"), "reading to find out failed too"},
-		{"the newest page is all newer than the call", http.Header{"X-Next-Page": {"2"}, "X-Total-Pages": {"3"}},
-			thread("2999-01-01T00:00:00Z"), "reading to find out failed too"},
+		{"the newest page is all newer than the call, and the page before is read", http.Header{"X-Next-Page": {"2"},
+			"X-Total-Pages": {"3"}}, thread("2999-01-01T00:00:00Z"), "a read shows it was not created"},
 		{"the newest page reaches back past the call", http.Header{"X-Next-Page": {"2"}, "X-Total-Pages": {"3"}},
 			thread("2026-01-01T00:00:00Z"), "a read shows it was not created"},
 	} {
@@ -594,6 +638,16 @@ func TestALostCommentIsSettledOnTheNewestThreads(t *testing.T) {
 		pages(h, c.header, c.body)
 		if text := h.fails("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "Lost."}, "ambiguous_outcome"); !strings.Contains(text, c.want) {
 			t.Errorf("%s: %s", c.name, text)
+		}
+		var read []string
+		for _, r := range h.gl.Requests() {
+			if r.Method == http.MethodGet && strings.HasSuffix(r.EscapedPath, "/issues/1/discussions") {
+				q, _ := url.ParseQuery(r.RawQuery)
+				read = append(read, q.Get("page"))
+			}
+		}
+		if strings.Contains(c.name, "page before") && fmt.Sprint(read) != "[1 3 2]" {
+			t.Errorf("%s: pages read %v", c.name, read)
 		}
 	}
 
@@ -650,4 +704,11 @@ func TestTodosAreHeldToTheAllowList(t *testing.T) {
 	if _, out := in.ok("mark_todos_done", map[string]any{"ids": []int{gitlabtest.TodoAssigned}}); get(out, "outcome") != "done" {
 		t.Errorf("inside: %v", out)
 	}
+}
+
+// A thread type other than issue or merge_request is refused, not read
+// as a merge request.
+func TestResolveDiscussionRefusesAnUnknownType(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.fails("resolve_discussion", map[string]any{"project": alpha, "type": "epic", "iid": 1, "discussion_id": "x"}, "invalid")
 }

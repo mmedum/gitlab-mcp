@@ -162,7 +162,15 @@ replace it with a `read_api` one.
   simplest way for private content to leave. A personal snippet is in
   no namespace, so `GITLAB_MCP_WRITE_NAMESPACES` refuses one.
 - **Variable values are not echoed.** `run_pipeline` and `play_job` send
-  the variables you give and name only their keys in the result.
+  the variables you give and name only their keys in the result. Job
+  inputs on `retry_job` and `play_job` are named the same way. GitLab
+  refuses a name a job's inputs do not include; a job that declares no
+  inputs ignores them.
+- **Release links stay in the project.** `create_release` takes asset
+  links only to the project's own pages and API paths on gitlab.com, its
+  packages included, with no credentials in the URL, and
+  refuses any other before sending anything: a release page sends
+  every reader wherever its links lead.
 
 ## What the server talks to
 

@@ -3,6 +3,7 @@ package gapi
 import (
 	"context"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/mmedum/gitlab-mcp/internal/gitlab"
@@ -70,6 +71,17 @@ func (c *Client) ListPipelineJobs(ctx context.Context, p Project, pipeline int64
 	return out, page, err
 }
 
+// ListPipelineTriggerJobs lists a pipeline's trigger jobs, which the job
+// listing leaves out.
+func (c *Client) ListPipelineTriggerJobs(ctx context.Context, p Project, pipeline int64, q JobQuery, opts ListOptions) ([]gitlab.Bridge, Page, error) {
+	v := url.Values{}
+	setString(v, "scope", q.Scope)
+	var out []gitlab.Bridge
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/pipelines/{}/trigger_jobs", Args: []string{p.segment(), idArg(pipeline)},
+		Query: v, Name: "list_trigger_jobs"}, opts, &out)
+	return out, page, err
+}
+
 // GetJob reads one job.
 func (c *Client) GetJob(ctx context.Context, p Project, id int64) (*gitlab.Job, error) {
 	var out gitlab.Job
@@ -78,12 +90,29 @@ func (c *Client) GetJob(ctx context.Context, p Project, id int64) (*gitlab.Job, 
 	return &out, err
 }
 
-// GetJobTrace reads a job's log as GitLab stored it: bytes, ANSI escapes
-// and section markers included.
-func (c *Client) GetJobTrace(ctx context.Context, p Project, id int64) ([]byte, error) {
+// MaxTraceRange is the most bytes one ranged read of a job's log may
+// ask for: GitLab refuses a larger byte_limit with 400
+// (Gitlab::Ci::Trace::Stream::LIMIT_SIZE; spike O).
+const MaxTraceRange = 500 << 10
+
+// GetJobTrace reads a job's log as GitLab stored it, bytes, ANSI escapes
+// and section markers included: from offset, and limit bytes of it, or
+// to the end when limit is 0. An offset past the end reads nothing
+// (spike J).
+func (c *Client) GetJobTrace(ctx context.Context, p Project, id int64, offset, limit int) ([]byte, error) {
+	if limit < 0 || limit > MaxTraceRange || offset < 0 {
+		return nil, Errf(ClassUnexpected, "a job log range must start at 0 or later and read 1 to %d bytes", MaxTraceRange)
+	}
+	q := url.Values{}
+	if offset > 0 {
+		q.Set("byte_offset", strconv.Itoa(offset))
+	}
+	if limit > 0 {
+		q.Set("byte_limit", strconv.Itoa(limit))
+	}
 	var out []byte
 	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/jobs/{}/trace", Args: []string{p.segment(), idArg(id)},
-		Name: "get_job_log"}, &out)
+		Query: q, Name: "get_job_log"}, &out)
 	return out, err
 }
 

@@ -109,6 +109,13 @@ func spikes(ctx context.Context, settings *app.Settings, s scratch, only string,
 		}
 		return
 	}
+	if only == "O" {
+		p.Say("\n=== spike O: a job log's size, unread ===")
+		if err := spikeO(ctx, c, s, p); err != nil {
+			p.Sayf("!! spike O: %v", err)
+		}
+		return
+	}
 	if only == "E" {
 		p.Say("\n=== spike E: quick actions ===")
 		if err := spikeE(ctx, c, s, p); err != nil {
@@ -125,6 +132,10 @@ func spikes(ctx context.Context, settings *app.Settings, s scratch, only string,
 	p.Say("\n=== spike J: job log windows ===")
 	if err := spikeJ(ctx, c, s, p); err != nil {
 		p.Sayf("!! spike J: %v", err)
+	}
+	p.Say("\n=== spike O: a job log's size, unread ===")
+	if err := spikeO(ctx, c, s, p); err != nil {
+		p.Sayf("!! spike O: %v", err)
 	}
 	p.Say("\n=== spike K: inline positions ===")
 	if err := spikeK(ctx, c, s, p); err != nil {
@@ -355,6 +366,191 @@ func spikeJ(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		p.Sayf("%s: status %d, %d bytes, %s; Content-Range %s", q.Encode(), r.status, len(r.body), verdict,
 			orNone(r.header.Get("Content-Range")))
 	}
+	return nil
+}
+
+// spikeO asks where a job log's size can be learned without reading the
+// log, so get_job_log can read only its window (§17a): a finished job's
+// trace artifact size against the bytes the trace endpoint serves, and
+// what a HEAD of the trace says for a finished log and for one still
+// being written. It also asks what byte_limit past GitLab's 500 KB cap
+// answers, and which paging headers a merge request's diffs carry.
+func spikeO(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
+	if s.JobFailed == 0 {
+		p.Say("no finished job to read; spike O needs one")
+		return nil
+	}
+	project := "projects/" + itoa(s.ID)
+	if err := logSize(ctx, c, project, s.JobFailed, "finished", p); err != nil {
+		return err
+	}
+	// Last, once gitlab.com has archived the finished log, whether the
+	// trace artifact's size is the log's.
+	defer func() {
+		if err := archivedSize(ctx, c, project, s.JobFailed, p); err != nil {
+			p.Sayf("!! spike O, the archived log: %v", err)
+		}
+	}()
+	r, err := c.get(ctx, project+"/jobs/"+itoa(s.JobFailed)+"/trace", url.Values{"byte_limit": {"512001"}}, nil)
+	if err != nil {
+		return err
+	}
+	p.Sayf("byte_limit 512001: status %d, %d bytes", r.status, len(r.body))
+
+	r, err = c.get(ctx, project+"/merge_requests/"+itoa(s.MR)+"/diffs", url.Values{"per_page": {"1"}}, nil)
+	if err != nil {
+		return err
+	}
+	p.Sayf("merge request diffs, per_page 1: status %d, X-Total %s, X-Total-Pages %s, X-Next-Page %s, Link %s", r.status,
+		orNone(r.header.Get("X-Total")), orNone(r.header.Get("X-Total-Pages")), orNone(r.header.Get("X-Next-Page")),
+		present(r.header.Get("Link")))
+
+	// A log still being written: a pipeline whose slow job prints and
+	// then sleeps, read while it runs, then canceled.
+	created, err := c.write(ctx, http.MethodPost, project+"/pipeline", map[string]any{"ref": s.Default, "inputs": map[string]any{"slow": "yes"}})
+	if err != nil {
+		return err
+	}
+	var pl struct {
+		ID int64 `json:"id"`
+	}
+	if created.status != http.StatusCreated || json.Unmarshal(created.body, &pl) != nil {
+		p.Sayf("a pipeline with the slow job: status %d; the running half is not asked", created.status)
+		return nil
+	}
+	p.Redactor().Known(redact.KindID, itoa(pl.ID))
+	defer func() {
+		r, err := c.write(ctx, http.MethodPost, project+"/pipelines/"+itoa(pl.ID)+"/cancel", map[string]any{})
+		if err != nil {
+			p.Sayf("!! cancel the slow pipeline: %v", err)
+			return
+		}
+		p.Sayf("slow pipeline canceled: status %d", r.status)
+	}()
+	deadline := time.Now().Add(8 * time.Minute)
+	for {
+		r, err := c.get(ctx, project+"/pipelines/"+itoa(pl.ID)+"/jobs", nil, nil)
+		if err != nil {
+			return err
+		}
+		var jobs []struct {
+			ID     int64  `json:"id"`
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(r.body, &jobs); err != nil {
+			return err
+		}
+		for _, j := range jobs {
+			if j.Name != "slow log" || j.Status != "running" {
+				continue
+			}
+			p.Redactor().Known(redact.KindID, itoa(j.ID))
+			t, err := c.get(ctx, project+"/jobs/"+itoa(j.ID)+"/trace", nil, nil)
+			if err != nil {
+				return err
+			}
+			// The job prints its lines at once; a log this long is past them.
+			if len(t.body) > 20000 {
+				return logSize(ctx, c, project, j.ID, "running", p)
+			}
+		}
+		if time.Now().After(deadline) {
+			p.Say("the slow job did not print its lines in time; the running half is not asked")
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+// archivedSize waits for a finished job's trace artifact and compares
+// its size with the bytes the trace endpoint serves.
+func archivedSize(ctx context.Context, c spikeClient, project string, job int64, p *redact.Printer) error {
+	deadline := time.Now().Add(10 * time.Minute)
+	for {
+		j, err := c.get(ctx, project+"/jobs/"+itoa(job), nil, nil)
+		if err != nil {
+			return err
+		}
+		var jr struct {
+			Artifacts []struct {
+				FileType string `json:"file_type"`
+				Size     int64  `json:"size"`
+			} `json:"artifacts"`
+		}
+		if err := json.Unmarshal(j.body, &jr); err != nil {
+			return err
+		}
+		for _, a := range jr.Artifacts {
+			if a.FileType != "trace" {
+				continue
+			}
+			full, err := c.get(ctx, project+"/jobs/"+itoa(job)+"/trace", nil, http.Header{"Accept-Encoding": {"identity"}})
+			if err != nil {
+				return err
+			}
+			tail, err := c.get(ctx, project+"/jobs/"+itoa(job)+"/trace", url.Values{"byte_offset": {fmt.Sprint(a.Size - 10)}}, nil)
+			if err != nil {
+				return err
+			}
+			p.Sayf("archived log: trace artifact size %d, GET %d bytes, the last ten bytes from its size %s", a.Size, len(full.body),
+				map[bool]string{true: "match", false: "differ"}[bytes.Equal(tail.body, full.body[max(0, len(full.body)-10):])])
+			return nil
+		}
+		if time.Now().After(deadline) {
+			p.Say("the finished log was not archived in time; the archived half is not asked")
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Second):
+		}
+	}
+}
+
+// logSize prints what the job, a HEAD of its trace and the trace itself
+// say about the log's size.
+func logSize(ctx context.Context, c spikeClient, project string, job int64, which string, p *redact.Printer) error {
+	j, err := c.get(ctx, project+"/jobs/"+itoa(job), nil, nil)
+	if err != nil {
+		return err
+	}
+	var jr struct {
+		Status    string `json:"status"`
+		Artifacts []struct {
+			FileType string `json:"file_type"`
+			Size     int64  `json:"size"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(j.body, &jr); err != nil {
+		return err
+	}
+	traceSize := "no trace artifact"
+	for _, a := range jr.Artifacts {
+		if a.FileType == "trace" {
+			traceSize = fmt.Sprintf("trace artifact size %d", a.Size)
+		}
+	}
+	// identity keeps Content-Length the log's own size: Go would ask
+	// for gzip, and drop the header when it unpacks the answer.
+	path := project + "/jobs/" + itoa(job) + "/trace"
+	identity := http.Header{"Accept-Encoding": {"identity"}}
+	head, err := c.send(ctx, http.MethodHead, path, nil, identity, nil)
+	if err != nil {
+		return err
+	}
+	full, err := c.get(ctx, path, nil, identity)
+	if err != nil {
+		return err
+	}
+	p.Sayf("%s job (%s): %s; HEAD status %d, Content-Length %s, RateLimit-Remaining %s; GET %d bytes, Content-Length %s",
+		which, jr.Status, traceSize, head.status, orNone(head.header.Get("Content-Length")),
+		orNone(head.header.Get("RateLimit-Remaining")), len(full.body), orNone(full.header.Get("Content-Length")))
 	return nil
 }
 

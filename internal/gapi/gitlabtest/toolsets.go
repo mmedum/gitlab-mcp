@@ -471,11 +471,27 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request, p *projec
 		name = tag
 	}
 	desc, _ := b.str("description")
+	// Asset links, as GitLab keeps them: other when no type is given.
+	var assets struct {
+		Links []gitlab.ReleaseLink `json:"links"`
+	}
+	if b.has("assets") {
+		if err := json.Unmarshal(b["assets"], &assets); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "assets is invalid"})
+			return
+		}
+	}
+	for k := range assets.Links {
+		if assets.Links[k].LinkType == "" {
+			assets.Links[k].LinkType = "other"
+		}
+	}
 	author := s.user(user)
 	c := p.tags[i].Commit
 	rel := gitlab.Release{TagName: tag, Name: name, Description: &desc, CreatedAt: now, ReleasedAt: &released,
 		UpcomingRelease: released.After(now), Author: &author, Commit: &gitlab.ReleaseCommit{ID: c.ID, ShortID: c.ShortID, Title: c.Title},
-		Milestones: append([]gitlab.ReleaseMilestone{}, milestones...), Assets: &gitlab.ReleaseAssets{Count: 4}}
+		Milestones: append([]gitlab.ReleaseMilestone{}, milestones...),
+		Assets:     &gitlab.ReleaseAssets{Count: 4 + len(assets.Links), Links: append([]gitlab.ReleaseLink{}, assets.Links...)}}
 	p.releases = append(p.releases, rel)
 	writeJSON(w, http.StatusCreated, rel)
 }

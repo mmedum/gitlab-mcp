@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 )
 
 // The review and history reads against the in-memory instance. Every
@@ -227,4 +229,82 @@ func TestListTags(t *testing.T) {
 	if get(one, "listing", "returned") != float64(1) {
 		t.Errorf("search ^v1: %v", get(one, "tags"))
 	}
+}
+
+// Paging through a large merge request reads each page of diffs about
+// once: a file_offset starts at the page that holds it.
+func TestGetMRDiffReadsFromItsPage(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	var diffs []gitlab.Diff
+	for i := range 250 {
+		path := fmt.Sprintf("src/file%03d.go", i)
+		diffs = append(diffs, gitlab.Diff{OldPath: path, NewPath: path, AMode: "100644", BMode: "100644",
+			Diff: "@@ -1 +1 @@\n-" + strings.Repeat("a", 500) + "\n+" + strings.Repeat("b", 500) + "\n"})
+	}
+	h.gl.SetMRDiffs(gitlabtest.ProjectAlpha, 1, diffs)
+	pages := func() []string {
+		var out []string
+		for _, r := range h.gl.Requests() {
+			if strings.HasSuffix(r.EscapedPath, "/merge_requests/1/diffs") {
+				q, _ := url.ParseQuery(r.RawQuery)
+				out = append(out, q.Get("page"))
+			}
+		}
+		return out
+	}
+	h.gl.ResetRequests()
+	_, out := h.ok("get_mr_diff", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	next := get(out, "next_file_offset")
+	if next == nil || get(out, "files_complete") != false || fmt.Sprint(pages()) != "[1]" {
+		t.Fatalf("next %v, complete %v, pages %v", next, get(out, "files_complete"), pages())
+	}
+	h.gl.ResetRequests()
+	_, out = h.ok("get_mr_diff", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "file_offset": 150})
+	if get(out, "files", 0, "new_path") != "src/file150.go" || fmt.Sprint(pages()) != "[2]" {
+		t.Errorf("first %v, pages %v", get(out, "files", 0, "new_path"), pages())
+	}
+	if n := get(out, "next_file_offset"); n == nil || n.(float64) <= 150 || n.(float64) >= 200 {
+		t.Errorf("next_file_offset = %v", n)
+	}
+	// The last files end the listing.
+	h.gl.ResetRequests()
+	_, out = h.ok("get_mr_diff", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "file_offset": 230})
+	if get(out, "files_complete") != true || get(out, "next_file_offset") != nil || fmt.Sprint(pages()) != "[3]" {
+		t.Errorf("complete %v, next %v, pages %v", get(out, "files_complete"), get(out, "next_file_offset"), pages())
+	}
+	h.fails("get_mr_diff", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "file_offset": 260}, "invalid")
+}
+
+// One diff larger than the whole budget is read to its end by
+// diff_offset, and nothing is lost or repeated at the cuts.
+func TestGetMRDiffContinuesACutDiff(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	var body strings.Builder
+	body.WriteString("@@ -0,0 +1,4000 @@\n")
+	for i := range 4000 {
+		fmt.Fprintf(&body, "+line %04d of a generated file\n", i)
+	}
+	h.gl.SetMRDiffs(gitlabtest.ProjectAlpha, 1, []gitlab.Diff{
+		{OldPath: "gen/big.go", NewPath: "gen/big.go", AMode: "100644", BMode: "100644", NewFile: true, Diff: body.String()},
+		{OldPath: "README.md", NewPath: "README.md", AMode: "100644", BMode: "100644", Diff: "@@ -1 +1 @@\n-a\n+b\n"},
+	})
+	var got strings.Builder
+	args := map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1}
+	for range 10 {
+		text, out := h.ok("get_mr_diff", args)
+		got.WriteString(get(out, "files", 0, "untrusted_diff").(string))
+		next := get(out, "files", 0, "continue_diff_offset")
+		if next == nil {
+			break
+		}
+		if get(out, "files", 0, "truncated") != true || !strings.Contains(text, fmt.Sprintf("diff_offset=%d", int(next.(float64)))) {
+			t.Fatalf("a cut diff without its continuation:\n%s", text[max(0, len(text)-400):])
+		}
+		args = map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "diff_offset": next}
+	}
+	if got.String() != body.String() {
+		t.Errorf("the pieces read are not the diff: %d of %d characters", got.Len(), body.Len())
+	}
+	h.fails("get_mr_diff", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "diff_offset": body.Len() + 1}, "invalid")
+	h.fails("get_mr_diff", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "file_offset": 2, "diff_offset": 5}, "invalid")
 }

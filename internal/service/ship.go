@@ -431,7 +431,11 @@ func pipelineWrite(t target, pl *gitlab.PipelineDetail, before, outcome string) 
 }
 
 // RetryJob runs a job again as a new job.
-func (s *Service) RetryJob(ctx context.Context, raw string, id int64) (model.JobWrite, error) {
+func (s *Service) RetryJob(ctx context.Context, raw string, id int64, inputs map[string]any) (model.JobWrite, error) {
+	inputNames, err := inputNamesOf(inputs)
+	if err != nil {
+		return model.JobWrite{}, err
+	}
 	t, err := s.writeTarget(ctx, raw)
 	if err != nil {
 		return model.JobWrite{}, err
@@ -442,16 +446,30 @@ func (s *Service) RetryJob(ctx context.Context, raw string, id int64) (model.Job
 	}
 	if gapi.IsDryRun(ctx) {
 		out := jobWrite(t, id, job, "dry_run")
-		out.DryRun, out.WouldSend = true, preview("POST", "retry the job as a new job", nil)
+		out.Inputs = inputNames
+		out.DryRun, out.WouldSend = true, preview("POST", "retry the job as a new job", names(field{"inputs", len(inputs) > 0}))
 		return out, nil
 	}
-	res, err := s.client.RetryJob(ctx, t.p, id)
+	res, err := s.client.RetryJob(ctx, t.p, id, inputs)
 	if err != nil {
 		return model.JobWrite{}, settle(err, "job retry", func() (string, error) {
 			return s.findRetry(ctx, t.p, job)
 		})
 	}
-	return jobWrite(t, id, res, "retried"), nil
+	out := jobWrite(t, id, res, "retried")
+	out.Inputs = inputNames
+	return out, nil
+}
+
+// inputNamesOf names the inputs sent, in order, refusing one without a
+// name; GitLab checks the rest against the specification that declares
+// them.
+func inputNamesOf(inputs map[string]any) ([]string, error) {
+	names := nonNil(slices.Sorted(maps.Keys(inputs)))
+	if slices.Contains(names, "") {
+		return nil, gapi.Errf(gapi.ClassInvalid, "an input has no name")
+	}
+	return names, nil
 }
 
 // findRetry settles a lost retry_job: a newer job of the same name in
@@ -482,7 +500,11 @@ type JobVariable struct {
 
 // PlayJob starts a manual job, with variables for this run. Their
 // values are sent and never shown.
-func (s *Service) PlayJob(ctx context.Context, raw string, id int64, vars []JobVariable) (model.JobWrite, error) {
+func (s *Service) PlayJob(ctx context.Context, raw string, id int64, vars []JobVariable, inputs map[string]any) (model.JobWrite, error) {
+	inputNames, err := inputNamesOf(inputs)
+	if err != nil {
+		return model.JobWrite{}, err
+	}
 	keys := make([]string, 0, len(vars))
 	body := make([]gapi.JobVariable, 0, len(vars))
 	for _, v := range vars {
@@ -502,11 +524,12 @@ func (s *Service) PlayJob(ctx context.Context, raw string, id int64, vars []JobV
 	}
 	if gapi.IsDryRun(ctx) {
 		out := jobWrite(t, id, job, "dry_run")
-		out.Variables = keys
-		out.DryRun, out.WouldSend = true, preview("POST", "run the manual job", names(field{"job_variables_attributes", len(body) > 0}))
+		out.Variables, out.Inputs = keys, inputNames
+		out.DryRun, out.WouldSend = true, preview("POST", "run the manual job", names(field{"job_variables_attributes", len(body) > 0},
+			field{"job_inputs", len(inputs) > 0}))
 		return out, nil
 	}
-	res, err := s.client.PlayJob(ctx, t.p, id, body)
+	res, err := s.client.PlayJob(ctx, t.p, id, body, inputs)
 	var e *gapi.Error
 	if errors.As(err, &e) && e.Class == gapi.ClassForbidden && e.Status == 403 && len(body) > 0 && strings.HasSuffix(e.Message, ": 403 Forbidden") {
 		// GitLab answers a bare 403, with no reason, when the project's
@@ -526,11 +549,11 @@ func (s *Service) PlayJob(ctx context.Context, raw string, id int64, vars []JobV
 		})
 	}
 	out := jobWrite(t, id, res, "played")
-	out.Variables = keys
+	out.Variables, out.Inputs = keys, inputNames
 	return out, nil
 }
 
 func jobWrite(t target, from int64, j *gitlab.Job, outcome string) model.JobWrite {
 	return model.JobWrite{Outcome: outcome, Write: model.Write{Target: t.ref}, JobID: j.ID, FromJobID: from, Name: j.Name, Stage: j.Stage,
-		Status: j.Status, PipelineID: j.Pipeline.ID, WebURL: j.WebURL, Variables: []string{}}
+		Status: j.Status, PipelineID: j.Pipeline.ID, WebURL: j.WebURL, Variables: []string{}, Inputs: []string{}}
 }

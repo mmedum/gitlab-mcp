@@ -60,42 +60,92 @@ func lineCounts(diff string) (added, removed int) {
 // GetMRDiff shows a merge request's diffs under the budget: the named
 // files, or every file from fileOffset (§7.3). A named file the merge
 // request does not change is refused naming it.
-func (s *Service) GetMRDiff(ctx context.Context, raw string, iid int64, paths []string, fileOffset int) (model.MRDiff, error) {
+func (s *Service) GetMRDiff(ctx context.Context, raw string, iid int64, paths []string, fileOffset, diffOffset int) (model.MRDiff, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
 		return model.MRDiff{}, err
 	}
-	// Named files stop the reading once every one is found.
-	var done func([]gitlab.Diff) bool
-	if len(paths) > 0 {
-		done = func(read []gitlab.Diff) bool {
-			return !slices.ContainsFunc(paths, func(want string) bool { return diffIndex(read, want) < 0 })
+	if len(paths) == 0 {
+		d, err := s.mrDiffsFrom(ctx, p, iid, fileOffset, diffOffset)
+		if err != nil {
+			return model.MRDiff{}, err
 		}
+		return model.MRDiff{Project: ref, IID: iid, Diffs: d}, nil
 	}
-	diffs, complete, err := readPagesUntil(maxMRDiffPages, func(opts gapi.ListOptions) ([]gitlab.Diff, gapi.Page, error) {
+	// Named files stop the reading once every one is found.
+	done := func(read []gitlab.Diff) bool {
+		return !slices.ContainsFunc(paths, func(want string) bool { return diffIndex(read, want) < 0 })
+	}
+	diffs, _, err := readPagesUntil(maxMRDiffPages, func(opts gapi.ListOptions) ([]gitlab.Diff, gapi.Page, error) {
 		return s.client.ListMergeRequestDiffs(ctx, p, iid, opts)
 	}, done)
 	if err != nil {
 		return model.MRDiff{}, err
 	}
-	if len(paths) > 0 {
-		var picked []gitlab.Diff
-		for _, want := range paths {
-			i := diffIndex(diffs, want)
-			if i < 0 {
-				return model.MRDiff{}, gapi.Errf(gapi.ClassInvalid,
-					"%s is not among the files this merge request changes; list_mr_files lists them", render.Ident(strings.Trim(want, "/")))
-			}
-			picked = append(picked, diffs[i])
+	var picked []gitlab.Diff
+	for _, want := range paths {
+		i := diffIndex(diffs, want)
+		if i < 0 {
+			return model.MRDiff{}, gapi.Errf(gapi.ClassInvalid,
+				"%s is not among the files this merge request changes; list_mr_files lists them", render.Ident(strings.Trim(want, "/")))
 		}
-		// The named files are all there is to show, read or not.
-		diffs, complete = picked, true
+		picked = append(picked, diffs[i])
 	}
-	d, err := budgetDiffs(diffs, complete, fileOffset)
+	// The named files are all there is to show, read or not.
+	d, err := budgetDiffs(picked, true, fileOffset, diffOffset)
 	if err != nil {
 		return model.MRDiff{}, err
 	}
 	return model.MRDiff{Project: ref, IID: iid, Diffs: d}, nil
+}
+
+// mrDiffsFrom shows a merge request's diffs from the file at fileOffset:
+// it reads from the page that holds that file, and on only until the
+// budget is spent, so paging through a large merge request reads each
+// page about once (§17a).
+func (s *Service) mrDiffsFrom(ctx context.Context, p gapi.Project, iid int64, fileOffset, diffOffset int) (model.Diffs, error) {
+	if fileOffset < 0 {
+		return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "file_offset is 0 or more")
+	}
+	first := fileOffset/gapi.MaxPerPage + 1
+	if first > maxMRDiffPages {
+		return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "file_offset %d is past the %d files GitLab shows a merge request with",
+			fileOffset, maxMRDiffPages*gapi.MaxPerPage)
+	}
+	base := (first - 1) * gapi.MaxPerPage
+	start := fileOffset - base // the first file to show, among those read
+	// Pages are read until the budget has cut the files shown, or the
+	// listing ends; budgetDiffs decides both.
+	var (
+		diffs    []gitlab.Diff
+		complete bool
+		d        model.Diffs
+	)
+	for page := first; page <= maxMRDiffPages; page++ {
+		rows, pg, err := s.client.ListMergeRequestDiffs(ctx, p, iid, gapi.ListOptions{PerPage: gapi.MaxPerPage, Page: page})
+		if err != nil {
+			return model.Diffs{}, err
+		}
+		diffs = append(diffs, rows...)
+		complete = pg.Complete()
+		if start > len(diffs) {
+			break
+		}
+		if d, err = budgetDiffs(diffs, complete, start, diffOffset); err != nil {
+			return model.Diffs{}, err
+		}
+		if complete || d.NextFileOffset != nil {
+			break
+		}
+	}
+	if start > len(diffs) {
+		return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "file_offset %d is past the last changed file; list_mr_files counts them", fileOffset)
+	}
+	if d.NextFileOffset != nil {
+		next := *d.NextFileOffset + base
+		d.NextFileOffset = &next
+	}
+	return d, nil
 }
 
 // diffIndex finds a file by its new or old path.
@@ -191,6 +241,7 @@ type CompareQuery struct {
 	Straight     bool
 	CommitOffset int
 	FileOffset   int
+	DiffOffset   int
 }
 
 // CompareRefs compares two refs: the commits in to and not in from, and
@@ -212,7 +263,7 @@ func (s *Service) CompareRefs(ctx context.Context, q CompareQuery) (model.Compar
 		return model.Compare{}, gapi.Errf(gapi.ClassInvalid, "commit_offset %d is past the %d commits compared", q.CommitOffset,
 			len(c.Commits))
 	}
-	d, err := budgetDiffs(c.Diffs, !c.CompareTimeout, q.FileOffset)
+	d, err := budgetDiffs(c.Diffs, !c.CompareTimeout, q.FileOffset, q.DiffOffset)
 	if err != nil {
 		return model.Compare{}, err
 	}

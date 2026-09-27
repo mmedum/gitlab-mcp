@@ -89,6 +89,7 @@ type project struct {
 	// the CI configuration per branch.
 	pipelines []*gitlab.PipelineDetail
 	jobs      map[int64][]gitlab.Job
+	bridges   map[int64][]gitlab.Bridge
 	traces    map[int64]string
 	ciConfig  map[string]string
 
@@ -185,6 +186,7 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		mrDiffs:     map[int64][]gitlab.Diff{},
 		drafts:      map[int64][]gitlab.DraftNote{},
 		jobs:        map[int64][]gitlab.Job{},
+		bridges:     map[int64][]gitlab.Bridge{},
 		traces:      map[int64]string{},
 		ciConfig:    map[string]string{},
 		levels:      map[string]int{},

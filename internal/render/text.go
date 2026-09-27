@@ -275,7 +275,8 @@ func Project(p model.Project, bd Boundary) string {
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Name: %s\n", bd.Inline(p.UntrustedName))
 	o := Origin{Kind: "project_description", Project: p.Project.Path}
-	b.WriteString(bd.Block(o, p.UntrustedDescription))
+	b.WriteString(bd.Block(o, p.UntrustedDescription) + "\n")
+	b.WriteString(budgetLine("Description", p.DescriptionBudget))
 	return b.String()
 }
 
@@ -575,9 +576,12 @@ func Commit(c model.Commit, bd Boundary) string {
 func writeDiffs(b *strings.Builder, d model.Diffs, project, at, incomplete string, bd Boundary) {
 	for _, f := range d.Files {
 		fmt.Fprintf(b, "\n\n%s %s", Ident(f.Status), fileName(f.OldPath, f.NewPath))
+		if f.DiffOffset > 0 {
+			fmt.Fprintf(b, ", from character %d of its diff", f.DiffOffset)
+		}
 		b.WriteString(":\n" + bd.Block(Origin{Kind: "diff", Project: project, Item: f.NewPath + at}, f.UntrustedDiff))
-		if f.Truncated {
-			b.WriteString("\nThis diff was cut at the budget; get_file reads the file itself.")
+		if f.ContinueDiffOffset != nil {
+			fmt.Fprintf(b, "\nThis diff was cut at the budget; continue it with diff_offset=%d and the same file_offset.", *f.ContinueDiffOffset)
 		}
 	}
 	fmt.Fprintf(b, "\n\nDiffs are budgeted at %d characters.", d.DiffBudget)

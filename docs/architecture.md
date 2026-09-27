@@ -1,7 +1,7 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 4 done and in review, 2026-09-27; every phase is
-built. Nothing is tagged.** This document holds the platform facts, the design bets, a
+**Status: phase 5 done and in review, 2026-09-27; phase 6 waits on
+§17.13. Nothing is tagged.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
@@ -482,8 +482,9 @@ request or a comparison 40,000; a commit message 8,000; one search
 excerpt 1,000; a wiki page or a snippet file 60,000, as a file; release
 notes 20,000, as a description. A job log is windowed in bytes of the stored log: 40,000
 by default, at most 100,000, each window widened to whole lines so no
-secret straddles its edge. A comparison lists 100 commits at a time. Two
-omissions are named but not yet continuable (§17a).
+secret straddles its edge. A comparison lists 100 commits at a time.
+Every omission is continuable: a project description by `offset`, and
+one file's diff larger than the diff budget by `diff_offset`.
 
 ### 4.9 gitlab.com, and nothing else
 
@@ -741,21 +742,26 @@ under the budget, with position and resolved state for diff threads.
 
 `list_mr_files` lists changed files with their line counts and the
 `too_large`, `collapsed`, `generated_file`, renamed and binary markers.
-`get_mr_diff` returns the diff of named files under the budget.
-`list_mr_commits` lists commits.
+`get_mr_diff` returns the diff of named files under the budget. Paging
+by `file_offset` reads from the page of diffs that holds that file, so
+each page is read about once. One diff larger than the whole budget is
+cut and continued by `diff_offset`, as `get_commit` and `compare_refs`
+continue theirs. `list_mr_commits` lists commits.
 
 Commenting has two paths, both taking a body (§4.2) and an optional diff
 location (§6.2):
 
 - `add_comment` posts now — to an issue, a merge request, or a reply to
-  a discussion.
+  a discussion; `thread` starts a resolvable thread on either.
 - `add_review_comment` creates a **draft note**; `list_review_comments`
   and `delete_review_comment` manage the caller's drafts;
   `submit_review` publishes them all at once with an optional summary
   and `reviewer_state` (`reviewed`, `requested_changes`, or `approved`,
   which needs Ship).
 
-`resolve_discussion` resolves or reopens a thread.
+`resolve_discussion` resolves or reopens a thread on a merge request,
+or on an issue with `type: issue`. A draft on a line reports the
+`line_code` GitLab computed for it.
 
 ### 7.4 Where an inline comment lands
 
@@ -789,10 +795,11 @@ commit and the branch head afterwards.
 
 ### 7.6 CI
 
-`list_pipelines`, `get_pipeline` (with a failed-jobs summary),
-`list_jobs`, `get_job_log` (tail by default; `byte_offset` and
-`byte_limit` to page; `failed_only`; ANSI stripped; collapsible sections
-folded to one line each; masked per §4.1), `lint_ci` (the project's
+`list_pipelines`, `get_pipeline` (with its failed jobs, and its failed
+trigger jobs with the downstream pipeline each started, which the job
+listing leaves out), `list_jobs`, `get_job_log` (tail by default;
+`byte_offset` and `byte_limit` to page; `failed_only`; ANSI stripped;
+collapsible sections folded to one line each; masked per §4.1), `lint_ci` (the project's
 configuration at a ref, by GET; supplied content by POST, refused in
 read-only mode, and refused with an `include:` at any depth, found by
 parsing: GitLab fetches what an include names while linting, so a URL in
@@ -808,9 +815,22 @@ window at the runner's `ERROR: Job failed` line and starts it at the
 section the job failed in, the last one of the job's own before that
 line, or as far back as the window allows.
 
+`get_job_log` reads only the window and what its edges need, so a log
+of any size can be read (spike O). The size comes from the job's
+`trace` artifact once GitLab has archived the log. Otherwise the first
+500 KB are read: a shorter answer is the whole log, in one call as
+before, and a longer log is measured by one-byte reads past its end. `failed_only` reads back from the end 500 KB at a
+time until it finds the failure line; a section that began before
+what it read is named by its end marker. A window that starts inside a
+private key block is masked whole: the read looks 256 KB before the
+window for a header with no footer after it (§18 row 76).
+
 Ship: `run_pipeline` (ref, variables and inputs; variables named in the
-result, values masked), `retry_pipeline`, `retry_job`, `play_job`,
-`cancel_pipeline`. Deleting a pipeline is written off (§8a).
+result, values masked), `retry_pipeline`, `retry_job` and `play_job`
+(each with values for the inputs the job declares: GitLab refuses a
+name a job's `inputs:` does not include, and a job that declares none
+takes any and uses none), `cancel_pipeline`. Deleting a
+pipeline is written off (§8a).
 
 ### 7.7 Planning, todos and search
 
@@ -865,7 +885,7 @@ Destructive kinds, as a signal and not a control.
 | `update_issue` | Write | default | `PUT /projects/:id/issues/:iid` |
 | `list_discussions` | Read | default | `GET …/issues|merge_requests/:iid/discussions` |
 | `add_comment` | Write | default | `POST …/notes`, `…/discussions`, `…/discussions/:id/notes` |
-| `resolve_discussion` | Write | default | `PUT …/merge_requests/:iid/discussions/:id` |
+| `resolve_discussion` | Write | default | `PUT …/issues|merge_requests/:iid/discussions/:id` |
 | `search_merge_requests` | Read | default | `GET /merge_requests`, `/projects/:id/merge_requests` |
 | `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals` |
 | `list_mr_files` | Read | default | `GET …/merge_requests/:iid/diffs` |
@@ -887,9 +907,9 @@ Destructive kinds, as a signal and not a control.
 | `create_branch` | Write | default | `POST …/repository/branches` |
 | `create_commit` | Write | default | `POST …/repository/commits` |
 | `list_pipelines` | Read | default | `GET …/pipelines` |
-| `get_pipeline` | Read | default | `GET …/pipelines/:id` |
+| `get_pipeline` | Read | default | `GET …/pipelines/:id`, `/jobs`, `/trigger_jobs` |
 | `list_jobs` | Read | default | `GET …/pipelines/:id/jobs` |
-| `get_job_log` | Read | default | `GET …/jobs/:id/trace` |
+| `get_job_log` | Read | default | `GET …/jobs/:id/trace`, in ranges |
 | `lint_ci` | Read | default | `GET …/ci/lint`; `POST …/ci/lint` when writes are on |
 | `list_labels` | Read | default | `GET …/labels` |
 | `list_milestones` | Read | default | `GET …/milestones`, group milestones |
@@ -915,7 +935,7 @@ Destructive kinds, as a signal and not a control.
 | `create_snippet` | Write | snippets | `POST …/snippets` (private) |
 | `list_releases` | Read | releases | `GET …/releases` |
 | `get_release` | Read | releases | `GET …/releases/:tag` |
-| `create_release` | Ship | releases | `POST …/releases` |
+| `create_release` | Ship | releases | `POST …/releases`, with asset links into the project |
 | `list_environments` | Read | deployments | `GET …/environments` |
 | `list_deployments` | Read | deployments | `GET …/deployments` |
 | `list_events` | Read | activity | `GET /events`, `…/events` |
@@ -951,20 +971,20 @@ The groups below are the design's verdicts; the TSV is the record.
 |---|---|
 | user, metadata, version | Used: `get_me`, login, `doctor`. `/version` written off as deprecated for `/metadata`. Personal access token `self` routes written off with the token path (§10) |
 | projects (read), groups (read), members (read), users (search) | Used for navigation. Project create, update, fork, transfer, archive, share, import and export written off: administration |
-| issues, issue notes and discussions | Used. Move, clone, subscribe, time tracking, award emoji, issue links deferred to §17a; delete written off (Owner-only, permanent) |
+| issues, issue notes and discussions | Used, starting and resolving threads included. Move, clone, subscribe, time tracking, award emoji, issue links deferred, move and links to phase 6; delete written off (Owner-only, permanent) |
 | merge requests, notes, discussions | Used. Rebase deferred (Ship candidate); `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
 | draft notes | Used: the review path |
 | approvals (merge-request level) | Used: approve, unapprove, state. Approval rules and project approval settings written off: governance configuration, Premium |
 | repository files, tree, commits, branches, tags, compare | Used. Blame and raw archive deferred; cherry-pick and revert deferred as Ship candidates; commit statuses written off (a CI integration's surface); tag create and delete deferred; "delete merged branches" written off |
 | protected branches and tags | Read only, by `create_commit`'s guard. Every write written off |
-| pipelines, jobs, CI lint | Used. Pipeline delete written off: it destroys logs and artifacts and is no assistant task, and GitLab's own server shows how easily it becomes a default. Artifact download deferred; artifact delete written off |
+| pipelines, jobs, CI lint | Used, trigger jobs included; the deprecated `bridges` listing written off for `trigger_jobs`, which GitLab serves with the same handler. Pipeline variables written off with CI variables: the listing carries their values. Pipeline delete written off: it destroys logs and artifacts and is no assistant task, and GitLab's own server shows how easily it becomes a default. Artifact download deferred; artifact delete written off |
 | pipeline schedules, triggers, variables, secure files | Written off: CI configuration and secrets |
-| labels, milestones | Read used. Create, update and delete deferred to §17a |
+| labels, milestones | Read used. Create, update and delete deferred to phase 6 |
 | search | Used |
 | todos | Used |
 | wikis (project) | Used under the `wiki` toolset. Group wikis deferred (Premium) |
 | snippets | Used under `snippets`; update and delete deferred |
-| releases, release links | Used under `releases`; update and delete written off |
+| releases, release links | Used under `releases`, with asset links only at create and only into the project itself; update and delete, of a release or a link, written off |
 | environments, deployments | Read used under `deployments`. Stop, delete and deployment approval written off: they act on running infrastructure |
 | events | Used under `activity` |
 | epics, iterations, work items, vulnerabilities, audit events, compliance, security policies | Deferred (§17.11): Premium or Ultimate, and several are GraphQL-first |
@@ -1235,7 +1255,8 @@ gated. It covers gitlab.com, the only instance.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-Every spike has run on gitlab.com (2026-09-26 and 2026-09-27). Spike I, the floor version, was dropped with self-managed support
+Every spike has run on gitlab.com (2026-09-26 and 2026-09-27), spike O
+the last, for phase 5. Spike I, the floor version, was dropped with self-managed support
 (§14, 2026-09-26).
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
@@ -1367,6 +1388,20 @@ Every spike has run on gitlab.com (2026-09-26 and 2026-09-27). Spike I, the floo
   412; the time shown stretched to the end of its millisecond deleted
   it, 204. GitLab compares below the millisecond it shows.*
 
+- **Spike O — a job log's size, unread.** Whether a job's `trace`
+  artifact size, or a HEAD of the trace, gives a log's length without
+  reading it, for a finished and a running job; what `byte_limit` past
+  500 KB answers; which paging headers a merge request's diffs carry.
+  `get_job_log` reads only its window from this (§7.6).
+  *Verdict, gitlab.com, 2026-09-27: an archived log's `trace` artifact
+  size was the log's 195,123 bytes exactly, and a ranged read from that
+  size back ended where the whole log did. gitlab.com archived the log
+  minutes after the job finished; until then the job lists no trace
+  artifact. A HEAD of a finished log answered its length on one run and
+  0 on the next, and 0 for a running log: it is not used. `byte_limit`
+  512,001 answered 400. The diffs listing sends `X-Total` and
+  `X-Total-Pages`. The driver runs it alone with `-spike O`.*
+
 Spikes A–D register or use an OAuth application and are in the "ask
 before doing" of `CLAUDE.md`.
 
@@ -1480,6 +1515,37 @@ clean. Spike G then ran on gitlab.com and agreed with the source on
 ten of ten routes, and answered spike B's revocation half. Owed:
 nothing.*
 
+**Phase 5 — the deferred cleanups, before 1.0.** Every cleanup of §17a
+that a REST call can close: `get_job_log` reading only its window (spike
+O), `get_mr_diff` reading from the page that holds `file_offset`, a
+project description and one oversized diff continued, a pipeline's
+failed trigger jobs, resolvable threads on issues, a lost comment settled
+however many threads followed it, a draft's `line_code`. And what §8a
+had left out on purpose, by the maintainer's decision of 2026-09-27: job
+inputs on `retry_job` and `play_job`, and release asset links, confined
+to the instance.
+
+*Built 2026-09-27, simplified and reviewed (§16a). Every behavior was
+checked against GitLab's source at v19.4.1-ee first (§18 rows 76–83).
+Spike O showed an archived log's size in its trace artifact and a HEAD
+not to be trusted, so a log not yet archived is read from its start and
+measured past its end. Four live runs on gitlab.com drove every tool and
+option but the two page tokens already waived, and their transcripts
+were read. They found a finished log's HEAD answering 0, a job with no
+`inputs:` taking any input (§18 row 80), and the undeclared-input
+refusal first tried on a job `retry_pipeline` had already retried; each
+is fixed. The third met a gitlab.com repository error creating a
+snippet, which phase 5 did not touch; the fourth was clean. The security review found indented and prefixed keys escaping
+the key search; the code review, a window start of -1 and links to any
+project's files; each is fixed. Owed: nothing. The two cleanups left are
+argued in §17a (§18 rows 82, 83), and phase 6 waits on §17.13.*
+
+**Phase 6 — the feature candidates, before 1.0.** The tools §17.13
+proposes, once the maintainer has decided each one's kind and toolset:
+issue move and links, label and milestone writes, rebase, cherry-pick,
+revert, blame, job artifacts, and tag writes. Each is checked against
+GitLab's source before it is built, and runs live.
+
 ### 16a. Found by review, and fixed
 
 Each phase's `/code-review high` and `/security-review` findings are
@@ -1502,7 +1568,7 @@ fixed in `637c982`, one recorded:
 | A stray callback without the login's `state` ended the login | `637c982`; ignored with a 400 |
 | A moved project lost the request's query | `637c982`; the request is kept and only the project segment replaced since `93c49af` |
 | A cut commit message looked complete | `637c982`; `message_offset` and `message_budget` |
-| Discussions walked up to ten pages per read | Not fixed: `X-Total` counts system-only threads, so the proposed fix miscounts; §17a |
+| Discussions walked up to ten pages per read | Not fixed: `X-Total` counts system-only threads, so the proposed fix miscounts, and the order needs every thread (§18 row 83); §17a |
 
 GitHub's CodeQL on the phase 0 pull request: six alerts. Two were real
 on a 32-bit build, which no release targets: a `#L` line anchor parsed
@@ -1528,11 +1594,11 @@ proposals skipped because a gate reads the shape they would remove.
 | A private key header far back moved every later window to it | Phase 1 commit; the window keeps its size and the block is masked from a restored header |
 | A script printing the runner's failure words steered `failed_only` | Phase 1 commit; the last failure line counts |
 | A failure line with no section read as "no failure line" | Phase 1 commit |
-| A failed pipeline failed by a downstream one said "No job failed." | Phase 1 commit; it says a trigger job may have. Reading trigger jobs is in §17a |
+| A failed pipeline failed by a downstream one said "No job failed." | Phase 1 commit; it said a trigger job may have. Phase 5 reads the failed trigger jobs and names the downstream pipeline |
 | Publishing a draft between pages skipped one | Phase 1 commit; the page token names a draft id |
 | The live driver ran its CI steps against an unfinished pipeline | Phase 1 commit; it leaves the ids zero so the steps fail |
-| A job log past 32 MiB cannot be read, and each window re-reads it | Not fixed: §17a |
-| `get_mr_diff` re-reads earlier pages on each continuation | Not fixed: §17a |
+| A job log past 32 MiB cannot be read, and each window re-reads it | Phase 5: only the window is read (§18 row 77) |
+| `get_mr_diff` re-reads earlier pages on each continuation | Phase 5: it reads from the page holding `file_offset` |
 | The driver's confinement accepts a group read without the run's word | Not a defect: every step's `group` argument is held to the run's namespace and word |
 
 **Phase 2.** `/simplify`: one project read per write; label checks by
@@ -1611,6 +1677,32 @@ recorded there. `/code-review high`: ten candidates:
 | The smoke floor moved with the code it checks | Phase 4 commit; a constant floor of the thirty-one reads beside it |
 | Spike G discards the authorization URL where no browser opens | Not fixed: the redacting printer masks the client id in it, so a printed URL would not work; the browser opens as it does for `login` |
 | `surfaceFloor` is typed, not derived | Kept: it is the floor on how much the checker read, which is meant to stand apart from the code (`CLAUDE.md` rule 19) |
+
+**Phase 5.** `/simplify`: the unused trace counter removed; one
+`bridgeRow`; one input-name helper for `run_pipeline`, `retry_job` and
+`play_job`; one thread reader for issues and merge requests; the service's
+copy of the link type dropped; page 1 reused when a settle walks back;
+`get_mr_diff` stopping where `budgetDiffs` does rather than by its own
+byte count, which could leave no `next_file_offset`; `failed_only`
+bounded to four reads for the line and one more for its section; a HEAD
+of the trace dropped after spike O showed it unreliable. Skipped: gapi
+discussion calls taking the item kind, which reshapes code far outside
+this phase. `/security-review`: one finding at confidence 8, fixed
+(`audit/security-reviews/phase-5.md`). `/code-review high`: ten
+candidates:
+
+| Found | Fixed |
+|---|---|
+| `failed_only` could start the window at -1 on a short log with a stray end marker, and panic | Phase 5 commit; the start is at least 0, with a test |
+| Key lines behind prefixes CI tools write ended the key walk, leaving a key unmasked | Phase 5 commit; the walk replaced by a 256 KB search for an open header, in the window's own read (§18 row 76) |
+| The key walk had no bound and copied the held stretch on each step | Phase 5 commit; the same change |
+| A BEGIN quoted in an error message can mask the rest of a window | Kept: over-masking fails safe, and the whole-log code did the same |
+| An asset link could point at any project's files on gitlab.com | Phase 5 commit; only into the release's own project (§18 row 81) |
+| A failed trigger job read failed `get_pipeline` | Phase 5 commit; it is soft, and the result says the trigger jobs could not be read |
+| The hidden-character count of a cut or continued diff counted the whole diff | Phase 5 commit; the part shown is counted |
+| `failed_only` reads up to 2 MB for a failing job with no failure line | Kept: the bound is the design; the runner writes the line last |
+| A `file_offset` past the end named the wrong number of files | Phase 5 commit; the message names none and points at `list_mr_files` |
+| `resolve_discussion` read an unknown type as a merge request | Phase 5 commit; refused `[invalid]` |
 
 ### Closing a phase
 
@@ -1697,57 +1789,49 @@ recorded there. `/code-review high`: ten candidates:
     checks a merge request is reviewed by. Raised by the phase 2
     security review.
 
+13. **The kinds and toolsets of phase 6.** Proposed, for the
+    maintainer to decide before phase 6 starts (`CLAUDE.md`, ask before
+    doing):
+
+    | Tool | Kind | Toolset | Why |
+    |---|---|---|---|
+    | `move_issue` | Ship | default | It publishes an issue's content in another project; both must be in the write allow-list, and a move into a more visible project is refused |
+    | `link_issues`, `unlink_issues` | Write | default | A relation between issues; removing one destroys no content |
+    | `create_label`, `update_label` | Write | `planning`, off | Project configuration that every issue shares |
+    | `delete_label` | Destructive | `planning`, off | Removes the label from every issue |
+    | `create_milestone`, `update_milestone` | Write | `planning`, off | As labels; closing a milestone is an update |
+    | `delete_milestone` | Destructive | `planning`, off | |
+    | `rebase_merge_request` | Ship | default | It rewrites the source branch and resets approvals; it takes the head `sha` as its witness |
+    | `cherry_pick_commit`, `revert_commit` | Write | default | A commit to a branch, as `create_commit` makes, with the same refusal of the default and protected branches (§4.4). §8a called them Ship candidates; the guard is what makes them Write |
+    | `get_blame` | Read | default | |
+    | `list_job_artifacts`, `get_job_artifact` | Read | default | One text file of a job's artifacts, masked like a job log and under the file budget; an archive is never downloaded whole |
+    | `create_tag` | Write | `releases` | It starts the tag pipelines, as `create_branch` starts a branch's; a tag a protection rule covers is refused |
+    | `delete_tag` | Destructive | `releases` | |
+
+    **Open.**
+
 ### 17a. Deferred cleanups
 
-- Two reads name an omission without a way to continue it, short of
-  §4.8: a project description over 20,000 characters, and a single
-  file's diff larger than the whole diff budget (cut, with a pointer to
-  `get_file`). Found in phase 0. A commit message over 8,000 is
-  continued with `get_commit`'s `message_offset`.
-- `get_job_log` reads a job's whole log to find its size, so a log past
-  the 32 MiB response cap is `[unavailable]`, and each window of a long
-  log downloads all of it again. Spike J showed GitLab serves byte
-  windows; reading only the window needs the size first, which no job
-  read reports. Found in phase 1.
-- `get_mr_diff` without `paths` reads every diff page on each call and
-  shows one budget from `file_offset`, so paging through a merge request
-  of hundreds of files re-reads the pages before. Found in phase 1.
-- `get_pipeline` lists failed jobs from the job listing, which leaves out
-  trigger jobs; a pipeline failed by a downstream pipeline says so
-  rather than naming it (`GET …/pipelines/:id/bridges`, deferred in
-  §8a). Found in phase 1.
+Phase 5 closed every cleanup phases 0 to 3 deferred but two, which no
+REST call can close:
+
 - `get_issue` and `get_merge_request` walk up to ten pages of threads to
   count them, and each `list_discussions` page walks them again to show
-  them newest first. `X-Total` cannot replace the walk: it counts
+  them by last activity. `X-Total` cannot replace the walk: it counts
   system-only threads, and the unresolved count and last activity need
-  every note. Found in phase 0.
-
-- `add_comment` on an issue posts a standalone comment, and
-  `resolve_discussion` resolves merge request threads only: starting a
-  resolvable thread on an issue and resolving one
-  (`POST`/`PUT …/issues/:iid/discussions`) are deferred in §8a. Found
-  in phase 2.
-- The settling read of `add_comment` walks the same ten pages of
-  threads as `list_discussions`, so a lost comment not among them
-  settles as unknown rather than not created. Found in phase 2.
-- A draft's `line_code` and `merge_request_id` are not decoded:
-  `add_review_comment` reports the position GitLab stored, which is what
-  a caller acts on. Spike K compared the codes directly. Found in
-  phase 2.
-
+  every note. Reading only the newest pages is rejected (§18 row 83).
+  Found in phase 0.
 - `run_pipeline` settles a lost answer by this account's newest API
   pipeline on the ref since shortly before the call, so a second
-  `run_pipeline` on the same ref in that window reads as this one. A
-  pipeline carries nothing of the request to tell them apart. Found in
-  phase 3.
-- Job inputs (`retry_job`'s `inputs`, `play_job`'s `job_inputs`) and a
-  release's asset links are not offered: inputs are new in GitLab and
-  typed by the job's own specification, and an asset link is an outside
-  URL a model would be writing into a release. Found in phase 3.
+  `run_pipeline` on the same ref in that window reads as this one. The
+  pipeline's variables would tell them apart, and reading them reads
+  their values (§18 row 82). Found in phase 3.
 
-Candidates for after 1.0, from §8a: issue move and links,
-label and milestone writes, rebase, cherry-pick, revert, blame, artifact
-download, tag writes.
+Operations `testdata/api-coverage.tsv` defers with a citation of §17a
+are deferred past 1.0, each for the reason its row gives. The feature
+candidates among them are phase 6 (§16, §17.13): issue move and links,
+label and milestone writes, rebase, cherry-pick, revert, blame, job
+artifacts and tag writes.
 
 ### 17b. Deviations from the shared standard
 
@@ -1828,7 +1912,7 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 43 | A moved project's redirect names its new path | Spike L on gitlab.com | **Refuted (tier 1, live).** It names the numeric id; the client replaces only the project segment, so either works, and the test instance now matches |
 | 44 | Every refused token says `invalid_token` | Spikes C and F on gitlab.com | **Refined (tier 1, live).** A revoked token does, in body and header; a malformed one is a plain 401. The client drops a token only on the marker, which a malformed token would not benefit from anyway |
 | 45 | A conditional read spares the rate limit | Spike H on gitlab.com | **Refuted (tier 1, live).** ETag and 304 are served on single reads and listings, and each 304 is counted. Not adopted: it saves bytes, not budget, and would add a cache to keep |
-| 46 | A job log is read whole or not at all | Spike J on gitlab.com, after row 29 | **Refuted (tier 1, live).** `byte_offset` and `byte_limit` return exact slices, no `Content-Range`, an empty 200 past the end. The server still reads the whole log, since a tail needs its size (§17a) |
+| 46 | A job log is read whole or not at all | Spike J on gitlab.com, after row 29 | **Refuted (tier 1, live).** `byte_offset` and `byte_limit` return exact slices, no `Content-Range`, an empty 200 past the end. Until phase 5 the server read the whole log, since a tail needs its size; row 77 found the size |
 | 47 | A job log holds the lines the script printed | Phase 1 live run on gitlab.com | **Refined (tier 1, live).** gitlab.com's runners prefix each line with its time and stream, `2026-09-26T22:30:07.819673Z 01O `, and `+` after the stream continues the line before, which is how a section header arrives. Stripped and joined, as the job page shows it. GitLab also masks `glpat-` tokens itself; the server's masking still runs for the shapes it does not |
 | 48 | GitLab's compare lists commits newest first | Phase 1 live run | **Refuted (tier 1, live).** Oldest first. `compare_refs` shows them newest first, as every other commit listing |
 | 49 | A general draft note has no position | Phase 1 live run | **Refuted (tier 1, live).** It carries a position object with no paths, and GitLab returns drafts in no stable order. An empty position reads as none; drafts are sorted by id, which the page token counts in |
@@ -1858,3 +1942,11 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 73 | Deployments filter by `updated_after` in any order | Phase 3 live run | **Refuted (tier 1, live).** GitLab answers 400 `` `updated_at` filter requires `updated_at` sort ``. `list_deployments` sorts by `updated_at` when a time filter is given and refuses another order with one |
 | 74 | A fresh eval world signs its server in afresh | Phase 4 eval run | **Refuted (tier 1).** The server kept the world's sign-in in the OS keyring under one profile, and every world mints the same token names, so the next world's refresh token matched the stored seed and the server used a dead access token: seven of eight tasks answered `[auth]`. `gitlabtest` now puts a random part in every token name, so no instance accepts or matches another's; the harness deletes its keyring item after each world, and a tool answering `[auth]` makes the run an error rather than a model's failure |
 | 75 | An `mcp`-scoped token reaches only the REST routes tagged `route_setting :mcp` | `lib/api/concerns/mcp_access.rb` at master `1ee957c5`; spike G on gitlab.com | **Confirmed (tier 1, live).** Ten of ten probed routes answered as tagged: reads of one issue, branches, merge request commits, pipelines and search; 403 for `/user`, a project, issue listings, a merge request and notes. §2.6 stands |
+| 76 | A job log window needs the whole log before it, to tell whether it starts inside a private key block | RFC 7468 §3 and RFC 4880 §6.2 for a key block's size; the phase 5 reviews | **Changed.** `get_job_log` looks 256 KB before a window, in the same ranged read, for a BEGIN with no END after it, the header counted anywhere in its line so indented and prefixed keys are found. No real key is near that long; a BEGIN further back is not looked for. A line-by-line walk that stopped at the first line a key cannot hold was tried and dropped: CI prefixes each line in too many ways (phase 5 security review and code review) |
+| 77 | A job log's size is known only by reading it | `lib/api/ci/jobs.rb`, `lib/gitlab/ci/trace.rb` and `lib/gitlab/ci/trace/stream.rb` at v19.4.1-ee; spike O on gitlab.com | **Refuted (tier 1, live).** An archived log is the job's `trace` artifact, whose `size` is the stored file's. A HEAD cannot be trusted: for one finished log it answered the length, for the same kind of log on the next run 0, and for a running log 0. `byte_limit` past 500 KB answers 400. A log not yet archived is read 500 KB from its start, and one longer than that is measured by one-byte reads past its end |
+| 78 | `GET …/pipelines/:id/bridges` lists a pipeline's trigger jobs | `lib/api/ci/pipelines.rb` at v19.4.1-ee | **Refined (tier 1).** Deprecated in 19.2 for `trigger_jobs`, served by the same handler; `get_pipeline` reads `trigger_jobs` with `scope=failed` |
+| 79 | Only merge request threads can be resolved | `app/models/concerns/noteable.rb` and `lib/api/discussions.rb` at v19.4.1-ee | **Refuted (tier 1).** `resolvable_types` includes Issue, and the discussions API registers the resolve route for every resolvable type. `resolve_discussion` takes `type: issue`, and `add_comment` starts a resolvable thread with `thread` |
+| 80 | Job inputs are typed by the job and cannot be offered safely | `lib/api/ci/jobs.rb`, `app/services/ci/retry_job_service.rb` and `lib/gitlab/ci/config/entry/job.rb` at v19.4.1-ee | **Changed (tier 1).** Retry takes `inputs` and play `job_inputs`; `app/services/ci/inputs/processor_service.rb` checks them against the job's own `inputs:` and refuses an unknown name with 400, but a job with no `inputs:` takes any and uses none, which the phase 5 live run showed. Both tools are Ship, so a steered value needs the flag the person set; the result names the inputs sent |
+| 81 | A release's asset links may point anywhere | Maintainer, 2026-09-27; `lib/api/entities/release.rb` at v19.4.1-ee | **Changed.** `create_release` takes links only into the release's own project, under its web path or its API path, on the instance's origin with no credentials in the URL, refused `[blocked]` before anything is sent: a release page sends every reader wherever its links lead, and gitlab.com serves anyone's files (phase 5 code review). Links are taken at create only; link writes on a published release stay written off |
+| 82 | A lost `run_pipeline` can be told from another run on the same ref by its variables | `GET …/pipelines/:id/variables` at v19.4.1-ee | **Rejected.** The listing returns the variables' values, which §8a writes off with CI variables; the settle stays by ref, source, account and time (§17a) |
+| 83 | `list_discussions` can read only the newest pages of threads | §7.2 and the tool's contract | **Rejected.** Threads are shown by last activity, and a reply moves an old thread to the top, so ordering them needs every thread. GitLab lists them by creation only |

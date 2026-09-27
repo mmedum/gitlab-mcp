@@ -105,6 +105,9 @@ func JobWrite(w model.JobWrite, _ Boundary) string {
 	if len(w.Variables) > 0 {
 		fmt.Fprintf(&b, "\nVariables sent, values not shown: %s.", idents(w.Variables))
 	}
+	if len(w.Inputs) > 0 {
+		fmt.Fprintf(&b, "\nInputs sent: %s.", idents(w.Inputs))
+	}
 	return b.String()
 }
 

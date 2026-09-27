@@ -33,6 +33,18 @@ func writePage[T any](s *Server, w http.ResponseWriter, r *http.Request, rows []
 	}
 }
 
+// SetMRDiffs replaces the files a merge request changes.
+func (s *Server) SetMRDiffs(projectPath string, iid int64, diffs []gitlab.Diff) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	p.mrDiffs[iid] = diffs
+	return true
+}
+
 // fillReview gives a merge request a spread of changed files, one of
 // each kind GitLab marks, and the default user two drafts on it.
 func (s *Server) fillReview(p *project, mr *gitlab.MergeRequest) {

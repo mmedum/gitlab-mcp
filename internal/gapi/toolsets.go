@@ -193,13 +193,28 @@ func (c *Client) GetRelease(ctx context.Context, p Project, tag string) (*gitlab
 
 // ReleaseCreate is POST /projects/:id/releases.
 type ReleaseCreate struct {
-	TagName     string     `json:"tag_name"`
-	Ref         string     `json:"ref,omitempty"`
-	TagMessage  string     `json:"tag_message,omitempty"`
-	Name        string     `json:"name,omitempty"`
-	Description string     `json:"description,omitempty"`
-	Milestones  []string   `json:"milestones,omitempty"`
-	ReleasedAt  *time.Time `json:"released_at,omitempty"`
+	TagName     string        `json:"tag_name"`
+	Ref         string        `json:"ref,omitempty"`
+	TagMessage  string        `json:"tag_message,omitempty"`
+	Name        string        `json:"name,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Milestones  []string      `json:"milestones,omitempty"`
+	ReleasedAt  *time.Time    `json:"released_at,omitempty"`
+	Assets      *ReleaseLinks `json:"assets,omitempty"`
+}
+
+// ReleaseLinks are the asset links a new release is created with.
+type ReleaseLinks struct {
+	Links []ReleaseLink `json:"links"`
+}
+
+// ReleaseLink is one asset link: a name and a URL, and optionally its
+// kind and the path GitLab serves it at under the release.
+type ReleaseLink struct {
+	Name            string `json:"name"`
+	URL             string `json:"url"`
+	LinkType        string `json:"link_type,omitempty"`
+	DirectAssetPath string `json:"direct_asset_path,omitempty"`
 }
 
 // CreateRelease creates a release, and its tag at ref when the tag does

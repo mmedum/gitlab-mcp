@@ -96,6 +96,7 @@ type addCommentIn struct {
 	IID          int64    `json:"iid" jsonschema:"The number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
 	Body         string   `json:"body" jsonschema:"The comment, in Markdown"`
 	DiscussionID string   `json:"discussion_id,omitempty" jsonschema:"Reply in this thread, as list_discussions names it"`
+	Thread       bool     `json:"thread,omitempty" jsonschema:"Start a new thread that can be resolved, rather than a standalone comment"`
 	diffLineIn
 	EscapeCommands bool `json:"escape_commands,omitempty" jsonschema:"GitLab runs a line starting with a slash, such as /close or /merge, as a command. By default such a line refuses the call; true sends each one as plain text instead, with a leading backslash that renders the same. There is no way to run them"`
 	DryRun         bool `json:"dry_run,omitempty" jsonschema:"Return what would be sent, and what the quick-action guard would do to the text, without writing anything"`
@@ -123,14 +124,14 @@ func addComment() definition {
 		sp: spec{Name: "add_comment", Kind: Write, Guarded: []string{"body"}, Bucket: gapi.BucketNotes,
 			Enums: map[string][]string{"type": {"issue", "merge_request"}, "side": sides},
 			Description: "Post a comment now, visible at once: on an issue or a merge request, as a reply in a thread " +
-				"(discussion_id), or as a new thread on a line of a merge request's diff (file, line and side, with end_line " +
-				"for a range). The server computes where an inline comment lands from the diff and reports the position " +
+				"(discussion_id), as a new thread that can be resolved (thread), or as a new thread on a line of a merge " +
+				"request's diff (file, line and side, with end_line for a range). The server computes where an inline comment lands from the diff and reports the position " +
 				"GitLab stored; a line outside the diff is refused naming the nearest hunks. For a review others see only when " +
 				"you submit it, use add_review_comment. A quick-action line in the body refuses the call unless " +
 				"escape_commands is true. Never repeated after a lost answer." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in addCommentIn) (model.CommentWrite, error) {
 			return svc.AddComment(ctx, service.Comment{Project: string(in.Project), Type: in.Type, IID: in.IID, Body: in.Body,
-				DiscussionID: in.DiscussionID, Location: in.location()})
+				DiscussionID: in.DiscussionID, Location: in.location(), Thread: in.Thread})
 		},
 		text: render.CommentWrite,
 	}
@@ -138,7 +139,8 @@ func addComment() definition {
 
 type resolveDiscussionIn struct {
 	Project      idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
-	IID          int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	Type         string   `json:"type,omitempty" jsonschema:"issue or merge_request, what iid names; default merge_request"`
+	IID          int64    `json:"iid" jsonschema:"The number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
 	DiscussionID string   `json:"discussion_id" jsonschema:"The thread, as list_discussions names it"`
 	Reopen       bool     `json:"reopen,omitempty" jsonschema:"Mark the thread unresolved instead of resolved"`
 	DryRun       bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
@@ -147,10 +149,11 @@ type resolveDiscussionIn struct {
 func resolveDiscussion() definition {
 	return tool[resolveDiscussionIn, model.DiscussionWrite]{
 		sp: spec{Name: "resolve_discussion", Kind: Write, Idempotent: true,
-			Description: "Resolve a thread on a merge request, or reopen it with reopen: true. The result gives the thread's " +
+			Enums: map[string][]string{"type": {"issue", "merge_request"}},
+			Description: "Resolve a thread on a merge request or an issue, or reopen it with reopen: true. The result gives the thread's " +
 				"state as GitLab reported it, and says when it already was in that state." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in resolveDiscussionIn) (model.DiscussionWrite, error) {
-			return svc.ResolveDiscussion(ctx, string(in.Project), in.IID, in.DiscussionID, !in.Reopen)
+			return svc.ResolveDiscussion(ctx, string(in.Project), in.Type, in.IID, in.DiscussionID, !in.Reopen)
 		},
 		text: render.DiscussionWrite,
 	}

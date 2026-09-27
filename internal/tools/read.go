@@ -99,6 +99,7 @@ func searchProjects() definition {
 
 type getProjectIn struct {
 	Project idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	Offset  int      `json:"offset,omitempty" jsonschema:"The character offset of the description to continue from, as a previous result's continue_offset gave it; default 0"`
 }
 
 func getProject() definition {
@@ -110,7 +111,7 @@ func getProject() definition {
 			"IMPORTANT: GitLab answers a private project you cannot see exactly as it answers a missing one, so " +
 			"[not_found] means either."},
 		run: func(ctx context.Context, svc *service.Service, in getProjectIn) (model.Project, error) {
-			return svc.GetProject(ctx, string(in.Project))
+			return svc.GetProject(ctx, string(in.Project), in.Offset)
 		},
 		text: render.Project,
 	}

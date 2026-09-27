@@ -1,6 +1,7 @@
 package gitlabtest
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -130,7 +131,7 @@ func (s *Server) serveCIWrite(w http.ResponseWriter, r *http.Request, p *project
 			return true
 		}
 		if seg[2] == "retry" {
-			s.retryJob(w, p, j)
+			s.retryJob(w, r, p, j)
 		} else {
 			s.playJob(w, r, j)
 		}
@@ -229,22 +230,66 @@ func (s *Server) cancelPipeline(w http.ResponseWriter, p *project, pl *gitlab.Pi
 
 // retryJob is POST …/jobs/:id/retry: a new job, or 403 "Job is not
 // retryable" for one still running or waiting.
-func (s *Server) retryJob(w http.ResponseWriter, p *project, j *gitlab.Job) {
+func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, p *project, j *gitlab.Job) {
+	b, ok := readBody(w, r)
+	if !ok {
+		return
+	}
 	if !slices.Contains([]string{"failed", "canceled", "success"}, j.Status) {
 		message(w, http.StatusForbidden, "403 Forbidden - Job is not retryable")
+		return
+	}
+	if !s.takeInputs(w, b, "inputs") {
 		return
 	}
 	writeJSON(w, http.StatusCreated, s.retryOne(p, *j))
 }
 
+// jobInputs are the inputs every job of the instance declares.
+var jobInputs = []string{"target"}
+
+// takeInputs checks the inputs a retry or play sent against the ones
+// every job here declares, as GitLab's Ci::Inputs::ProcessorService does
+// for a job with inputs, and keeps them. A refusal is answered.
+func (s *Server) takeInputs(w http.ResponseWriter, b body, key string) bool {
+	s.inputsSent = nil
+	if !b.has(key) {
+		return true
+	}
+	var in map[string]any
+	if err := json.Unmarshal(b[key], &in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": key + " is invalid"})
+		return false
+	}
+	for name := range in {
+		if !slices.Contains(jobInputs, name) {
+			message(w, http.StatusBadRequest, "400 Bad request - Unknown input: "+name)
+			return false
+		}
+	}
+	s.inputsSent = in
+	return true
+}
+
+// JobInputsSent are the input values the last job retry or play sent.
+func (s *Server) JobInputsSent() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inputsSent
+}
+
 // playJob is POST …/jobs/:id/play: a manual job starts, anything else is
 // 400 "Unplayable Job".
 func (s *Server) playJob(w http.ResponseWriter, r *http.Request, j *gitlab.Job) {
-	if _, ok := readBody(w, r); !ok {
+	b, ok := readBody(w, r)
+	if !ok {
 		return
 	}
 	if j.Status != "manual" {
 		message(w, http.StatusBadRequest, "400 Bad request - Unplayable Job")
+		return
+	}
+	if !s.takeInputs(w, b, "job_inputs") {
 		return
 	}
 	j.Status = "pending"

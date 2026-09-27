@@ -209,22 +209,30 @@ func getRelease() definition {
 }
 
 type createReleaseIn struct {
-	Project     idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
-	TagName     string   `json:"tag_name" jsonschema:"The tag to release. When it does not exist, GitLab creates it at ref"`
-	Ref         string   `json:"ref,omitempty" jsonschema:"Only for a new tag: the branch, tag or commit SHA to create it at"`
-	TagMessage  string   `json:"tag_message,omitempty" jsonschema:"Only for a new tag: a message, which makes it an annotated tag"`
-	Name        string   `json:"name,omitempty" jsonschema:"The release's name; the tag name when omitted"`
-	Description string   `json:"description,omitempty" jsonschema:"The release notes, in Markdown"`
-	Milestones  []string `json:"milestones,omitempty" jsonschema:"Titles of the project's milestones to associate; a group milestone needs Premium"`
-	ReleasedAt  string   `json:"released_at,omitempty" jsonschema:"When it was or will be released, RFC 3339; now when omitted. A time in the future makes it an upcoming release"`
-	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
+	Project     idOrPath        `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	TagName     string          `json:"tag_name" jsonschema:"The tag to release. When it does not exist, GitLab creates it at ref"`
+	Ref         string          `json:"ref,omitempty" jsonschema:"Only for a new tag: the branch, tag or commit SHA to create it at"`
+	TagMessage  string          `json:"tag_message,omitempty" jsonschema:"Only for a new tag: a message, which makes it an annotated tag"`
+	Name        string          `json:"name,omitempty" jsonschema:"The release's name; the tag name when omitted"`
+	Description string          `json:"description,omitempty" jsonschema:"The release notes, in Markdown"`
+	Milestones  []string        `json:"milestones,omitempty" jsonschema:"Titles of the project's milestones to associate; a group milestone needs Premium"`
+	ReleasedAt  string          `json:"released_at,omitempty" jsonschema:"When it was or will be released, RFC 3339; now when omitted. A time in the future makes it an upcoming release"`
+	Links       []releaseLinkIn `json:"links,omitempty" jsonschema:"Asset links to publish with the release, at most 20; each URL must be in this project: its web pages or its API path, where its packages are"`
+	DryRun      bool            `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
+}
+
+type releaseLinkIn struct {
+	Name            string `json:"name" jsonschema:"The link's name, shown on the release page"`
+	URL             string `json:"url" jsonschema:"Where it points: a URL in this project, under its web path or its API path, with no credentials in it"`
+	LinkType        string `json:"link_type,omitempty" jsonschema:"other, runbook, image or package; other when omitted"`
+	DirectAssetPath string `json:"direct_asset_path,omitempty" jsonschema:"A path under the release, starting with /, that GitLab redirects to the URL"`
 }
 
 func createRelease() definition {
 	return tool[createReleaseIn, model.ReleaseWrite]{
 		sp: spec{Name: "create_release", Kind: Ship, Toolset: "releases",
-			Description: "Create a release of a tag. When the tag does not exist, GitLab creates it at ref, which starts the " +
-				"project's tag pipelines; the result says whether it did. A second release of one tag is refused [conflict]. " +
+			Description: "Create a release of a tag, with asset links to the project's own pages when given. When the tag does " +
+				"not exist, GitLab creates it at ref, which starts the project's tag pipelines; the result says whether it did. A second release of one tag is refused [conflict]. " +
 				"Never repeated after a lost answer." + shipNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in createReleaseIn) (model.ReleaseWrite, error) {
 			at, err := parseTime("released_at", in.ReleasedAt)
@@ -233,6 +241,9 @@ func createRelease() definition {
 			}
 			req := service.ReleaseCreate{Project: string(in.Project), TagName: in.TagName, Ref: in.Ref, TagMessage: in.TagMessage,
 				Name: in.Name, Description: in.Description, Milestones: in.Milestones}
+			for _, l := range in.Links {
+				req.Links = append(req.Links, gapi.ReleaseLink(l))
+			}
 			if !at.IsZero() {
 				req.ReleasedAt = &at
 			}

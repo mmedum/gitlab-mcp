@@ -101,11 +101,17 @@ func (c *Client) CancelPipeline(ctx context.Context, p Project, id int64) (*gitl
 }
 
 // RetryJob runs a job again as a new job, which it returns.
-func (c *Client) RetryJob(ctx context.Context, p Project, id int64) (*gitlab.Job, error) {
+func (c *Client) RetryJob(ctx context.Context, p Project, id int64, inputs map[string]any) (*gitlab.Job, error) {
 	var out gitlab.Job
 	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/jobs/{}/retry", Args: []string{p.segment(), idArg(id)},
-		Name: "retry_job"}, &out)
+		Body: retryBody{Inputs: inputs}, Name: "retry_job"}, &out)
 	return &out, err
+}
+
+// retryBody is POST …/jobs/:id/retry's request: values for the inputs
+// the job declares, which GitLab checks against its specification.
+type retryBody struct {
+	Inputs map[string]any `json:"inputs,omitempty"`
 }
 
 // JobVariable is one variable a manual job is played with.
@@ -116,14 +122,15 @@ type JobVariable struct {
 
 // playBody is POST …/jobs/:id/play's request.
 type playBody struct {
-	Variables []JobVariable `json:"job_variables_attributes,omitempty"`
+	Variables []JobVariable  `json:"job_variables_attributes,omitempty"`
+	Inputs    map[string]any `json:"job_inputs,omitempty"`
 }
 
 // PlayJob starts a manual job. It runs the job, so it is not repeated.
-func (c *Client) PlayJob(ctx context.Context, p Project, id int64, vars []JobVariable) (*gitlab.Job, error) {
+func (c *Client) PlayJob(ctx context.Context, p Project, id int64, vars []JobVariable, inputs map[string]any) (*gitlab.Job, error) {
 	var out gitlab.Job
 	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/jobs/{}/play", Args: []string{p.segment(), idArg(id)},
-		Body: playBody{Variables: vars}, Name: "play_job"}, &out)
+		Body: playBody{Variables: vars, Inputs: inputs}, Name: "play_job"}, &out)
 	return &out, err
 }
 

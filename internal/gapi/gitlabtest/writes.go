@@ -183,8 +183,12 @@ func (s *Server) serveIssueWrite(w http.ResponseWriter, r *http.Request, p *proj
 		s.updateIssue(w, r, p, iss, user)
 	case r.Method == http.MethodPost && match(rest, "notes"):
 		s.createNote(w, r, p, t, user)
+	case r.Method == http.MethodPost && match(rest, "discussions"):
+		s.createDiscussion(w, r, p, t, nil, user)
 	case r.Method == http.MethodPost && match(rest, "discussions", "*", "notes"):
 		s.replyToDiscussion(w, r, p, t, user, rest[1])
+	case r.Method == http.MethodPut && match(rest, "discussions", "*"):
+		s.resolveDiscussion(w, r, p, t, user, rest[1])
 	case r.Method == http.MethodDelete && match(rest, "notes", "*"):
 		s.deleteNote(w, r, p, t, user, rest[1])
 	default:
@@ -203,11 +207,11 @@ func (s *Server) serveMRWrite(w http.ResponseWriter, r *http.Request, p *project
 	case post && match(rest, "notes"):
 		s.createNote(w, r, p, t, user)
 	case post && match(rest, "discussions"):
-		s.createDiscussion(w, r, p, mr, user)
+		s.createDiscussion(w, r, p, t, mr, user)
 	case post && match(rest, "discussions", "*", "notes"):
 		s.replyToDiscussion(w, r, p, t, user, rest[1])
 	case put && match(rest, "discussions", "*"):
-		s.resolveDiscussion(w, r, p, mr, user, rest[1])
+		s.resolveDiscussion(w, r, p, t, user, rest[1])
 	case post && match(rest, "draft_notes"):
 		s.createDraft(w, r, p, mr, user)
 	case post && match(rest, "draft_notes", "bulk_publish"):

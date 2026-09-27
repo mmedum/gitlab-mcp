@@ -68,7 +68,9 @@ type Server struct {
 	*httptest.Server
 	opts Options
 
-	mu            sync.Mutex
+	mu sync.Mutex
+	// inputsSent are the input values the last job retry or play sent.
+	inputsSent    map[string]any
 	groups        []*group
 	projects      []*project
 	moved         map[string]string

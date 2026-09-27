@@ -70,18 +70,32 @@ func Pipeline(p model.PipelineDetail, bd Boundary) string {
 		fmt.Fprintf(&b, "\nConfiguration errors: %s", bd.Inline(p.UntrustedYAMLErrors))
 	}
 	switch {
-	case len(p.FailedJobs) == 0 && p.Status == "failed":
-		// Trigger jobs are not in the job listing: a downstream pipeline
-		// that failed fails this one with no job of its own failing.
-		b.WriteString("\nNo job of this pipeline failed; a trigger job's downstream pipeline may have, which this server does not read yet.")
-	case len(p.FailedJobs) == 0:
+	case len(p.FailedJobs) == 0 && len(p.FailedTriggerJobs) == 0:
 		b.WriteString("\nNo job failed.")
-	default:
+	case len(p.FailedJobs) > 0:
 		fmt.Fprintf(&b, "\nFailed jobs (%d):", len(p.FailedJobs))
 		for _, j := range p.FailedJobs {
 			b.WriteString("\n- " + jobLine(j))
 		}
 		b.WriteString("\nget_job_log with failed_only reads where a job failed.")
+	}
+	if len(p.FailedTriggerJobs) > 0 {
+		fmt.Fprintf(&b, "\nFailed trigger jobs (%d), each failed by the pipeline it started:", len(p.FailedTriggerJobs))
+		for _, t := range p.FailedTriggerJobs {
+			b.WriteString("\n- " + jobLine(t.JobRow))
+			if d := t.Downstream; d != nil {
+				fmt.Fprintf(&b, "; started pipeline %d in project id %d, %s", d.ID, d.ProjectID, Ident(d.Status))
+			} else {
+				b.WriteString("; started no pipeline")
+			}
+		}
+		b.WriteString("\nget_pipeline with that project and pipeline reads the downstream pipeline.")
+	}
+	switch {
+	case !p.FailedTriggerJobsComplete && len(p.FailedTriggerJobs) > 0:
+		b.WriteString("\nMore trigger jobs failed than were read.")
+	case !p.FailedTriggerJobsComplete:
+		b.WriteString("\nThe trigger jobs could not be read, so a downstream pipeline that failed this one is not named.")
 	}
 	if !p.FailedJobsComplete {
 		b.WriteString("\nMore jobs failed than were read; list_jobs with scope failed lists them all.")

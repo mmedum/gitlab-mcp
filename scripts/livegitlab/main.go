@@ -61,7 +61,7 @@ func main() {
 	flag.StringVar(&o.profile, "profile", "", "the signed-in profile to use; empty takes the default")
 	flag.BoolVar(&o.keep, "keep", false, "leave the scratch projects in place for a look afterwards")
 	flag.StringVar(&o.record, "record", "testdata/live-cover-record.tsv", "where to write what the run sent")
-	flag.StringVar(&o.spike, "spike", "", "run only this spike after seeding (E or G), and drive no tool")
+	flag.StringVar(&o.spike, "spike", "", "run only this spike after seeding (E, G or O), and drive no tool")
 	flag.Parse()
 
 	p := redact.NewPrinter(redact.NewRedactor(false))
@@ -69,8 +69,8 @@ func main() {
 		p.Fail("livegitlab: -namespace is required; the run creates its projects in -namespace and reads nothing else")
 		os.Exit(2)
 	}
-	if o.spike != "" && o.spike != "E" && o.spike != "G" {
-		p.Fail("livegitlab: -spike takes E or G; the other spikes run with every run")
+	if o.spike != "" && o.spike != "E" && o.spike != "G" && o.spike != "O" {
+		p.Fail("livegitlab: -spike takes E, G or O; the other spikes run with every run")
 		os.Exit(2)
 	}
 	err := run(context.Background(), o, p)
@@ -149,12 +149,16 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	if err != nil {
 		return fmt.Errorf("seed the scratch projects: %w", err)
 	}
-	if o.spike != "" {
+	if o.spike == "E" || o.spike == "G" {
 		spikes(ctx, settings, s, o.spike, p)
 		return nil
 	}
 	if err := waitForCI(ctx, client, &s, p); err != nil {
 		return err
+	}
+	if o.spike == "O" {
+		spikes(ctx, settings, s, o.spike, p)
+		return nil
 	}
 	spikes(ctx, settings, s, "", p)
 
@@ -341,7 +345,8 @@ func seed(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor)
 			map[string]any{"action": action, "file_path": "src/main.txt", "content": "synthetic source for " + c2.branch + ": " + c2.msg + "\n"},
 		}
 		if first {
-			actions = append(actions, map[string]any{"action": "create", "file_path": ".gitlab-ci.yml", "content": ciConfig(*s)})
+			actions = append(actions, map[string]any{"action": "create", "file_path": ".gitlab-ci.yml", "content": ciConfig(*s)},
+				map[string]any{"action": "create", "file_path": "ci/child.yml", "content": childConfig})
 		}
 		body := map[string]any{"branch": c2.branch, "commit_message": c2.msg, "actions": actions}
 		if c2.start != "" {
@@ -473,13 +478,18 @@ func seedPhase1(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Red
 // ciConfig is the scratch project's CI: on the default branch a job that
 // passes, a long job that prints a synthetic token and fails, and a job
 // allowed to fail; on any other branch the passing job alone, so a
-// pipeline listing has more than one page at little cost.
+// pipeline listing has more than one page at little cost. A trigger job
+// starts a child pipeline that fails, so get_pipeline has one to name. The passing
+// and the manual job declare an input, and the input slow adds a job that
+// keeps its log open for spike O.
 func ciConfig(s scratch) string {
 	token := "glpat-" + "EXAMPLE" + strings.Repeat("0", 20)
 	return `spec:
   inputs:
     greeting:
       default: hello
+    slow:
+      default: "no"
 ---
 workflow:
   rules:
@@ -488,8 +498,14 @@ workflow:
 default:
   image: alpine:3.20
 
+variables:
+  SLOW: $[[ inputs.slow ]]
+
 build:
   stage: build
+  inputs:
+    target:
+      default: scratch
   script:
     - echo "building ` + s.Name + ` $[[ inputs.greeting ]]"
 
@@ -517,8 +533,19 @@ manual step:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
       allow_failure: true
+  inputs:
+    target:
+      default: scratch
   script:
-    - echo "a step a person starts"
+    - echo "a step a person starts for ${{ job.inputs.target }}"
+
+slow log:
+  stage: build
+  rules:
+    - if: $SLOW == "yes"
+  script:
+    - i=0; while [ $i -lt 2000 ]; do echo "slow line $i"; i=$((i+1)); done
+    - sleep 300
 
 unit tests:
   stage: test
@@ -531,6 +558,14 @@ unit tests:
     - echo "the server refused token ` + token + `"
     - exit 1
 
+downstream:
+  stage: test
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  trigger:
+    include: ci/child.yml
+    strategy: depend
+
 lint:
   stage: test
   allow_failure: true
@@ -541,6 +576,15 @@ lint:
     - exit 1
 `
 }
+
+// childConfig is the child pipeline the downstream trigger job starts:
+// one job that fails, which fails the trigger job.
+const childConfig = `child fails:
+  image: alpine:3.20
+  script:
+    - echo "a child pipeline that fails"
+    - exit 1
+`
 
 // waitForCI waits for the default branch's pipeline to finish and learns
 // its id and two of its jobs. A pipeline that does not finish in time,

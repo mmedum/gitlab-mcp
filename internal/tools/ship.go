@@ -149,19 +149,20 @@ func cancelPipeline() definition {
 	}
 }
 
-type jobIDIn struct {
-	Project idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
-	JobID   int64    `json:"job_id" jsonschema:"The job's id, as list_jobs, get_pipeline and job URLs give it"`
-	DryRun  bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without running anything"`
+type retryJobIn struct {
+	Project idOrPath       `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	JobID   int64          `json:"job_id" jsonschema:"The job's id, as list_jobs, get_pipeline and job URLs give it"`
+	Inputs  map[string]any `json:"inputs,omitempty" jsonschema:"Values for the inputs the job's own configuration declares, by name, for the new job; GitLab refuses a name the job's inputs do not include, and a job that declares none ignores them"`
+	DryRun  bool           `json:"dry_run,omitempty" jsonschema:"Return what would be sent without running anything"`
 }
 
 func retryJob() definition {
-	return tool[jobIDIn, model.JobWrite]{
+	return tool[retryJobIn, model.JobWrite]{
 		sp: spec{Name: "retry_job", Kind: Ship,
-			Description: "Run a finished job again. GitLab makes a new job, whose id the result gives; one GitLab will not retry " +
-				"is refused [conflict]. Never repeated after a lost answer." + shipNote},
-		run: func(ctx context.Context, svc *service.Service, in jobIDIn) (model.JobWrite, error) {
-			return svc.RetryJob(ctx, string(in.Project), in.JobID)
+			Description: "Run a finished job again, with new values for its inputs when given. GitLab makes a new job, whose " +
+				"id the result gives; one GitLab will not retry is refused [conflict]. Never repeated after a lost answer." + shipNote},
+		run: func(ctx context.Context, svc *service.Service, in retryJobIn) (model.JobWrite, error) {
+			return svc.RetryJob(ctx, string(in.Project), in.JobID, in.Inputs)
 		},
 		text: render.JobWrite,
 	}
@@ -176,20 +177,21 @@ type playJobIn struct {
 	Project   idOrPath        `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
 	JobID     int64           `json:"job_id" jsonschema:"The manual job's id, as list_jobs gives it"`
 	Variables []jobVariableIn `json:"variables,omitempty" jsonschema:"Variables for this run of the job; the result names their keys and never their values"`
+	Inputs    map[string]any  `json:"inputs,omitempty" jsonschema:"Values for the inputs the job's own configuration declares, by name; GitLab refuses a name the job's inputs do not include, and a job that declares none ignores them"`
 	DryRun    bool            `json:"dry_run,omitempty" jsonschema:"Return what would be sent without running anything"`
 }
 
 func playJob() definition {
 	return tool[playJobIn, model.JobWrite]{
 		sp: spec{Name: "play_job", Kind: Ship,
-			Description: "Start a manual job, such as a deployment a person has to trigger. A job that is not waiting to be " +
-				"started is refused [conflict]. Never repeated after a lost answer." + shipNote},
+			Description: "Start a manual job, such as a deployment a person has to trigger, with values for its inputs when " +
+				"given. A job that is not waiting to be started is refused [conflict]. Never repeated after a lost answer." + shipNote},
 		run: func(ctx context.Context, svc *service.Service, in playJobIn) (model.JobWrite, error) {
 			vars := make([]service.JobVariable, 0, len(in.Variables))
 			for _, v := range in.Variables {
 				vars = append(vars, service.JobVariable{Key: v.Key, Value: v.Value})
 			}
-			return svc.PlayJob(ctx, string(in.Project), in.JobID, vars)
+			return svc.PlayJob(ctx, string(in.Project), in.JobID, vars, in.Inputs)
 		},
 		text: render.JobWrite,
 	}

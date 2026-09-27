@@ -450,3 +450,17 @@ func TestSurfaceCounts(t *testing.T) {
 		}
 	}
 }
+
+// A description is continued from an offset, as an issue's is.
+func TestGetProjectDescriptionOffset(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, whole := h.ok("get_project", map[string]any{"project": gitlabtest.ProjectAlpha})
+	desc := get(whole, "untrusted_description").(string)
+	text, out := h.ok("get_project", map[string]any{"project": gitlabtest.ProjectAlpha, "offset": 5})
+	want := fmt.Sprintf("Description: characters 5 to %d of %d shown, to the end", len(desc), len(desc))
+	if get(out, "untrusted_description") != desc[5:] || get(out, "description_budget", "offset") != float64(5) ||
+		!strings.Contains(text, want) {
+		t.Errorf("description %q, budget %v\n%s", get(out, "untrusted_description"), get(out, "description_budget"), text)
+	}
+	h.fails("get_project", map[string]any{"project": gitlabtest.ProjectAlpha, "offset": len(desc) + 1}, "invalid")
+}

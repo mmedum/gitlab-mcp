@@ -194,7 +194,7 @@ func TestCommitDiffBudget(t *testing.T) {
 	body, _ := json.Marshal(diffs)
 	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/diff", alphaID, sha),
 		Status: http.StatusOK, Body: string(body)})
-	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0)
+	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestCommitMessageBudget(t *testing.T) {
 			Status: http.StatusOK, Body: string(body)})
 	}
 	inject()
-	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0)
+	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestCommitMessageBudget(t *testing.T) {
 		t.Fatalf("message budget = %+v, shown %d characters", b, len([]rune(out.UntrustedMessage)))
 	}
 	inject()
-	rest, err := s.GetCommit(t.Context(), "2001", sha, 0, *b.ContinueOffset)
+	rest, err := s.GetCommit(t.Context(), "2001", sha, 0, 0, *b.ContinueOffset)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestCommitMessageBudget(t *testing.T) {
 		t.Errorf("continued message budget = %+v", rest.MessageBudget)
 	}
 	inject()
-	if _, err := s.GetCommit(t.Context(), "2001", sha, 0, 20000); class(err) != gapi.ClassInvalid {
+	if _, err := s.GetCommit(t.Context(), "2001", sha, 0, 0, 20000); class(err) != gapi.ClassInvalid {
 		t.Errorf("offset past the end: %v", err)
 	}
 }
@@ -260,7 +260,7 @@ func TestCommitCountsHiddenTextOnce(t *testing.T) {
 		Status: http.StatusOK, Body: string(diffs)})
 	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s", alphaID, sha),
 		Status: http.StatusOK, Body: string(commit)})
-	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0)
+	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

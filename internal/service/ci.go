@@ -46,28 +46,42 @@ func (s *Service) GetPipeline(ctx context.Context, raw string, id int64) (model.
 		return model.PipelineDetail{}, err
 	}
 	var (
-		wg        sync.WaitGroup
-		pl        *gitlab.PipelineDetail
-		failed    []gitlab.Job
-		page      gapi.Page
-		failedErr error
+		wg                    sync.WaitGroup
+		pl                    *gitlab.PipelineDetail
+		failed                []gitlab.Job
+		triggers              []gitlab.Bridge
+		page, triggerPage     gapi.Page
+		failedErr, triggerErr error
 	)
 	wg.Go(func() { pl, err = s.client.GetPipeline(ctx, p, id) })
 	wg.Go(func() {
 		failed, page, failedErr = s.client.ListPipelineJobs(ctx, p, id, gapi.JobQuery{Scope: "failed"},
 			gapi.ListOptions{PerPage: gapi.MaxPerPage})
 	})
+	wg.Go(func() {
+		triggers, triggerPage, triggerErr = s.client.ListPipelineTriggerJobs(ctx, p, id, gapi.JobQuery{Scope: "failed"},
+			gapi.ListOptions{PerPage: gapi.MaxPerPage})
+	})
 	wg.Wait()
-	if err != nil {
-		return model.PipelineDetail{}, err
+	for _, e := range []error{err, failedErr} {
+		if e != nil {
+			return model.PipelineDetail{}, e
+		}
 	}
-	if failedErr != nil {
-		return model.PipelineDetail{}, failedErr
+	// The trigger jobs add to the pipeline; a failure to read them leaves
+	// them unknown rather than failing the read, as the thread summary does.
+	if triggerErr != nil {
+		if !soft(triggerErr) {
+			return model.PipelineDetail{}, triggerErr
+		}
+		triggers, triggerPage = nil, gapi.Page{NextToken: "unread"}
 	}
 	out := model.PipelineDetail{Project: ref, ID: pl.ID, IID: pl.IID, Status: pl.Status, Ref: pl.Ref, Tag: pl.Tag,
 		SHA: pl.SHA, BeforeSHA: pl.BeforeSHA, Source: pl.Source, CreatedAt: pl.CreatedAt, StartedAt: pl.StartedAt,
 		FinishedAt: pl.FinishedAt, UpdatedAt: pl.UpdatedAt, Duration: pl.Duration, QueuedDuration: pl.QueuedDuration,
-		WebURL: pl.WebURL, FailedJobs: make([]model.JobRow, 0, len(failed)), FailedJobsComplete: page.Complete()}
+		WebURL: pl.WebURL, FailedJobs: make([]model.JobRow, 0, len(failed)), FailedJobsComplete: page.Complete(),
+		FailedTriggerJobsComplete: triggerPage.Complete(),
+		FailedTriggerJobs:         make([]model.TriggerJobRow, 0, len(triggers))}
 	if pl.DetailedStatus != nil {
 		out.DetailedStatus = pl.DetailedStatus.Text
 	}
@@ -80,6 +94,9 @@ func (s *Service) GetPipeline(ctx context.Context, raw string, id int64) (model.
 	}
 	for _, j := range failed {
 		out.FailedJobs = append(out.FailedJobs, jobRow(j))
+	}
+	for _, b := range triggers {
+		out.FailedTriggerJobs = append(out.FailedTriggerJobs, bridgeRow(b))
 	}
 	return out, nil
 }
@@ -107,6 +124,17 @@ func jobRow(j gitlab.Job) model.JobRow {
 		Duration: j.Duration, WebURL: j.WebURL}
 }
 
+// bridgeRow is a trigger job as a job row, with the pipeline it started.
+func bridgeRow(b gitlab.Bridge) model.TriggerJobRow {
+	row := model.TriggerJobRow{JobRow: jobRow(gitlab.Job{ID: b.ID, Name: b.Name, Stage: b.Stage, Status: b.Status,
+		AllowFailure: b.AllowFailure, FailureReason: b.FailureReason, CreatedAt: b.CreatedAt, StartedAt: b.StartedAt,
+		FinishedAt: b.FinishedAt, Duration: b.Duration, WebURL: b.WebURL})}
+	if d := b.DownstreamPipeline; d != nil {
+		row.Downstream = &model.DownstreamRow{ID: d.ID, ProjectID: d.ProjectID, Status: d.Status, WebURL: d.WebURL}
+	}
+	return row
+}
+
 // JobLogQuery is get_job_log's query. Offsets are bytes of the log as
 // GitLab stores it.
 type JobLogQuery struct {
@@ -122,7 +150,9 @@ type JobLogQuery struct {
 // GetJobLog shows a window of a job's log: the tail by default, from
 // byte_offset when given, or the section the job failed in (§7.6). What
 // it shows is cleaned as GitLab's page shows it, secret shapes masked
-// (§4.1.4) and hidden characters made visible, inside a boundary.
+// (§4.1.4) and hidden characters made visible, inside a boundary. Only
+// the window and what its edges need are read, so a log of any size can
+// be shown (§7.6).
 func (s *Service) GetJobLog(ctx context.Context, q JobLogQuery) (model.JobLog, error) {
 	limit := q.ByteLimit
 	switch {
@@ -138,58 +168,72 @@ func (s *Service) GetJobLog(ctx context.Context, q JobLogQuery) (model.JobLog, e
 	if err != nil {
 		return model.JobLog{}, err
 	}
-	var (
-		wg     sync.WaitGroup
-		job    *gitlab.Job
-		trace  []byte
-		jobErr error
-	)
-	wg.Go(func() { job, jobErr = s.client.GetJob(ctx, p, q.JobID) })
-	wg.Go(func() { trace, err = s.client.GetJobTrace(ctx, p, q.JobID) })
-	wg.Wait()
-	if jobErr != nil {
-		return model.JobLog{}, jobErr
-	}
+	job, err := s.client.GetJob(ctx, p, q.JobID)
 	if err != nil {
 		return model.JobLog{}, err
 	}
-	out := model.JobLog{Project: ref, Job: jobRow(*job), TotalBytes: len(trace)}
+	r := &logReader{ctx: ctx, client: s.client, p: p, job: q.JobID}
+	if err := r.measure(*job); err != nil {
+		return model.JobLog{}, err
+	}
+	out := model.JobLog{Project: ref, Job: jobRow(*job)}
 
 	var start, end int
 	switch {
 	case q.ByteOffset != nil:
-		if *q.ByteOffset < 0 || *q.ByteOffset > len(trace) {
+		if *q.ByteOffset < 0 || *q.ByteOffset > r.size {
 			return model.JobLog{}, gapi.Errf(gapi.ClassInvalid, "byte_offset %d is outside the log, which has %d bytes",
-				*q.ByteOffset, len(trace))
+				*q.ByteOffset, r.size)
 		}
-		start, end = *q.ByteOffset, min(len(trace), *q.ByteOffset+limit)
+		start, end = *q.ByteOffset, min(r.size, *q.ByteOffset+limit)
 	case q.FailedOnly:
-		sec, failEnd, inSection, failed := failedSection(trace)
+		f, err := r.failure(slices.Contains(failingStatuses, job.Status))
+		if err != nil {
+			return model.JobLog{}, err
+		}
 		switch {
-		case inSection:
-			out.Section = sec.Name
-			start, end = max(sec.Start, failEnd-limit), failEnd
-		case failed:
+		case f.inSection:
+			out.Section = f.section.Name
+			// A section begun before what was read has Start -1.
+			start, end = max(0, f.section.Start, f.end-limit), f.end
+		case f.found:
 			// A runner that writes no sections still ends at the failure.
-			start, end = max(0, failEnd-limit), failEnd
+			start, end = max(0, f.end-limit), f.end
 		default:
 			out.FailureNotFound = true
-			start, end = max(0, len(trace)-limit), len(trace)
+			start, end = max(0, r.size-limit), r.size
 		}
 	default:
-		start, end = max(0, len(trace)-limit), len(trace)
+		start, end = max(0, r.size-limit), r.size
 	}
-	start, end, keyOpen := widen(trace, start, end)
+	// The window, as far each edge may move to a line boundary, and before
+	// it as far as keyOpen looks, in one read: one byte more on each side
+	// tells a reach that ran out from the log's own edge.
+	from := max(0, start-keyReach-lineReach-1)
+	buf, err := r.span(from, end+lineReach+1)
+	if err != nil {
+		return model.JobLog{}, err
+	}
+	// A log shorter than it was measured ends the window sooner.
+	end = min(end, from+len(buf))
+	start = min(start, end)
+	ws, we := widen(buf, start-from, end-from)
+	start, end = from+ws, from+we
+	keyOpen, err := r.keyOpen(start)
+	if err != nil {
+		return model.JobLog{}, err
+	}
+	out.TotalBytes = r.size
 	out.ByteOffset, out.ByteEnd = start, end
 	if start > 0 {
 		prev := max(0, start-limit)
 		out.PrevByteOffset = &prev
 	}
-	if end < len(trace) {
+	if end < r.size {
 		next := end
 		out.NextByteOffset = &next
 	}
-	text := render.Log(trace[start:end])
+	text := render.Log(buf[ws:we])
 	if keyOpen {
 		// The window starts inside a private key block that opened
 		// earlier: its header is put back so the block is masked whole,
@@ -199,6 +243,138 @@ func (s *Service) GetJobLog(ctx context.Context, q JobLogQuery) (model.JobLog, e
 	masked, n := redact.MaskSecrets(text)
 	out.SecretsMasked = n
 	out.UntrustedLog, out.HiddenRemoved = render.Code(masked)
+	return out, nil
+}
+
+// failingStatuses are the job states whose log ends in the runner's
+// failure line; failed_only searches no other.
+var failingStatuses = []string{"failed", "canceled", "canceling"}
+
+// logReader reads a job's log in ranges. It holds what it read as one
+// stretch, so a walk back from the end reads each byte once.
+type logReader struct {
+	ctx    context.Context
+	client *gapi.Client
+	p      gapi.Project
+	job    int64
+	// size is the log's length in bytes.
+	size int
+	// have is the stretch read, starting at at.
+	at   int
+	have []byte
+}
+
+// measure learns the log's size. An archived log's size is its trace
+// artifact's. Any other is read from its start, one ranged read's worth:
+// a shorter answer is the whole log, and a longer log is measured by
+// reading past its end (spike O).
+func (r *logReader) measure(j gitlab.Job) error {
+	for _, a := range j.Artifacts {
+		if a.FileType == "trace" && a.Size > 0 {
+			r.size = int(a.Size)
+			return nil
+		}
+	}
+	head, err := r.client.GetJobTrace(r.ctx, r.p, r.job, 0, gapi.MaxTraceRange)
+	if err != nil {
+		return err
+	}
+	r.at, r.have, r.size = 0, head, len(head)
+	if len(head) < gapi.MaxTraceRange {
+		return nil
+	}
+	return r.probe()
+}
+
+// probe measures a log at least one ranged read long by where a one-byte
+// read comes back empty: it doubles, halves the gap until one ranged read
+// covers it, and reads that last stretch, which ends the log exactly.
+func (r *logReader) probe() error {
+	lo, hi := gapi.MaxTraceRange, 2*gapi.MaxTraceRange
+	for {
+		b, err := r.client.GetJobTrace(r.ctx, r.p, r.job, hi, 1)
+		if err != nil {
+			return err
+		}
+		if len(b) == 0 {
+			break
+		}
+		lo, hi = hi, hi*2
+	}
+	for hi-lo > gapi.MaxTraceRange {
+		mid := lo + (hi-lo)/2
+		b, err := r.client.GetJobTrace(r.ctx, r.p, r.job, mid, 1)
+		if err != nil {
+			return err
+		}
+		if len(b) > 0 {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	// The log ends after lo and by hi; a log still being written may have
+	// grown since, which reading to the end takes in.
+	tail, err := r.client.GetJobTrace(r.ctx, r.p, r.job, lo, 0)
+	if err != nil {
+		return err
+	}
+	r.at, r.have, r.size = lo, tail, lo+len(tail)
+	return nil
+}
+
+// span returns the log's bytes from a to b, b clamped to the log's end,
+// reading what it does not hold. A range that touches the stretch held
+// extends it; any other replaces it.
+func (r *logReader) span(a, b int) ([]byte, error) {
+	b = min(b, r.size)
+	a = max(0, min(a, b))
+	held := r.at + len(r.have)
+	if a >= r.at && b <= held {
+		return r.have[a-r.at : b-r.at], nil
+	}
+	if a > held || b < r.at {
+		r.at, r.have = a, nil
+		held = a
+	}
+	if a < r.at {
+		before, err := r.read(a, r.at)
+		if err != nil {
+			return nil, err
+		}
+		r.have = append(before, r.have...)
+		r.at = a
+	}
+	if b > held {
+		after, err := r.read(held, b)
+		if err != nil {
+			return nil, err
+		}
+		r.have = append(r.have, after...)
+		if len(after) < b-held {
+			// The log is shorter than it was measured.
+			r.size = r.at + len(r.have)
+		}
+	}
+	b = min(b, r.at+len(r.have))
+	return r.have[a-r.at : b-r.at], nil
+}
+
+// read reads the log from a to b, a ranged read at a time.
+func (r *logReader) read(a, b int) ([]byte, error) {
+	var out []byte
+	for a < b {
+		n := min(b-a, gapi.MaxTraceRange)
+		chunk, err := r.client.GetJobTrace(r.ctx, r.p, r.job, a, n)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, chunk...)
+		if len(chunk) < n {
+			break
+		}
+		a += n
+	}
 	return out, nil
 }
 
@@ -234,31 +410,73 @@ func failureAt(trace []byte) (lineStart, textEnd int, ok bool) {
 var runnerAfterFailure = []string{"after_script", "upload_artifacts_on_failure", "upload_artifacts_on_success",
 	"cleanup_file_variables", "archive_cache", "archive_cache_on_failure"}
 
-// failedSection finds where a failed job's failure line ends, and the
-// section it failed in: of the job's own sections that start before the
-// runner's "ERROR: Job failed" line, the one that ended last, or one
-// still open. A section a script opens inside step_script ends before
-// step_script does, so the script's own step is the one named.
-// inSection is false when the log has a failure line but no section of
-// the job's own before it.
-func failedSection(trace []byte) (sec render.LogSection, failEnd int, inSection, failed bool) {
-	lineStart, textEnd, failed := failureAt(trace)
-	if !failed {
-		return render.LogSection{}, 0, false, false
+// failureReads bounds the walk back for the failure line: the runner
+// writes it last, after at most its own cleanup, so 2 MB from the end
+// holds it. Once found, one more read looks for the section it is in.
+const failureReads = 4
+
+// failed is where a failed job's log failed.
+type failed struct {
+	// found is a failure line found; end is where that line ends.
+	found bool
+	end   int
+	// section is the section the job failed in, when inSection. Its
+	// Start is -1 when it began before the stretch read.
+	section   render.LogSection
+	inSection bool
+}
+
+// failure finds the runner's "ERROR: Job failed" line and the section it
+// failed in, reading back from the end a ranged read at a time: of the
+// job's own sections that start before the line, the one that ended
+// last, or one still open. A section a script opens inside step_script
+// ends before step_script does, so the script's own step is the one
+// named. A section that began before the stretch read is known by its
+// end marker; one begun before it and never ended is looked for further
+// back, one read further, only when no other is found. search is false
+// for a job whose state has no failure line.
+func (r *logReader) failure(search bool) (failed, error) {
+	if !search {
+		return failed{}, nil
 	}
-	failEnd = len(trace)
-	if i := bytes.IndexByte(trace[textEnd:], '\n'); i >= 0 {
-		failEnd = textEnd + i + 1
-	}
-	for _, s := range render.LogSections(trace) {
-		if s.Start >= lineStart || slices.Contains(runnerAfterFailure, s.Name) {
+	var f failed
+	// Reads past the one that found the line, looking for its section.
+	after := 0
+	for from, reads := r.size, 0; from > 0 && !f.inSection; reads++ {
+		if (!f.found && reads == failureReads) || (f.found && after == 1) {
+			break
+		}
+		if f.found {
+			after++
+		}
+		from = max(0, from-gapi.MaxTraceRange)
+		b, err := r.span(from, r.size)
+		if err != nil {
+			return failed{}, err
+		}
+		lineStart, textEnd, ok := failureAt(b)
+		// A line that starts at the stretch's edge may start before it.
+		if !ok || (lineStart == 0 && from > 0) {
 			continue
 		}
-		if !inSection || endsLater(s, sec) {
-			sec, inSection = s, true
+		f = failed{found: true, end: len(b)}
+		if i := bytes.IndexByte(b[textEnd:], '\n'); i >= 0 {
+			f.end = textEnd + i + 1
+		}
+		for _, s := range render.LogSections(b) {
+			if s.Start >= lineStart || slices.Contains(runnerAfterFailure, s.Name) {
+				continue
+			}
+			if !f.inSection || endsLater(s, f.section) {
+				f.section, f.inSection = s, true
+			}
+		}
+		f.end += from
+		if f.section.Start >= 0 {
+			f.section.Start += from
 		}
 	}
-	return sec, failEnd, inSection, true
+	return f, nil
 }
 
 // endsLater reports whether a ended after b, an open section counting as
@@ -285,8 +503,18 @@ const (
 // pemBegin is a private key block's first line, from its start.
 var pemBegin = regexp.MustCompile(`^-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----`)
 
+// keyHeader opens a private key block for the masking to match.
+const keyHeader = "-----BEGIN PRIVATE KEY-----"
+
+// keyReach is how far before a window keyOpen looks for a key block
+// still open: far past any real key, however CI prefixed its lines, in
+// one ranged read.
+const keyReach = 256 << 10
+
 // lastKeyBegin finds where the last private key block in b starts, or
-// -1, searching back by the literal rather than scanning all of b.
+// -1, searching back by the literal rather than scanning all of b. The
+// header counts wherever it sits in its line, so an indented or prefixed
+// key is found.
 func lastKeyBegin(b []byte) int {
 	for end := len(b); ; {
 		i := bytes.LastIndex(b[:end], []byte("-----BEGIN "))
@@ -297,25 +525,27 @@ func lastKeyBegin(b []byte) int {
 	}
 }
 
-// keyHeader opens a private key block for the masking to match.
-const keyHeader = "-----BEGIN PRIVATE KEY-----"
+// keyOpen reports whether start is inside a private key block opened
+// before it and not yet closed, which the caller masks whole rather than
+// shows from its middle. It looks keyReach back (§18 row 76).
+func (r *logReader) keyOpen(start int) (bool, error) {
+	b, err := r.span(max(0, start-keyReach), start)
+	if err != nil {
+		return false, err
+	}
+	last := lastKeyBegin(b)
+	return last >= 0 && !bytes.Contains(b[last:], []byte("-----END ")), nil
+}
 
-// widen moves a window's edges out to line boundaries. keyOpen reports a
-// window that starts inside a private key block opened earlier and not
-// yet closed, which the caller masks whole rather than shows from its
-// middle; the block may have opened megabytes before, so the window is
-// not moved back to it.
-func widen(trace []byte, start, end int) (int, int, bool) {
-	keyOpen := false
+// widen moves a window's edges out to line boundaries.
+func widen(trace []byte, start, end int) (int, int) {
 	if start > 0 {
 		start = edgeBack(trace, start)
-		last := lastKeyBegin(trace[:start])
-		keyOpen = last >= 0 && !bytes.Contains(trace[last:start], []byte("-----END "))
 	}
 	if end < len(trace) {
 		end = edgeForward(trace, end)
 	}
-	return start, end, keyOpen
+	return start, end
 }
 
 // edgeBack moves i back to just after a newline, or failing that a

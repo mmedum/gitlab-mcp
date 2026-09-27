@@ -312,6 +312,37 @@ func TestRetryAndPlayJob(t *testing.T) {
 		"variables": []map[string]any{{"key": "", "value": "x"}}}, "invalid")
 }
 
+// Job inputs are sent as given, named in the result, and checked by
+// GitLab against what the job declares.
+func TestRetryAndPlayJobWithInputs(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	text, out := h.ok("retry_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed,
+		"inputs": map[string]any{"target": "staging"}})
+	if get(out, "outcome") != "retried" || strings.Join(strs(get(out, "inputs")), ",") != "target" ||
+		h.gl.JobInputsSent()["target"] != "staging" || !strings.Contains(text, "Inputs sent: target.") {
+		t.Errorf("retry = %v, sent %v\n%s", out, h.gl.JobInputsSent(), text)
+	}
+	h.fails("retry_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed,
+		"inputs": map[string]any{"undeclared": true}}, "invalid")
+	_, out = h.ok("retry_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed,
+		"inputs": map[string]any{"target": "x"}, "dry_run": true})
+	if get(out, "outcome") != "dry_run" || !strings.Contains(fmt.Sprint(get(out, "would_send")), "inputs") {
+		t.Errorf("dry run = %v", out)
+	}
+
+	_, out = h.ok("play_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobManual,
+		"inputs": map[string]any{"target": "production"}})
+	if get(out, "outcome") != "played" || strings.Join(strs(get(out, "inputs")), ",") != "target" ||
+		h.gl.JobInputsSent()["target"] != "production" {
+		t.Errorf("play = %v, sent %v", out, h.gl.JobInputsSent())
+	}
+	// Without inputs, none are sent and the result names none.
+	_, out = h.ok("retry_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed})
+	if len(strs(get(out, "inputs"))) != 0 || h.gl.JobInputsSent() != nil {
+		t.Errorf("no inputs: %v, sent %v", out, h.gl.JobInputsSent())
+	}
+}
+
 func TestRetryJobWhoseAnswerWasLostIsSettled(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: ship})
 	id := h.gl.ProjectID(alpha)

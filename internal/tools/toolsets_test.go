@@ -311,3 +311,38 @@ func TestLostWikiCreateInADirectoryIsSettled(t *testing.T) {
 		t.Errorf("settled: %s", text)
 	}
 }
+
+// A release's asset links must point at the instance itself: a release
+// page sends every reader wherever they lead.
+func TestCreateReleaseWithAssetLinks(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(ship, "releases")})
+	base := h.gl.URL
+	link := func(name, u string) map[string]any { return map[string]any{"name": name, "url": u} }
+	text, out := h.ok("create_release", map[string]any{"project": alpha, "tag_name": gitlabtest.TagPlain, "links": []map[string]any{
+		{"name": "linux binary", "url": base + "/example-group/alpha/-/packages/1", "link_type": "package", "direct_asset_path": "/bin/linux"},
+		link("runbook", base+"/example-group/alpha/-/wikis/runbook"),
+		link("generic package", fmt.Sprintf("%s/api/v4/projects/%d/packages/generic/app/1.0/app", base, h.gl.ProjectID(alpha))),
+	}})
+	if get(out, "links", 0, "name") != "linux binary" || get(out, "links", 0, "link_type") != "package" ||
+		get(out, "links", 1, "link_type") != "other" || !strings.Contains(text, "Asset link linux binary (package)") {
+		t.Errorf("links = %v\n%s", get(out, "links"), text)
+	}
+	for name, u := range map[string]string{
+		"another host":     "https://example.invalid/payload",
+		"credentials":      strings.Replace(base, "://", "://user:pass@", 1) + "/x",
+		"a relative URL":   "/example-group/alpha/-/packages/1",
+		"another scheme":   "javascript:alert(1)",
+		"another project":  base + "/example-group/sub/beta/-/raw/main/installer.sh",
+		"a way out":        base + "/example-group/alpha/../sub/beta/-/raw/main/installer.sh",
+		"the project page": base + "/example-group/alpha-lookalike/-/raw/main/x",
+	} {
+		h.fails("create_release", map[string]any{"project": alpha, "tag_name": gitlabtest.TagPlain, "dry_run": true,
+			"links": []map[string]any{link(name, u)}}, "blocked")
+	}
+	h.fails("create_release", map[string]any{"project": alpha, "tag_name": gitlabtest.TagPlain, "dry_run": true,
+		"links": []map[string]any{{"name": "x", "url": base + "/example-group/alpha/x", "link_type": "script"}}}, "invalid")
+	h.fails("create_release", map[string]any{"project": alpha, "tag_name": gitlabtest.TagPlain, "dry_run": true,
+		"links": []map[string]any{{"name": "x", "url": base + "/example-group/alpha/x", "direct_asset_path": "/../up"}}}, "invalid")
+	h.fails("create_release", map[string]any{"project": alpha, "tag_name": gitlabtest.TagPlain, "dry_run": true,
+		"links": []map[string]any{link(" ", base+"/example-group/alpha/x")}}, "invalid")
+}

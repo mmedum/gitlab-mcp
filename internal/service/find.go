@@ -189,7 +189,7 @@ func (s *Service) SearchProjects(ctx context.Context, q ProjectSearch) (model.Pr
 }
 
 // GetProject reads one project.
-func (s *Service) GetProject(ctx context.Context, raw string) (model.Project, error) {
+func (s *Service) GetProject(ctx context.Context, raw string, offset int) (model.Project, error) {
 	c, err := s.api()
 	if err != nil {
 		return model.Project{}, err
@@ -203,14 +203,16 @@ func (s *Service) GetProject(ctx context.Context, raw string) (model.Project, er
 		return model.Project{}, err
 	}
 	name, _ := render.Line(proj.Name, render.TitleChars)
-	desc, _ := render.Markdown(proj.Description, s.self())
-	desc, _ = render.Cut(desc, 0, render.DescriptionBudget)
+	desc, budget, err := s.description(proj.Description, offset)
+	if err != nil {
+		return model.Project{}, err
+	}
 	return model.Project{
 		Project: projectRef(ctx, proj.ID, proj.PathWithNamespace), WebURL: proj.WebURL, Visibility: proj.Visibility,
 		DefaultBranch: proj.DefaultBranch, Archived: proj.Archived, EmptyRepo: proj.EmptyRepo, Topics: proj.Topics,
 		Stars: proj.StarCount, Forks: proj.ForksCount, OpenIssues: proj.OpenIssuesCount, CreatedAt: proj.CreatedAt,
 		LastActivityAt: proj.LastActivityAt, Namespace: proj.Namespace.FullPath, NamespaceKind: proj.Namespace.Kind,
-		UntrustedName: name, UntrustedDescription: desc,
+		UntrustedName: name, UntrustedDescription: desc, DescriptionBudget: budget,
 	}, nil
 }
 

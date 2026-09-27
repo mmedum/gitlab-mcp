@@ -315,10 +315,14 @@ func fill(v reflect.Value, field, payload string) {
 	}
 }
 
-// A failed pipeline with no failed job of its own says why that can be.
-func TestPipelineFailedWithoutAFailedJob(t *testing.T) {
-	got := Pipeline(model.PipelineDetail{Status: "failed", FailedJobsComplete: true}, FixedBoundary("0123456789abcdef"))
-	if !strings.Contains(got, "a trigger job's downstream pipeline may have") || strings.Contains(got, "No job failed.") {
+// A pipeline failed by a downstream pipeline names the trigger job and
+// the pipeline it started.
+func TestPipelineFailedByATriggerJob(t *testing.T) {
+	got := Pipeline(model.PipelineDetail{Status: "failed", FailedJobsComplete: true, FailedTriggerJobs: []model.TriggerJobRow{
+		{JobRow: model.JobRow{ID: 7, Name: "deploy downstream", Stage: "deploy", Status: "failed"},
+			Downstream: &model.DownstreamRow{ID: 9, ProjectID: 2002, Status: "failed"}}}}, FixedBoundary("0123456789abcdef"))
+	if !strings.Contains(got, "Failed trigger jobs (1)") || !strings.Contains(got, "started pipeline 9 in project id 2002, failed") ||
+		strings.Contains(got, "Failed jobs") || strings.Contains(got, "No job failed.") {
 		t.Errorf("text:\n%s", got)
 	}
 }

@@ -26,6 +26,10 @@ const (
 	JobFailed  = 70002
 	JobAllowed = 70003
 	JobManual  = 70004
+	// BridgeFailed is a trigger job on PipelineFailed whose downstream
+	// pipeline, DownstreamFailed, failed.
+	BridgeFailed     = 79001
+	DownstreamFailed = 62001
 	// FakeToken is the synthetic token JobFailed's log prints.
 	FakeToken = "glpat-" + "EXAMPLE0000000000000000000"
 	// LogFiller is how many lines of test output JobFailed's log holds,
@@ -52,6 +56,14 @@ func (s *Server) fillCI(p *project) {
 	s.addJob(p, pl, JobFailed, "unit tests", "test", "failed", "script_failure", false)
 	s.addJob(p, pl, JobAllowed, "lint", "test", "failed", "script_failure", true)
 	s.addJob(p, pl, JobManual, "deploy", "deploy", "manual", "", false)
+	// A trigger job whose downstream pipeline, in another project,
+	// failed: the job listing leaves it out.
+	started, finished := pl.CreatedAt.Add(time.Minute), pl.CreatedAt.Add(5*time.Minute)
+	p.bridges[pl.ID] = []gitlab.Bridge{{ID: BridgeFailed, Name: "downstream", Stage: "deploy", Status: "failed",
+		FailureReason: "downstream_pipeline_creation_failed", CreatedAt: pl.CreatedAt, StartedAt: &started, FinishedAt: &finished,
+		WebURL: fmt.Sprintf("%s/-/jobs/%d", p.WebURL, BridgeFailed),
+		DownstreamPipeline: &gitlab.DownstreamPipeline{ID: DownstreamFailed, ProjectID: 2002, Status: "failed",
+			WebURL: "https://gitlab.example.com/example-group/sub/beta/-/pipelines/62001"}}}
 
 	p.ciConfig["main"] = "stages: [build, test, deploy]\n\nbuild:\n  stage: build\n  script: make build\n\n" +
 		"unit tests:\n  stage: test\n  script: make test\n\nlint:\n  stage: test\n  script: make lint\n  allow_failure: true\n\n" +
@@ -82,6 +94,9 @@ func (s *Server) addJob(p *project, pl *gitlab.PipelineDetail, id int64, name, s
 		p.traces[id] = jobLog(id, name, status == "failed")
 		if id == JobAllowed {
 			p.traces[id] = timestamped(p.traces[id], started)
+		}
+		if id == JobPassed {
+			j.Artifacts = traceArtifact(p.traces[id])
 		}
 	}
 	p.jobs[pl.ID] = append(p.jobs[pl.ID], j)
@@ -147,6 +162,64 @@ func timestamped(log string, at time.Time) string {
 	return b.String()
 }
 
+// trace serves a job's log as GitLab does: the stored bytes as text,
+// from byte_offset and byte_limit bytes of it when asked, an offset past
+// the end reading nothing.
+func (s *Server) trace(w http.ResponseWriter, r *http.Request, log string) {
+	q := r.URL.Query()
+	offset, limit := 0, len(log)
+	if v := q.Get("byte_offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "byte_offset does not have a valid value"})
+			return
+		}
+		offset = min(n, len(log))
+	}
+	if v := q.Get("byte_limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > traceLimit {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "byte_limit does not have a valid value"})
+			return
+		}
+		limit = n
+	}
+	// GitLab serves the stored log as text, whatever was asked for.
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(log[offset:min(len(log), offset+limit)]))
+}
+
+// traceLimit is the most bytes GitLab reads of a log at once.
+const traceLimit = 500 << 10
+
+// traceArtifact is how GitLab lists a log it has archived.
+func traceArtifact(log string) []gitlab.JobArtifact {
+	return []gitlab.JobArtifact{{FileType: "trace", Size: int64(len(log))}}
+}
+
+// SetJobLog replaces a job's log and state. An archived log is also a
+// trace artifact of its size, as GitLab lists one once it archives the
+// log.
+func (s *Server) SetJobLog(projectPath string, id int64, status, log string, archived bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	j := findJob(p, itoa(id))
+	if j == nil {
+		return false
+	}
+	j.Status, j.Artifacts = status, nil
+	if archived {
+		j.Artifacts = traceArtifact(log)
+	}
+	p.traces[id] = log
+	return true
+}
+
 func (s *Server) findPipeline(p *project, id string) *gitlab.PipelineDetail {
 	for _, pl := range p.pipelines {
 		if strconv.FormatInt(pl.ID, 10) == id {
@@ -194,6 +267,20 @@ func (s *Server) serveCI(w http.ResponseWriter, r *http.Request, p *project, seg
 			}
 		}
 		writePage(s, w, r, rows)
+	case match(seg, "pipelines", "*", "trigger_jobs"):
+		pl := s.findPipeline(p, seg[1])
+		if pl == nil {
+			message(w, http.StatusNotFound, "404 Not found")
+			return true
+		}
+		scope := r.URL.Query().Get("scope")
+		var rows []gitlab.Bridge
+		for _, b := range p.bridges[pl.ID] {
+			if scope == "" || b.Status == scope {
+				rows = append(rows, b)
+			}
+		}
+		writePage(s, w, r, rows)
 	case match(seg, "jobs", "*"):
 		j := findJob(p, seg[1])
 		if j == nil {
@@ -207,10 +294,7 @@ func (s *Server) serveCI(w http.ResponseWriter, r *http.Request, p *project, seg
 			message(w, http.StatusNotFound, "404 Not found")
 			return true
 		}
-		// GitLab serves the stored log as text, whatever was asked for.
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(p.traces[j.ID]))
+		s.trace(w, r, p.traces[j.ID])
 	case match(seg, "ci", "lint"):
 		s.lint(w, r, p)
 	default:

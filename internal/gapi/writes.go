@@ -113,6 +113,14 @@ func (c *Client) CreateMergeRequestDiscussion(ctx context.Context, p Project, ii
 	return &out, err
 }
 
+// CreateIssueDiscussion starts a resolvable thread on an issue.
+func (c *Client) CreateIssueDiscussion(ctx context.Context, p Project, iid int64, body string) (*gitlab.Discussion, error) {
+	var out gitlab.Discussion
+	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/issues/{}/discussions", Args: []string{p.segment(), idArg(iid)},
+		Body: noteBody{body}, Bucket: BucketNotes, Name: "add_comment"}, &out)
+	return &out, err
+}
+
 // GetIssueDiscussion reads one thread of an issue.
 func (c *Client) GetIssueDiscussion(ctx context.Context, p Project, iid int64, discussion string) (*gitlab.Discussion, error) {
 	var out gitlab.Discussion
@@ -139,6 +147,15 @@ type resolveBody struct {
 func (c *Client) ResolveMergeRequestDiscussion(ctx context.Context, p Project, iid int64, discussion string, resolved bool) (*gitlab.Discussion, error) {
 	var out gitlab.Discussion
 	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/merge_requests/{}/discussions/{}",
+		Args: []string{p.segment(), idArg(iid), discussion}, Body: resolveBody{Resolved: resolved},
+		Name: "resolve_discussion"}, &out)
+	return &out, err
+}
+
+// ResolveIssueDiscussion resolves or reopens an issue's thread.
+func (c *Client) ResolveIssueDiscussion(ctx context.Context, p Project, iid int64, discussion string, resolved bool) (*gitlab.Discussion, error) {
+	var out gitlab.Discussion
+	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/issues/{}/discussions/{}",
 		Args: []string{p.segment(), idArg(iid), discussion}, Body: resolveBody{Resolved: resolved},
 		Name: "resolve_discussion"}, &out)
 	return &out, err

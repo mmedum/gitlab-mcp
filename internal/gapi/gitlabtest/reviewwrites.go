@@ -178,7 +178,9 @@ func (s *Server) startThread(p *project, t target, user, text string, pos *gitla
 	return d
 }
 
-func (s *Server) createDiscussion(w http.ResponseWriter, r *http.Request, p *project, mr *gitlab.MergeRequest, user string) {
+// createDiscussion starts a thread on an issue or a merge request; mr
+// is nil for an issue, which takes no position.
+func (s *Server) createDiscussion(w http.ResponseWriter, r *http.Request, p *project, t target, mr *gitlab.MergeRequest, user string) {
 	b, ok := readBody(w, r)
 	if !ok || !b.require(w, "body") {
 		return
@@ -188,12 +190,15 @@ func (s *Server) createDiscussion(w http.ResponseWriter, r *http.Request, p *pro
 		return
 	}
 	if pos != nil {
+		if mr == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "position is only for a merge request"})
+			return
+		}
 		if _, ok := s.checkPosition(w, p, mr, pos); !ok {
 			return
 		}
 	}
 	text, _ := b.str("body")
-	t := mrTarget(mr)
 	cmds, kept := extract(text)
 	summary := s.runCommands(p, t, cmds, user)
 	if kept == "" && len(cmds) > 0 {
@@ -262,8 +267,8 @@ func (s *Server) setResolved(d *gitlab.Discussion, user string, resolved bool) b
 	return found
 }
 
-func (s *Server) resolveDiscussion(w http.ResponseWriter, r *http.Request, p *project, mr *gitlab.MergeRequest, user, id string) {
-	key := mrTarget(mr).key()
+func (s *Server) resolveDiscussion(w http.ResponseWriter, r *http.Request, p *project, t target, user, id string) {
+	key := t.key()
 	i := findDiscussion(p, key, id)
 	if i < 0 {
 		message(w, http.StatusNotFound, "404 Discussion Not Found")
@@ -318,15 +323,13 @@ func (s *Server) createDraft(w http.ResponseWriter, r *http.Request, p *project,
 	if !ok {
 		return
 	}
-	var code any
+	code := ""
 	if pos != nil {
 		c, ok := s.checkPosition(w, p, mr, pos)
 		if !ok {
 			return
 		}
-		if c != "" {
-			code = c
-		}
+		code = c
 	}
 	d := gitlab.DraftNote{AuthorID: s.user(user).ID}
 	if id, ok := b.str("in_reply_to_discussion_id"); ok && id != "" {
@@ -342,9 +345,12 @@ func (s *Server) createDraft(w http.ResponseWriter, r *http.Request, p *project,
 	d.Note, _ = b.str("note")
 	d.ResolveDiscussion, _ = b.boolean("resolve_discussion")
 	d.Position = pos
+	if code != "" {
+		d.LineCode = &code
+	}
 	d.ID = s.nextDraft()
 	p.drafts[mr.IID] = append(p.drafts[mr.IID], d)
-	writeJSON(w, http.StatusCreated, withExtra(d, map[string]any{"merge_request_id": mr.ID, "line_code": code}))
+	writeJSON(w, http.StatusCreated, withExtra(d, map[string]any{"merge_request_id": mr.ID}))
 }
 
 func (s *Server) deleteDraft(w http.ResponseWriter, p *project, mr *gitlab.MergeRequest, user, id string) {

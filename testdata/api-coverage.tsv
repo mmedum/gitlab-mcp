@@ -55,7 +55,7 @@ GET /projects/{id}/pipelines	used	1	Client.ListPipelines: list_pipelines
 GET /projects/{id}/pipelines/{pipeline_id}	used	1	Client.GetPipeline: get_pipeline
 GET /projects/{id}/pipelines/{pipeline_id}/jobs	used	1	Client.ListPipelineJobs: list_jobs, and get_pipeline's failed jobs
 GET /projects/{id}/jobs/{job_id}	used	1	Client.GetJob: get_job_log and its resource name the job they show
-GET /projects/{id}/jobs/{job_id}/trace	used	1	Client.GetJobTrace: get_job_log and its resource
+GET /projects/{id}/jobs/{job_id}/trace	used	1	Client.GetJobTrace: get_job_log and its resource, in ranges
 GET /projects/{id}/ci/lint	used	1	Client.LintCI: lint_ci on the project's own configuration at a ref
 GET /search	used	1	Client.Search and Client.SearchCommits: search across the instance
 GET /groups/{id}/(-/)search	used	1	Client.Search and Client.SearchCommits: search inside one group
@@ -72,10 +72,10 @@ POST /projects/{id}/ci/lint	used	1	Client.LintCIContent: lint_ci on a configurat
 POST /projects/{id}/issues	used	1	Client.CreateIssue: create_issue
 PUT /projects/{id}/issues/{issue_iid}	used	1	Client.UpdateIssue: update_issue, after the updated_at witness is checked (§4.6)
 POST /projects/{id}/issues/{noteable_id}/notes	used	1	Client.CreateIssueNote: add_comment on an issue
-POST /projects/{id}/issues/{noteable_id}/discussions	deferred	1	starting a thread on an issue; add_comment posts a standalone comment there, and a new thread only on a merge request's diff line (§17a)
+POST /projects/{id}/issues/{noteable_id}/discussions	used	1	Client.CreateIssueDiscussion: add_comment with thread, a resolvable thread on an issue
 POST /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	used	1	Client.ReplyToIssueDiscussion: add_comment replying in an issue thread
 POST /projects/{id}/merge_requests/{noteable_id}/notes	used	1	Client.CreateMergeRequestNote: add_comment on a merge request
-POST /projects/{id}/merge_requests/{noteable_id}/discussions	used	1	Client.CreateMergeRequestDiscussion: add_comment starting a thread on a line of the diff, at a position diffpos computes (§7.4)
+POST /projects/{id}/merge_requests/{noteable_id}/discussions	used	1	Client.CreateMergeRequestDiscussion: add_comment starting a thread, on a line of the diff at a position diffpos computes (§7.4) or with thread
 POST /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes	used	1	Client.ReplyToMergeRequestDiscussion: add_comment replying in a merge request thread
 PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	used	1	Client.ResolveMergeRequestDiscussion: resolve_discussion
 POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	used	1	Client.CreateDraftNote: add_review_comment
@@ -245,7 +245,7 @@ GET /projects/{id}/issues/{issue_iid}/time_stats	deferred	1	issue time tracking 
 * /projects/{id}/issues/{subscribable_id}/*	deferred	2	subscribing to an issue's notifications (§17a)
 * /projects/{id}/issues/{eventable_id}/*	deferred	10	resource events of an issue: label, milestone, state and weight history (§17a)
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Client.GetIssueDiscussion: add_comment settles a lost reply by reading its thread
-PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	deferred	1	resolving an issue thread; resolve_discussion is for merge requests in §8 (§17a)
+PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Client.ResolveIssueDiscussion: resolve_discussion on an issue
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one issue thread's comments; list_discussions carries them
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	one comment; list_discussions carries it
 PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	editing a comment in a thread (§17a)
@@ -361,8 +361,8 @@ DELETE /projects/{id}/protected_branches/{name}	written-off	1	branch protection 
 # CI (§8a): pipelines, jobs and lint used; schedules, triggers, variables and secure files written off
 DELETE /projects/{id}/pipelines/{pipeline_id}	written-off	1	pipeline delete destroys logs and artifacts, and is no assistant task (§8a)
 GET /projects/{id}/pipelines/latest	deferred	1	the latest pipeline; list_pipelines ordered by id covers it
-GET /projects/{id}/pipelines/{pipeline_id}/bridges	deferred	1	the trigger jobs the job listing leaves out, which name the downstream pipeline that failed one (§17a); a deprecated listing to judge before it is used
-GET /projects/{id}/pipelines/{pipeline_id}/trigger_jobs	deferred	1	trigger jobs of a pipeline (§17a)
+GET /projects/{id}/pipelines/{pipeline_id}/bridges	written-off	1	deprecated in GitLab 19.2 for trigger_jobs, which lib/api/ci/pipelines.rb serves with the same handler
+GET /projects/{id}/pipelines/{pipeline_id}/trigger_jobs	used	1	Client.ListPipelineTriggerJobs: get_pipeline's failed trigger jobs and the downstream pipelines that failed them
 PUT /projects/{id}/pipelines/{pipeline_id}/metadata	deferred	1	renaming a pipeline (§17a)
 GET /projects/{id}/pipelines/{pipeline_id}/test_report	deferred	1	test reports (§17a)
 GET /projects/{id}/pipelines/{pipeline_id}/test_report_summary	deferred	1	test report summaries (§17a)
