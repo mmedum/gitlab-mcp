@@ -119,7 +119,7 @@ func stalenessCheck(in stalenessInputs) stalenessReport {
 	r.add("status line", stalenessStatus(arch, in.docs["CHANGELOG.md#all"], in.newestTag, in.built))
 
 	r.add(fmt.Sprintf("changes since %s", cmp.Or(in.newestTag, "the first tag")),
-		stalenessChangedSinceTag(in.docs["CHANGELOG.md"], in.newestTag, in.changedSince))
+		stalenessChangedSinceTag(in.docs["CHANGELOG.md"], in.docs["CHANGELOG.md#all"], in.newestTag, in.changedSince))
 
 	n, p = stalenessNoVersionInProse(in.docs)
 	r.add(fmt.Sprintf("version in prose: %d documents", n), p)
@@ -557,12 +557,22 @@ func stalenessStatus(arch, changelog, tag string, built bool) []string {
 
 // stalenessChangedSinceTag holds that shipped Go changed since the newest
 // tag comes with CHANGELOG entries under [Unreleased]: a release cut from
-// here would otherwise publish an empty note over real changes.
-func stalenessChangedSinceTag(unreleased, tag string, changed []string) []string {
+// here would otherwise publish an empty note over real changes. The
+// release commit moves them under a version heading the tag does not yet
+// have, and those count too.
+func stalenessChangedSinceTag(unreleased, changelog, tag string, changed []string) []string {
 	if tag == "" || len(changed) == 0 {
 		return nil
 	}
-	for line := range strings.Lines(unreleased) {
+	notes := unreleased
+	if loc := stalenessHeading.FindStringSubmatchIndex(changelog); loc != nil && changelog[loc[2]:loc[3]] != tag {
+		cut := changelog[loc[1]:]
+		if end := strings.Index(cut, "\n## "); end >= 0 {
+			cut = cut[:end]
+		}
+		notes += cut
+	}
+	for line := range strings.Lines(notes) {
 		if strings.HasPrefix(strings.TrimSpace(line), "- ") {
 			return nil
 		}
