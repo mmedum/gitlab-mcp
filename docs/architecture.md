@@ -1235,8 +1235,7 @@ gated. It covers gitlab.com, the only instance.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-A, B, C, D, E, F, H, J, K, L, M and N have run on gitlab.com (2026-09-26
-and 2026-09-27); G has not. Spike I, the floor version, was dropped with self-managed support
+Every spike has run on gitlab.com (2026-09-26 and 2026-09-27). Spike I, the floor version, was dropped with self-managed support
 (§14, 2026-09-26).
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
@@ -1252,7 +1251,10 @@ and 2026-09-27); G has not. Spike I, the floor version, was dropped with self-ma
   `/oauth/revoke` with only `client_id`, on gitlab.com. §2.2.
   *Verdict, gitlab.com, 2026-09-26: code exchange and refresh work
   with no secret on a non-confidential application; `doctor` then read
-  the token's scopes and the account. Revocation is still open.*
+  the token's scopes and the account. Revocation, 2026-09-27, through
+  spike G: revoking a public client's access token with only
+  `client_id` killed it (401 `invalid_token`) and its refresh token
+  (`invalid_grant`).*
 - **Spike C — concurrent refresh.** Two refreshes with one token: one
   `invalid_grant`, and the old access token dead at once. §10's lock is
   built from this.
@@ -1303,8 +1305,14 @@ and 2026-09-27); G has not. Spike I, the floor version, was dropped with self-ma
   pipelines, and pipeline and job listings among them; `/user`, a
   project, issue listings and every notes route do not. The driver
   probes both kinds with a second sign-in for `mcp` alone, then revokes
-  it (`-spike G`). Not yet run live: the first attempt timed out at the
-  browser on 2026-09-27.*
+  it (`-spike G`).*
+  *Verdict, gitlab.com, 2026-09-27: confirmed. A sign-in asking for
+  `mcp` alone was granted `mcp`. One issue by iid, branches, a merge
+  request's commits, pipelines and project search answered 200; `/user`,
+  a project, the issue listing, a merge request and a new comment
+  answered 403. Ten of ten routes agreed with the source. The scope
+  cannot comment or read a merge request, so it changes nothing for
+  this server (§2.6).*
 - **Spike H — conditional reads.** Whether `If-None-Match` returns 304 on
   API GETs and whether a 304 is counted against the rate limit.
   *Verdict, gitlab.com, 2026-09-26: a single read and a listing both
@@ -1468,8 +1476,9 @@ and §17.9 are decided as proposed and §17.3 from the evals; §17.10
 stands and §17.11 is after 1.0. The schema baseline holds all
 sixty-six tools. A live run on gitlab.com drove every tool and option
 but the two page tokens already waived, and its transcript was read:
-clean. Owed: spike G, which needs the maintainer at a browser for an
-`mcp`-scoped sign-in; the driver runs it with `-spike G`.*
+clean. Spike G then ran on gitlab.com and agreed with the source on
+ten of ten routes, and answered spike B's revocation half. Owed:
+nothing.*
 
 ### 16a. Found by review, and fixed
 
@@ -1848,3 +1857,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 72 | A developer may set pipeline variables | Phase 3 live run | **Refuted for new projects (tier 1, live).** gitlab.com creates a project allowing no one to set them: a pipeline with variables answers 400 `Insufficient permissions to set pipeline variables`, a manual job with variables a bare 403. Both are `[forbidden]` naming the setting. The live driver sets the scratch project's minimum role to developer |
 | 73 | Deployments filter by `updated_after` in any order | Phase 3 live run | **Refuted (tier 1, live).** GitLab answers 400 `` `updated_at` filter requires `updated_at` sort ``. `list_deployments` sorts by `updated_at` when a time filter is given and refuses another order with one |
 | 74 | A fresh eval world signs its server in afresh | Phase 4 eval run | **Refuted (tier 1).** The server kept the world's sign-in in the OS keyring under one profile, and every world mints the same token names, so the next world's refresh token matched the stored seed and the server used a dead access token: seven of eight tasks answered `[auth]`. `gitlabtest` now puts a random part in every token name, so no instance accepts or matches another's; the harness deletes its keyring item after each world, and a tool answering `[auth]` makes the run an error rather than a model's failure |
+| 75 | An `mcp`-scoped token reaches only the REST routes tagged `route_setting :mcp` | `lib/api/concerns/mcp_access.rb` at master `1ee957c5`; spike G on gitlab.com | **Confirmed (tier 1, live).** Ten of ten probed routes answered as tagged: reads of one issue, branches, merge request commits, pipelines and search; 403 for `/user`, a project, issue listings, a merge request and notes. §2.6 stands |
