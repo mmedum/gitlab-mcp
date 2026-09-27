@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -257,6 +258,11 @@ func dumpAt(root, rev string) (schemaDump, error) {
 		_, _ = gitx.Output(root, "worktree", "remove", "--force", src)
 		_, _ = gitx.Output(root, "worktree", "prune")
 	}()
+	// A revision from before the server existed, such as the repository's
+	// initial commit, has no surface: every tool is added since.
+	if _, err := os.Stat(filepath.Join(src, "cmd", "gitlab-mcp")); errors.Is(err, fs.ErrNotExist) {
+		return schemaDump{}, nil
+	}
 	bin := executable(filepath.Join(tmp, "gitlab-mcp"))
 	build := exec.Command("go", "build", "-o", bin, "./cmd/gitlab-mcp") //nolint:gosec // fixed arguments
 	build.Dir = src

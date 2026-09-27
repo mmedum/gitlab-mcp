@@ -350,6 +350,25 @@ func TestSchemaAckInAPullRequest(t *testing.T) {
 	}
 }
 
+// A pull request from before the server existed compares with an empty
+// surface: every tool is added, and has to be acknowledged.
+func TestSchemaAckFromBeforeTheServer(t *testing.T) {
+	r := newFakeRepo(t)
+	r.git("add", "-A")
+	r.git("commit", "--quiet", "-m", "initial")
+	base := r.git("rev-parse", "HEAD")
+	r.commit(dumpJSON(manyTools()), "the server")
+	bin := r.build()
+	t.Chdir(r.root)
+	if err := schemaAck(&bytes.Buffer{}, []string{bin, base, "HEAD"}); err == nil || !strings.Contains(err.Error(), "SCHEMA-CHANGE") {
+		t.Fatalf("unacknowledged: err = %v", err)
+	}
+	r.git("commit", "--quiet", "--allow-empty", "-m", "acknowledge\n\nSCHEMA-CHANGE: the first tools")
+	if err := schemaAck(&bytes.Buffer{}, []string{bin, base, "HEAD"}); err != nil {
+		t.Fatalf("acknowledged: %v", err)
+	}
+}
+
 // The committed baseline is a real dump of the whole surface.
 func TestTheCommittedBaselineIsADump(t *testing.T) {
 	t.Chdir("../..")
