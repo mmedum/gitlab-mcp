@@ -30,9 +30,11 @@ import (
 
 const (
 	baselineFile = "testdata/schema-baseline.json"
-	// surfaceFloor is the fewest tools a real dump carries: thirty-one
-	// since phase 1, sixty-six planned.
-	surfaceFloor = 28
+	// surfaceFloor is the fewest tools a real surface carries: the
+	// thirty-one of the committed baseline, recorded at phase 1 and
+	// frozen again in phase 4. The default configuration, which the
+	// smoke gate sees, has forty-three, and the dump sixty-six.
+	surfaceFloor = 31
 )
 
 // surfaceChanges is what moved between two dumps.

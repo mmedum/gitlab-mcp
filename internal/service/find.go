@@ -116,6 +116,11 @@ func (s *Service) suggest(r *model.Resolved) {
 		if r.ID != nil {
 			tool, args["job_id"] = "get_job_log", *r.ID
 		}
+	case instance.KindWiki:
+		tool = "list_wiki_pages"
+		if r.Slug != "" {
+			tool, args["slug"] = "get_wiki_page", r.Slug
+		}
 	case instance.KindProject:
 		tool = "get_project"
 		if r.Ref != "" {

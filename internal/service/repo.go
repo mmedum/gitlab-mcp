@@ -38,16 +38,22 @@ func (s *Service) GetFile(ctx context.Context, raw, path, ref string, offset int
 	}
 	out := model.File{Project: pref, Path: f.FilePath, Ref: f.Ref, Size: f.Size, BlobID: f.BlobID,
 		LastCommitID: f.LastCommitID, CommitID: f.CommitID, SHA256: f.ContentSHA256, ContentType: render.ContentType(content)}
-	if render.IsBinary(content) {
-		out.Binary = true
-		out.Budget = model.Budget{BudgetChars: render.FileBudget}
-		return out, nil
-	}
-	text, visible := render.Code(string(content))
-	if out.UntrustedContent, out.Budget, err = cut(text, visible, offset, render.FileBudget, "the file", "offset"); err != nil {
+	if out.UntrustedContent, out.Binary, out.Budget, err = fileContent(content, offset); err != nil {
 		return model.File{}, err
 	}
 	return out, nil
+}
+
+// fileContent is a file's text from offset under the file budget, with
+// hidden characters made visible, or, for binary content, nothing and a
+// flag that says why.
+func fileContent(content []byte, offset int) (string, bool, model.Budget, error) {
+	if render.IsBinary(content) {
+		return "", true, model.Budget{BudgetChars: render.FileBudget}, nil
+	}
+	text, visible := render.Code(string(content))
+	shown, budget, err := cut(text, visible, offset, render.FileBudget, "the file", "offset")
+	return shown, false, budget, err
 }
 
 // ListTree lists a directory.

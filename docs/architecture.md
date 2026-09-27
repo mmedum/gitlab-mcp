@@ -1,6 +1,6 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 2 done and in review, 2026-09-27; phase 3 is next.
+**Status: phase 3 done and in review, 2026-09-27; phase 4 is next.
 Nothing is tagged.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
@@ -422,11 +422,21 @@ else stays **unknown**, and the result says not to repeat the call.
   mapped to `[stale]`).
 - **Merge and approve:** require `sha`, the head the caller read;
   GitLab enforces it (409, `[stale]`).
-- **Issue, merge request and wiki updates:** no API guard (§2.9). The
+- **Issue and merge request updates:** no API guard (§2.9). The
   tool requires the `updated_at` the caller read, re-reads, refuses
   `[stale]` if it moved, and sends only the fields given. The window
   between the re-read and the PUT is not closed, and the result does
   not claim it is (§17b).
+- **Wiki pages:** GitLab's wiki API exposes neither a version nor an
+  `updated_at` (`lib/api/entities/wiki_page.rb`), so the witness is
+  `content_sha256`, a hash of the content `get_wiki_page` returned. A
+  change or delete re-reads, compares, and refuses `[stale]`; the same
+  window stays open.
+- **Deletes:** a branch carries its head `sha`, compared with a fresh
+  read, since GitLab's own branch delete checks only an author date. A
+  comment carries its `updated_at`, sent as `If-Unmodified-Since`, which
+  GitLab enforces (412, `[stale]`): the one conditional request its REST
+  API honors for a delete this server makes.
 - **Omitted means unchanged.** GitLab's PUT changes only the parameters
   sent, and the server sends only what the caller gave.
 - **Lists change by add and remove.** Labels through GitLab's own
@@ -469,7 +479,8 @@ named and continuable. Budgets, in characters: a description 20,000; a
 file or a merged CI configuration 60,000; discussions or review drafts
 30,000 a page and one comment 6,000; the diffs of a commit, a merge
 request or a comparison 40,000; a commit message 8,000; one search
-excerpt 1,000. A job log is windowed in bytes of the stored log: 40,000
+excerpt 1,000; a wiki page or a snippet file 60,000, as a file; release
+notes 20,000, as a description. A job log is windowed in bytes of the stored log: 40,000
 by default, at most 100,000, each window widened to whole lines so no
 secret straddles its edge. A comparison lists 100 commits at a time. Two
 omissions are named but not yet continuable (§17a).
@@ -1222,9 +1233,8 @@ gated. It covers gitlab.com, the only instance.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-A, B, C, D, E, F, H, J, K, L and M have run on gitlab.com (2026-09-26
-and 2026-09-27); the rest
-have not. Spike I, the floor version, was dropped with self-managed support
+A, B, C, D, E, F, H, J, K, L, M and N have run on gitlab.com (2026-09-26
+and 2026-09-27); G has not. Spike I, the floor version, was dropped with self-managed support
 (§14, 2026-09-26).
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
@@ -1322,7 +1332,20 @@ have not. Spike I, the floor version, was dropped with self-managed support
   merge request by author, `created_after` and title, a comment among
   the threads, a draft among the account's drafts and a commit as the
   branch head were each found by the first read, 265 to 387 ms after
-  the create answered. Pipelines and releases are phase 3's.*
+  the create answered. On 2026-09-27 again, for phase 3: a pipeline by
+  ref, source `api`, username and `created_after`, and a release by its
+  tag, each found by the first read, about 290 ms after the create.*
+
+- **Spike N — conditional delete.** Whether a comment delete honors
+  `If-Unmodified-Since`: a time before the comment's `updated_at`, the
+  same second as an HTTP-date, the time shown, and the time shown
+  stretched to the end of its millisecond. `delete_comment` sends the
+  last (§4.6, §18 row 62).
+  *Verdict, gitlab.com, 2026-09-27: confirmed. The comment's
+  `updated_at` is shown to the millisecond. A second before, the same
+  second as an HTTP-date, and the time shown unpadded were each refused
+  412; the time shown stretched to the end of its millisecond deleted
+  it, 204. GitLab compares below the millisecond it shows.*
 
 Spikes A–D register or use an OAuth application and are in the "ask
 before doing" of `CLAUDE.md`.
@@ -1402,6 +1425,19 @@ is decided, and §17a holds three new deferrals.*
 **Phase 3 — Ship, Destructive and toolsets.** The Ship tools
 with `sha` witnesses; `delete_branch`, `delete_comment`; the `wiki`,
 `snippets`, `releases`, `deployments` and `activity` toolsets. Spike G.
+
+*Built 2026-09-27, simplified and reviewed (§16a). Every behavior was
+checked against GitLab's source at v19.4.1-ee first (§18 rows 60–70).
+Spike M covered pipelines and releases, and spike N showed GitLab holds
+a comment delete's `If-Unmodified-Since` below the millisecond it shows.
+The live driver runs a second server with every flag and toolset on,
+its writes confined to the scratch group. Three live runs on gitlab.com
+drove every tool and option but the two page tokens already waived, and
+their transcripts were read. The first found gitlab.com refusing
+pipeline variables on a new project and deployments filtered by time in
+another order (§18 rows 72, 73); both are fixed. Owed: spike G, which
+needs an `mcp`-scoped application (ask before doing); §17.2 and §17.8
+stay open for phase 4; §17a holds two new deferrals.*
 
 **Phase 4 — evals and 1.0.** The evals harness with the
 injection tasks of §13; §17.3 decided; the surface frozen into the
@@ -1486,6 +1522,33 @@ test that failed before the fix:
 | To-do items and label checks ran one at a time | Phase 2 commit; in parallel, paced by the client |
 | A doc comment slipped from its function | Phase 2 commit |
 | Every standalone comment reads threads to name its thread | Phase 2 commit; it no longer does: a reply or a thread names its own, and `list_discussions` names a standalone comment's |
+
+**Phase 3.** `/simplify`: one read-back helper for the three deletes,
+which also keeps their rendering alike; the issue or merge request note
+reads picked once (the delete stays called by name, which the outcomes
+gate's floor caught when it was not); the If-Unmodified-Since stretch moved into the client
+beside the header; a tag looked up by name instead of by search, which
+also finds one past the search's first page; a snippet's metadata and
+first file read at once; the file budget shared with `get_file`; one
+variable-key check; one release row; the id minimum derived from the
+schema rather than listed; the job-state refusal classified once.
+Skipped: classing every 401 without `invalid_token` as `[forbidden]`
+rather than `[auth]`, a §6.5 decision left to the maintainer.
+`/security-review`: no finding at confidence 8
+(`audit/security-reviews/phase-3.md`), two below it recorded there.
+`/code-review high`: nine candidates:
+
+| Found | Fixed |
+|---|---|
+| `play_job` blamed every 403 with variables on the variables setting and dropped GitLab's reason | Phase 3 commit; only GitLab's bare 403 is offered that cause |
+| A delete repeated after a lost answer read as `[not_found]` though it had landed | Phase 3 commit; a not-found delete of something now gone is reported deleted, saying so |
+| `delete_branch` wanted the whole SHA, while `list_branches` shows twelve characters | Phase 3 commit; a prefix of seven or more is taken |
+| An auto-merge set before a lost answer read as a failure | Phase 3 commit; the read back reports it set |
+| A lost wiki create in a directory settled as not created | Phase 3 commit; the slug is matched as well as the title |
+| `resolve_url` sent a wiki's index and a page's edit view to `get_wiki_page` | Phase 3 commit; the index names `list_wiki_pages`, the views are stripped |
+| `retry_pipeline` could report unchanged while GitLab still showed the old status | Not a defect: the live runs showed GitLab answering with the new status |
+| A 200 merge answer with the merge request open reads as `[unexpected]` | Not a defect: GitLab answers 422 unless merged (`execute_immediate_merge!`) |
+| The id minimum now applies to `list_discussions.note_id` | Kept: nothing is released, and 0 never named a comment |
 
 ### Closing a phase
 
@@ -1598,6 +1661,16 @@ test that failed before the fix:
   a caller acts on. Spike K compared the codes directly. Found in
   phase 2.
 
+- `run_pipeline` settles a lost answer by this account's newest API
+  pipeline on the ref since shortly before the call, so a second
+  `run_pipeline` on the same ref in that window reads as this one. A
+  pipeline carries nothing of the request to tell them apart. Found in
+  phase 3.
+- Job inputs (`retry_job`'s `inputs`, `play_job`'s `job_inputs`) and a
+  release's asset links are not offered: inputs are new in GitLab and
+  typed by the job's own specification, and an asset link is an outside
+  URL a model would be writing into a release. Found in phase 3.
+
 Candidates for after 1.0, from §8a: issue move and links,
 label and milestone writes, rebase, cherry-pick, revert, blame, artifact
 download, tag writes.
@@ -1695,3 +1768,17 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 57 | Every change to an issue moves its `updated_at` | Phase 2 live run | **Refuted (tier 1, live).** Adding an assignee changed the issue and left `updated_at` where it was. A concurrent assignee change is not caught by the witness; `update_issue` computes the assignee set from its own fresh read, so it does not lose one |
 | 58 | A commit's move action without content keeps the file | `app/services/files/multi_service.rb` `transform_move_actions` at `829b21d2`; phase 2 live run | **Refined (tier 1).** Only a missing `content` keeps it: `content: ""` empties the moved file, which the first phase 2 run did. `create_commit` now sends content on a move only when given, and the third run's moved file kept its text |
 | 59 | A branch's own `protected` flag reflects wildcard rules | Phase 2 live run | **Confirmed (tier 1, live).** A branch made under a `guard-*/*`-style rule read as protected, and `create_commit` refused it by that flag; a new branch under the rule was refused by the rules. `create_commit` trusts the flag for a branch that exists and reads the rules only for one it would create. |
+| 60 | A merge GitLab refuses answers 409 | `lib/api/merge_requests.rb` `execute_merge` and `lib/api/helpers.rb` `check_sha_param!` at v19.4.1-ee | **Refined (tier 1).** 409 means only that `sha` is not the head, and names the head. A merge request that cannot merge now answers 405 `Method Not Allowed` or 422 `Branch cannot be merged`, neither saying why. `merge_merge_request` reads it back and names `detailed_merge_status`, and reports a merge whose answer was lost as merged |
+| 61 | Approving twice is harmless | `lib/api/merge_request_approvals.rb` at v19.4.1-ee | **Refuted (tier 1).** An approval GitLab will not take, given already or by an ineligible approver, answers 401 with no `invalid_token` marker; unapproving without one answers 404. The server reads the approvals first and reports `unchanged`, and a 401 the same token can read past is `[forbidden]` |
+| 62 | A comment delete takes no witness | `lib/api/helpers/notes_helpers.rb` `delete_note`, `lib/api/helpers.rb` `destroy_conditionally!` and `check_unmodified_since!` at v19.4.1-ee | **Refuted (tier 1).** `If-Unmodified-Since` is honored with 412. GitLab reads it with Ruby's `Time.parse` and compares the note's `updated_at` at full precision, while its JSON shows milliseconds, so the server sends the witness stretched to the end of its millisecond, in RFC 3339; an HTTP-date, cut to the second, would refuse nearly every delete. Spike N confirmed each half on gitlab.com (tier 1, live) |
+| 63 | GitLab's wiki API carries a version a write can check | `lib/api/wikis.rb`, `lib/api/entities/wiki_page*.rb`, `app/models/wiki_page.rb` at v19.4.1-ee | **Refuted (tier 1).** `WikiPage#update` checks a `last_commit_sha`, but no REST answer exposes one. The witness is a hash of the content read (§4.6) |
+| 64 | A snippet's raw route serves any of its files | `lib/api/helpers/snippets_helpers.rb` `content_for` at v19.4.1-ee | **Refuted (tier 1).** `/raw` serves the first file; `/files/:ref/:file_path/raw` serves each. `get_snippet` reads the others at `HEAD`, which the phase 3 live run checks. A response's `raw_url` is never called (§11) |
+| 65 | A job GitLab will not retry or run is refused as forbidden or invalid | `lib/api/ci/jobs.rb` at v19.4.1-ee | **Refined (tier 1).** It answers 403 `Job is not retryable` and 400 `Unplayable Job`, both the job's state. Both map to `[conflict]` |
+| 66 | Retrying a pipeline with nothing failed is an error | `lib/api/ci/pipelines.rb` at v19.4.1-ee | **Refuted (tier 1).** It answers with the pipeline, changed or not, and so does a cancel of a finished one. The result compares the status before and after |
+| 67 | Wiki pages, snippets and release notes run quick actions | `app/services/wiki_pages`, `snippets` and `releases` at v19.4.1-ee | **Refuted (tier 1).** None calls `QuickActions::InterpretService`, and neither does `MergeRequests::MergeService` for a merge commit message. `scripts/gates bodies` lists them as plain |
+| 68 | An event is filtered by the action name it shows | `app/models/event.rb`, `app/finders/events_finder.rb` at v19.4.1-ee | **Refuted (tier 1).** `action` takes the stored action (`created`, `pushed`, `transferred` and the rest), which is shown as `opened` or `pushed to`; `target_type` takes snake_case names mapped to classes |
+| 69 | A tag search is exact with `^` and `$` | `app/finders/git_refs_finder.rb` at v19.4.1-ee | **Refined (tier 1).** A plain search is a case-insensitive substring match that lists an exact match first. `create_release` searches plainly and compares names |
+| 70 | A release takes any milestone by title | `lib/api/releases.rb` at v19.4.1-ee | **Refined (tier 1).** Group milestones need Premium; on Free a release takes the project's own |
+| 71 | An author may not approve their own merge request | Phase 3 live run on gitlab.com, a Free group | **Refuted there (tier 1, live).** The author's approval was taken. Where a project forbids it GitLab answers 401, which `approve_merge_request` reports as `[forbidden]` |
+| 72 | A developer may set pipeline variables | Phase 3 live run | **Refuted for new projects (tier 1, live).** gitlab.com creates a project allowing no one to set them: a pipeline with variables answers 400 `Insufficient permissions to set pipeline variables`, a manual job with variables a bare 403. Both are `[forbidden]` naming the setting. The live driver sets the scratch project's minimum role to developer |
+| 73 | Deployments filter by `updated_after` in any order | Phase 3 live run | **Refuted (tier 1, live).** GitLab answers 400 `` `updated_at` filter requires `updated_at` sort ``. `list_deployments` sorts by `updated_at` when a time filter is given and refuses another order with one |

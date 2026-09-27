@@ -23,6 +23,14 @@ func definitions() []definition {
 		getFile(), listTree(), listBranches(), listCommits(), getCommit(), compareRefs(), listTags(), createBranch(), createCommit(),
 		listPipelines(), getPipeline(), listJobs(), getJobLog(), lintCI(),
 		listLabels(), listMilestones(), search(), listTodos(), markTodosDone(),
+		mergeMergeRequest(), approveMergeRequest(), unapproveMergeRequest(),
+		runPipeline(), retryPipeline(), retryJob(), playJob(), cancelPipeline(),
+		deleteBranch(), deleteComment(),
+		listWikiPages(), getWikiPage(), saveWikiPage(), deleteWikiPage(),
+		listSnippets(), getSnippet(), createSnippet(),
+		listReleases(), getRelease(), createRelease(),
+		listEnvironments(), listDeployments(),
+		listEvents(),
 	}
 }
 

@@ -1,0 +1,530 @@
+package tools
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mmedum/gitlab-mcp/internal/config"
+	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+)
+
+// The Ship and Destructive tools against the in-memory instance: that
+// only their flag registers them, the witness each carries, what each
+// refuses before sending, and what each reads back (§4.3, §4.5, §4.6).
+
+var (
+	ship        = config.Config{EnableShip: true}
+	destructive = config.Config{EnableDestructive: true}
+)
+
+func mrSHA(h *harness, iid int) string {
+	h.t.Helper()
+	_, out := h.ok("get_merge_request", map[string]any{"project": alpha, "iid": iid})
+	return get(out, "sha").(string)
+}
+
+func TestShipAndDestructiveAreRegisteredOnlyByTheirFlags(t *testing.T) {
+	names := func(cfg config.Config) []string {
+		var out []string
+		for _, r := range Surface(cfg, nil) {
+			out = append(out, r.Name)
+		}
+		return out
+	}
+	shipTools := []string{"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "retry_pipeline",
+		"retry_job", "play_job", "cancel_pipeline"}
+	deleteTools := []string{"delete_branch", "delete_comment"}
+	for _, c := range []struct {
+		name       string
+		cfg        config.Config
+		ship, dels bool
+	}{
+		{"default", config.Config{}, false, false},
+		{"ship", ship, true, false},
+		{"destructive", destructive, false, true},
+		{"both, read-only", config.Config{ReadOnly: true, EnableShip: true, EnableDestructive: true}, false, false},
+	} {
+		got := names(c.cfg)
+		for _, tool := range shipTools {
+			if slices.Contains(got, tool) != c.ship {
+				t.Errorf("%s: %s registered = %v", c.name, tool, !c.ship)
+			}
+		}
+		for _, tool := range deleteTools {
+			if slices.Contains(got, tool) != c.dels {
+				t.Errorf("%s: %s registered = %v", c.name, tool, !c.dels)
+			}
+		}
+	}
+	// A toolset's Ship and Destructive tools need both the toolset and
+	// the flag.
+	releases := config.Config{Toolsets: []string{"releases", "wiki"}}
+	if got := names(releases); slices.Contains(got, "create_release") || slices.Contains(got, "delete_wiki_page") ||
+		!slices.Contains(got, "list_releases") || !slices.Contains(got, "save_wiki_page") {
+		t.Errorf("toolsets without the flags: %v", got)
+	}
+	releases.EnableShip, releases.EnableDestructive = true, true
+	if got := names(releases); !slices.Contains(got, "create_release") || !slices.Contains(got, "delete_wiki_page") {
+		t.Errorf("toolsets with the flags: %v", got)
+	}
+}
+
+// ------------------------------------------------------------- merging
+
+func TestMergeMergeRequest(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	sha := mrSHA(h, 1)
+	before := writesSent(h)
+
+	h.fails("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": ""}, "invalid")
+	h.fails("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": strings.Repeat("0", 40)}, "stale")
+	_, dry := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": sha, "dry_run": true, "squash": true})
+	if get(dry, "outcome") != "dry_run" || !slices.Contains(strs(get(dry, "would_send", "fields")), "squash") {
+		t.Errorf("dry run = %v", dry)
+	}
+	if writesSent(h) != before {
+		t.Fatal("a refusal or a dry run wrote")
+	}
+
+	text, out := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": sha,
+		"merge_commit_message": "Merge it", "remove_source_branch": false})
+	if get(out, "outcome") != "merged" || get(out, "state") != "merged" || get(out, "merge_commit_sha") == "" ||
+		get(out, "merged_by") != gitlabtest.DefaultUser || get(out, "sha") != sha {
+		t.Errorf("merged = %v", out)
+	}
+	if !strings.Contains(text, "Merged merge request !1.") || !strings.Contains(text, "Merged ") {
+		t.Errorf("text:\n%s", text)
+	}
+	head, _ := h.gl.BranchHead(alpha, "main")
+	if head.ID != get(out, "merge_commit_sha") {
+		t.Errorf("main's head is %s, not the merge commit", head.ID)
+	}
+	_, again := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": sha})
+	if get(again, "outcome") != "unchanged" || !strings.Contains(fmt.Sprint(get(again, "notes")), "already merged") {
+		t.Errorf("again = %v", again)
+	}
+}
+
+func TestMergeRefusalsNameTheMergeStatus(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	sha := mrSHA(h, 2)
+	h.gl.SetMergeStatus(alpha, 2, "not_approved")
+	text := h.fails("merge_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": sha}, "conflict")
+	if !strings.Contains(text, `"not_approved"`) {
+		t.Errorf("refusal: %s", text)
+	}
+
+	// Closed and draft merge requests are refused before anything is
+	// sent, with what to do next.
+	at := mrWitness(h, 3)
+	h.ok("update_merge_request", map[string]any{"project": alpha, "iid": 3, "updated_at": at, "draft": true})
+	before := writesSent(h)
+	text = h.fails("merge_merge_request", map[string]any{"project": alpha, "iid": 3, "sha": mrSHA(h, 3)}, "conflict")
+	if !strings.Contains(text, "draft") || writesSent(h) != before {
+		t.Errorf("draft refusal: %s", text)
+	}
+	h.ok("update_merge_request", map[string]any{"project": alpha, "iid": 3, "updated_at": mrWitness(h, 3), "state": "close"})
+	h.fails("merge_merge_request", map[string]any{"project": alpha, "iid": 3, "sha": mrSHA(h, 3)}, "conflict")
+}
+
+func TestMergeAfterAPushIsStale(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	sha := mrSHA(h, 2)
+	if _, ok := h.gl.PushTo(alpha, "feature/login"); !ok {
+		t.Fatal("push")
+	}
+	text := h.fails("merge_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": sha}, "stale")
+	if !strings.Contains(text, "NOT") && !strings.Contains(text, "moved") {
+		t.Errorf("stale: %s", text)
+	}
+}
+
+func TestAutoMerge(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.gl.SetHeadPipelineStatus(alpha, 2, "running")
+	text, out := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": mrSHA(h, 2), "auto_merge": true})
+	if get(out, "outcome") != "auto_merge_set" || get(out, "state") != "opened" || !strings.Contains(text, "not merged yet") {
+		t.Errorf("auto merge = %v\n%s", out, text)
+	}
+}
+
+func TestMergeWhoseAnswerWasLostReadsItBack(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	sha := mrSHA(h, 1)
+	id := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: fmt.Sprintf("/projects/%d/merge_requests/1/merge", id), Status: 502,
+		AfterApply: true, Body: `{"message":"502 Bad Gateway"}`})
+	_, out := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": sha})
+	if get(out, "outcome") != "merged" || !strings.Contains(fmt.Sprint(get(out, "notes")), "a read afterwards shows it merged") {
+		t.Errorf("lost merge = %v", out)
+	}
+}
+
+// ----------------------------------------------------------- approving
+
+func TestApproveAndUnapprove(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	sha := mrSHA(h, 2) // carol's, not approved
+	h.fails("approve_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": strings.Repeat("0", 40)}, "stale")
+	_, dry := h.ok("approve_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": sha, "dry_run": true})
+	if get(dry, "outcome") != "dry_run" || get(dry, "you_approved") != false {
+		t.Errorf("dry run = %v", dry)
+	}
+
+	text, out := h.ok("approve_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": sha})
+	if get(out, "outcome") != "approved" || get(out, "you_approved") != true ||
+		!slices.Contains(strs(get(out, "approved_by")), gitlabtest.DefaultUser) || !strings.Contains(text, "Approved merge request !2.") {
+		t.Errorf("approve = %v\n%s", out, text)
+	}
+	before := writesSent(h)
+	_, again := h.ok("approve_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": sha})
+	if get(again, "outcome") != "unchanged" || writesSent(h) != before {
+		t.Errorf("again = %v", again)
+	}
+
+	_, un := h.ok("unapprove_merge_request", map[string]any{"project": alpha, "iid": 2})
+	if get(un, "outcome") != "unapproved" || get(un, "you_approved") != false {
+		t.Errorf("unapprove = %v", un)
+	}
+	_, unAgain := h.ok("unapprove_merge_request", map[string]any{"project": alpha, "iid": 2})
+	if get(unAgain, "outcome") != "unchanged" {
+		t.Errorf("unapprove again = %v", unAgain)
+	}
+
+	// alice wrote !3, and the instance forbids approving your own.
+	text = h.fails("approve_merge_request", map[string]any{"project": alpha, "iid": 3, "sha": mrSHA(h, 3)}, "forbidden")
+	if !strings.Contains(text, "nothing changed") {
+		t.Errorf("own merge request: %s", text)
+	}
+}
+
+func TestApprovalWhoseAnswerWasLostIsSettled(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	id := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/merge_requests/2/approve", id), Status: 500,
+		AfterApply: true, Body: `{"message":"500 Internal Server Error"}`})
+	_, out := h.ok("approve_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": mrSHA(h, 2)})
+	if get(out, "outcome") != "approved" || get(out, "you_approved") != true {
+		t.Errorf("settled approval = %v", out)
+	}
+	if a, _ := h.gl.Approvals(alpha, 2, gitlabtest.DefaultUser); len(a.ApprovedBy) != 1 {
+		t.Errorf("approved %d times", len(a.ApprovedBy))
+	}
+}
+
+// ------------------------------------------------------------------- CI
+
+func TestRunPipeline(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.fails("run_pipeline", map[string]any{"project": alpha, "ref": " "}, "invalid")
+	h.fails("run_pipeline", map[string]any{"project": alpha, "ref": "main",
+		"variables": []map[string]any{{"key": "A", "value": "1"}, {"key": "A", "value": "2"}}}, "invalid")
+	h.fails("run_pipeline", map[string]any{"project": alpha, "ref": "main", "variables": []map[string]any{{"key": "A", "value": "1", "type": "secret"}}},
+		"invalid")
+	h.fails("run_pipeline", map[string]any{"project": alpha, "ref": "no-such-ref"}, "invalid")
+
+	secret := "s3cret-generated-value"
+	args := map[string]any{"project": alpha, "ref": "main", "variables": []map[string]any{{"key": "DEPLOY_TARGET", "value": secret},
+		{"key": "CONFIG", "value": secret, "type": "file"}}, "inputs": map[string]any{"environment": "staging"}}
+	_, dry := h.ok("run_pipeline", map[string]any{"project": alpha, "ref": "main", "dry_run": true, "variables": args["variables"]})
+	if get(dry, "outcome") != "dry_run" || get(dry, "pipeline_id") != float64(0) {
+		t.Errorf("dry run = %v", dry)
+	}
+	text, out := h.ok("run_pipeline", args)
+	if get(out, "outcome") != "created" || get(out, "source") != "api" || get(out, "ref") != "main" ||
+		strings.Join(strs(get(out, "variables")), ",") != "DEPLOY_TARGET,CONFIG" || strings.Join(strs(get(out, "inputs")), ",") != "environment" {
+		t.Errorf("run = %v", out)
+	}
+	if strings.Contains(text, secret) || strings.Contains(fmt.Sprint(out), secret) {
+		t.Errorf("a variable's value was shown:\n%s", text)
+	}
+}
+
+func TestRunPipelineWhoseAnswerWasLostIsNotRepeated(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	id := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/pipeline", id), Status: 500, AfterApply: true,
+		Body: `{"message":"500 Internal Server Error"}`})
+	text := h.fails("run_pipeline", map[string]any{"project": alpha, "ref": "main"}, "ambiguous_outcome")
+	if !strings.Contains(text, "a read shows it was created: pipeline") {
+		t.Errorf("settled: %s", text)
+	}
+	posts := 0
+	for _, r := range h.gl.Requests() {
+		if r.Method == "POST" && strings.HasSuffix(r.EscapedPath, "/pipeline") {
+			posts++
+		}
+	}
+	if posts != 1 {
+		t.Errorf("the create was sent %d times", posts)
+	}
+}
+
+func TestRetryAndCancelPipeline(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	failed := gitlabtest.PipelineFailed
+	_, out := h.ok("retry_pipeline", map[string]any{"project": alpha, "pipeline_id": failed})
+	if get(out, "outcome") != "retried" || get(out, "status_before") != "failed" || get(out, "status") != "running" {
+		t.Errorf("retry = %v", out)
+	}
+	_, out = h.ok("cancel_pipeline", map[string]any{"project": alpha, "pipeline_id": failed})
+	if get(out, "outcome") != "canceled" || get(out, "status") != "canceled" {
+		t.Errorf("cancel = %v", out)
+	}
+	before := writesSent(h)
+	_, out = h.ok("cancel_pipeline", map[string]any{"project": alpha, "pipeline_id": failed})
+	if get(out, "outcome") != "unchanged" || writesSent(h) != before {
+		t.Errorf("cancel a finished pipeline = %v", out)
+	}
+
+	// A pipeline with nothing failed is answered unchanged.
+	_, mr := h.ok("get_merge_request", map[string]any{"project": alpha, "iid": 2})
+	head := get(mr, "head_pipeline", "id")
+	_, out = h.ok("retry_pipeline", map[string]any{"project": alpha, "pipeline_id": head})
+	if get(out, "outcome") != "unchanged" || !strings.Contains(fmt.Sprint(get(out, "notes")), "retries failed and canceled jobs only") {
+		t.Errorf("retry of a green pipeline = %v", out)
+	}
+	h.fails("retry_pipeline", map[string]any{"project": alpha, "pipeline_id": 999999}, "not_found")
+}
+
+func TestRetryAndPlayJob(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	text, out := h.ok("retry_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed})
+	if get(out, "outcome") != "retried" || get(out, "from_job_id") != float64(gitlabtest.JobFailed) ||
+		get(out, "job_id") == float64(gitlabtest.JobFailed) || get(out, "name") != "unit tests" || get(out, "status") != "pending" {
+		t.Errorf("retry = %v", out)
+	}
+	if !strings.Contains(text, "Retried job") {
+		t.Errorf("text:\n%s", text)
+	}
+	h.fails("retry_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobManual}, "conflict")
+
+	_, out = h.ok("play_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobManual,
+		"variables": []map[string]any{{"key": "TARGET", "value": "hidden-value"}}})
+	if get(out, "outcome") != "played" || get(out, "status") != "pending" || strings.Join(strs(get(out, "variables")), ",") != "TARGET" {
+		t.Errorf("play = %v", out)
+	}
+	h.fails("play_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobManual}, "conflict")
+	h.fails("play_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobPassed,
+		"variables": []map[string]any{{"key": "", "value": "x"}}}, "invalid")
+}
+
+func TestRetryJobWhoseAnswerWasLostIsSettled(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	id := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/jobs/%d/retry", id, gitlabtest.JobFailed), Status: 503,
+		AfterApply: true, Body: `{"message":"503 Service Unavailable"}`})
+	text := h.fails("retry_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed}, "ambiguous_outcome")
+	if !strings.Contains(text, "a read shows it was created: job") {
+		t.Errorf("settled: %s", text)
+	}
+}
+
+// ---------------------------------------------------------- destructive
+
+func branchHead(h *harness, name string) string {
+	h.t.Helper()
+	c, ok := h.gl.BranchHead(alpha, name)
+	if !ok {
+		h.t.Fatalf("no branch %s", name)
+	}
+	return c.ID
+}
+
+func TestDeleteBranch(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: destructive})
+	feature := "feature/login"
+	sha := branchHead(h, feature)
+	before := writesSent(h)
+	text := h.fails("delete_branch", map[string]any{"project": alpha, "branch": feature, "sha": sha, "unmerged": true}, "blocked")
+	if !strings.Contains(text, "confirm: true") {
+		t.Errorf("without confirm: %s", text)
+	}
+	h.fails("delete_branch", map[string]any{"project": alpha, "branch": "main", "sha": branchHead(h, "main"), "confirm": true}, "blocked")
+	h.fails("delete_branch", map[string]any{"project": alpha, "branch": "release/1.0", "sha": branchHead(h, "release/1.0"), "confirm": true},
+		"blocked")
+	text = h.fails("delete_branch", map[string]any{"project": alpha, "branch": feature, "sha": sha, "confirm": true}, "blocked")
+	if !strings.Contains(text, "unmerged: true") {
+		t.Errorf("unmerged: %s", text)
+	}
+	h.fails("delete_branch", map[string]any{"project": alpha, "branch": feature, "sha": strings.Repeat("0", 40), "confirm": true,
+		"unmerged": true}, "stale")
+	h.fails("delete_branch", map[string]any{"project": alpha, "branch": feature, "confirm": true}, "invalid")
+	_, dry := h.ok("delete_branch", map[string]any{"project": alpha, "branch": feature, "sha": sha, "unmerged": true, "dry_run": true})
+	if get(dry, "outcome") != "dry_run" {
+		t.Errorf("dry run = %v", dry)
+	}
+	if writesSent(h) != before {
+		t.Fatal("a refusal or a dry run wrote")
+	}
+
+	text, out := h.ok("delete_branch", map[string]any{"project": alpha, "branch": feature, "sha": sha, "unmerged": true, "confirm": true})
+	if get(out, "outcome") != "deleted" || get(out, "merged") != false || !strings.Contains(text, "finds no such branch") {
+		t.Errorf("delete = %v\n%s", out, text)
+	}
+	if _, ok := h.gl.BranchHead(alpha, feature); ok {
+		t.Error("the branch is still there")
+	}
+	h.fails("delete_branch", map[string]any{"project": alpha, "branch": feature, "sha": sha, "unmerged": true, "confirm": true}, "not_found")
+}
+
+func TestDeleteMergedBranchNeedsNoOverride(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: destructive})
+	h.ok("create_branch", map[string]any{"project": alpha, "branch": "merged-topic"})
+	_, out := h.ok("delete_branch", map[string]any{"project": alpha, "branch": "merged-topic", "sha": branchHead(h, "merged-topic"),
+		"confirm": true})
+	if get(out, "outcome") != "deleted" || get(out, "merged") != true {
+		t.Errorf("delete = %v", out)
+	}
+}
+
+// commentOf finds a note on issue 1 by its author, as list_discussions
+// shows it.
+func commentOf(h *harness, author string, system bool) (id float64, updatedAt string) {
+	h.t.Helper()
+	_, out := h.ok("list_discussions", map[string]any{"project": alpha, "type": "issue", "iid": 1, "include_system": true})
+	for _, th := range get(out, "threads").([]any) {
+		for _, n := range get(th, "notes").([]any) {
+			if get(n, "author", "username") == author && get(n, "system") == system {
+				return get(n, "id").(float64), get(n, "updated_at").(string)
+			}
+		}
+	}
+	h.t.Fatalf("no note by %s", author)
+	return 0, ""
+}
+
+func TestDeleteComment(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: destructive})
+	id, at := commentOf(h, gitlabtest.DefaultUser, false)
+	bobs, bobsAt := commentOf(h, "bob", false)
+	system, systemAt := commentOf(h, gitlabtest.DefaultUser, true)
+	args := func(id float64, at string) map[string]any {
+		return map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": id, "updated_at": at, "confirm": true}
+	}
+	before := writesSent(h)
+	text := h.fails("delete_comment", args(bobs, bobsAt), "blocked")
+	if !strings.Contains(text, "@bob") {
+		t.Errorf("another's comment: %s", text)
+	}
+	h.fails("delete_comment", args(system, systemAt), "invalid")
+	h.fails("delete_comment", args(id, "2020-01-01T00:00:00Z"), "stale")
+	h.fails("delete_comment", args(id, "yesterday"), "invalid")
+	if writesSent(h) != before {
+		t.Fatal("a refusal wrote")
+	}
+
+	text, out := h.ok("delete_comment", args(id, at))
+	if get(out, "outcome") != "deleted" || !strings.Contains(text, "finds no such comment") {
+		t.Errorf("delete = %v\n%s", out, text)
+	}
+	// The witness went as If-Unmodified-Since, stretched to the end of
+	// its millisecond, which GitLab keeps to the microsecond.
+	witness, _ := time.Parse(time.RFC3339Nano, at)
+	want := witness.Add(time.Millisecond - time.Microsecond).UTC().Format(time.RFC3339Nano)
+	sent := ""
+	for _, r := range h.gl.Requests() {
+		if r.Method == "DELETE" {
+			sent = r.IfUnmodifiedSince
+		}
+	}
+	if sent != want {
+		t.Errorf("If-Unmodified-Since = %q, want %q", sent, want)
+	}
+	h.fails("delete_comment", args(id, at), "not_found")
+}
+
+func TestDeleteCommentEditedAfterTheReadIsStale(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: destructive})
+	id, at := commentOf(h, gitlabtest.DefaultUser, false)
+	// An edit between the server's read and its delete: GitLab's own
+	// check refuses it with 412.
+	project := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "DELETE", Path: fmt.Sprintf("/projects/%d/issues/1/notes/", project), Status: 412,
+		Body: `{"message":"412 Precondition Failed"}`})
+	h.fails("delete_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": id, "updated_at": at, "confirm": true},
+		"stale")
+	if !h.gl.TouchNote(alpha, "issue", 1, int64(id), time.Now().Add(time.Hour)) {
+		t.Fatal("touch")
+	}
+	h.fails("delete_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": id, "updated_at": at, "confirm": true},
+		"stale")
+}
+
+// gitlab.com refuses pipeline variables on a new project to everyone:
+// 400 on a pipeline, a bare 403 on a manual job (phase 3 live run). No
+// argument fixes that, so it is [forbidden] naming the setting.
+func TestPipelineVariablesRefusedByTheProject(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	id := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/pipeline", id), Status: 400,
+		Body: `{"message":{"base":["Insufficient permissions to set pipeline variables"]}}`})
+	text := h.fails("run_pipeline", map[string]any{"project": alpha, "ref": "main",
+		"variables": []map[string]any{{"key": "A", "value": "1"}}}, "forbidden")
+	if !strings.Contains(text, "minimum role to use pipeline variables") {
+		t.Errorf("pipeline: %s", text)
+	}
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/jobs/%d/play", id, gitlabtest.JobManual), Status: 403,
+		Body: `{"message":"403 Forbidden"}`})
+	text = h.fails("play_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobManual,
+		"variables": []map[string]any{{"key": "A", "value": "1"}}}, "forbidden")
+	if !strings.Contains(text, "without variables") {
+		t.Errorf("job: %s", text)
+	}
+}
+
+func TestDeleteBranchTakesTheShortSHAListBranchesShows(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: destructive})
+	head := branchHead(h, "feature/login")
+	h.fails("delete_branch", map[string]any{"project": alpha, "branch": "feature/login", "sha": head[:6], "unmerged": true,
+		"confirm": true}, "invalid")
+	_, out := h.ok("delete_branch", map[string]any{"project": alpha, "branch": "feature/login", "sha": " " + head[:12] + " ",
+		"unmerged": true, "confirm": true})
+	if get(out, "outcome") != "deleted" {
+		t.Errorf("delete = %v", out)
+	}
+}
+
+// A delete whose answer is lost is sent again, and the repeat finds
+// nothing: the read afterwards says the thing is gone.
+func TestDeleteWhoseAnswerWasLostIsReportedDeleted(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: destructive})
+	id := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "DELETE", Path: fmt.Sprintf("/projects/%d/repository/branches/", id), Status: 502,
+		AfterApply: true, Body: `{"message":"502 Bad Gateway"}`})
+	_, out := h.ok("delete_branch", map[string]any{"project": alpha, "branch": "feature/login", "sha": branchHead(h, "feature/login"),
+		"unmerged": true, "confirm": true})
+	if get(out, "outcome") != "deleted" || !strings.Contains(fmt.Sprint(get(out, "notes")), "it is gone") {
+		t.Errorf("lost delete = %v", out)
+	}
+}
+
+func TestAutoMergeWhoseAnswerWasLostReadsItBack(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.gl.SetHeadPipelineStatus(alpha, 2, "running")
+	id := h.gl.ProjectID(alpha)
+	// Every attempt lands and every answer is lost.
+	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: fmt.Sprintf("/projects/%d/merge_requests/2/merge", id), Status: 502, Times: 10,
+		AfterApply: true, Body: `{"message":"502 Bad Gateway"}`})
+	_, out := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": mrSHA(h, 2), "auto_merge": true})
+	if get(out, "outcome") != "auto_merge_set" {
+		t.Errorf("lost auto merge = %v", out)
+	}
+}
+
+// Only GitLab's bare 403 is offered the variables setting as a cause;
+// a refusal with a reason keeps it.
+func TestPlayJobKeepsGitLabsReason(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	id := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/jobs/%d/play", id, gitlabtest.JobManual), Status: 403,
+		Body: `{"message":"403 Forbidden - You are not allowed to deploy to production"}`})
+	text := h.fails("play_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobManual,
+		"variables": []map[string]any{{"key": "A", "value": "1"}}}, "forbidden")
+	if strings.Contains(text, "pipeline variables") || !strings.Contains(text, "deploy to production") {
+		t.Errorf("reason lost: %s", text)
+	}
+}

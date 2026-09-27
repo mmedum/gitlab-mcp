@@ -145,7 +145,24 @@ replace it with a `read_api` one.
 - **A write carries a witness.** An update names the version it read
   (`last_commit_id`, `sha` or `updated_at`) and is refused as `[stale]`
   if that moved. Omitted fields stay unchanged, and lists change by add
-  and remove, never by replacement.
+  and remove, never by replacement. Merging and approving carry the head
+  `sha` you reviewed, and GitLab refuses them itself if a push came
+  after. GitLab keeps no version of a wiki page, so a change or delete
+  carries a hash of the content you read, which the server compares
+  with a fresh read; as with issues, a change made between that read and
+  the write is not caught.
+- **Deletes are narrow.** `delete_branch` refuses the default branch,
+  every protected branch, and one GitLab does not count merged unless
+  you pass `unmerged: true`, and needs the head `sha` you read.
+  `delete_comment` deletes only your own comments, even where GitLab
+  would let a maintainer delete anyone's, and GitLab refuses it if the
+  comment was edited after your read.
+- **Snippets are private.** `create_snippet` has no visibility input:
+  every snippet it creates is private, because a public snippet is the
+  simplest way for private content to leave. A personal snippet is in
+  no namespace, so `GITLAB_MCP_WRITE_NAMESPACES` refuses one.
+- **Variable values are not echoed.** `run_pipeline` and `play_job` send
+  the variables you give and name only their keys in the result.
 
 ## What the server talks to
 

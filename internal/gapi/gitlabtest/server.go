@@ -89,6 +89,7 @@ type Server struct {
 	groupLabels     map[int64][]gitlab.Label
 	groupLevels     map[int64]map[string]int
 	todos           []todo
+	snippets        []*snippet
 
 	faults   []*Fault
 	requests []Request
@@ -263,6 +264,8 @@ type Request struct {
 	RawQuery      string
 	Authorization string
 	UserAgent     string
+	// IfUnmodifiedSince is the header a conditional delete sends.
+	IfUnmodifiedSince string
 }
 
 // Requests returns what the instance received so far.
@@ -284,7 +287,8 @@ func (s *Server) ResetRequests() {
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.requests = append(s.requests, Request{Method: r.Method, EscapedPath: r.URL.EscapedPath(), RawQuery: r.URL.RawQuery,
-		Authorization: r.Header.Get("Authorization"), UserAgent: r.Header.Get("User-Agent")})
+		Authorization: r.Header.Get("Authorization"), UserAgent: r.Header.Get("User-Agent"),
+		IfUnmodifiedSince: r.Header.Get("If-Unmodified-Since")})
 	s.mu.Unlock()
 
 	path := r.URL.EscapedPath()

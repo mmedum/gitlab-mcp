@@ -28,9 +28,9 @@ Unofficial, and not affiliated with GitLab Inc. See `NOTICE`.
 ## Status
 
 Under construction: the release badge above names the newest tag, and
-`CHANGELOG.md` says what each one holds. The read and write tools below
-are built; merging, approving, running CI and deleting come next.
-`docs/architecture.md` §16 is the plan.
+`CHANGELOG.md` says what each one holds. Every tool below is built; the
+evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
+§16 is the plan.
 
 ## Tools
 
@@ -79,6 +79,32 @@ are built; merging, approving, running CI and deleting come next.
 | `search` | Code, commits, comments and more, in a project, a group or everywhere |
 | `list_todos` | Your to-do items |
 | `mark_todos_done` | Mark your to-do items done |
+| `merge_merge_request` | Merge at the head you reviewed, or when the pipeline succeeds (Ship) |
+| `approve_merge_request` | Approve at the head you reviewed (Ship) |
+| `unapprove_merge_request` | Withdraw your approval (Ship) |
+| `run_pipeline` | Run a pipeline for a ref, with variables whose values are never shown (Ship) |
+| `retry_pipeline` | Retry a pipeline's failed and canceled jobs (Ship) |
+| `retry_job` | Run a finished job again (Ship) |
+| `play_job` | Start a manual job (Ship) |
+| `cancel_pipeline` | Cancel a running pipeline (Ship) |
+| `delete_branch` | Delete a branch; never the default, a protected or an unmerged one unless asked (Destructive) |
+| `delete_comment` | Delete one of your own comments (Destructive) |
+| `list_wiki_pages` | A project wiki's pages (`wiki` toolset) |
+| `get_wiki_page` | One wiki page, bounded (`wiki` toolset) |
+| `save_wiki_page` | Create a wiki page, or change one unchanged since you read it (`wiki` toolset) |
+| `delete_wiki_page` | Delete a wiki page (`wiki` toolset, Destructive) |
+| `list_snippets` | A project's snippets, or your own (`snippets` toolset) |
+| `get_snippet` | One snippet and a file of it, bounded (`snippets` toolset) |
+| `create_snippet` | Create a snippet, always private (`snippets` toolset) |
+| `list_releases` | A project's releases (`releases` toolset) |
+| `get_release` | One release and its notes (`releases` toolset) |
+| `create_release` | Create a release, and its tag at a ref (`releases` toolset, Ship) |
+| `list_environments` | A project's environments and their last deployment (`deployments` toolset) |
+| `list_deployments` | What was deployed where, and by which job (`deployments` toolset) |
+| `list_events` | Recent activity, yours or a project's (`activity` toolset) |
+
+Ship and Destructive tools are registered only with the settings below,
+and the five toolsets only when `GITLAB_MCP_TOOLSETS` names them.
 
 Three resources carry the same text for clients that attach rather
 than call: an issue, a merge request and a job log.

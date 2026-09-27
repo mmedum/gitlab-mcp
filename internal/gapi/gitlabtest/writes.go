@@ -147,10 +147,18 @@ func (b body) valid(w http.ResponseWriter, name string, allowed ...string) bool 
 // serveProjectWrite routes the writes under a project that do not hang
 // off one issue or merge request; it reports whether it answered.
 func (s *Server) serveProjectWrite(w http.ResponseWriter, r *http.Request, p *project, user string, seg []string) bool {
+	if r.Method == http.MethodDelete && match(seg, "repository", "branches", "*") {
+		s.deleteBranch(w, p, seg[2])
+		return true
+	}
+	if s.serveToolsetWrite(w, r, p, user, seg) {
+		return true
+	}
 	if r.Method != http.MethodPost {
 		return false
 	}
 	switch {
+	case s.serveCIWrite(w, r, p, user, seg):
 	case match(seg, "issues"):
 		s.createIssue(w, r, p, user)
 	case match(seg, "merge_requests"):
@@ -177,6 +185,8 @@ func (s *Server) serveIssueWrite(w http.ResponseWriter, r *http.Request, p *proj
 		s.createNote(w, r, p, t, user)
 	case r.Method == http.MethodPost && match(rest, "discussions", "*", "notes"):
 		s.replyToDiscussion(w, r, p, t, user, rest[1])
+	case r.Method == http.MethodDelete && match(rest, "notes", "*"):
+		s.deleteNote(w, r, p, t, user, rest[1])
 	default:
 		return false
 	}
@@ -204,6 +214,14 @@ func (s *Server) serveMRWrite(w http.ResponseWriter, r *http.Request, p *project
 		s.publishDrafts(w, r, p, mr, user)
 	case del && match(rest, "draft_notes", "*"):
 		s.deleteDraft(w, p, mr, user, rest[1])
+	case put && match(rest, "merge"):
+		s.merge(w, r, p, mr, user)
+	case post && match(rest, "approve"):
+		s.approve(w, r, p, mr, user)
+	case post && match(rest, "unapprove"):
+		s.unapprove(w, p, mr, user)
+	case del && match(rest, "notes", "*"):
+		s.deleteNote(w, r, p, t, user, rest[1])
 	default:
 		return false
 	}

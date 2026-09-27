@@ -19,8 +19,10 @@ type PipelineQuery struct {
 	Username      string
 	UpdatedAfter  time.Time
 	UpdatedBefore time.Time
-	OrderBy       string // id, status, ref, updated_at or user_id
-	Sort          string // asc or desc
+	// CreatedAfter is how a lost run_pipeline is settled (§4.5).
+	CreatedAfter time.Time
+	OrderBy      string // id, status, ref, updated_at or user_id
+	Sort         string // asc or desc
 }
 
 // ListPipelines lists a project's pipelines.
@@ -33,6 +35,7 @@ func (c *Client) ListPipelines(ctx context.Context, p Project, q PipelineQuery, 
 	setString(v, "username", q.Username)
 	setTime(v, "updated_after", q.UpdatedAfter)
 	setTime(v, "updated_before", q.UpdatedBefore)
+	setTime(v, "created_after", q.CreatedAfter)
 	setString(v, "order_by", q.OrderBy)
 	setString(v, "sort", q.Sort)
 	var out []gitlab.Pipeline

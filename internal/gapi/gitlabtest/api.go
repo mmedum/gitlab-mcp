@@ -40,20 +40,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, rest string) {
 
 	get := r.Method == http.MethodGet
 	switch {
-	case get && match(seg, "metadata"):
-		writeJSON(w, http.StatusOK, map[string]any{"version": s.opts.Version, "revision": "0a1b2c3d4e5",
-			"enterprise": s.opts.Enterprise, "kas": map[string]any{"enabled": false, "externalUrl": nil, "version": nil}})
-	case get && match(seg, "user"):
-		u := s.user(user)
-		writeJSON(w, http.StatusOK, withExtra(gitlab.User{ID: u.ID, Username: u.Username, Name: u.Name, State: u.State,
-			WebURL: u.WebURL, CreatedAt: &epoch}, map[string]any{"email": user + "@example.com", "two_factor_enabled": false}))
-	case get && match(seg, "projects"):
-		s.listProjects(w, r, user, nil)
-	case get && match(seg, "issues"):
-		s.listIssues(w, r, user, s.visibleProjects(user), "created_by_me")
-	case get && match(seg, "merge_requests"):
-		s.listMRs(w, r, user, s.visibleProjects(user), "created_by_me")
+	case get && s.serveTopRead(w, r, user, seg):
 	case get && s.servePlanningTop(w, r, user, seg):
+	case s.serveToolsetTop(w, r, user, seg):
 	case r.Method == http.MethodPost && match(seg, "todos", "*", "mark_as_done"):
 		s.markTodoDone(w, user, seg[1])
 	case get && len(seg) == 3 && seg[0] == "groups":
@@ -67,6 +56,29 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, rest string) {
 	default:
 		routeNotFound(w)
 	}
+}
+
+// serveTopRead serves the account-level reads that are neither planning
+// nor a toolset's; it reports whether it answered.
+func (s *Server) serveTopRead(w http.ResponseWriter, r *http.Request, user string, seg []string) bool {
+	switch {
+	case match(seg, "metadata"):
+		writeJSON(w, http.StatusOK, map[string]any{"version": s.opts.Version, "revision": "0a1b2c3d4e5",
+			"enterprise": s.opts.Enterprise, "kas": map[string]any{"enabled": false, "externalUrl": nil, "version": nil}})
+	case match(seg, "user"):
+		u := s.user(user)
+		writeJSON(w, http.StatusOK, withExtra(gitlab.User{ID: u.ID, Username: u.Username, Name: u.Name, State: u.State,
+			WebURL: u.WebURL, CreatedAt: &epoch}, map[string]any{"email": user + "@example.com", "two_factor_enabled": false}))
+	case match(seg, "projects"):
+		s.listProjects(w, r, user, nil)
+	case match(seg, "issues"):
+		s.listIssues(w, r, user, s.visibleProjects(user), "created_by_me")
+	case match(seg, "merge_requests"):
+		s.listMRs(w, r, user, s.visibleProjects(user), "created_by_me")
+	default:
+		return false
+	}
+	return true
 }
 
 func match(seg []string, want ...string) bool {
@@ -118,7 +130,7 @@ func (s *Server) serveProject(w http.ResponseWriter, r *http.Request, p *project
 		s.serveRepository(w, r, p, seg[1:])
 	case get && match(seg, "protected_branches"):
 		writePage(s, w, r, p.protected)
-	case get && (s.serveCI(w, r, p, seg) || s.servePlanning(w, r, p, seg)):
+	case get && (s.serveCI(w, r, p, seg) || s.servePlanning(w, r, p, seg) || s.serveToolsetRead(w, r, p, user, seg)):
 	case s.serveProjectWrite(w, r, p, user, seg):
 	default:
 		routeNotFound(w)
@@ -143,6 +155,8 @@ func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, 
 		} else {
 			message(w, http.StatusNotFound, "404 Discussion Not Found")
 		}
+	case get && match(rest, "notes", "*"):
+		s.getNote(w, p, issueTarget(iss), rest[1])
 	case s.serveIssueWrite(w, r, p, iss, user, rest):
 	default:
 		routeNotFound(w)
@@ -160,7 +174,9 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 	case get && len(rest) == 0:
 		writeJSON(w, http.StatusOK, mr)
 	case get && match(rest, "approvals"):
-		s.approvals(w, p, mr)
+		s.approvals(w, p, mr, user)
+	case get && match(rest, "notes", "*"):
+		s.getNote(w, p, mrTarget(mr), rest[1])
 	case get && match(rest, "discussions"):
 		s.listDiscussions(w, r, p.discussions["mr:"+iid])
 	case get && match(rest, "discussions", "*"):
@@ -197,6 +213,14 @@ func (s *Server) serveRepository(w http.ResponseWriter, r *http.Request, p *proj
 		message(w, http.StatusNotFound, "404 Commit Not Found")
 	case match(seg, "compare"):
 		s.compare(w, r, p)
+	case match(seg, "tags", "*"):
+		for _, t := range p.tags {
+			if t.Name == seg[1] {
+				writeJSON(w, http.StatusOK, t)
+				return
+			}
+		}
+		message(w, http.StatusNotFound, "404 Tag Not Found")
 	case match(seg, "tags"):
 		s.listTags(w, r, p)
 	case match(seg, "commits", "*", "diff"):
@@ -575,11 +599,11 @@ func (s *Server) listMRs(w http.ResponseWriter, r *http.Request, user string, pr
 	writeJSON(w, http.StatusOK, rows)
 }
 
-func (s *Server) approvals(w http.ResponseWriter, p *project, mr *gitlab.MergeRequest) {
-	a := *p.approvals[mr.IID]
-	if a.ApprovedBy == nil {
-		a.ApprovedBy = []gitlab.Approver{}
+func (s *Server) approvals(w http.ResponseWriter, p *project, mr *gitlab.MergeRequest, user string) {
+	if p.approvals[mr.IID] == nil {
+		p.approvals[mr.IID] = &gitlab.Approvals{UserCanApprove: true}
 	}
+	a := approvalsFor(p.approvals[mr.IID], user)
 	if s.opts.Enterprise {
 		required, left := 1, 1
 		if a.Approved {
@@ -714,11 +738,18 @@ func (s *Server) listBranches(w http.ResponseWriter, r *http.Request, p *project
 	var rows []gitlab.Branch
 	for _, b := range p.branches {
 		if term == "" || strings.Contains(b.Name, term) {
-			rows = append(rows, b)
+			rows = append(rows, withMerged(p, b))
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	writePage(s, w, r, rows)
+}
+
+// withMerged sets a branch's merged flag as GitLab computes it: its head
+// is in the default branch's history.
+func withMerged(p *project, b gitlab.Branch) gitlab.Branch {
+	b.Merged = b.Name != p.DefaultBranch && commitIndex(p.commits[p.DefaultBranch], b.Commit.ID) >= 0
+	return b
 }
 
 func findCommit(p *project, sha string) *gitlab.Commit {

@@ -97,6 +97,15 @@ type project struct {
 	labels     []gitlab.Label
 	milestones []gitlab.ProjectMilestone
 	levels     map[string]int
+
+	// The optional toolsets: wiki pages, releases, environments,
+	// deployments and events. Snippets are the server's, since a
+	// personal one has no project.
+	wiki         []gitlab.WikiPage
+	releases     []gitlab.Release
+	environments []gitlab.Environment
+	deployments  []gitlab.Deployment
+	events       []event
 }
 
 // fakeSHA is a stable 40-hex id for a name.
@@ -262,6 +271,7 @@ func (s *Server) fillAlpha(p *project) {
 	}
 	s.fillCI(p)
 	s.fillPlanning(p)
+	s.fillToolsets(p)
 }
 
 func intPtr(n int) *int { return &n }

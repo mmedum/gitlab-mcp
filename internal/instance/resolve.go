@@ -311,9 +311,18 @@ func resolveRoute(project string, r []string) (Ref, error) {
 		}
 		ref.Kind, ref.From, ref.To = KindCompare, from, to
 	case "wikis":
+		// config/routes/wiki.rb: pages, templates and new are the wiki's
+		// own pages, and a page's edit, history, diff and raw views end
+		// in those words. An empty slug is the wiki as a whole.
 		ref.Kind, ref.Slug = KindWiki, rest
-		if ref.Slug == "" {
+		for _, view := range []string{"/edit", "/history", "/diff", "/raw"} {
+			ref.Slug = strings.TrimSuffix(ref.Slug, view)
+		}
+		switch ref.Slug {
+		case "":
 			ref.Slug = "home"
+		case "pages", "templates", "new":
+			ref.Slug = ""
 		}
 	default:
 		return Ref{}, invalidf("the URL is a %q page, which resolve_url does not know; it knows %s", r[0], knownKinds)

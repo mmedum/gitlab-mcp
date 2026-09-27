@@ -42,6 +42,14 @@ lifted verbatim.
 - A create whose answer is lost is never repeated: the server reads to say whether it happened.
 - `GITLAB_MCP_WRITE_NAMESPACES` confines writes to the groups and projects it names.
 - `lint_ci` checks configuration you pass, before it is committed; it may not use `include:`, since GitLab fetches what an include names.
+- Ship tools, registered only with `GITLAB_MCP_ENABLE_SHIP=true`: `merge_merge_request`, `approve_merge_request` and `unapprove_merge_request`, which take the head `sha` you reviewed, and `run_pipeline`, `retry_pipeline`, `retry_job`, `play_job` and `cancel_pipeline`.
+- Pipeline and job variables are sent and never shown: a result names their keys.
+- Destructive tools, registered only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` and refused without `confirm: true`: `delete_branch`, which refuses the default, protected and unmerged branches, and `delete_comment`, for your own comments only.
+- The `wiki` toolset: `list_wiki_pages`, `get_wiki_page`, `save_wiki_page` and `delete_wiki_page`; a change carries a hash of the content you read.
+- The `snippets` toolset: `list_snippets`, `get_snippet` and `create_snippet`, which only creates private snippets.
+- The `releases` toolset: `list_releases`, `get_release` and `create_release`, which is Ship.
+- The `deployments` toolset (`list_environments`, `list_deployments`) and the `activity` toolset (`list_events`).
+- `resolve_url` names `get_wiki_page` for a wiki page's link, and `list_wiki_pages` for the wiki's index, when the `wiki` toolset is on.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 

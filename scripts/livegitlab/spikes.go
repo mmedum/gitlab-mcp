@@ -130,6 +130,59 @@ func spikes(ctx context.Context, settings *app.Settings, s scratch, only string,
 	if err := spikeM(ctx, c, s, p); err != nil {
 		p.Sayf("!! spike M: %v", err)
 	}
+	p.Say("\n=== spike N: a conditional comment delete ===")
+	if err := spikeN(ctx, c, s, p); err != nil {
+		p.Sayf("!! spike N: %v", err)
+	}
+}
+
+// spikeN asks how GitLab holds If-Unmodified-Since on a comment delete
+// (§4.6, §18 row 62): a time before the comment's updated_at should be
+// 412, the same second as an HTTP-date too if GitLab compares below the
+// second, and the updated_at it shows, stretched to the end of its
+// millisecond in RFC 3339, should delete.
+func spikeN(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
+	notes := "projects/" + itoa(s.ID) + "/issues/" + itoa(s.Issue2) + "/notes"
+	r, err := c.write(ctx, http.MethodPost, notes, map[string]any{"body": "Spike N comment " + s.Name})
+	if err != nil {
+		return err
+	}
+	var note struct {
+		ID        int64  `json:"id"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	if err := json.Unmarshal(r.body, &note); err != nil || note.ID == 0 {
+		return fmt.Errorf("the comment was not created: status %d", r.status)
+	}
+	p.Redactor().Known(redact.KindID, itoa(note.ID))
+	shown, err := time.Parse(time.RFC3339Nano, note.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("updated_at is not RFC 3339: %w", err)
+	}
+	_, fraction, _ := strings.Cut(strings.TrimSuffix(note.UpdatedAt, "Z"), ".")
+	p.Sayf("the comment's updated_at is shown with %d digits after the second", len(fraction))
+	path := notes + "/" + itoa(note.ID)
+	for _, try := range []struct {
+		what   string
+		header string
+	}{
+		{"a second before, RFC 3339", shown.Add(-time.Second).UTC().Format(time.RFC3339Nano)},
+		{"the same second, as an HTTP-date", shown.UTC().Format(http.TimeFormat)},
+		{"the time shown, unpadded, RFC 3339", shown.UTC().Format(time.RFC3339Nano)},
+		{"the time shown stretched to the end of its millisecond, RFC 3339",
+			shown.Truncate(time.Millisecond).Add(time.Millisecond - time.Microsecond).UTC().Format(time.RFC3339Nano)},
+	} {
+		res, err := c.send(ctx, http.MethodDelete, path, nil, http.Header{"If-Unmodified-Since": {try.header}}, nil)
+		if err != nil {
+			return err
+		}
+		p.Sayf("DELETE with If-Unmodified-Since %s: status %d", try.what, res.status)
+		if res.status == http.StatusNoContent {
+			return nil
+		}
+	}
+	p.Say("!! no header deleted the comment; it is left on the second issue")
+	return nil
 }
 
 // spikeH asks whether If-None-Match earns a 304 on an API read, and
@@ -596,6 +649,20 @@ func spikeM(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		}, func() (bool, error) {
 			return c.listed(ctx, project+"/merge_requests", me, "title", "Spike M merge request "+s.Name)
 		}},
+		{"a pipeline, on the ref by source api, username and created_after", func() (int, error) {
+			r, err := c.write(ctx, http.MethodPost, project+"/pipeline", map[string]any{"ref": branch})
+			return r.status, err
+		}, func() (bool, error) {
+			return c.listed(ctx, project+"/pipelines", url.Values{"ref": {branch}, "source": {"api"}, "username": {s.User},
+				"created_after": {since}}, "ref", branch)
+		}},
+		{"a release, by its tag", func() (int, error) {
+			r, err := c.write(ctx, http.MethodPost, project+"/releases", map[string]any{"tag_name": branch, "ref": branch})
+			return r.status, err
+		}, func() (bool, error) {
+			r, err := c.get(ctx, project+"/releases/"+branch, nil, nil)
+			return err == nil && r.status == http.StatusOK, err
+		}},
 	}
 	for _, ck := range checks {
 		status, err := ck.create()
@@ -613,6 +680,17 @@ func spikeM(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 			}
 		}
 		p.Sayf("%s: created with status %d; found by reading: %t, after %d ms", ck.what, status, found, time.Since(start).Milliseconds())
+	}
+	// The spike's pipeline runs nothing the plan needs; it is canceled.
+	if r, err := c.get(ctx, project+"/pipelines", url.Values{"ref": {branch}, "source": {"api"}}, nil); err == nil && r.status == http.StatusOK {
+		var rows []struct {
+			ID int64 `json:"id"`
+		}
+		_ = json.Unmarshal(r.body, &rows)
+		for _, pl := range rows {
+			p.Redactor().Known(redact.KindID, itoa(pl.ID))
+			_, _ = c.write(ctx, http.MethodPost, project+"/pipelines/"+itoa(pl.ID)+"/cancel", nil)
+		}
 	}
 	// The draft would be published by the plan's review; it is removed.
 	r, err := c.get(ctx, project+"/merge_requests/"+itoa(s.MR)+"/draft_notes", nil, nil)

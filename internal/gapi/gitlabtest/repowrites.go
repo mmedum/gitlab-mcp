@@ -273,7 +273,7 @@ func (s *Server) createBranch(w http.ResponseWriter, r *http.Request, p *project
 func (s *Server) getBranch(w http.ResponseWriter, p *project, name string) {
 	for _, b := range p.branches {
 		if b.Name == name {
-			writeJSON(w, http.StatusOK, b)
+			writeJSON(w, http.StatusOK, withMerged(p, b))
 			return
 		}
 	}

@@ -250,6 +250,9 @@ type MergeRequest struct {
 	References              References     `json:"references"`
 	DiffRefs                *DiffRefs      `json:"diff_refs"`
 	HeadPipeline            *PipelineBasic `json:"head_pipeline"`
+	// MergeWhenPipelineSucceeds is set while an auto-merge waits for the
+	// pipeline.
+	MergeWhenPipelineSucceeds bool `json:"merge_when_pipeline_succeeds"`
 }
 
 // Approvals is GET /projects/:id/merge_requests/:iid/approvals. The
@@ -657,4 +660,151 @@ type SearchCommit struct {
 	CommittedDate time.Time `json:"committed_date"`
 	WebURL        string    `json:"web_url"`
 	ProjectID     int64     `json:"project_id"`
+}
+
+// WikiPageBasic is one row of GET /projects/:id/wikis.
+type WikiPageBasic struct {
+	Format string `json:"format"`
+	Slug   string `json:"slug"`
+	Title  string `json:"title"`
+}
+
+// WikiPage is GET /projects/:id/wikis/:slug. GitLab exposes no version
+// and no updated_at, so the server's witness is a hash of Content
+// (§4.6).
+type WikiPage struct {
+	Format   string `json:"format"`
+	Slug     string `json:"slug"`
+	Title    string `json:"title"`
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
+}
+
+// Snippet is GET /snippets/:id and /projects/:id/snippets/:snippet_id.
+// ProjectID is null for a personal snippet. raw_url is not decoded: no
+// URL a response names is ever called (§11).
+type Snippet struct {
+	ID          int64         `json:"id"`
+	Title       string        `json:"title"`
+	Description *string       `json:"description"`
+	Visibility  string        `json:"visibility"`
+	Author      UserBasic     `json:"author"`
+	FileName    string        `json:"file_name"`
+	Files       []SnippetFile `json:"files"`
+	ProjectID   *int64        `json:"project_id"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+	WebURL      string        `json:"web_url"`
+}
+
+// SnippetFile is one file of a snippet's repository.
+type SnippetFile struct {
+	Path string `json:"path"`
+}
+
+// Release is GET /projects/:id/releases/:tag_name and a row of the
+// listing.
+type Release struct {
+	TagName         string             `json:"tag_name"`
+	Name            string             `json:"name"`
+	Description     *string            `json:"description"`
+	CreatedAt       time.Time          `json:"created_at"`
+	ReleasedAt      *time.Time         `json:"released_at"`
+	UpcomingRelease bool               `json:"upcoming_release"`
+	Author          *UserBasic         `json:"author"`
+	Commit          *ReleaseCommit     `json:"commit"`
+	Milestones      []ReleaseMilestone `json:"milestones"`
+	Assets          *ReleaseAssets     `json:"assets"`
+}
+
+// ReleaseCommit is the commit a release's tag points at.
+type ReleaseCommit struct {
+	ID      string `json:"id"`
+	ShortID string `json:"short_id"`
+	Title   string `json:"title"`
+}
+
+// ReleaseMilestone is a milestone a release names.
+type ReleaseMilestone struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+}
+
+// ReleaseAssets counts a release's assets: its links and source archives.
+type ReleaseAssets struct {
+	Count int `json:"count"`
+}
+
+// Environment is one row of GET /projects/:id/environments.
+type Environment struct {
+	ID             int64                  `json:"id"`
+	Name           string                 `json:"name"`
+	Slug           string                 `json:"slug"`
+	State          string                 `json:"state"`
+	Tier           string                 `json:"tier"`
+	ExternalURL    *string                `json:"external_url"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+	AutoStopAt     *time.Time             `json:"auto_stop_at"`
+	LastDeployment *EnvironmentDeployment `json:"last_deployment"`
+}
+
+// EnvironmentDeployment is the last deployment an environment names.
+type EnvironmentDeployment struct {
+	ID        int64     `json:"id"`
+	IID       int64     `json:"iid"`
+	Status    string    `json:"status"`
+	Ref       string    `json:"ref"`
+	SHA       string    `json:"sha"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Deployment is one row of GET /projects/:id/deployments.
+type Deployment struct {
+	ID          int64                 `json:"id"`
+	IID         int64                 `json:"iid"`
+	Status      string                `json:"status"`
+	Ref         string                `json:"ref"`
+	SHA         string                `json:"sha"`
+	CreatedAt   time.Time             `json:"created_at"`
+	UpdatedAt   *time.Time            `json:"updated_at"`
+	User        *UserBasic            `json:"user"`
+	Environment DeploymentEnvironment `json:"environment"`
+	Deployable  *DeploymentJob        `json:"deployable"`
+}
+
+// DeploymentEnvironment is the environment a deployment went to.
+type DeploymentEnvironment struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// DeploymentJob is the job that ran a deployment.
+type DeploymentJob struct {
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// Event is one row of GET /events and /projects/:id/events.
+type Event struct {
+	ID             int64      `json:"id"`
+	ActionName     string     `json:"action_name"`
+	TargetType     *string    `json:"target_type"`
+	TargetID       *int64     `json:"target_id"`
+	TargetIID      *int64     `json:"target_iid"`
+	TargetTitle    *string    `json:"target_title"`
+	AuthorUsername string     `json:"author_username"`
+	ProjectID      *int64     `json:"project_id"`
+	CreatedAt      time.Time  `json:"created_at"`
+	PushData       *EventPush `json:"push_data"`
+}
+
+// EventPush is what a push event carries.
+type EventPush struct {
+	Action      string  `json:"action"`
+	RefType     string  `json:"ref_type"`
+	Ref         *string `json:"ref"`
+	CommitCount int     `json:"commit_count"`
+	CommitTitle *string `json:"commit_title"`
 }

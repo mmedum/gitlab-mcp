@@ -1007,7 +1007,7 @@ func TestNewRequiresInstance(t *testing.T) {
 func TestTokenNeverLeavesTheInstance(t *testing.T) {
 	f := newFixture(t, gitlabtest.Options{})
 	u, _ := url.Parse("https://other.invalid/api/v4/user")
-	_, err := f.client.attempt(context.Background(), "GET", u, nil, "secret")
+	_, err := f.client.attempt(context.Background(), "GET", u, nil, "secret", time.Time{})
 	if !errors.Is(err, errOffInstance) {
 		t.Errorf("err = %v, want errOffInstance", err)
 	}

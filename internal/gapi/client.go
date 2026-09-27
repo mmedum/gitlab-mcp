@@ -431,7 +431,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 			s.requests.Add(1)
 		}
 		start := time.Now()
-		res, sendErr := c.attempt(ctx, p.call.Method, p.endpoint, p.payload, p.token)
+		res, sendErr := c.attempt(ctx, p.call.Method, p.endpoint, p.payload, p.token, p.call.UnmodifiedSince)
 		release()
 		status := 0
 		if res != nil {
@@ -582,7 +582,7 @@ var (
 
 // attempt makes one HTTP request. The address is checked against the
 // instance before the token is attached.
-func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, payload []byte, token string) (*attemptResult, error) {
+func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, payload []byte, token string, unmodifiedSince time.Time) (*attemptResult, error) {
 	if !c.inst.SameOrigin(endpoint) {
 		return nil, errOffInstance
 	}
@@ -605,6 +605,13 @@ func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, 
 	req.Header.Set("User-Agent", c.userAgent)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if !unmodifiedSince.IsZero() {
+		// RFC 3339 with the fraction, not an HTTP-date: GitLab reads the
+		// header with Ruby's Time.parse and compares it with a time kept to
+		// the microsecond, so a date cut to the second would refuse nearly
+		// every delete (check_unmodified_since! in lib/api/helpers.rb).
+		req.Header.Set("If-Unmodified-Since", unmodifiedSince.UTC().Format(time.RFC3339Nano))
 	}
 	resp, err := c.http.Do(req)
 	headers.Stop()

@@ -21,7 +21,7 @@ func sampleScratch() scratch {
 		Default: "main", Feature: "feature-0a0b0c", Feature2: "draft-0a0b0c", File: "docs/live.md",
 		SHA: strings.Repeat("a", 40), Issue: 1, Issue2: 2, MR: 1, MR2: 2, Note: 77, User: "alice", Label: "live-0a0b0c",
 		Label2: "live-0a0b0c-b", Milestone: "Live milestone gitlab-mcp-live-20260926-0a0b0c", Pipeline: 5001, JobFailed: 6001,
-		JobPassed: 6002,
+		JobPassed: 6002, JobManual: 6003,
 	}
 }
 
@@ -70,7 +70,7 @@ func TestThePlanDrivesEveryOption(t *testing.T) {
 		t.Fatalf("the baseline has %d tools", len(d))
 	}
 	sent := map[string]bool{}
-	for _, st := range plan(sampleScratch()) {
+	for _, st := range slices.Concat(plan(sampleScratch()), planShip(sampleScratch())) {
 		sent[st.tool+".*"] = true
 		for k := range st.args {
 			sent[st.tool+"."+k] = true
@@ -108,7 +108,7 @@ func TestEveryToolHasARule(t *testing.T) {
 
 func TestEveryStepStaysInTheScratchProject(t *testing.T) {
 	s := sampleScratch()
-	for _, st := range plan(s) {
+	for _, st := range slices.Concat(plan(s), planShip(s)) {
 		if err := confined(st, s); err != nil {
 			t.Errorf("%v", err)
 		}

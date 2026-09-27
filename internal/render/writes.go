@@ -72,9 +72,9 @@ func changedLine(b *strings.Builder, outcome string, changed []string) {
 	}
 }
 
-func removedLine(b *strings.Builder, r *model.Removed) {
+func removedLine(b *strings.Builder, what string, r *model.Removed) {
 	if r != nil {
-		fmt.Fprintf(b, "\nThe description was replaced; the old one lost %d line(s), %d characters.", r.Lines, r.Chars)
+		fmt.Fprintf(b, "\nThe %s was replaced; the old one lost %d line(s), %d characters.", what, r.Lines, r.Chars)
 	}
 }
 
@@ -110,7 +110,7 @@ func IssueWrite(w model.IssueWrite, _ Boundary) string {
 	fmt.Fprintf(&b, "\nLabels: %s; assignees %s; milestone %s; due %s.", idents(w.Labels), atList(w.Assignees, "none"),
 		milestone(w.Milestone), orNone(w.DueDate))
 	changedLine(&b, w.Outcome, w.Changed)
-	removedLine(&b, w.DescriptionRemoved)
+	removedLine(&b, "description", w.DescriptionRemoved)
 	witnessLine(&b, w.UpdatedAt, "update_issue")
 	return b.String()
 }
@@ -131,7 +131,7 @@ func MergeRequestWrite(w model.MergeRequestWrite, _ Boundary) string {
 		atList(w.Reviewers, "none"), milestone(w.Milestone))
 	fmt.Fprintf(&b, "\nDelete the source branch when merged: %s; squash: %s.", yesNo(w.RemoveSourceBranch), yesNo(w.Squash))
 	changedLine(&b, w.Outcome, w.Changed)
-	removedLine(&b, w.DescriptionRemoved)
+	removedLine(&b, "description", w.DescriptionRemoved)
 	if w.Outcome != "created" {
 		// A new merge request's updated_at moves within seconds (§18).
 		witnessLine(&b, w.UpdatedAt, "update_merge_request")

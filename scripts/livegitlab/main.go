@@ -162,27 +162,24 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	if o.profile != "" {
 		serverEnv = append(serverEnv, config.EnvProfile+"="+o.profile)
 	}
-	sess, err := mcpstdio.Start(o.binary, mcpstdio.Config{Env: serverEnv})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = sess.Close() }()
 	rec := newRecorder()
-	sess.OnCall(rec.Sent)
-	init, err := sess.Initialize("", "livegitlab")
+	// The default surface first, then a second server with Ship,
+	// Destructive and every toolset on, its writes confined to the
+	// maintainer's group: the first run also shows the flags' tools
+	// are not there without them.
+	unexpected, _, err := session(o.binary, serverEnv, rec, plan(s), s, p)
 	if err != nil {
 		return err
 	}
-	p.Sayf("protocol %v; %d tools registered", init["protocolVersion"], len(sess.Options()))
-
-	unexpected, err := drive(sess, plan(s), s, p)
+	p.Say("\n=== with Ship, Destructive and every toolset ===")
+	flagged := append(slices.Clone(serverEnv), config.EnvEnableShip+"=true", config.EnvEnableDestructive+"=true",
+		config.EnvToolsets+"="+config.ToolsetAll, config.EnvWriteNamespaces+"="+o.namespace)
+	more, surface, err := session(o.binary, flagged, rec, planShip(s), s, p)
 	if err != nil {
 		return err
 	}
-	for _, line := range sess.StderrTail(20) {
-		p.Say("stderr | " + line)
-	}
-	if missing := rec.missing(sess.Options()); len(missing) > 0 {
+	unexpected += more
+	if missing := rec.missing(surface); len(missing) > 0 {
 		p.Sayf("\nnot sent this run (%d): %s", len(missing), strings.Join(missing, ", "))
 	}
 	header := fmt.Sprintf("run of %s against a %s instance", time.Now().UTC().Format("2006-01-02"), app.InstanceKind(settings.Instance))
@@ -195,6 +192,30 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	}
 	p.Say("every call behaved as expected")
 	return nil
+}
+
+// session starts a server with env, drives steps through it, and
+// returns how many behaved unexpectedly and the surface it registered.
+func session(binary string, env []string, rec *recorder, steps []step, s scratch, p *redact.Printer) (int, map[string][]string, error) {
+	sess, err := mcpstdio.Start(binary, mcpstdio.Config{Env: env})
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = sess.Close() }()
+	sess.OnCall(rec.Sent)
+	init, err := sess.Initialize("", "livegitlab")
+	if err != nil {
+		return 0, nil, err
+	}
+	p.Sayf("protocol %v; %d tools registered", init["protocolVersion"], len(sess.Options()))
+	unexpected, err := drive(sess, steps, s, p)
+	if err != nil {
+		return unexpected, nil, err
+	}
+	for _, line := range sess.StderrTail(20) {
+		p.Say("stderr | " + line)
+	}
+	return unexpected, sess.Options(), nil
 }
 
 // drive sends every step, refusing one that would read outside the
@@ -291,6 +312,12 @@ func seed(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor)
 		if i == 0 {
 			s.ID, s.Path, s.WebURL = project.ID, project.PathWithNamespace, project.WebURL
 		}
+	}
+	// gitlab.com makes a new project refuse pipeline variables from
+	// everyone; run_pipeline and play_job send them.
+	if err := c.Do(ctx, gapi.Call{Method: "PUT", Path: "projects/{}", Args: []string{itoa(s.ID)},
+		Body: map[string]any{"ci_pipeline_variables_minimum_override_role": "developer"}, Name: "live_project_settings"}, nil); err != nil {
+		return created, fmt.Errorf("allow pipeline variables in the scratch project: %w", err)
 	}
 	id := itoa(s.ID)
 	var commit struct {
@@ -449,7 +476,12 @@ func seedPhase1(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Red
 // pipeline listing has more than one page at little cost.
 func ciConfig(s scratch) string {
 	token := "glpat-" + "EXAMPLE" + strings.Repeat("0", 20)
-	return `workflow:
+	return `spec:
+  inputs:
+    greeting:
+      default: hello
+---
+workflow:
   rules:
     - if: $CI_COMMIT_BRANCH
 
@@ -459,7 +491,34 @@ default:
 build:
   stage: build
   script:
-    - echo "building ` + s.Name + `"
+    - echo "building ` + s.Name + ` $[[ inputs.greeting ]]"
+
+deploy live:
+  stage: build
+  environment:
+    name: live
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - echo "deploying ` + s.Name + `"
+
+deploy review:
+  stage: build
+  environment:
+    name: live-review
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - echo "deploying a review of ` + s.Name + `"
+
+manual step:
+  stage: build
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: true
+  script:
+    - echo "a step a person starts"
 
 unit tests:
   stage: test
@@ -544,6 +603,8 @@ func waitForCI(ctx context.Context, c *gapi.Client, s *scratch, p *redact.Printe
 			s.JobFailed = j.ID
 		case "build":
 			s.JobPassed = j.ID
+		case "manual step":
+			s.JobManual = j.ID
 		}
 	}
 	return nil

@@ -65,6 +65,7 @@ type scratch struct {
 	Pipeline  int64
 	JobFailed int64
 	JobPassed int64
+	JobManual int64
 }
 
 // step is one tool call and what it should do. A refusal that is
@@ -381,6 +382,138 @@ func phase2(s scratch) []step {
 	}
 }
 
+// planShip is phase 3 (§16), sent to a second server with Ship,
+// Destructive and every toolset on and its writes confined to the
+// maintainer's group. It merges and deletes only what the run made, and
+// every delete is refused once without confirm or with a stale witness
+// before it is made.
+func planShip(s scratch) []step {
+	p := s.Path
+	w := s.Name[len(s.Name)-6:]
+	branch := "ship-" + w
+	branch2 := "write2-" + w // phase 2's, one commit the default branch lacks
+	tag, tag2 := "live-"+w, "live-"+w+"-b"
+	stale := strings.Repeat("0", 40)
+	now := time.Now().UTC()
+	yesterday, tomorrow := now.Add(-24*time.Hour).Format(time.RFC3339), now.Add(24*time.Hour).Format(time.RFC3339)
+	return []step{
+		// A merge request to approve and merge.
+		{tool: "create_branch", args: map[string]any{"project": p, "branch": branch, "ref": s.Default}},
+		{tool: "create_commit", args: map[string]any{"project": p, "branch": branch, "message": "A change to merge",
+			"actions": []any{map[string]any{"action": "create", "file_path": "ship/merged.txt", "content": "merged\n"}}}},
+		{tool: "create_merge_request", args: map[string]any{"project": p, "source_branch": branch, "title": "Ship merge request " + s.Name},
+			save: map[string]string{"ship_mr": "iid"}},
+		// GitLab computes mergeability in the background.
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}"}, pause: 20 * time.Second,
+			save: map[string]string{"ship_sha": "sha"}},
+		{tool: "approve_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}", "sha": stale},
+			expectError: true, why: "a sha that is not the head"},
+		{tool: "approve_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}", "sha": "{{ship_sha}}", "dry_run": true}},
+		{tool: "approve_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}", "sha": "{{ship_sha}}"}, anyOutcome: true,
+			why: "whether the author may approve their own merge request is the project's and the tier's to say"},
+		{tool: "unapprove_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}", "dry_run": true}},
+		{tool: "unapprove_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}"}},
+		{tool: "merge_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}", "sha": stale},
+			expectError: true, why: "a sha that is not the head"},
+		{tool: "merge_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}", "sha": "{{ship_sha}}", "squash": true,
+			"dry_run": true}},
+		{tool: "merge_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}", "sha": "{{ship_sha}}", "squash": false,
+			"remove_source_branch": false, "merge_commit_message": "Merge the live run's change", "squash_commit_message": "Unused",
+			"auto_merge": false}},
+		{tool: "merge_merge_request", args: map[string]any{"project": p, "iid": "{{ship_mr}}", "sha": "{{ship_sha}}"}},
+
+		// Branches: the merged one, then phase 2's unmerged one.
+		{tool: "list_branches", args: map[string]any{"project": p, "search": branch}, save: map[string]string{"ship_head": "branches.0.commit_id"}},
+		{tool: "delete_branch", args: map[string]any{"project": p, "branch": branch, "sha": "{{ship_head}}"},
+			expectError: true, why: "no confirm: true"},
+		{tool: "delete_branch", args: map[string]any{"project": p, "branch": branch, "sha": "{{ship_head}}", "dry_run": true}},
+		{tool: "delete_branch", args: map[string]any{"project": p, "branch": branch, "sha": "{{ship_head}}", "confirm": true}},
+		{tool: "list_branches", args: map[string]any{"project": p, "search": branch2}, save: map[string]string{"w2_head": "branches.0.commit_id"}},
+		{tool: "delete_branch", args: map[string]any{"project": p, "branch": branch2, "sha": "{{w2_head}}", "confirm": true},
+			expectError: true, why: "a branch GitLab does not count merged, without unmerged"},
+		{tool: "delete_branch", args: map[string]any{"project": p, "branch": s.Default, "sha": "{{w2_head}}", "confirm": true},
+			expectError: true, why: "the default branch"},
+		{tool: "delete_branch", args: map[string]any{"project": p, "branch": branch2, "sha": "{{w2_head}}", "unmerged": true, "confirm": true}},
+
+		// CI: a pipeline run and canceled, the failed one retried, a job
+		// retried, the manual one started.
+		{tool: "run_pipeline", args: map[string]any{"project": p, "ref": s.Default, "dry_run": true}},
+		{tool: "run_pipeline", args: map[string]any{"project": p, "ref": s.Default, "inputs": map[string]any{"greeting": "live"},
+			"variables": []any{map[string]any{"key": "LIVE_VARIABLE", "value": "live-value-" + w, "type": "env_var"}}},
+			save: map[string]string{"run_pipeline": "pipeline_id"}},
+		{tool: "cancel_pipeline", args: map[string]any{"project": p, "pipeline_id": "{{run_pipeline}}", "dry_run": true}},
+		{tool: "cancel_pipeline", args: map[string]any{"project": p, "pipeline_id": "{{run_pipeline}}"}},
+		{tool: "retry_pipeline", args: map[string]any{"project": p, "pipeline_id": s.Pipeline, "dry_run": true}},
+		{tool: "retry_pipeline", args: map[string]any{"project": p, "pipeline_id": s.Pipeline}},
+		{tool: "retry_job", args: map[string]any{"project": p, "job_id": s.JobPassed, "dry_run": true}},
+		{tool: "retry_job", args: map[string]any{"project": p, "job_id": s.JobPassed}},
+		{tool: "play_job", args: map[string]any{"project": p, "job_id": s.JobManual, "dry_run": true,
+			"variables": []any{map[string]any{"key": "LIVE_PLAY", "value": "played-" + w}}}},
+		{tool: "play_job", args: map[string]any{"project": p, "job_id": s.JobManual,
+			"variables": []any{map[string]any{"key": "LIVE_PLAY", "value": "played-" + w}}}},
+		{tool: "play_job", args: map[string]any{"project": p, "job_id": s.JobManual}, expectError: true,
+			why: "a job no longer waiting to be started"},
+
+		// A comment of the run's, deleted.
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A comment the live run deletes."}},
+		{tool: "list_discussions", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue},
+			save: map[string]string{"del_note": "threads.0.notes.0.id", "del_at": "threads.0.notes.0.updated_at"}},
+		{tool: "delete_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{del_note}}",
+			"updated_at": "2020-01-01T00:00:00Z", "confirm": true}, expectError: true, why: "a witness from before the comment"},
+		{tool: "delete_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{del_note}}",
+			"updated_at": "{{del_at}}", "dry_run": true}},
+		{tool: "delete_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{del_note}}",
+			"updated_at": "{{del_at}}", "confirm": true}},
+
+		// The wiki.
+		{tool: "save_wiki_page", args: map[string]any{"project": p, "title": "Live page " + w, "content": "# Live\n\n/close stays text.\n",
+			"format": "markdown", "dry_run": true}},
+		{tool: "save_wiki_page", args: map[string]any{"project": p, "title": "Live page " + w, "content": "# Live\n\n/close stays text.\n",
+			"format": "markdown"}, save: map[string]string{"page": "slug", "page_sha": "content_sha256"}},
+		{tool: "list_wiki_pages", args: map[string]any{"project": p}},
+		{tool: "get_wiki_page", args: map[string]any{"project": p, "slug": "{{page}}", "offset": 0}},
+		{tool: "resolve_url", args: map[string]any{"url": s.WebURL + "/-/wikis/home"}},
+		{tool: "save_wiki_page", args: map[string]any{"project": p, "slug": "{{page}}", "content_sha256": "{{page_sha}}",
+			"title": "Live page renamed " + w, "content": "# Live\n\nChanged.\n"}, save: map[string]string{"page2": "slug", "page_sha2": "content_sha256"}},
+		{tool: "save_wiki_page", args: map[string]any{"project": p, "slug": "{{page2}}", "content_sha256": "{{page_sha}}", "content": "stale"},
+			expectError: true, why: "a content_sha256 from before the change"},
+		{tool: "delete_wiki_page", args: map[string]any{"project": p, "slug": "{{page2}}", "content_sha256": "{{page_sha2}}", "dry_run": true}},
+		{tool: "delete_wiki_page", args: map[string]any{"project": p, "slug": "{{page2}}", "content_sha256": "{{page_sha2}}", "confirm": true}},
+
+		// Snippets: two, so the listing pages.
+		{tool: "create_snippet", args: map[string]any{"project": p, "title": "Live snippet " + w, "description": "Two files.",
+			"files": []any{map[string]any{"path": "a.md", "content": "# A\n"}}, "dry_run": true}},
+		{tool: "create_snippet", args: map[string]any{"project": p, "title": "Live snippet " + w, "description": "Two files.",
+			"files": []any{map[string]any{"path": "a.md", "content": "# A\n"}, map[string]any{"path": "b.sh", "content": "echo b\n"}}},
+			save: map[string]string{"snippet": "id"}},
+		{tool: "create_snippet", args: map[string]any{"project": p, "title": "Live snippet two " + w,
+			"files": []any{map[string]any{"path": "c.txt", "content": "c\n"}}}},
+		{tool: "list_snippets", args: map[string]any{"project": p, "max": 1}, paged: true},
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}"}},
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "file": "b.sh", "offset": 0}},
+
+		// Releases: two, so the listing pages.
+		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag, "ref": s.Default, "dry_run": true}},
+		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag, "ref": s.Default, "tag_message": "A live tag",
+			"name": "Live release " + w, "description": "Release notes.\n/close stays text.\n", "milestones": []any{s.Milestone},
+			"released_at": now.Format(time.RFC3339)}},
+		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag}, expectError: true, why: "a second release of one tag"},
+		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag2, "ref": s.Default}},
+		{tool: "list_releases", args: map[string]any{"project": p, "order_by": "created_at", "sort": "desc", "max": 1}, paged: true},
+		{tool: "get_release", args: map[string]any{"project": p, "tag_name": tag, "offset": 0}},
+
+		// Deployments, from the default branch's pipeline, and activity.
+		{tool: "list_environments", args: map[string]any{"project": p, "name": "live"}},
+		{tool: "list_environments", args: map[string]any{"project": p, "search": "live", "states": "available", "max": 1}, paged: true},
+		{tool: "list_deployments", args: map[string]any{"project": p, "order_by": "id", "sort": "desc", "max": 1}, paged: true},
+		{tool: "list_deployments", args: map[string]any{"project": p, "environment": "live", "status": "success",
+			"updated_after": yesterday, "updated_before": tomorrow}},
+		{tool: "list_events", args: map[string]any{"project": p, "max": 1}, paged: true},
+		{tool: "list_events", args: map[string]any{"project": p, "action": "created", "target_type": "issue",
+			"after": now.Add(-48 * time.Hour).Format(time.DateOnly), "before": now.Add(48 * time.Hour).Format(time.DateOnly), "sort": "asc"}},
+	}
+}
+
 // guardRule and guardBranch are a wildcard protected-branch rule and a
 // branch under it, which the driver makes before the plan runs.
 func guardRule(s scratch) string   { return "guard-" + s.Name[len(s.Name)-6:] + "/*" }
@@ -492,7 +625,13 @@ func init() {
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "lint_ci",
 		"list_todos", "create_issue", "update_issue", "add_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "create_branch",
-		"create_commit"} {
+		"create_commit",
+		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "retry_pipeline", "retry_job",
+		"play_job", "cancel_pipeline", "delete_branch", "delete_comment", "list_wiki_pages", "get_wiki_page", "save_wiki_page",
+		"delete_wiki_page", "list_releases", "get_release", "create_release", "list_environments", "list_deployments",
+		// Without a project these read or write the maintainer's own
+		// snippets and activity, which are not the run's.
+		"list_snippets", "get_snippet", "create_snippet", "list_events"} {
 		rules[tool] = inProject
 	}
 }

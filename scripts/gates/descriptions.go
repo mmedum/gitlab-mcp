@@ -22,10 +22,11 @@ import (
 //     input's own description is where that is headed off (§4.6).
 
 // witnessInputs are the inputs §4.6 makes a write carry: the file's
-// last_commit_id, the head sha a merge or approval was decided on, and
-// the updated_at an issue or merge request was read at. On a read tool
-// the same names are addresses, not witnesses.
-var witnessInputs = []string{"last_commit_id", "sha", "updated_at"}
+// last_commit_id, the head sha a merge, approval or branch delete was
+// decided on, the updated_at an issue, merge request or comment was read
+// at, and the hash of a wiki page's content. On a read tool the same
+// names are addresses, not witnesses.
+var witnessInputs = []string{"content_sha256", "last_commit_id", "sha", "updated_at"}
 
 const retrySentence = "NOT a retry signal"
 

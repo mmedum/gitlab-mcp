@@ -56,11 +56,28 @@ var plainInputs = map[string]string{
 	"start_branch":     "a Git branch name, which GitLab takes as a ref, not Markdown",
 	"create_commit.message": "a commit message: the Commits API writes it into Git and runs no quick action from it; " +
 		"only issue and merge request descriptions and notes are interpreted",
+	"sha":            "a commit SHA, compared with the head GitLab reports and sent as the witness; GitLab takes it as a ref, not Markdown",
+	"content_sha256": "the wiki witness, compared with a hash of a fresh read and never sent",
+	"slug":           "addresses a wiki page in the request path; never sent as text",
+	"format":         "a closed value, markdown, rdoc, asciidoc or org, which GitLab takes as the page's markup and does not interpret",
+	"merge_merge_request.merge_commit_message": "a commit message MergeRequests::MergeService writes into Git; it runs no quick " +
+		"action (§18 row 67)",
+	"merge_merge_request.squash_commit_message": "a commit message MergeRequests::MergeService writes into Git; it runs no quick " +
+		"action (§18 row 67)",
+	"save_wiki_page.content":     "a wiki page: WikiPages::CreateService and UpdateService run no quick action (§18 row 67)",
+	"create_snippet.description": "a snippet's description: Snippets::CreateService runs no quick action (§18 row 67)",
+	"create_release.description": "release notes: Releases::CreateService runs no quick action (§18 row 67)",
+	"create_release.name":        "a release's name: Releases::CreateService runs no quick action (§18 row 67)",
+	"create_release.tag_name":    "a Git tag name, which GitLab takes as a ref, not Markdown",
+	"create_release.tag_message": "an annotated tag's message, written into Git; Releases::CreateService runs no quick action (§18 row 67)",
+	"create_release.milestones":  "milestone titles GitLab looks up by title, never as Markdown",
+	"create_release.released_at": "a time, checked as RFC 3339 and sent as one",
 }
 
 // minWriteTools is the floor on write tools the gate examined: the
-// twelve of phase 2. A dump with fewer is a dump of the wrong build.
-const minWriteTools = 12
+// twenty-six of phase 3 with every flag and toolset on. A dump with fewer
+// is a dump of the wrong build.
+const minWriteTools = 26
 
 func bodies(out io.Writer, args []string) error {
 	d, err := readDump(args[0])

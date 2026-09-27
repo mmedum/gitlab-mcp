@@ -46,7 +46,7 @@ type outcomesFloors struct{ files, boolFields, writes int }
 
 // realOutcomesFloors: the service's files, the boolean request fields it
 // branches on, and the writes.
-var realOutcomesFloors = outcomesFloors{files: 11, boolFields: 12, writes: 12}
+var realOutcomesFloors = outcomesFloors{files: 17, boolFields: 23, writes: 27}
 
 func outcomes(out io.Writer, _ []string) error {
 	service, err := parsePackageDir(serviceDir)

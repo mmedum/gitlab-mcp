@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -46,6 +47,10 @@ type Call struct {
 	// call with a witness means the witness moved, so it is stale rather
 	// than a conflict (§4.6).
 	Witness string
+	// UnmodifiedSince is sent as If-Unmodified-Since when set. GitLab's
+	// conditional deletes answer 412 when the resource changed after it,
+	// which is [stale] (§4.6).
+	UnmodifiedSince time.Time
 	// Bucket is the rate bucket the call is charged to, beyond the
 	// instance's own. The zero value is the general bucket only.
 	Bucket Bucket

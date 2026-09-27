@@ -1041,3 +1041,308 @@ type TodoDone struct {
 	Outcome string `json:"outcome" jsonschema:"done, not_found, blocked (outside GITLAB_MCP_WRITE_NAMESPACES), failed, or would_mark in a dry run"`
 	Error   string `json:"error" jsonschema:"Why it was not marked; empty when it was"`
 }
+
+// ------------------------------------------------------------------ ship
+
+// MergeWrite is merge_merge_request's result.
+type MergeWrite struct {
+	Outcome string `json:"outcome" jsonschema:"merged, auto_merge_set (it merges when its pipeline succeeds), unchanged (already merged) or dry_run"`
+	Write
+	IID                 int64      `json:"iid"`
+	WebURL              string     `json:"web_url"`
+	State               string     `json:"state" jsonschema:"The merge request's state after the call, as GitLab reported it"`
+	SourceBranch        string     `json:"source_branch"`
+	TargetBranch        string     `json:"target_branch"`
+	SHA                 string     `json:"sha" jsonschema:"The source branch's head that was merged, or would be"`
+	MergeCommitSHA      string     `json:"merge_commit_sha" jsonschema:"The commit the merge made on the target branch; empty until merged, or when GitLab fast-forwarded"`
+	SquashCommitSHA     string     `json:"squash_commit_sha"`
+	MergedAt            *time.Time `json:"merged_at"`
+	MergedBy            string     `json:"merged_by" jsonschema:"Username"`
+	DetailedMergeStatus string     `json:"detailed_merge_status" jsonschema:"GitLab's reason a merge request can or cannot merge now, such as mergeable, ci_must_pass or not_approved"`
+}
+
+// ApprovalWrite is approve_merge_request's and unapprove_merge_request's
+// result.
+type ApprovalWrite struct {
+	Outcome string `json:"outcome" jsonschema:"approved, unapproved, unchanged or dry_run"`
+	Write
+	IID           int64    `json:"iid"`
+	SHA           string   `json:"sha" jsonschema:"The head the approval was given at; empty for unapprove"`
+	YouApproved   bool     `json:"you_approved" jsonschema:"Whether your approval stands after the call"`
+	Approved      bool     `json:"approved" jsonschema:"Whether the merge request's approval rules are met"`
+	ApprovedBy    []string `json:"approved_by" jsonschema:"Usernames"`
+	ApprovalsLeft *int     `json:"approvals_left" jsonschema:"Approvals still required; null where the tier has no approval rules"`
+}
+
+// PipelineWrite is run_pipeline's, retry_pipeline's and cancel_pipeline's
+// result.
+type PipelineWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created, retried, canceled, unchanged or dry_run"`
+	Write
+	PipelineID   int64    `json:"pipeline_id"`
+	IID          int64    `json:"iid"`
+	StatusBefore string   `json:"status_before" jsonschema:"The status read before the call; empty for a new pipeline"`
+	Status       string   `json:"status" jsonschema:"The status GitLab reported after the call"`
+	Ref          string   `json:"ref"`
+	SHA          string   `json:"sha"`
+	Source       string   `json:"source"`
+	WebURL       string   `json:"web_url"`
+	Variables    []string `json:"variables" jsonschema:"The keys of the variables sent; their values are never shown"`
+	Inputs       []string `json:"inputs" jsonschema:"The names of the inputs sent; their values are never shown"`
+}
+
+// JobWrite is retry_job's and play_job's result.
+type JobWrite struct {
+	Outcome string `json:"outcome" jsonschema:"retried, played or dry_run"`
+	Write
+	JobID      int64    `json:"job_id" jsonschema:"The job that runs: for a retry, the new job GitLab made; for play, the job itself"`
+	FromJobID  int64    `json:"from_job_id" jsonschema:"The job the call was given"`
+	Name       string   `json:"name"`
+	Stage      string   `json:"stage"`
+	Status     string   `json:"status"`
+	PipelineID int64    `json:"pipeline_id"`
+	WebURL     string   `json:"web_url"`
+	Variables  []string `json:"variables" jsonschema:"The keys of the variables sent; their values are never shown"`
+}
+
+// ----------------------------------------------------------- destructive
+
+// BranchDelete is delete_branch's result.
+type BranchDelete struct {
+	Outcome string `json:"outcome" jsonschema:"deleted or dry_run"`
+	Write
+	Branch string `json:"branch"`
+	SHA    string `json:"sha" jsonschema:"The head the branch had when it was deleted"`
+	Merged bool   `json:"merged" jsonschema:"Whether GitLab counted it merged into the default branch"`
+}
+
+// CommentDelete is delete_comment's result.
+type CommentDelete struct {
+	Outcome string `json:"outcome" jsonschema:"deleted or dry_run"`
+	Write
+	Type   string `json:"type" jsonschema:"issue or merge_request"`
+	IID    int64  `json:"iid"`
+	NoteID int64  `json:"note_id"`
+}
+
+// ------------------------------------------------------------------ wiki
+
+// WikiPageRow is one page of a wiki listing.
+type WikiPageRow struct {
+	Slug   string `json:"slug" jsonschema:"Pass as slug to get_wiki_page"`
+	Title  string `json:"untrusted_title"`
+	Format string `json:"format"`
+}
+
+// WikiPages is list_wiki_pages' result.
+type WikiPages struct {
+	Project ProjectRef    `json:"project"`
+	Pages   []WikiPageRow `json:"pages"`
+	Listing Listing       `json:"listing"`
+}
+
+// WikiPage is get_wiki_page's result.
+type WikiPage struct {
+	Project          ProjectRef `json:"project"`
+	Slug             string     `json:"slug"`
+	UntrustedTitle   string     `json:"untrusted_title"`
+	Format           string     `json:"format" jsonschema:"markdown, rdoc, asciidoc or org"`
+	ContentSHA256    string     `json:"content_sha256" jsonschema:"A hash of the page's content as GitLab stores it. Pass as content_sha256 to save_wiki_page or delete_wiki_page: GitLab keeps no version a write could check, so the server compares this"`
+	UntrustedContent string     `json:"untrusted_content"`
+	Budget           Budget     `json:"content_budget"`
+}
+
+// WikiWrite is save_wiki_page's result.
+type WikiWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created, updated, unchanged or dry_run"`
+	Write
+	Slug           string   `json:"slug" jsonschema:"The page's slug after the write, which a new title changes"`
+	Title          string   `json:"title"`
+	Format         string   `json:"format"`
+	ContentSHA256  string   `json:"content_sha256" jsonschema:"Pass as content_sha256 to the next save_wiki_page"`
+	Changed        []string `json:"changed" jsonschema:"The fields whose value differs after the write, as GitLab reported it"`
+	ContentRemoved *Removed `json:"content_removed" jsonschema:"What replacing the content took out; null when it was not replaced"`
+}
+
+// WikiDelete is delete_wiki_page's result.
+type WikiDelete struct {
+	Outcome string `json:"outcome" jsonschema:"deleted or dry_run"`
+	Write
+	Slug string `json:"slug"`
+}
+
+// -------------------------------------------------------------- snippets
+
+// SnippetRow is one snippet of a listing.
+type SnippetRow struct {
+	ID             int64     `json:"id"`
+	UntrustedTitle string    `json:"untrusted_title"`
+	Visibility     string    `json:"visibility"`
+	Author         string    `json:"author" jsonschema:"Username"`
+	ProjectID      *int64    `json:"project_id" jsonschema:"The project it is in; null for a personal snippet"`
+	Files          []string  `json:"files"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	WebURL         string    `json:"web_url"`
+}
+
+// Snippets is list_snippets' result.
+type Snippets struct {
+	Project  *ProjectRef  `json:"project" jsonschema:"The project listed; null for your personal snippets"`
+	Snippets []SnippetRow `json:"snippets"`
+	Listing  Listing      `json:"listing"`
+}
+
+// Snippet is get_snippet's result.
+type Snippet struct {
+	Project              *ProjectRef `json:"project" jsonschema:"The project it is in; null for a personal snippet"`
+	ID                   int64       `json:"id"`
+	UntrustedTitle       string      `json:"untrusted_title"`
+	UntrustedDescription string      `json:"untrusted_description"`
+	Visibility           string      `json:"visibility"`
+	Author               string      `json:"author" jsonschema:"Username"`
+	Files                []string    `json:"files" jsonschema:"Every file of the snippet; pass one as file to read it"`
+	File                 string      `json:"file" jsonschema:"The file shown"`
+	Binary               bool        `json:"binary" jsonschema:"True when the file is binary and its content is not shown"`
+	UntrustedContent     string      `json:"untrusted_content"`
+	Budget               Budget      `json:"content_budget"`
+	CreatedAt            time.Time   `json:"created_at"`
+	UpdatedAt            time.Time   `json:"updated_at"`
+	WebURL               string      `json:"web_url"`
+}
+
+// SnippetWrite is create_snippet's result.
+type SnippetWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created or dry_run"`
+	Write
+	ID         int64    `json:"id"`
+	Visibility string   `json:"visibility" jsonschema:"Always private"`
+	Files      []string `json:"files"`
+	WebURL     string   `json:"web_url"`
+}
+
+// -------------------------------------------------------------- releases
+
+// ReleaseRow is one release of a listing.
+type ReleaseRow struct {
+	TagName       string     `json:"tag_name"`
+	UntrustedName string     `json:"untrusted_name"`
+	Author        string     `json:"author" jsonschema:"Username"`
+	CommitSHA     string     `json:"commit_sha"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ReleasedAt    *time.Time `json:"released_at"`
+	Upcoming      bool       `json:"upcoming" jsonschema:"True when released_at is in the future"`
+}
+
+// Releases is list_releases' result.
+type Releases struct {
+	Project  ProjectRef   `json:"project"`
+	Releases []ReleaseRow `json:"releases"`
+	Listing  Listing      `json:"listing"`
+}
+
+// Release is get_release's result.
+type Release struct {
+	Project              ProjectRef `json:"project"`
+	TagName              string     `json:"tag_name"`
+	UntrustedName        string     `json:"untrusted_name"`
+	UntrustedDescription string     `json:"untrusted_description"`
+	Budget               Budget     `json:"description_budget"`
+	Author               string     `json:"author" jsonschema:"Username"`
+	CommitSHA            string     `json:"commit_sha"`
+	CreatedAt            time.Time  `json:"created_at"`
+	ReleasedAt           *time.Time `json:"released_at"`
+	Upcoming             bool       `json:"upcoming"`
+	Milestones           []string   `json:"milestones" jsonschema:"Milestone titles"`
+	Assets               int        `json:"assets" jsonschema:"How many assets it has: links and source archives"`
+}
+
+// ReleaseWrite is create_release's result.
+type ReleaseWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created or dry_run"`
+	Write
+	TagName    string     `json:"tag_name"`
+	TagCreated bool       `json:"tag_created" jsonschema:"True when the tag did not exist and GitLab created it at ref, which starts the project's tag pipelines"`
+	CommitSHA  string     `json:"commit_sha"`
+	ReleasedAt *time.Time `json:"released_at"`
+	Milestones []string   `json:"milestones"`
+}
+
+// ----------------------------------------------------------- deployments
+
+// DeploymentRef is the deployment an environment names last.
+type DeploymentRef struct {
+	ID        int64     `json:"id"`
+	IID       int64     `json:"iid"`
+	Status    string    `json:"status"`
+	Ref       string    `json:"ref"`
+	SHA       string    `json:"sha"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// EnvironmentRow is one environment.
+type EnvironmentRow struct {
+	ID             int64          `json:"id"`
+	Name           string         `json:"name"`
+	Slug           string         `json:"slug"`
+	State          string         `json:"state" jsonschema:"available, stopping or stopped"`
+	Tier           string         `json:"tier"`
+	ExternalURL    string         `json:"external_url" jsonschema:"Where the environment is served, as the project configured it; never fetched"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	AutoStopAt     *time.Time     `json:"auto_stop_at"`
+	LastDeployment *DeploymentRef `json:"last_deployment"`
+}
+
+// Environments is list_environments' result.
+type Environments struct {
+	Project      ProjectRef       `json:"project"`
+	Environments []EnvironmentRow `json:"environments"`
+	Listing      Listing          `json:"listing"`
+}
+
+// DeploymentRow is one deployment.
+type DeploymentRow struct {
+	ID          int64      `json:"id"`
+	IID         int64      `json:"iid"`
+	Status      string     `json:"status"`
+	Environment string     `json:"environment"`
+	Ref         string     `json:"ref"`
+	SHA         string     `json:"sha"`
+	User        string     `json:"user" jsonschema:"Username of who deployed"`
+	JobID       int64      `json:"job_id" jsonschema:"The job that deployed; 0 when none"`
+	JobName     string     `json:"job_name"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   *time.Time `json:"updated_at"`
+}
+
+// Deployments is list_deployments' result.
+type Deployments struct {
+	Project     ProjectRef      `json:"project"`
+	Deployments []DeploymentRow `json:"deployments"`
+	Listing     Listing         `json:"listing"`
+}
+
+// -------------------------------------------------------------- activity
+
+// EventRow is one event.
+type EventRow struct {
+	ID                   int64     `json:"id"`
+	Action               string    `json:"action" jsonschema:"GitLab's action name, such as opened, commented on or pushed to"`
+	TargetType           string    `json:"target_type" jsonschema:"Issue, MergeRequest, Note, DiffNote, Milestone, WikiPage::Meta and the like; empty for a push"`
+	TargetID             *int64    `json:"target_id"`
+	TargetIID            *int64    `json:"target_iid"`
+	UntrustedTargetTitle string    `json:"untrusted_target_title"`
+	Author               string    `json:"author" jsonschema:"Username"`
+	ProjectID            *int64    `json:"project_id"`
+	CreatedAt            time.Time `json:"created_at"`
+	PushRef              string    `json:"push_ref" jsonschema:"For a push: the branch or tag"`
+	PushCommits          int       `json:"push_commits" jsonschema:"For a push: how many commits"`
+	UntrustedCommitTitle string    `json:"untrusted_commit_title" jsonschema:"For a push: the newest commit's title"`
+}
+
+// Events is list_events' result.
+type Events struct {
+	Project *ProjectRef `json:"project" jsonschema:"The project listed; null for your own activity"`
+	Events  []EventRow  `json:"events"`
+	Listing Listing     `json:"listing"`
+}

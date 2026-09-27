@@ -114,6 +114,22 @@ var staleFile = regexp.MustCompile(`(?i)has changed since you started editing it
 // or a file a commit would create. GitLab answers 400, not 409.
 var alreadyExists = regexp.MustCompile(`(?i)already exists`)
 
+// jobState is a job refused for the state it is in: GitLab answers
+// "403 Forbidden - Job is not retryable" and "400 Bad request - Unplayable
+// Job" (lib/api/ci/jobs.rb, lib/api/helpers.rb), which asks the caller to
+// read the job, not a maintainer or the arguments.
+var jobState = regexp.MustCompile(`(?i)- (job is not retryable|unplayable job)$`)
+
+// pipelineVariables is GitLab refusing variables from an account below
+// the project's minimum role for them, which gitlab.com sets to no one on
+// a new project. It answers 400, but no argument fixes it.
+var pipelineVariables = regexp.MustCompile(`(?i)insufficient permissions to set pipeline variables`)
+
+// PipelineVariablesRefused says why GitLab refuses variables from an
+// account and what to do, for every refusal of them.
+const PipelineVariablesRefused = "the project lets only roles above yours set pipeline variables (Settings, CI/CD, Variables: " +
+	"the minimum role to use pipeline variables). Run it without variables, or ask a maintainer"
+
 // notFoundWhat pulls the resource out of "404 Project Not Found".
 var notFoundWhat = regexp.MustCompile(`(?i)^404\s+(.*?)\s*not\s+found$`)
 
@@ -143,6 +159,8 @@ func classifyStatus(call Call, name string, repeatable bool, status int, h http.
 		a.detail = describeBody(status, h, body)
 	}
 	switch {
+	case (status == http.StatusBadRequest || status == http.StatusForbidden) && jobState.MatchString(strings.TrimSpace(a.env.message)):
+		return a.fail(ClassConflict, "GitLab refused %s in the job's current state: %s", a.name, a.detail)
 	case status == http.StatusTooManyRequests:
 		return a.rateLimited()
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
@@ -246,6 +264,8 @@ func (a answer) clientError() verdict {
 		// The Files and Commits APIs refuse a moved last_commit_id with
 		// 400, not 409 (§2.10).
 		return a.fail(ClassStale, "the file changed since its last_commit_id was read: read it again and retry. GitLab said: %s", a.detail)
+	case a.status == http.StatusBadRequest && pipelineVariables.MatchString(a.env.message):
+		return a.fail(ClassForbidden, "GitLab refused %s: %s. GitLab said: %s", a.name, PipelineVariablesRefused, a.detail)
 	case a.status == http.StatusBadRequest && alreadyExists.MatchString(a.env.message):
 		return a.fail(ClassConflict, "GitLab refused %s because the name is taken: %s", a.name, a.detail)
 	case a.status == http.StatusPreconditionFailed:
