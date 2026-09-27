@@ -170,11 +170,16 @@ func (s *Server) addNote(p *project, t target, user, body string) (note gitlab.N
 	if kept == "" && len(cmds) > 0 {
 		return gitlab.Note{}, summary, true
 	}
-	note = s.newNote(t, user, kept, nil, false, nil)
-	key := t.key()
-	p.discussions[key] = append(p.discussions[key], gitlab.Discussion{ID: fakeSHA(key, itoa(note.ID)),
+	return s.storeNote(p, t, user, kept), summary, false
+}
+
+// storeNote saves body as a new individual note on t, as its own
+// discussion.
+func (s *Server) storeNote(p *project, t target, user, body string) gitlab.Note {
+	note := s.newNote(t, user, body, nil, false, nil)
+	p.discussions[t.key()] = append(p.discussions[t.key()], gitlab.Discussion{ID: fakeSHA(t.key(), itoa(note.ID)),
 		IndividualNote: true, Notes: []gitlab.Note{note}})
-	return note, summary, false
+	return note
 }
 
 // newNote makes a note on t and counts it; it does not store it.

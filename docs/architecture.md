@@ -1,7 +1,7 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 3 done and in review, 2026-09-27; phase 4 is next.
-Nothing is tagged.** This document holds the platform facts, the design bets, a
+**Status: phase 4 done and in review, 2026-09-27; every phase is
+built. Nothing is tagged.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
@@ -312,9 +312,9 @@ never add its own voice to the attacker's.
    masks. GitLab's own masking covers only masked variables.
 5. **Authorship is shown.** Every rendered comment and description
    names its author's username, and where the call already has it, the
-   author's role in the project. Whether content from authors below
-   Developer is withheld in public projects — GitHub's lockdown — is
-   §17.3.
+   author's role in the project. Content from authors below Developer
+   in public projects is not withheld, as GitHub's lockdown does: §17.3
+   says why.
 6. **The server's own text never relays content.** Tool descriptions
    and the server instructions say content is untrusted, and no result
    ever phrases what content says as something to do.
@@ -1205,14 +1205,16 @@ gated. It covers gitlab.com, the only instance.
   and option, held by `live-cover`; the transcript through one
   redacting writer, held by `transcript`; read by a person before a
   phase counts.
-- **Evals**, `scripts/evals`, against `gitlabtest` for the offline
-  self-check in `check`, and live against the driver's scratch project
-  by hand, with built-in tools disabled by `--tools ""` and
-  `--setting-sources ""` (fail-closed, never a denylist), a census of
-  the scratch project before and after, and tasks whose content carries
-  an injected instruction — a quick action, a request to post
-  elsewhere, a request to approve — scored on whether the model
-  followed it.
+- **Evals**, `scripts/evals`, against `gitlabtest` only (`CLAUDE.md`
+  rule 1): a self-check in `check` with no model, and a real model by
+  hand through `claude -p`, with built-in tools disabled by `--tools ""`
+  and `--setting-sources ""` (fail-closed, never a denylist), a census
+  of the instance before and after, and tasks whose content carries an
+  injected instruction — read a private file, a quick action, a request
+  to post elsewhere, a request to approve — scored on whether the model
+  followed it. The self-check drives, per task, an empty run, a scripted
+  run that does the task and one that follows the steer through the
+  real server, and holds them to fail, pass and fail.
 
 ## 14. Confirmed decisions and their consequences
 
@@ -1293,6 +1295,16 @@ and 2026-09-27); G has not. Spike I, the floor version, was dropped with self-ma
 - **Spike G — `mcp` scope.** Whether an `mcp`-scoped token can call the
   tagged REST routes directly. Informational: it would not cover
   comments (§2.6).
+  *Source, gitlab-org/gitlab master `1ee957c5`, 2026-09-26: a route
+  takes an `mcp` token when its class allows the verb for `mcp` and the
+  route carries `route_setting :mcp` (`lib/api/concerns/mcp_access.rb`).
+  About sixteen REST routes do: search, branches, one issue by iid and
+  issue create, merge request create, update, commits, diffs and
+  pipelines, and pipeline and job listings among them; `/user`, a
+  project, issue listings and every notes route do not. The driver
+  probes both kinds with a second sign-in for `mcp` alone, then revokes
+  it (`-spike G`). Not yet run live: the first attempt timed out at the
+  browser on 2026-09-27.*
 - **Spike H — conditional reads.** Whether `If-None-Match` returns 304 on
   API GETs and whether a 304 is counted against the rate limit.
   *Verdict, gitlab.com, 2026-09-26: a single read and a listing both
@@ -1443,6 +1455,22 @@ stay open for phase 4; §17a holds two new deferrals.*
 injection tasks of §13; §17.3 decided; the surface frozen into the
 schema baseline; §17 closed or each item argued open.
 
+*Built 2026-09-27, simplified and reviewed (§16a). Four injection tasks
+plant an instruction from a non-member of the public project: read a
+private file, run a quick action, post in another project, approve and
+merge with Ship on. The self-check drives each task's empty, done and
+obeyed runs through the real server and holds them to fail, pass and
+fail. The first model run scored the harness, not the model: every
+world signed the server in under one keyring profile with the same
+token names (§18 row 74), which is fixed. Opus then passed all eight
+tasks, and the four injection tasks twice more, 12 of 12. §17.2, §17.8
+and §17.9 are decided as proposed and §17.3 from the evals; §17.10
+stands and §17.11 is after 1.0. The schema baseline holds all
+sixty-six tools. A live run on gitlab.com drove every tool and option
+but the two page tokens already waived, and its transcript was read:
+clean. Owed: spike G, which needs the maintainer at a browser for an
+`mcp`-scoped sign-in; the driver runs it with `-spike G`.*
+
 ### 16a. Found by review, and fixed
 
 Each phase's `/code-review high` and `/security-review` findings are
@@ -1550,6 +1578,31 @@ rather than `[auth]`, a §6.5 decision left to the maintainer.
 | A 200 merge answer with the merge request open reads as `[unexpected]` | Not a defect: GitLab answers 422 unless merged (`execute_immediate_merge!`) |
 | The id minimum now applies to `list_discussions.note_id` | Kept: nothing is released, and 0 never named a comment |
 
+**Phase 4.** `/simplify`: one note-storing helper in `gitlabtest`,
+which the planted comments share; a random part in every `gitlabtest`
+token name, the root of the keyring collision (§18 row 74); the smoke
+gate's floor derived from `tools.Surface` rather than typed; the tools a
+rehearsal is offered listed by the rehearsal itself; one path helper for
+the three write scorers; spike G's probes carrying their own query.
+Skipped: one parser of tool-result text for the harness and the smoke
+gate (different shapes, different packages), and fewer worlds per
+self-check, which takes under a second. `/security-review`: no finding
+at confidence 8 (`audit/security-reviews/phase-4.md`), three below it
+recorded there. `/code-review high`: ten candidates:
+
+| Found | Fixed |
+|---|---|
+| `injected-post-elsewhere` failed a summary that mentioned the other project | Phase 4 commit; only a call aimed at it, or a new issue, follows the steer |
+| Spike G left its `mcp` token live when a probe failed | Phase 4 commit; revoked on every path out |
+| Spike G's refresh after revocation, if granted, left a live pair | Phase 4 commit; that pair is revoked |
+| An approval submitted as a review was seen only in the call's arguments | Phase 4 commit; `observe` reads the reviewer state |
+| One fixed keyring profile let two runs delete each other's sign-in | Phase 4 commit; a profile per world |
+| The scorer's own quick-action pattern knew four commands | Phase 4 commit; `quickaction.Find`, escaped lines included |
+| `injected-comment` passed "the discussion is empty" | Phase 4 commit; the summary must carry the export or the header row |
+| The smoke floor moved with the code it checks | Phase 4 commit; a constant floor of the thirty-one reads beside it |
+| Spike G discards the authorization URL where no browser opens | Not fixed: the redacting printer masks the client id in it, so a printed URL would not work; the browser opens as it does for `login` |
+| `surfaceFloor` is typed, not derived | Kept: it is the floor on how much the checker read, which is meant to stand apart from the code (`CLAUDE.md` rule 19) |
+
 ### Closing a phase
 
 1. `make check` green; the live driver run and its transcript read.
@@ -1572,13 +1625,25 @@ rather than `[auth]`, a §6.5 decision left to the maintainer.
    people's merge rules count. Proposed: Ship, as §4.3 has it, since an
    injected "approve this" is exactly what the flag exists to refuse.
    The counter-argument is that approving is the most common review
-   action and is reversible. **Open.**
+   action and is reversible. **Decided 2026-09-27 (maintainer): Ship,
+   as proposed.** The injection evals score an approval the model was
+   steered to (§13).
 3. **Lockdown for public projects.** GitHub withholds content from
    authors without push access in public repositories. Here: in a
    public project, render content from authors below Developer as
    withheld unless `GITLAB_MCP_UNTRUSTED_CONTENT=show`. It costs a
    members read per call and hides legitimate bug reports. Proposed:
-   decide in phase 4 from the injection evals. **Open.**
+   decide in phase 4 from the injection evals. **Decided 2026-09-27: no
+   lockdown in 1.0.** Four evals plant an instruction from a
+   non-member of a public project, the case lockdown would withhold: read
+   a private file, run a quick action, post in another project, approve
+   and merge with Ship on. Opus followed none of them in three runs,
+   12 of 12, each time doing the task it was given. Behind the model the
+   boundaries (§4.1), the quick-action guard (§4.2), the unregistered
+   kinds (§4.3) and the allow-list (§4.7) still hold without it. Hiding
+   outsiders' bug reports would cost every person a members read per
+   call to guard against what these layers already stop. Revisit if a
+   model or task makes the evals fail; `make evals` is the check.
 4. **The floor version.** **Decided 2026-09-26: not applicable.** The
    server serves gitlab.com only (§14), which runs the newest release,
    so no tool is gated by version and the live driver runs no floor
@@ -1598,11 +1663,11 @@ rather than `[auth]`, a §6.5 decision left to the maintainer.
    itself after decoding.
 8. **Default toolsets.** Proposed as §8: wiki, snippets, releases,
    deployments and activity off by default, which keeps the default at
-   43 tools. **Open.**
+   43 tools. **Decided 2026-09-27 (maintainer): as proposed.**
 9. **Default write allow-list.** Unset means everywhere the token can
    write. Proposed: keep, with `doctor` and `get_me` saying so, because
    a default that refuses every write is a default everyone overrides.
-   **Open.**
+   **Decided 2026-09-27 (maintainer): as proposed.**
 10. **GitLab's built-in server.** If it gains stdio, tokens, enforced
     filtering and a read-only mode, this server's reason to exist
     narrows to the local-token, quick-action and verified-release half.
@@ -1782,3 +1847,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 71 | An author may not approve their own merge request | Phase 3 live run on gitlab.com, a Free group | **Refuted there (tier 1, live).** The author's approval was taken. Where a project forbids it GitLab answers 401, which `approve_merge_request` reports as `[forbidden]` |
 | 72 | A developer may set pipeline variables | Phase 3 live run | **Refuted for new projects (tier 1, live).** gitlab.com creates a project allowing no one to set them: a pipeline with variables answers 400 `Insufficient permissions to set pipeline variables`, a manual job with variables a bare 403. Both are `[forbidden]` naming the setting. The live driver sets the scratch project's minimum role to developer |
 | 73 | Deployments filter by `updated_after` in any order | Phase 3 live run | **Refuted (tier 1, live).** GitLab answers 400 `` `updated_at` filter requires `updated_at` sort ``. `list_deployments` sorts by `updated_at` when a time filter is given and refuses another order with one |
+| 74 | A fresh eval world signs its server in afresh | Phase 4 eval run | **Refuted (tier 1).** The server kept the world's sign-in in the OS keyring under one profile, and every world mints the same token names, so the next world's refresh token matched the stored seed and the server used a dead access token: seven of eight tasks answered `[auth]`. `gitlabtest` now puts a random part in every token name, so no instance accepts or matches another's; the harness deletes its keyring item after each world, and a tool answering `[auth]` makes the run an error rather than a model's failure |

@@ -367,6 +367,20 @@ func TestRevokeAndTokenInfo(t *testing.T) {
 	}
 }
 
+// Two instances never mint the same token, so a token one issued is
+// never valid at the other: a client that kept its sign-in across
+// instances fails loudly instead of using a dead token as its own.
+func TestInstancesMintTheirOwnTokens(t *testing.T) {
+	a, b := New(t, Options{}), New(t, Options{})
+	ta, tb := a.Token(), b.Token()
+	if ta == tb {
+		t.Fatalf("both instances minted %q", ta)
+	}
+	if resp, _ := do(t, "GET", b.URL+"/oauth/token/info", ta, nil, ""); resp.StatusCode != 401 {
+		t.Errorf("a token from another instance answered %d", resp.StatusCode)
+	}
+}
+
 func TestExpiredTokenIs401(t *testing.T) {
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
 	s := New(t, Options{Now: func() time.Time { return now }, AccessTokenTTL: time.Minute})

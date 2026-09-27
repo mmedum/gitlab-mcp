@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mmedum/gitlab-mcp/internal/app"
+	"github.com/mmedum/gitlab-mcp/internal/auth"
 	"github.com/mmedum/gitlab-mcp/internal/diffpos"
 	"github.com/mmedum/gitlab-mcp/internal/quickaction"
 	netredact "github.com/mmedum/gitlab-mcp/internal/redact"
@@ -101,6 +102,13 @@ func spikes(ctx context.Context, settings *app.Settings, s scratch, only string,
 		hc = &copied
 	}
 	c := spikeClient{http: hc, root: settings.Instance.APIRoot(), token: tok}
+	if only == "G" {
+		p.Say("\n=== spike G: an mcp-scoped token over REST ===")
+		if err := spikeG(ctx, settings.Application(), c, s, p); err != nil {
+			p.Sayf("!! spike G: %v", err)
+		}
+		return
+	}
 	if only == "E" {
 		p.Say("\n=== spike E: quick actions ===")
 		if err := spikeE(ctx, c, s, p); err != nil {
@@ -134,6 +142,102 @@ func spikes(ctx context.Context, settings *app.Settings, s scratch, only string,
 	if err := spikeN(ctx, c, s, p); err != nil {
 		p.Sayf("!! spike N: %v", err)
 	}
+}
+
+// spikeG asks what a token with only the mcp scope can do over REST
+// (§15 spike G, §18 row 10): the source lets it call the routes tagged
+// route_setting :mcp and nothing else. It signs in a second time asking
+// for mcp alone, holds that token in memory only, sends it to tagged and
+// untagged routes of the scratch project, and revokes it, which also
+// asks whether revocation works for a public client (spike B).
+func spikeG(ctx context.Context, a *auth.Application, c spikeClient, s scratch, p *redact.Printer) error {
+	p.Say("a browser tab asks to authorize the mcp scope alone; approve it")
+	g, err := a.Login(ctx, []string{"mcp"}, auth.LoginOptions{})
+	if err != nil {
+		return fmt.Errorf("sign in with the mcp scope: %w", err)
+	}
+	p.Sayf("granted scopes: %s", strings.Join(g.Scopes, " "))
+	// The token is revoked however the probes end, and the revocation is
+	// then itself probed.
+	revoked := false
+	defer func() {
+		if !revoked {
+			_ = a.Revoke(context.Background(), g.Token.AccessToken)
+		}
+	}()
+	mc := c
+	mc.token = g.Token.AccessToken
+	proj := "projects/" + itoa(s.ID)
+	search := url.Values{"scope": {"issues"}, "search": {s.Name}}
+	probes := []struct {
+		method, route, path string
+		query               url.Values
+		tagged              bool
+	}{
+		{http.MethodGet, "user", "user", nil, false},
+		{http.MethodGet, "projects/:id", proj, nil, false},
+		{http.MethodGet, "projects/:id/issues/:iid", proj + "/issues/" + itoa(s.Issue), nil, true},
+		{http.MethodGet, "projects/:id/issues", proj + "/issues", nil, false},
+		{http.MethodGet, "projects/:id/repository/branches", proj + "/repository/branches", nil, true},
+		{http.MethodGet, "projects/:id/merge_requests/:iid", proj + "/merge_requests/" + itoa(s.MR), nil, false},
+		{http.MethodGet, "projects/:id/merge_requests/:iid/commits", proj + "/merge_requests/" + itoa(s.MR) + "/commits", nil, true},
+		{http.MethodGet, "projects/:id/pipelines", proj + "/pipelines", nil, true},
+		{http.MethodGet, "projects/:id/search", proj + "/search", search, true},
+		{http.MethodPost, "projects/:id/issues/:iid/notes", proj + "/issues/" + itoa(s.Issue) + "/notes", nil, false},
+	}
+	agree := 0
+	for _, pr := range probes {
+		var r raw
+		if pr.method == http.MethodPost {
+			r, err = mc.write(ctx, pr.method, pr.path, map[string]any{"body": "Spike G " + s.Name})
+		} else {
+			r, err = mc.get(ctx, pr.path, pr.query, nil)
+		}
+		if err != nil {
+			return err
+		}
+		ok := r.status/100 == 2
+		if ok == pr.tagged {
+			agree++
+		}
+		p.Sayf("%-4s %-45s tagged %-5v status %d %s", pr.method, pr.route, pr.tagged, r.status,
+			scopeError(r.header.Get("WWW-Authenticate")))
+	}
+	p.Sayf("spike G: %d of %d routes answer as their tag says", agree, len(probes))
+
+	if err := a.Revoke(ctx, g.Token.AccessToken); err != nil {
+		return fmt.Errorf("revoke the mcp token: %w", err)
+	}
+	revoked = true
+	r, err := mc.get(ctx, proj+"/issues/"+itoa(s.Issue), nil, nil)
+	if err != nil {
+		return err
+	}
+	p.Sayf("after revocation: the access token answers %d %s", r.status, scopeError(r.header.Get("WWW-Authenticate")))
+	fresh, err := a.Refresh(ctx, g.Token.RefreshToken)
+	p.Sayf("after revocation: the refresh token is refused invalid_grant: %v", auth.IsInvalidGrant(err))
+	if err == nil {
+		// Revocation did not reach the refresh token: the pair it just
+		// minted is live, and goes the same way.
+		if err := a.Revoke(ctx, fresh.Token.AccessToken); err != nil {
+			return fmt.Errorf("revoke the pair the refresh minted: %w", err)
+		}
+		p.Say("the pair the refresh minted is revoked")
+	}
+	return nil
+}
+
+// authError is the error parameter of a WWW-Authenticate header.
+var authError = regexp.MustCompile(`error="([a-z_]+)"`)
+
+// scopeError is the error GitLab names in a WWW-Authenticate header,
+// such as insufficient_scope, and nothing else of it.
+func scopeError(h string) string {
+	m := authError.FindStringSubmatch(h)
+	if m == nil {
+		return ""
+	}
+	return "(" + m[1] + ")"
 }
 
 // spikeN asks how GitLab holds If-Unmodified-Since on a comment delete

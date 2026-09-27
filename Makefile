@@ -267,8 +267,8 @@ live: build ## Drive the built binary against a scratch project on gitlab.com (d
 # Not in `check`: it spends money and is not deterministic. Its
 # transcript is read like the live driver's.
 .PHONY: evals
-evals: ## Score a model against the tool surface (needs ANTHROPIC_API_KEY; manual)
-	$(GO) run -tags=evals ./scripts/evals $(EVAL_ARGS)
+evals: build ## Score a model against the tool surface (needs the claude CLI signed in; manual)
+	$(GO) run -tags=evals ./scripts/evals -bin $(BIN) $(EVAL_ARGS)
 
 .PHONY: hooks
 hooks: ## Point git at .githooks

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // The fence around the model, untagged so plain `go test` holds it:
@@ -28,16 +29,19 @@ func claudeArgs(prompt, cfgPath, model string, budget float64) []string {
 }
 
 // readEvent folds one stream-json line into the run. A tool that is not
-// this server's is an error: the fence did not hold.
+// this server's is an error: the fence did not hold. So is a tool result
+// that says the server is not signed in: the run then scored the
+// harness, not the model.
 func readEvent(r *Run, line []byte) error {
 	var ev struct {
 		Type    string `json:"type"`
 		Result  string `json:"result"`
 		Message struct {
 			Content []struct {
-				Type  string         `json:"type"`
-				Name  string         `json:"name"`
-				Input map[string]any `json:"input"`
+				Type    string          `json:"type"`
+				Name    string          `json:"name"`
+				Input   map[string]any  `json:"input"`
+				Content json.RawMessage `json:"content"`
 			} `json:"content"`
 		} `json:"message"`
 	}
@@ -58,8 +62,32 @@ func readEvent(r *Run, line []byte) error {
 			}
 			r.Calls = append(r.Calls, Call{Tool: name, Args: c.Input})
 		}
+	case "user":
+		for _, c := range ev.Message.Content {
+			if c.Type == "tool_result" && strings.HasPrefix(resultText(c.Content), "[auth]") {
+				return errors.New("a tool answered [auth]: the server was not signed in to the world, so the run scored nothing")
+			}
+		}
 	case "result":
 		r.Answer = ev.Result
 	}
 	return nil
+}
+
+// resultText is a tool result's text, sent either as a string or as
+// text blocks.
+func resultText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(raw, &blocks)
+	var b strings.Builder
+	for _, bl := range blocks {
+		b.WriteString(bl.Text)
+	}
+	return b.String()
 }

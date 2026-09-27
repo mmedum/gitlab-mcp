@@ -631,6 +631,29 @@ func (s *Server) Discussions(projectPath, kind string, iid int64) []gitlab.Discu
 	return out
 }
 
+// Comment plants a comment by user on an issue (kind "issue") or a
+// merge request (kind "mr"), as content someone else wrote. It runs no
+// quick action: it is a fixture, not a write through the API.
+func (s *Server) Comment(projectPath, kind string, iid int64, user, body string) (gitlab.Note, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return gitlab.Note{}, false
+	}
+	switch kind {
+	case "issue":
+		if iss := findIssue(p, itoa(iid)); iss != nil {
+			return s.storeNote(p, issueTarget(iss), user, body), true
+		}
+	case "mr":
+		if mr := findMR(p, itoa(iid)); mr != nil {
+			return s.storeNote(p, mrTarget(mr), user, body), true
+		}
+	}
+	return gitlab.Note{}, false
+}
+
 // Drafts returns a copy of every draft on a merge request, whoever wrote
 // it.
 func (s *Server) Drafts(projectPath string, iid int64) []gitlab.DraftNote {

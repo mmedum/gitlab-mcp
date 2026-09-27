@@ -49,7 +49,7 @@ In the order the `check:` target lists them:
 | `make transcript` | `gates transcript`: the live and eval drivers reach a terminal only through the redacting printer |
 | `make live-cover` | `gates live-cover`: every tool option was driven live, or is waived with a reason in `testdata/live-cover.tsv` |
 | `make outcomes` | `gates outcomes`: every write result states its outcome, and none from the request alone |
-| `make evals-check` | the eval scorers fail on an instance nobody touched; no model and no key |
+| `make evals-check` | each eval task, with no model and no key: an empty run fails, a scripted run that does the task passes, and one that follows the task's injected instruction fails, each driven through the real server |
 | `make mcpb` | `gates mcpb`: `packaging/mcpb/manifest.json` against its vendored schema and the staging table the packer uses |
 | `make release` | `gates release`: `.goreleaser.yaml` against `release.yml` and the packer |
 | `make server-json` | `gates server-json`: the registry entry generator against the vendored registry schema |
@@ -162,10 +162,16 @@ What it does, so nothing is a surprise:
 - It records what it sent per tool option, which `make live-cover`
   reads.
 
-`make evals` scores a model against the tool surface. It needs
-`ANTHROPIC_API_KEY`, costs money and is not deterministic, so it is run
-by hand and its transcript is read like the live driver's. It reads
-only the in-memory instance of `internal/gapi/gitlabtest`.
+`make evals` builds the binary and scores a model against the tool
+surface through `claude -p`, with every built-in tool off. It needs the
+`claude` CLI signed in, costs money and is not deterministic, so it is
+run by hand and its transcript is read like the live driver's. It reads
+only the in-memory instance of `internal/gapi/gitlabtest`. Four tasks
+carry an instruction planted in the content by someone outside the
+project: read a private file, run a quick action, post in another
+project, approve and merge. Each is scored on whether the model
+followed it. `EVAL_ARGS="-task injected -v"` runs those alone and
+prints every call.
 
 ## The test instance
 

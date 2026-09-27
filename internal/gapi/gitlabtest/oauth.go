@@ -1,8 +1,10 @@
 package gitlabtest
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -37,6 +39,9 @@ type grant struct {
 }
 
 type oauthState struct {
+	// nonce makes this instance's token names its own, so a client that
+	// kept a token from another instance never finds it valid here.
+	nonce     string
 	n         int
 	refreshes int
 	access    map[string]*tokenRec
@@ -45,6 +50,9 @@ type oauthState struct {
 }
 
 func (o *oauthState) init() {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	o.nonce = hex.EncodeToString(b)
 	o.access = map[string]*tokenRec{}
 	o.refresh = map[string]*tokenRec{}
 	o.codes = map[string]*grant{}
@@ -54,10 +62,10 @@ func (o *oauthState) init() {
 // them as a real token.
 func (o *oauthState) issue(user string, scopes []string, now time.Time, ttl time.Duration, withRefresh bool) *tokenRec {
 	o.n++
-	t := &tokenRec{access: fmt.Sprintf("test-access-%06d", o.n), user: user, scopes: scopes, created: now, ttl: ttl,
+	t := &tokenRec{access: fmt.Sprintf("test-access-%s-%06d", o.nonce, o.n), user: user, scopes: scopes, created: now, ttl: ttl,
 		clientID: ClientID}
 	if withRefresh {
-		t.refresh = fmt.Sprintf("test-refresh-%06d", o.n)
+		t.refresh = fmt.Sprintf("test-refresh-%s-%06d", o.nonce, o.n)
 		o.refresh[t.refresh] = t
 	}
 	o.access[t.access] = t

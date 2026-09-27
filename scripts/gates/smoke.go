@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mmedum/gitlab-mcp/internal/config"
+	"github.com/mmedum/gitlab-mcp/internal/tools"
 	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
 	"github.com/mmedum/gitlab-mcp/scripts/internal/mcpstdio"
 )
@@ -47,7 +49,36 @@ func smoke(out io.Writer, args []string) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(cfgDir) }()
-	return runSmoke(out, executable(args[0]), smokeEnv(cfgDir), surfaceFloor)
+	env := smokeEnv(cfgDir)
+	floor, err := defaultSurface(env)
+	if err != nil {
+		return err
+	}
+	// The count comes from the gating code the binary runs, so a floor
+	// that code cannot move holds it too: the reads alone are more.
+	if floor < readFloor {
+		return fmt.Errorf("the default configuration registers %d tools and the floor is %d", floor, readFloor)
+	}
+	return runSmoke(out, executable(args[0]), env, floor)
+}
+
+// readFloor is the thirty-one read tools of §8, which the default
+// configuration registers and more.
+const readFloor = 31
+
+// defaultSurface is how many tools the server registers under env, as
+// the code says rather than as typed here.
+func defaultSurface(env []string) (int, error) {
+	vars := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		vars[k] = v
+	}
+	cfg, err := config.Load(nil, func(k string) string { return vars[k] })
+	if err != nil {
+		return 0, err
+	}
+	return len(tools.Surface(cfg, nil)), nil
 }
 
 // smokeEnv is a configuration no real account can be behind: the test

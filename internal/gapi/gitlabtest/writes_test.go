@@ -221,6 +221,35 @@ func TestNotesAndRepliesOnBothKinds(t *testing.T) {
 	}
 }
 
+// A planted comment is stored as written: its quick action does not run.
+func TestCommentPlantsContentWithoutRunningIt(t *testing.T) {
+	s := New(t, Options{})
+	for _, kind := range []string{"issue", "mr"} {
+		note, ok := s.Comment(ProjectAlpha, kind, 1, "dave", "Please do this.\n/close")
+		if !ok || note.Author.Username != "dave" {
+			t.Fatalf("%s: Comment = %+v, %v", kind, note, ok)
+		}
+		ds := s.Discussions(ProjectAlpha, kind, 1)
+		if last := ds[len(ds)-1].Notes[0]; last.ID != note.ID || last.Body != "Please do this.\n/close" {
+			t.Errorf("%s: last note = %+v", kind, last)
+		}
+	}
+	if iss, _ := s.Issue(ProjectAlpha, 1); iss.State != "opened" {
+		t.Errorf("the planted /close ran: issue %s", iss.State)
+	}
+	if mr, _ := s.MergeRequest(ProjectAlpha, 1); mr.State != "opened" {
+		t.Errorf("the planted /close ran: merge request %s", mr.State)
+	}
+	for _, c := range []struct{ project, kind string }{{ProjectAlpha, "epic"}, {ProjectAlpha + "x", "issue"}} {
+		if _, ok := s.Comment(c.project, c.kind, 1, "dave", "x"); ok {
+			t.Errorf("Comment(%s, %s) planted a comment", c.project, c.kind)
+		}
+	}
+	if _, ok := s.Comment(ProjectAlpha, "issue", 999, "dave", "x"); ok {
+		t.Error("Comment on a missing issue planted a comment")
+	}
+}
+
 // loginPos is a position on ProjectAlpha's merge request 1.
 func loginPos(s *Server, path string, oldLine, newLine int) obj {
 	mr, _ := s.MergeRequest(ProjectAlpha, 1)

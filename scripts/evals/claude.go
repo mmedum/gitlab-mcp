@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
@@ -35,8 +36,9 @@ import (
 
 // serverEnv signs the binary in to the world the way a person would —
 // an authorization code for alice, exchanged for a refresh token — and
-// returns the environment an MCP client passes it, and a cleanup.
-func serverEnv(ctx context.Context, w *world) ([]string, func(), error) {
+// returns the environment an MCP client passes it for the task, and a
+// cleanup.
+func serverEnv(ctx context.Context, w *world, t Task) ([]string, func(), error) {
 	refresh, err := refreshToken(ctx, w.srv.URL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sign in to the fixture: %w", err)
@@ -45,15 +47,24 @@ func serverEnv(ctx context.Context, w *world) ([]string, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// The server keeps its sign-in in the OS keyring under the profile's
+	// name, so each world has a profile of its own, whose item goes with
+	// it: two runs at once never delete each other's, and a profile
+	// someone named evals is never touched.
+	profile := "evals-" + strings.TrimPrefix(filepath.Base(dir), "evals-config-")
 	env := []string{
 		config.EnvTestInstance + "=" + w.srv.URL,
 		config.EnvClientID + "=" + gitlabtest.ClientID,
-		config.EnvProfile + "=evals",
+		config.EnvProfile + "=" + profile,
 		config.EnvConfigDir + "=" + dir,
 		config.EnvConfigDirAllowOutsideHome + "=true",
 		credentials.EnvVar + "=" + refresh,
+		config.EnvEnableShip + "=" + strconv.FormatBool(t.Ship),
 	}
-	return env, func() { _ = os.RemoveAll(dir) }, nil
+	return env, func() {
+		_ = credentials.OSKeyring().Delete(credentials.ServiceName, profile)
+		_ = os.RemoveAll(dir)
+	}, nil
 }
 
 func refreshToken(ctx context.Context, base string) (string, error) {

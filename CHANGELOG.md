@@ -50,6 +50,7 @@ lifted verbatim.
 - The `releases` toolset: `list_releases`, `get_release` and `create_release`, which is Ship.
 - The `deployments` toolset (`list_environments`, `list_deployments`) and the `activity` toolset (`list_events`).
 - `resolve_url` names `get_wiki_page` for a wiki page's link, and `list_wiki_pages` for the wiki's index, when the `wiki` toolset is on.
+- `make evals` scores a model against the tool surface, including four instructions planted in content that it must not follow.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
