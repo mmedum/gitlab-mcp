@@ -16,6 +16,14 @@ var ErrLockTimeout = errors.New("auth: another gitlab-mcp process is refreshing 
 // lockPoll is how often a waiting process tries the lock again.
 const lockPoll = 20 * time.Millisecond
 
+// LockRefresh takes a profile's refresh lock for a command that must
+// not interleave with a refresh: logout, which would otherwise revoke a
+// pair a server has just replaced and delete the store before the
+// server saves the new one.
+func LockRefresh(ctx context.Context, path string, timeout time.Duration) (func(), error) {
+	return lockFile(ctx, path, timeout)
+}
+
 // lockFile takes an exclusive OS lock on path, waiting at most timeout,
 // and returns the function that releases it.
 //

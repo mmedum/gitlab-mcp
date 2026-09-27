@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 	"github.com/mmedum/gitlab-mcp/internal/model"
@@ -161,6 +162,14 @@ func (s *Service) UpdateIssue(ctx context.Context, in IssueUpdate) (model.IssueW
 	}
 	if err := checkWitness(witness, before.UpdatedAt, "issue"); err != nil {
 		return model.IssueWrite{}, err
+	}
+	// Making a confidential issue public shows it to everyone who can see
+	// the project's issues, as a move to a more visible project would,
+	// and an injected "it was confidential by mistake" asks for exactly
+	// that. It is Ship's to allow, as an approving review is.
+	if in.Confidential != nil && !*in.Confidential && before.Confidential && !s.cfg.EnableShip {
+		return model.IssueWrite{}, gapi.Errf(gapi.ClassBlocked, "making a confidential issue public shows it to everyone "+
+			"who can see the project's issues, which this server does only when %s=true; nothing was sent", config.EnvEnableShip)
 	}
 	body.AssigneeIDs = assigneeSet(before.Assignees, addIDs, in.AddAssignees, in.RemoveAssignees)
 	if in.ClearDueDate {

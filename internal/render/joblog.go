@@ -33,6 +33,10 @@ const (
 // (titles, hyperlinks, whose target a reader never sees).
 var ansi = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]`)
 
+// StripANSI removes terminal escapes, which also hide a secret from the
+// masks: a color code before a token leaves no word boundary to match.
+func StripANSI(s string) string { return ansi.ReplaceAllString(s, "") }
+
 // sectionMarker matches a runner section marker up to the carriage
 // return that ends it.
 var sectionMarker = regexp.MustCompile(`section_(start|end):[0-9]+:([A-Za-z0-9_.\-]+)(?:\[[^\]\r\n]*\])?\r`)

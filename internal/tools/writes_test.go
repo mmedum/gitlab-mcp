@@ -133,6 +133,30 @@ func TestDryRunsSendNothing(t *testing.T) {
 	}
 }
 
+// Making a confidential issue public widens who can read it, so it is
+// Ship's to allow; making one confidential is not.
+func TestMakingAnIssuePublicNeedsShip(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, out := h.ok("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": issueWitness(h, 2), "confidential": true})
+	if get(out, "confidential") != true {
+		t.Fatalf("result = %v", out)
+	}
+	sent := writesSent(h)
+	for _, dry := range []bool{true, false} {
+		text := h.fails("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": get(out, "updated_at"),
+			"confidential": false, "dry_run": dry}, "blocked")
+		if !strings.Contains(text, "GITLAB_MCP_ENABLE_SHIP") || writesSent(h) != sent {
+			t.Errorf("dry run %v: %s", dry, text)
+		}
+	}
+	s := newHarness(t, harnessOptions{cfg: ship})
+	_, out = s.ok("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": issueWitness(s, 2), "confidential": true})
+	if _, out = s.ok("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": get(out, "updated_at"),
+		"confidential": false}); get(out, "confidential") != false {
+		t.Errorf("with Ship: %v", out)
+	}
+}
+
 func TestUpdateIssue(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	witness := issueWitness(h, 2)

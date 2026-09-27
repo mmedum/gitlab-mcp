@@ -105,7 +105,7 @@ type updateLabelIn struct {
 	Version     string   `json:"version" jsonschema:"The label's version as list_labels returned it. The write is refused [stale] if the label changed since. A [stale] refusal is NOT a retry signal: read it again and decide whether the change still makes sense"`
 	Name        string   `json:"name,omitempty" jsonschema:"A new name; every issue and merge request carrying the label shows it"`
 	Color       string   `json:"color,omitempty" jsonschema:"A new color: #RRGGBB, or a CSS color name"`
-	Description *string  `json:"description,omitempty" jsonschema:"A new description; empty clears it"`
+	Description *string  `json:"description,omitempty" jsonschema:"A new description"`
 	Priority    *int     `json:"priority,omitempty" jsonschema:"A new priority, 0 highest"`
 	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
 }
@@ -169,9 +169,9 @@ type updateMilestoneIn struct {
 	MilestoneID int64    `json:"milestone_id" jsonschema:"The milestone's id, as list_milestones returned it; not its iid"`
 	UpdatedAt   string   `json:"updated_at" jsonschema:"The updated_at of your latest read of it, as list_milestones returned it. The write is refused [stale] if it changed since. A [stale] refusal is NOT a retry signal: read it again and decide whether the change still makes sense"`
 	Title       string   `json:"title,omitempty" jsonschema:"A new title"`
-	Description *string  `json:"description,omitempty" jsonschema:"What the milestone is for, in Markdown; empty clears it"`
-	StartDate   *string  `json:"start_date,omitempty" jsonschema:"The day it starts, YYYY-MM-DD; empty clears it"`
-	DueDate     *string  `json:"due_date,omitempty" jsonschema:"The day it is due, YYYY-MM-DD; empty clears it"`
+	Description *string  `json:"description,omitempty" jsonschema:"What the milestone is for, in Markdown"`
+	StartDate   *string  `json:"start_date,omitempty" jsonschema:"The day it starts, YYYY-MM-DD"`
+	DueDate     *string  `json:"due_date,omitempty" jsonschema:"The day it is due, YYYY-MM-DD"`
 	State       string   `json:"state,omitempty" jsonschema:"close to close it, activate to open it again"`
 	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
 }

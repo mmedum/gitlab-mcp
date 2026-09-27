@@ -30,12 +30,17 @@ func (s *Service) Me(ctx context.Context) (model.Me, error) {
 		metaErr error
 		info    *gitlab.TokenInfo
 		infoErr error
+		infoAt  time.Time
 	)
 	wg.Go(func() { u, err = c.GetCurrentUser(ctx) })
 	if meta.Version.Major == 0 {
 		wg.Go(func() { meta, metaErr = s.readMetadata(ctx, c) })
 	}
-	wg.Go(func() { info, infoErr = c.TokenInfo(ctx) })
+	wg.Go(func() {
+		// Before the request, so the expiry errs early rather than late.
+		infoAt = time.Now()
+		info, infoErr = c.TokenInfo(ctx)
+	})
 	wg.Wait()
 	if err != nil {
 		return model.Me{}, err
@@ -61,7 +66,9 @@ func (s *Service) Me(ctx context.Context) (model.Me, error) {
 	if infoErr == nil {
 		me.Token.Scopes = info.Scope
 		if info.ExpiresIn != nil {
-			at := info.Created().Add(time.Duration(*info.ExpiresIn) * time.Second)
+			// expires_in is the seconds left when GitLab answered, not the
+			// lifetime: Doorkeeper's expires_in_seconds (§18 row 90).
+			at := infoAt.Add(time.Duration(*info.ExpiresIn) * time.Second).UTC().Truncate(time.Second)
 			me.Token.ExpiresAt = &at
 		}
 	} else {

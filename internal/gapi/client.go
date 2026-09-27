@@ -852,7 +852,9 @@ func classifyTransport(ctx context.Context, name string, repeatable bool, err er
 	switch {
 	case errors.Is(err, errOffInstance):
 		return verdict{err: Wrap(ClassBlocked, err, "%s was refused: its address is outside the configured instance", name)}
-	case errors.Is(err, errTooLarge):
+	case errors.Is(err, errTooLarge) && repeatable:
+		// A create's answer too large to read may still have landed, so
+		// it falls through to ambiguous below (§4.5).
 		return verdict{err: Wrap(ClassUnavailable, err, "GitLab's answer to %s was larger than %d MiB and was not read", name, MaxResponseBytes>>20)}
 	case redact.IsCertificateError(err):
 		return verdict{err: Wrap(ClassUnavailable, err,

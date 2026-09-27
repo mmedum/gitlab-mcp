@@ -391,6 +391,12 @@ func (s *Service) RetryPipeline(ctx context.Context, raw string, id int64) (mode
 // finished are the pipeline statuses nothing can cancel.
 var finished = []string{"success", "failed", "canceled", "skipped"}
 
+// cancelable are the pipeline statuses GitLab's cancel acts on, for any
+// pipeline but an external one (Ci::HasStatus::CANCELABLE_STATUSES,
+// §18 row 91).
+var cancelable = []string{"created", "waiting_for_resource", "preparing", "waiting_for_callback", "pending", "running",
+	"manual", "scheduled"}
+
 // CancelPipeline cancels a pipeline's running and pending jobs.
 func (s *Service) CancelPipeline(ctx context.Context, raw string, id int64) (model.PipelineWrite, error) {
 	t, err := s.writeTarget(ctx, raw)
@@ -415,12 +421,28 @@ func (s *Service) CancelPipeline(ctx context.Context, raw string, id int64) (mod
 	if err != nil {
 		return model.PipelineWrite{}, err
 	}
-	out := pipelineWrite(t, pl, before.Status, "canceled")
-	if pl.Status != "canceled" && pl.Status != "canceling" {
-		out.Outcome = "unchanged"
-		out.Notes = []string{"GitLab answered with the pipeline " + pl.Status + ": nothing in it could be canceled."}
+	outcome, note := cancelOutcome(before, pl)
+	out := pipelineWrite(t, pl, before.Status, outcome)
+	if note != "" {
+		out.Notes = []string{note}
 	}
 	return out, nil
+}
+
+// cancelOutcome says what a cancel did from the pipeline read first and
+// GitLab's answer. GitLab cancels the jobs before it answers and
+// recomputes the pipeline's status after, so an answer that still reads
+// running is a cancel that took effect.
+func cancelOutcome(before, answer *gitlab.PipelineDetail) (outcome, note string) {
+	switch {
+	case answer.Status == "canceled" || answer.Status == "canceling":
+		return "canceled", ""
+	case slices.Contains(finished, answer.Status), before.Source == "external", !slices.Contains(cancelable, before.Status):
+		return "unchanged", "GitLab answered with the pipeline " + answer.Status + ": nothing in it could be canceled."
+	default:
+		return "canceled", "GitLab canceled the pipeline's jobs; the pipeline still reads " + answer.Status +
+			" until GitLab recomputes its status, which get_pipeline shows."
+	}
 }
 
 // pipelineWrite is a pipeline write's result; before is the status read

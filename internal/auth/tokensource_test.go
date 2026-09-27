@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -434,5 +435,47 @@ func TestARejectedCreateIsNotRepeated(t *testing.T) {
 	}
 	if got := f.srv.Requests()[len(f.srv.Requests())-1].Authorization; got != "Bearer "+relogin.AccessToken {
 		t.Errorf("next call sent %q, want the new token", got)
+	}
+}
+
+// cancelAfter is a transport that lets the token endpoint answer, then
+// cancels the caller before the answer arrives, as a client stopping a
+// tool call mid-refresh does. Like net/http, it then reports the
+// request's context error, if the request carries one.
+type cancelAfter struct {
+	cancel context.CancelFunc
+}
+
+func (c cancelAfter) RoundTrip(r *http.Request) (*http.Response, error) {
+	res, err := http.DefaultTransport.RoundTrip(r)
+	c.cancel()
+	if err == nil && r.Context().Err() != nil {
+		_ = res.Body.Close()
+		return nil, r.Context().Err()
+	}
+	return res, err
+}
+
+func TestACanceledCallDoesNotLoseTheRotatedPair(t *testing.T) {
+	f := newFixture(t, 300*time.Second)
+	first := f.signedIn(t)
+	store := fileStore(f.dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	f.app.HTTPClient = &http.Client{Transport: cancelAfter{cancel: cancel}}
+	ts := f.source(store)
+
+	f.clock.Advance(250 * time.Second)
+	_, _ = ts.Token(ctx)
+	if f.srv.Refreshes() != 1 {
+		t.Fatalf("%d refreshes, want 1", f.srv.Refreshes())
+	}
+	// GitLab rotated the pair, so the store must hold the new one.
+	now := stored(t, store)
+	if now.RefreshToken == first.RefreshToken {
+		t.Fatal("the rotated pair was dropped; the store still holds the spent one")
+	}
+	f.app.HTTPClient = nil
+	if _, err := f.source(store).Token(context.Background()); err != nil {
+		t.Errorf("the next process could not sign in: %v", err)
 	}
 }

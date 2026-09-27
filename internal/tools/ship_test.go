@@ -270,9 +270,15 @@ func TestRetryAndCancelPipeline(t *testing.T) {
 	if get(out, "outcome") != "retried" || get(out, "status_before") != "failed" || get(out, "status") != "running" {
 		t.Errorf("retry = %v", out)
 	}
+	// GitLab answers before it recomputes the pipeline's status, as the
+	// fake does: the cancel took effect though the answer reads running.
 	_, out = h.ok("cancel_pipeline", map[string]any{"project": alpha, "pipeline_id": failed})
-	if get(out, "outcome") != "canceled" || get(out, "status") != "canceled" {
+	if get(out, "outcome") != "canceled" || get(out, "status") != "running" ||
+		!strings.Contains(fmt.Sprint(get(out, "notes")), "canceled the pipeline's jobs") {
 		t.Errorf("cancel = %v", out)
+	}
+	if _, pl := h.ok("get_pipeline", map[string]any{"project": alpha, "pipeline_id": failed}); get(pl, "status") != "canceled" {
+		t.Errorf("after the cancel, get_pipeline = %v", pl)
 	}
 	before := writesSent(h)
 	_, out = h.ok("cancel_pipeline", map[string]any{"project": alpha, "pipeline_id": failed})

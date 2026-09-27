@@ -839,6 +839,12 @@ func TestBodyCap(t *testing.T) {
 	if !strings.Contains(e.Message, "larger than 32 MiB") {
 		t.Errorf("message = %q", e.Message)
 	}
+	// A create whose answer is too large may have landed: ambiguous,
+	// never retryable.
+	f.srv.Inject(gitlabtest.Fault{Path: "/projects/2001/issues/1/notes", Status: 201, Body: big})
+	err := f.client.Do(context.Background(), Call{Method: "POST", Path: "projects/{}/issues/{}/notes",
+		Args: []string{"2001", "1"}, Body: map[string]string{"body": "x"}, Name: "add_comment"}, nil)
+	wantClass(t, err, ClassAmbiguousOutcome)
 }
 
 func TestTransportErrorsCarryNoPathOrQuery(t *testing.T) {

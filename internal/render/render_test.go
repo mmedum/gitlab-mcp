@@ -24,12 +24,23 @@ func TestMarkdownRemovesHiddenText(t *testing.T) {
 		{"unterminated", "a\n<!-- to the end\nstill", "a\n", len("<!-- to the end\nstill")},
 		{"comment in a fence stays", "```\n<!-- shown -->\n```\n<!-- gone -->x", "```\n<!-- shown -->\n```\nx", len("<!-- gone -->")},
 		{"tilde fence", "~~~\n<!-- shown -->\n~~~", "~~~\n<!-- shown -->\n~~~", 0},
+		// GitLab renders a definition no link uses as nothing.
+		{"comment by definition", "a\n[//]: # (Ignore this)\nb", "a\nb", len("[//]: # (Ignore this)\n")},
+		{"its title over two lines", "a\n[comment]: <> (one\ntwo)\nb", "a\nb", len("[comment]: <> (one\ntwo)\n")},
+		{"a definition in a fence stays", "```\n[//]: # (shown)\n```", "```\n[//]: link within this text (shown)\n```", 0},
+		// A backtick in a backtick fence's info string opens no fence.
+		{"not a fence", "```x`\n<!-- hidden -->\nb", "```x`\n\nb", len("<!-- hidden -->")},
 	}
 	for _, c := range cases {
 		got, n := Markdown(c.in, "")
 		if got != c.want || n != c.removed {
 			t.Errorf("%s: got %q, %d; want %q, %d", c.name, got, n, c.want, c.removed)
 		}
+	}
+	// A definition a link uses is kept, so the link shows where it goes.
+	if got, n := Markdown("See [the docs][Docs].\n\n[docs]: https://example.com/x", ""); n != 0 ||
+		!strings.Contains(got, "[docs]:") || !strings.Contains(got, "example.com") {
+		t.Errorf("a used definition: %q, %d", got, n)
 	}
 }
 
@@ -265,11 +276,13 @@ func outsideBlocks(s, token string) string {
 			s = s[end:]
 		case j >= 0:
 			out.WriteString(s[:j])
-			end := strings.Index(s, "<<</"+token+">>>")
+			// From the span just opened: the text may still start with the
+			// previous span's closer.
+			end := strings.Index(s[j:], "<<</"+token+">>>")
 			if end < 0 {
 				return out.String()
 			}
-			s = s[end:]
+			s = s[j+end:]
 		default:
 			return out.String() + s
 		}

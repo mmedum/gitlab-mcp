@@ -38,7 +38,8 @@ func hidden(r rune) bool {
 }
 
 // Markdown prepares Markdown someone else wrote for display: HTML
-// comments outside code fences are dropped, hidden characters are
+// comments and reference definitions no link uses, outside code fences,
+// are dropped, hidden characters are
 // dropped everywhere, and links show their destination. It returns the
 // text and how many characters were dropped.
 //
@@ -47,6 +48,8 @@ func hidden(r rune) bool {
 // the model would.
 func Markdown(s string, self string) (string, int) {
 	s, n := dropComments(s)
+	s, defs := dropUnusedDefinitions(s)
+	n += defs
 	out := strings.Builder{}
 	out.Grow(len(s))
 	for _, r := range s {
@@ -197,6 +200,89 @@ func dropComments(s string) (string, int) {
 	return out.String(), removed
 }
 
+// refDefinitionLine matches a reference definition, [label]: dest, and
+// captures its label and what follows the destination.
+var refDefinitionLine = regexp.MustCompile(`^ {0,3}\[([^\]\n]+)\]:[ \t]*(?:<[^>\n]*>|\S+)(.*)$`)
+
+// refUse matches what may use a definition: [label], [text][label].
+var refUse = regexp.MustCompile(`\[([^\]\n]+)\]`)
+
+// dropUnusedDefinitions removes reference definitions outside fences
+// that no link uses, and counts their characters. GitLab renders one as
+// nothing, which makes [//]: # (text) a comment by another name. A title
+// left open runs on to the line that closes it or to a blank line.
+func dropUnusedDefinitions(s string) (string, int) {
+	if !strings.Contains(s, "]:") {
+		return s, 0
+	}
+	lines := strings.SplitAfter(s, "\n")
+	label := make([]string, len(lines)) // "" where the line is no definition
+	fence := ""
+	for i, line := range lines {
+		switch {
+		case fence != "":
+			if strings.HasPrefix(strings.TrimLeft(line, " "), fence) {
+				fence = ""
+			}
+		case fenceOpen(line) != "":
+			fence = fenceOpen(line)
+		default:
+			if m := refDefinitionLine.FindStringSubmatch(strings.TrimRight(line, "\r\n")); m != nil {
+				label[i] = refLabel(m[1])
+			}
+		}
+	}
+	used := map[string]bool{}
+	for i, line := range lines {
+		if label[i] != "" {
+			continue
+		}
+		for _, m := range refUse.FindAllStringSubmatch(line, -1) {
+			used[refLabel(m[1])] = true
+		}
+	}
+	var out strings.Builder
+	removed := 0
+	for i := 0; i < len(lines); i++ {
+		if label[i] == "" || used[label[i]] {
+			out.WriteString(lines[i])
+			continue
+		}
+		removed += utf8.RuneCountInString(lines[i])
+		closer := openTitle(lines[i])
+		for closer != 0 && i+1 < len(lines) && strings.TrimSpace(lines[i+1]) != "" && label[i+1] == "" {
+			i++
+			removed += utf8.RuneCountInString(lines[i])
+			if strings.ContainsRune(lines[i], closer) {
+				closer = 0
+			}
+		}
+	}
+	return out.String(), removed
+}
+
+// refLabel normalizes a label as CommonMark matches it: case and runs
+// of whitespace do not count.
+func refLabel(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+
+// openTitle returns the character that closes a definition's title the
+// line opens and does not close, or 0.
+func openTitle(line string) rune {
+	m := refDefinitionLine.FindStringSubmatch(strings.TrimRight(line, "\r\n"))
+	if m == nil {
+		return 0
+	}
+	rest := strings.TrimSpace(m[2])
+	if rest == "" {
+		return 0
+	}
+	closer := map[byte]rune{'"': '"', '\'': '\'', '(': ')'}[rest[0]]
+	if closer == 0 || strings.ContainsRune(rest[1:], closer) {
+		return 0
+	}
+	return closer
+}
+
 // fenceOpen returns the fence a line opens, "```" or "~~~", or "". Up
 // to three spaces of indent are allowed, as CommonMark allows.
 func fenceOpen(line string) string {
@@ -206,6 +292,12 @@ func fenceOpen(line string) string {
 	}
 	for _, f := range []string{"```", "~~~"} {
 		if strings.HasPrefix(trimmed, f) {
+			// A backtick fence's info string may not hold a backtick; a
+			// line with one opens nothing (CommonMark 4.5), and text after
+			// it is rendered, comments hidden.
+			if f == "```" && strings.Contains(strings.TrimLeft(trimmed, "`"), "`") {
+				return ""
+			}
 			return f
 		}
 	}

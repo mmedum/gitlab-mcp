@@ -144,6 +144,13 @@ func cmdLogout(args []string, stdout, stderr io.Writer, env func(string) string)
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
+	// Under the refresh lock: a server refreshing meanwhile would save a
+	// new pair after the store is emptied, and it would outlive logout.
+	release, err := auth.LockRefresh(context.Background(), p.Dir.LockPath(p.Name), 2*cfg.HTTPTimeout)
+	if err != nil {
+		return fail(stderr, "%v", err)
+	}
+	defer release()
 	// Revoking one token signs out only this profile. Deleting or
 	// renewing the application in GitLab, the usual next step, signs
 	// out every profile that uses it, so they are named first.

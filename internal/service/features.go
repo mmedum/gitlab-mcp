@@ -864,7 +864,9 @@ func (s *Service) GetArtifact(ctx context.Context, raw string, job int64, path s
 	out := model.Artifact{Project: ref, JobID: job, Path: path, Size: len(b)}
 	if !render.IsBinary(b) {
 		var masked string
-		masked, out.SecretsMasked = redact.MaskSecrets(string(b))
+		// Escapes removed first, as a job log's are, or a colored token
+		// escapes the masks.
+		masked, out.SecretsMasked = redact.MaskSecrets(render.StripANSI(string(b)))
 		b = []byte(masked)
 	}
 	if out.UntrustedContent, out.Binary, out.Budget, err = fileContent(b, offset); err != nil {

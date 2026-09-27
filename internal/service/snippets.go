@@ -107,7 +107,13 @@ func (s *Service) GetSnippet(ctx context.Context, raw string, id int64, file str
 		files := snippetFiles(*sn)
 		switch {
 		case !slices.Contains(files, file):
-			return model.Snippet{}, gapi.Errf(gapi.ClassInvalid, "the snippet has no file %q; its files are %s", file, strings.Join(files, ", "))
+			// The names are the snippet author's, so each is made plain as
+			// a path is anywhere else outside a boundary.
+			names := make([]string, len(files))
+			for i, f := range files {
+				names[i] = render.Ident(f)
+			}
+			return model.Snippet{}, gapi.Errf(gapi.ClassInvalid, "the snippet has no file %q; its files are %s", file, strings.Join(names, ", "))
 		case file == files[0]:
 			err = first()
 		case raw == "":

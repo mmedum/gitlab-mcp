@@ -190,7 +190,10 @@ func (s *TokenSource) refresh(ctx context.Context) error {
 		if sent == "" {
 			return s.reauthorize(sent, nil)
 		}
-		g, err := s.app.Refresh(ctx, sent)
+		// Not the caller's context: a tool call canceled after GitLab
+		// rotated the pair would drop the only copy of the new one, the
+		// old being revoked already. The HTTP timeout still bounds it.
+		g, err := s.app.Refresh(context.WithoutCancel(ctx), sent)
 		if err == nil {
 			if g.Token.RefreshToken == "" {
 				// Doorkeeper keeps the refresh token when it does not

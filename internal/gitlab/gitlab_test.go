@@ -130,13 +130,13 @@ func TestDecodeMergeRequest(t *testing.T) {
 	}
 }
 
-func TestTokenInfoCreated(t *testing.T) {
+func TestTokenInfoDecodes(t *testing.T) {
 	var ti TokenInfo
 	if err := json.Unmarshal([]byte(`{"resource_owner_id":1001,"scope":["read_api"],"expires_in":7100,"application":{"uid":"app"},"created_at":1790000000}`), &ti); err != nil {
 		t.Fatal(err)
 	}
-	if got := ti.Created(); !got.Equal(time.Date(2026, 9, 21, 14, 13, 20, 0, time.UTC)) {
-		t.Errorf("Created = %v", got)
+	if ti.CreatedAt != 1790000000 {
+		t.Errorf("created_at = %d", ti.CreatedAt)
 	}
 	if ti.ExpiresIn == nil || *ti.ExpiresIn != 7100 || ti.Scope[0] != "read_api" {
 		t.Errorf("decoded %+v", ti)

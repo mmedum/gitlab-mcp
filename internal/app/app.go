@@ -138,9 +138,17 @@ func Resolve(cfg config.Config, o Options) (*Settings, error) {
 	if cfg.TestInstance {
 		logger.Warn(config.EnvTestInstance + " is set: this server talks to a loopback test instance, not gitlab.com")
 	}
-	if !SameInstance(p.User.Instance, s.Instance) {
+	switch {
+	case !SameInstance(p.User.Instance, s.Instance):
 		s.CredentialsErr = fmt.Errorf("profile %q is signed in to another instance than %s; "+
 			"run `gitlab-mcp login` to sign it in to this one", p.Name, InstanceKind(s.Instance))
+	case cfg.TestInstance && p.User.Instance == "" && o.env(credentials.EnvVar) == "":
+		// The keyring is keyed by profile alone, so a stored token under a
+		// profile that records no instance may be gitlab.com's: it is
+		// never sent to a test instance. A token given in the environment
+		// was given for this run.
+		s.CredentialsErr = fmt.Errorf("profile %q records no instance, so its stored token may be gitlab.com's and "+
+			"is not sent to %s; run `gitlab-mcp login` against it first", p.Name, InstanceKind(s.Instance))
 	}
 
 	s.ClientID = cfg.ClientID

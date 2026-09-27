@@ -27,10 +27,10 @@ Unofficial, and not affiliated with GitLab Inc. See `NOTICE`.
 
 ## Status
 
-Under construction: the release badge above names the newest tag, and
-`CHANGELOG.md` says what each one holds. Every tool below is built; the
-evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
-§16 is the plan.
+Stable: the release badge above names the newest tag, and
+`CHANGELOG.md` says what each one holds. The tool surface is a
+contract: tools keep their names and output fields.
+`docs/architecture.md` §16 is the plan.
 
 ## Tools
 

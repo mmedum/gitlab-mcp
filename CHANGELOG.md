@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-27
+
 ### Added
 
 - `login`, `logout`, `status` and `doctor`, signing in with your own OAuth application through `--client-id`.
@@ -38,6 +40,7 @@ lifted verbatim.
 - A line GitLab would run as a quick action refuses the write, or is sent as text with `escape_commands`.
 - Every write takes `dry_run`, and names the project's visibility in its result.
 - Updates to issues and merge requests require the `updated_at` you read, and are refused `[stale]` if it moved.
+- `update_issue` makes a confidential issue public only with `GITLAB_MCP_ENABLE_SHIP=true`.
 - `create_commit` refuses the default branch and every protected branch, and `create_branch` refuses a name a protected-branch rule covers; code reaches them through a merge request.
 - A create whose answer is lost is never repeated: the server reads to say whether it happened.
 - `GITLAB_MCP_WRITE_NAMESPACES` confines writes to the groups and projects it names.
@@ -72,4 +75,5 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/b0a78ab...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/mmedum/gitlab-mcp/releases/tag/v1.0.0

@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mmedum/gitlab-mcp/internal/auth"
 	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
 	"github.com/mmedum/gitlab-mcp/internal/userconfig"
@@ -172,5 +174,26 @@ func TestLogoutRevokesAndNamesProfilesOnTheSameApplication(t *testing.T) {
 	r = runWith(env, nil, "logout")
 	if r.code != 0 || !strings.Contains(r.stdout, "No stored token to revoke.") {
 		t.Errorf("second logout: %+v", r)
+	}
+}
+
+func TestLogoutWaitsForARefreshInProgress(t *testing.T) {
+	env, _, _ := signedIn(t, gitlabtest.Options{})
+	dir := userconfig.Dir(env[config.EnvConfigDir])
+	release, err := auth.LockRefresh(t.Context(), dir.LockPath("default"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const held = 300 * time.Millisecond
+	go func() {
+		time.Sleep(held)
+		release()
+	}()
+	start := time.Now()
+	if r := runWith(env, nil, "logout"); r.code != 0 {
+		t.Fatalf("logout: %+v", r)
+	}
+	if waited := time.Since(start); waited < held {
+		t.Errorf("logout finished after %s, while a refresh held the lock for %s", waited, held)
 	}
 }
