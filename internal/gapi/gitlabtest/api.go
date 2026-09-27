@@ -118,6 +118,7 @@ func (s *Server) serveProject(w http.ResponseWriter, r *http.Request, p *project
 	switch {
 	case get && len(seg) == 0:
 		writeJSON(w, http.StatusOK, s.projectJSON(p))
+	case s.serveFeatures(w, r, p, user, seg):
 	case get && match(seg, "issues"):
 		s.listIssues(w, r, user, []*project{p}, "all")
 	case len(seg) >= 2 && seg[0] == "issues":
@@ -352,7 +353,30 @@ func (s *Server) projectJSON(p *project) map[string]any {
 		"runners_token":                   "fixture-secret-never-decoded",
 		"ssh_url_to_repo":                 "git@gitlab.example.com:" + p.PathWithNamespace + ".git",
 		"container_registry_image_prefix": "registry.example.com/" + p.PathWithNamespace,
+		"issues_access_level":             issuesAccess(p),
 	})
+}
+
+// issuesAccess is who sees a project's issues: members only when set so,
+// everyone who sees the project otherwise.
+func issuesAccess(p *project) string {
+	if p.IssuesAccessLevel != "" {
+		return p.IssuesAccessLevel
+	}
+	return "enabled"
+}
+
+// SetIssuesAccess sets who sees a project's issues: enabled, private or
+// disabled.
+func (s *Server) SetIssuesAccess(projectPath, level string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	p.IssuesAccessLevel = level
+	return true
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request, user string, g *group) {

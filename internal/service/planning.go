@@ -23,9 +23,7 @@ func (s *Service) ListLabels(ctx context.Context, raw string, q gapi.LabelQuery,
 	}
 	out := model.Labels{Project: ref, Labels: make([]model.Label, 0, len(rows)), Listing: listing(len(rows), page)}
 	for _, l := range rows {
-		desc, _ := render.Line(l.Description, render.TitleChars)
-		row := model.Label{ID: l.ID, Name: l.Name, Color: l.Color, ProjectOnly: l.IsProjectLabel, Priority: l.Priority,
-			UntrustedDescription: desc}
+		row := labelRow(l)
 		if q.WithCounts {
 			row.OpenIssues, row.ClosedIssues, row.OpenMergeRequests = l.OpenIssuesCount, l.ClosedIssuesCount, l.OpenMergeRequestsCount
 		}
@@ -75,17 +73,7 @@ func (s *Service) ListMilestones(ctx context.Context, q MilestoneSearch) (model.
 	}
 	out.Listing = listing(len(rows), page)
 	for _, m := range rows {
-		title, _ := render.Line(m.Title, render.TitleChars)
-		row := model.MilestoneRow{ID: m.ID, IID: m.IID, State: m.State, Expired: m.Expired != nil && *m.Expired,
-			UpdatedAt: m.UpdatedAt, WebURL: m.WebURL, UntrustedTitle: title}
-		if m.DueDate != "" {
-			d := m.DueDate
-			row.DueDate = &d
-		}
-		if m.StartDate != "" {
-			d := m.StartDate
-			row.StartDate = &d
-		}
+		row := milestoneRow(m)
 		out.Milestones = append(out.Milestones, row)
 	}
 	return out, nil

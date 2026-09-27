@@ -24,7 +24,7 @@ itself, and every problem is reported together.
 | `GITLAB_MCP_READ_ONLY` | `--read-only` | `false` | Register only the Read tools and request `read_api`. Needs a login made in this mode. |
 | `GITLAB_MCP_ENABLE_SHIP` | `--enable-ship` | `false` | Register merging, approving, running and canceling CI, and creating releases. |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE` | `--enable-destructive` | `false` | Register deletions. Each call also needs `confirm: true`. |
-| `GITLAB_MCP_TOOLSETS` | `--toolsets` | none | Comma-separated optional toolsets: `activity`, `deployments`, `releases`, `snippets`, `wiki`, or `all`. |
+| `GITLAB_MCP_TOOLSETS` | `--toolsets` | none | Comma-separated optional toolsets: `activity`, `deployments`, `planning`, `releases`, `snippets`, `wiki`, or `all`. |
 | `GITLAB_MCP_WRITE_NAMESPACES` | `--write-namespaces` | anywhere | Comma-separated group or project paths that Write, Ship and Destructive calls are confined to. A call aimed elsewhere is `[blocked]`. |
 | `GITLAB_MCP_LOG_LEVEL` | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. |
 | `GITLAB_MCP_LOG_FORMAT` | `--log-format` | `text` | `text` or `json`. |

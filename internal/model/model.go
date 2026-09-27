@@ -772,6 +772,9 @@ type Label struct {
 	ClosedIssues         *int   `json:"closed_issues"`
 	OpenMergeRequests    *int   `json:"open_merge_requests"`
 	UntrustedDescription string `json:"untrusted_description"`
+	// Version is the witness update_label and delete_label take: GitLab
+	// keeps no version of a label (§4.6).
+	Version string `json:"version" jsonschema:"A hash of the label as read: update_label and delete_label take it, and refuse [stale] if the label changed since"`
 }
 
 // Labels is list_labels' result.
@@ -1377,4 +1380,137 @@ type Events struct {
 	Project *ProjectRef `json:"project" jsonschema:"The project listed; null for your own activity"`
 	Events  []EventRow  `json:"events"`
 	Listing Listing     `json:"listing"`
+}
+
+// ------------------------------------------------------------ phase 6
+
+// IssueMove is move_issue's result.
+type IssueMove struct {
+	Outcome string `json:"outcome" jsonschema:"moved or dry_run"`
+	Write
+	FromIID int64 `json:"from_iid" jsonschema:"The issue in the project it was moved from, which GitLab closes"`
+	// To is the project it went to; IID and WebURL are the new issue's.
+	To     ProjectRef `json:"to_project"`
+	IID    int64      `json:"iid" jsonschema:"The new issue's number in the project it went to; 0 for a dry run"`
+	WebURL string     `json:"web_url"`
+	// ToVisibility is who can see the new issue.
+	ToVisibility string `json:"to_visibility" jsonschema:"public, internal or private: who can see the issue where it went"`
+}
+
+// IssueLinkWrite is link_issues' and unlink_issues' result.
+type IssueLinkWrite struct {
+	Outcome string `json:"outcome" jsonschema:"linked, unlinked, unchanged or dry_run"`
+	Write
+	IID           int64      `json:"iid"`
+	TargetProject ProjectRef `json:"target_project"`
+	TargetIID     int64      `json:"target_iid"`
+	LinkID        int64      `json:"link_id" jsonschema:"The link's id; 0 when there is none"`
+	LinkType      string     `json:"link_type" jsonschema:"relates_to, blocks or is_blocked_by, from the first issue's side"`
+}
+
+// LabelWrite is create_label's, update_label's and delete_label's result.
+type LabelWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created, updated, deleted, unchanged or dry_run"`
+	Write
+	Label   Label    `json:"label" jsonschema:"The label as GitLab reported it after the write, or before a delete"`
+	Changed []string `json:"changed" jsonschema:"The fields whose value differs after an update"`
+}
+
+// MilestoneWrite is create_milestone's, update_milestone's and
+// delete_milestone's result.
+type MilestoneWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created, updated, deleted, unchanged or dry_run"`
+	Write
+	Milestone            MilestoneRow `json:"milestone" jsonschema:"The milestone as GitLab reported it after the write, or before a delete; updated_at is the witness the next write takes"`
+	UntrustedDescription string       `json:"untrusted_description"`
+	Changed              []string     `json:"changed" jsonschema:"The fields whose value differs after an update"`
+}
+
+// RebaseWrite is rebase_merge_request's result.
+type RebaseWrite struct {
+	Outcome string `json:"outcome" jsonschema:"started or dry_run"`
+	Write
+	IID              int64  `json:"iid"`
+	SHA              string `json:"sha" jsonschema:"The head the rebase started from"`
+	RebaseInProgress bool   `json:"rebase_in_progress" jsonschema:"True while GitLab rebases in the background; get_merge_request shows the new head once it is done"`
+	// MergeError is GitLab's reason, when it reported one.
+	UntrustedMergeError string `json:"untrusted_merge_error" jsonschema:"Why a rebase failed, as GitLab reported it; empty otherwise"`
+	SkipCI              bool   `json:"skip_ci"`
+}
+
+// PickWrite is cherry_pick_commit's and revert_commit's result.
+type PickWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created or dry_run"`
+	Write
+	Action  string `json:"action" jsonschema:"cherry_pick or revert"`
+	FromSHA string `json:"from_sha" jsonschema:"The commit picked or reverted"`
+	Branch  string `json:"branch"`
+	// Applies is GitLab's own dry run: whether the change applies.
+	Applies bool   `json:"applies" jsonschema:"For a dry run, whether GitLab found the change applies to the branch cleanly"`
+	SHA     string `json:"sha" jsonschema:"The new commit; empty for a dry run"`
+	ShortID string `json:"short_id"`
+	WebURL  string `json:"web_url"`
+	// UntrustedTitle is the new commit's title.
+	UntrustedTitle string `json:"untrusted_title"`
+}
+
+// BlameRange is a run of lines one commit last changed.
+type BlameRange struct {
+	StartLine        int       `json:"start_line"`
+	EndLine          int       `json:"end_line"`
+	CommitSHA        string    `json:"commit_sha"`
+	Author           string    `json:"author_name"`
+	AuthoredAt       time.Time `json:"authored_at"`
+	UntrustedSummary string    `json:"untrusted_summary" jsonschema:"The commit's title"`
+	UntrustedLines   string    `json:"untrusted_lines"`
+}
+
+// Blame is get_blame's result.
+type Blame struct {
+	Project ProjectRef   `json:"project"`
+	Path    string       `json:"path"`
+	Ref     string       `json:"ref"`
+	Ranges  []BlameRange `json:"ranges"`
+	// NextLine continues the blame after the budget.
+	NextLine      *int `json:"next_line" jsonschema:"Pass as start_line to read on; null at the end of what was asked"`
+	HiddenRemoved int  `json:"hidden_chars_removed"`
+}
+
+// ArtifactEntry is one row of list_job_artifacts.
+type ArtifactEntry struct {
+	Path string `json:"path"`
+	Type string `json:"type" jsonschema:"file or directory"`
+	Size *int64 `json:"size_bytes"`
+}
+
+// Artifacts is list_job_artifacts' result.
+type Artifacts struct {
+	Project ProjectRef      `json:"project"`
+	JobID   int64           `json:"job_id"`
+	Path    string          `json:"path" jsonschema:"The directory listed; empty for the top"`
+	Entries []ArtifactEntry `json:"entries"`
+	Listing Listing         `json:"listing"`
+}
+
+// Artifact is get_job_artifact's result.
+type Artifact struct {
+	Project ProjectRef `json:"project"`
+	JobID   int64      `json:"job_id"`
+	Path    string     `json:"path"`
+	Size    int        `json:"size_bytes"`
+	Binary  bool       `json:"binary" jsonschema:"True when the file is not text; only its size is returned"`
+	// SecretsMasked counts the secret shapes replaced, as in a job log.
+	SecretsMasked    int    `json:"secrets_masked" jsonschema:"Token and key shapes replaced with [MASKED kind]"`
+	UntrustedContent string `json:"untrusted_content"`
+	Budget           Budget `json:"content_budget"`
+}
+
+// TagWrite is create_tag's and delete_tag's result.
+type TagWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created, deleted or dry_run"`
+	Write
+	Tag       string `json:"tag"`
+	CommitSHA string `json:"commit_sha" jsonschema:"The commit the tag points at"`
+	Annotated bool   `json:"annotated"`
+	Protected bool   `json:"protected"`
 }

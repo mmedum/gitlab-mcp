@@ -140,7 +140,7 @@ func names(dev bool) []string {
 
 // Toolsets are the optional toolsets, sorted, which are off unless
 // named (§4.3).
-var Toolsets = []string{"activity", "deployments", "releases", "snippets", "wiki"}
+var Toolsets = []string{"activity", "deployments", "planning", "releases", "snippets", "wiki"}
 
 // ToolsetAll names every toolset at once.
 const ToolsetAll = "all"

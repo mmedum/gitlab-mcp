@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 )
 
 // held is a log reader that already holds the whole log, so it reads
@@ -153,5 +154,18 @@ func TestFailure(t *testing.T) {
 	buried := "\x1b[31;1mERROR: Job failed: exit code 1\n" + strings.Repeat(filler, 5)
 	if f := failure(buried); f.found {
 		t.Errorf("a failure line %d bytes from the end was searched for", len(buried))
+	}
+}
+
+// Who can see a project's issues: its visibility, narrowed to its
+// members when its issues are set so, and unknown refuses a move.
+func TestIssueAudience(t *testing.T) {
+	for _, c := range []struct {
+		visibility, issues string
+		want               int
+	}{{"public", "enabled", 2}, {"public", "private", 0}, {"internal", "", 1}, {"private", "enabled", 0}, {"", "enabled", -1}} {
+		if got := issueAudience(&gitlab.Project{Visibility: c.visibility, IssuesAccessLevel: c.issues}); got != c.want {
+			t.Errorf("%s with %s issues = %d, want %d", c.visibility, c.issues, got, c.want)
+		}
 	}
 }

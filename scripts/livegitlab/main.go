@@ -556,7 +556,14 @@ unit tests:
     - i=0; while [ $i -lt 3000 ]; do echo "ok  example.test/pkg$i 0.01s"; i=$((i+1)); done
     - printf '\033[0Ksection_end:%s:live_output\r\033[0K\n' "$(date +%s)"
     - echo "the server refused token ` + token + `"
+    - mkdir -p reports
+    - echo "the report repeats token ` + token + `" > reports/summary.txt
+    - echo "a second report, so a listing pages" > reports/second.txt
     - exit 1
+  artifacts:
+    when: always
+    paths:
+      - reports/
 
 downstream:
   stage: test

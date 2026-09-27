@@ -121,14 +121,17 @@ type Namespace struct {
 // Secret fields (runners_token and the rest) are never declared, so they
 // are never decoded (§3.19).
 type Project struct {
-	ID                int64      `json:"id"`
-	Name              string     `json:"name"`
-	NameWithNamespace string     `json:"name_with_namespace"`
-	Path              string     `json:"path"`
-	PathWithNamespace string     `json:"path_with_namespace"`
-	Description       string     `json:"description"`
-	DefaultBranch     string     `json:"default_branch"`
-	Visibility        string     `json:"visibility"`
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	NameWithNamespace string `json:"name_with_namespace"`
+	Path              string `json:"path"`
+	PathWithNamespace string `json:"path_with_namespace"`
+	Description       string `json:"description"`
+	DefaultBranch     string `json:"default_branch"`
+	Visibility        string `json:"visibility"`
+	// IssuesAccessLevel narrows who sees the issues: private is members
+	// only, whatever the project's visibility.
+	IssuesAccessLevel string     `json:"issues_access_level"`
 	WebURL            string     `json:"web_url"`
 	Archived          bool       `json:"archived"`
 	EmptyRepo         bool       `json:"empty_repo"`
@@ -188,6 +191,8 @@ type Issue struct {
 	WebURL         string          `json:"web_url"`
 	References     References      `json:"references"`
 	TaskCompletion *TaskCompletion `json:"task_completion_status"`
+	// MovedToID is the issue it was moved to, once moved.
+	MovedToID *int64 `json:"moved_to_id"`
 }
 
 // DiffRefs are the three SHAs a diff position is computed against.
@@ -588,6 +593,81 @@ type Label struct {
 	OpenMergeRequestsCount *int   `json:"open_merge_requests_count"`
 	Priority               *int   `json:"priority"`
 	IsProjectLabel         bool   `json:"is_project_label"`
+	Archived               bool   `json:"archived"`
+}
+
+// IssueLink is POST /projects/:id/issues/:iid/links' answer.
+type IssueLink struct {
+	ID          int64      `json:"id"`
+	LinkType    string     `json:"link_type"`
+	SourceIssue IssueBasic `json:"source_issue"`
+	TargetIssue IssueBasic `json:"target_issue"`
+}
+
+// IssueBasic is an issue as an issue link names it.
+type IssueBasic struct {
+	ID        int64  `json:"id"`
+	IID       int64  `json:"iid"`
+	ProjectID int64  `json:"project_id"`
+	Title     string `json:"title"`
+	State     string `json:"state"`
+	WebURL    string `json:"web_url"`
+}
+
+// RelatedIssue is one row of GET /projects/:id/issues/:iid/links: the
+// linked issue, and the link.
+type RelatedIssue struct {
+	IID         int64  `json:"iid"`
+	ProjectID   int64  `json:"project_id"`
+	Title       string `json:"title"`
+	State       string `json:"state"`
+	WebURL      string `json:"web_url"`
+	IssueLinkID int64  `json:"issue_link_id"`
+	LinkType    string `json:"link_type"`
+}
+
+// ProtectedTag is one row of GET /projects/:id/protected_tags. Name may
+// be a wildcard.
+type ProtectedTag struct {
+	Name string `json:"name"`
+}
+
+// BlameRange is one row of GET …/repository/files/:path/blame: a run of
+// lines and the commit that last changed them.
+type BlameRange struct {
+	Commit BlameCommit `json:"commit"`
+	Lines  []string    `json:"lines"`
+}
+
+// BlameCommit is the commit a blame range names.
+type BlameCommit struct {
+	ID           string    `json:"id"`
+	AuthorName   string    `json:"author_name"`
+	AuthoredDate time.Time `json:"authored_date"`
+	Message      string    `json:"message"`
+}
+
+// ArtifactEntry is one row of GET /projects/:id/jobs/:id/artifacts/tree.
+type ArtifactEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type"` // file or directory
+	Size *int64 `json:"size"`
+}
+
+// MergeRequestRebase is what rebase_merge_request reads of a merge
+// request afterwards. RebaseInProgress is sent only when asked for with
+// include_rebase_in_progress; MergeError is why the last merge or rebase
+// failed.
+type MergeRequestRebase struct {
+	SHA              string  `json:"sha"`
+	MergeError       *string `json:"merge_error"`
+	RebaseInProgress *bool   `json:"rebase_in_progress"`
+}
+
+// RebaseState is PUT …/merge_requests/:iid/rebase's answer.
+type RebaseState struct {
+	RebaseInProgress bool `json:"rebase_in_progress"`
 }
 
 // ProjectMilestone is one row of GET /projects/:id/milestones and
@@ -602,6 +682,9 @@ type ProjectMilestone struct {
 	Expired   *bool     `json:"expired"`
 	UpdatedAt time.Time `json:"updated_at"`
 	WebURL    string    `json:"web_url"`
+	// Description and CreatedAt are read only by the milestone writes.
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Member is one row of GET /projects/:id/members/all. The email an

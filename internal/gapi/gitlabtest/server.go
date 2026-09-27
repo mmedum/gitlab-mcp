@@ -70,16 +70,23 @@ type Server struct {
 
 	mu sync.Mutex
 	// inputsSent are the input values the last job retry or play sent.
-	inputsSent    map[string]any
-	groups        []*group
-	projects      []*project
-	moved         map[string]string
-	nextProjectID int64
-	nextIssueID   int64
-	nextMRID      int64
-	nextNoteID    int64
-	nextDraftID   int64
-	nextCommit    int64
+	inputsSent map[string]any
+	// The phase 6 state: issue links, the ids new labels and milestones
+	// take, and the rebases asked for.
+	issueLinks      []issueLink
+	nextLinkID      int64
+	nextLabelID     int64
+	nextMilestoneID int64
+	rebases         int
+	groups          []*group
+	projects        []*project
+	moved           map[string]string
+	nextProjectID   int64
+	nextIssueID     int64
+	nextMRID        int64
+	nextNoteID      int64
+	nextDraftID     int64
+	nextCommit      int64
 
 	// reviewerStates is the reviewer state each user last submitted with
 	// a review, by project, merge request and user.

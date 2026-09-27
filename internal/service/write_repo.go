@@ -219,23 +219,47 @@ func (s *Service) guardBranch(ctx context.Context, t target, branch string, exis
 		}
 		return nil
 	}
-	rules, complete, err := readPages(maxProtectedPages, func(o gapi.ListOptions) ([]gitlab.ProtectedBranch, gapi.Page, error) {
-		return s.client.ListProtectedBranches(ctx, t.p, o)
-	})
+	rule, err := protectingRule(func(o gapi.ListOptions) ([]string, gapi.Page, error) {
+		rows, page, err := s.client.ListProtectedBranches(ctx, t.p, o)
+		return ruleNames(rows, func(r gitlab.ProtectedBranch) string { return r.Name }), page, err
+	}, "branch", branch)
 	if err != nil {
 		return err
 	}
-	if !complete {
-		// A rule past those read could protect the branch.
-		return gapi.Errf(gapi.ClassBlocked, "the project has more protected-branch rules than one read covers (%d), so whether this "+
-			"branch would be protected cannot be told; nothing was sent", len(rules))
-	}
-	for _, r := range rules {
-		if protectedMatch(r.Name, branch) {
-			return gapi.Errf(gapi.ClassBlocked, "the branch would be protected (rule %q) once created, and %s", r.Name, refusal)
-		}
+	if rule != "" {
+		return gapi.Errf(gapi.ClassBlocked, "the branch would be protected (rule %q) once created, and %s", rule, refusal)
 	}
 	return nil
+}
+
+// protectingRule reads a project's protection rules for a kind of ref,
+// branch or tag, and names the one that covers name, or "" for none. A
+// project with more rules than one read covers is refused, since a rule
+// past them could cover it.
+func protectingRule(read func(gapi.ListOptions) ([]string, gapi.Page, error), kind, name string) (string, error) {
+	rules, complete, err := readPages(maxProtectedPages, read)
+	if err != nil {
+		return "", err
+	}
+	if !complete {
+		return "", gapi.Errf(gapi.ClassBlocked, "the project has more protected-%s rules than one read covers (%d), so whether this "+
+			"%s would be protected cannot be told; nothing was sent", kind, len(rules), kind)
+	}
+	for _, r := range rules {
+		if protectedMatch(r, name) {
+			return r, nil
+		}
+	}
+	return "", nil
+}
+
+// ruleNames is the names of a page of protection rules.
+func ruleNames[T any](rows []T, name func(T) string) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, name(r))
+	}
+	return out
 }
 
 // protectedMatch applies a protected-branch rule: an exact name, or a

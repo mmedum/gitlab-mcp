@@ -409,7 +409,7 @@ func planShip(s scratch) []step {
 	stale := strings.Repeat("0", 40)
 	now := time.Now().UTC()
 	yesterday, tomorrow := now.Add(-24*time.Hour).Format(time.RFC3339), now.Add(24*time.Hour).Format(time.RFC3339)
-	return []step{
+	return slices.Concat([]step{
 		// A merge request to approve and merge.
 		{tool: "create_branch", args: map[string]any{"project": p, "branch": branch, "ref": s.Default}},
 		{tool: "create_commit", args: map[string]any{"project": p, "branch": branch, "message": "A change to merge",
@@ -531,6 +531,99 @@ func planShip(s scratch) []step {
 		{tool: "list_events", args: map[string]any{"project": p, "max": 1}, paged: true},
 		{tool: "list_events", args: map[string]any{"project": p, "action": "created", "target_type": "issue",
 			"after": now.Add(-48 * time.Hour).Format(time.DateOnly), "before": now.Add(48 * time.Hour).Format(time.DateOnly), "sort": "asc"}},
+	}, phase6(s))
+}
+
+// phase6 drives the tools §17.13 added, on the server with every flag and
+// toolset on.
+func phase6(s scratch) []step {
+	p := s.Path
+	w := s.Name[len(s.Name)-6:]
+	pick := "pick-" + w
+	stale := strings.Repeat("0", 40)
+	return []step{
+		// Linking two issues of the run's.
+		{tool: "link_issues", args: map[string]any{"project": p, "iid": s.Issue, "target_project": p, "target_iid": s.Issue2,
+			"link_type": "relates_to", "dry_run": true}},
+		{tool: "link_issues", args: map[string]any{"project": p, "iid": s.Issue, "target_iid": s.Issue2}, save: map[string]string{"link": "link_id"}},
+		// Already linked, seen from the other side: unchanged.
+		{tool: "link_issues", args: map[string]any{"project": p, "iid": s.Issue2, "target_iid": s.Issue}},
+		{tool: "unlink_issues", args: map[string]any{"project": p, "iid": s.Issue, "target_project": p, "target_iid": s.Issue2, "dry_run": true}},
+		{tool: "unlink_issues", args: map[string]any{"project": p, "iid": s.Issue, "target_iid": s.Issue2}},
+
+		// Blame.
+		{tool: "get_blame", args: map[string]any{"project": p, "path": s.File}},
+		{tool: "get_blame", args: map[string]any{"project": p, "path": s.File, "ref": s.Feature, "start_line": 2, "end_line": 3}},
+
+		// Artifacts of the failed job, whose report prints the synthetic token.
+		{tool: "list_job_artifacts", args: map[string]any{"project": p, "job_id": s.JobFailed}},
+		{tool: "list_job_artifacts", args: map[string]any{"project": p, "job_id": s.JobFailed, "path": "reports", "recursive": true, "max": 1},
+			paged: true},
+		{tool: "get_job_artifact", args: map[string]any{"project": p, "job_id": s.JobFailed, "path": "reports/summary.txt", "offset": 0}},
+		{tool: "get_job_artifact", args: map[string]any{"project": p, "job_id": s.JobFailed, "path": "reports/missing.txt"},
+			expectError: true, why: "a file the artifacts do not have"},
+
+		// Cherry-pick a commit of a side branch onto a new branch, then
+		// revert it there. The commit adds a file nothing else touches, so
+		// it applies whatever the default branch did since.
+		{tool: "create_branch", args: map[string]any{"project": p, "branch": pick + "-src", "ref": s.Default}},
+		{tool: "create_commit", args: map[string]any{"project": p, "branch": pick + "-src", "message": "A change to pick",
+			"actions": []any{map[string]any{"action": "create", "file_path": "pick/" + w + ".txt", "content": "picked\n"}}},
+			save: map[string]string{"feature_sha": "sha"}},
+		{tool: "create_branch", args: map[string]any{"project": p, "branch": pick, "ref": s.Default}},
+		{tool: "cherry_pick_commit", args: map[string]any{"project": p, "commit": "{{feature_sha}}", "branch": pick, "dry_run": true}},
+		{tool: "cherry_pick_commit", args: map[string]any{"project": p, "commit": "{{feature_sha}}", "branch": pick,
+			"message": "Pick the feature change"}, save: map[string]string{"picked": "sha"}},
+		{tool: "revert_commit", args: map[string]any{"project": p, "commit": "{{picked}}", "branch": pick, "dry_run": true}},
+		{tool: "revert_commit", args: map[string]any{"project": p, "commit": "{{picked}}", "branch": pick}},
+		{tool: "cherry_pick_commit", args: map[string]any{"project": p, "commit": "{{feature_sha}}", "branch": s.Default},
+			expectError: true, why: "the default branch takes code only through a merge request"},
+
+		// Rebase the draft merge request.
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": s.MR2}, save: map[string]string{"mr2_sha": "sha"}},
+		{tool: "rebase_merge_request", args: map[string]any{"project": p, "iid": s.MR2, "sha": stale},
+			expectError: true, why: "a head that moved"},
+		{tool: "rebase_merge_request", args: map[string]any{"project": p, "iid": s.MR2, "sha": "{{mr2_sha}}", "dry_run": true}},
+		{tool: "rebase_merge_request", args: map[string]any{"project": p, "iid": s.MR2, "sha": "{{mr2_sha}}", "skip_ci": true}},
+
+		// Move an issue of the run's to its second project.
+		{tool: "create_issue", args: map[string]any{"project": p, "title": "An issue to move " + s.Name}, save: map[string]string{"to_move": "iid"}},
+		{tool: "get_issue", args: map[string]any{"project": p, "iid": "{{to_move}}"}, save: map[string]string{"to_move_at": "updated_at"}},
+		{tool: "move_issue", args: map[string]any{"project": p, "iid": "{{to_move}}", "to_project": p + "-b", "updated_at": "{{to_move_at}}",
+			"dry_run": true}},
+		{tool: "move_issue", args: map[string]any{"project": p, "iid": "{{to_move}}", "to_project": p + "-b", "updated_at": "{{to_move_at}}"}},
+
+		// A label and a milestone, made, changed and deleted.
+		{tool: "create_label", args: map[string]any{"project": p, "name": "live-made-" + w, "color": "#336699", "dry_run": true}},
+		{tool: "create_label", args: map[string]any{"project": p, "name": "live-made-" + w, "color": "#336699",
+			"description": "A label the live run made", "priority": 3}, save: map[string]string{"label": "label.id", "label_v": "label.version"}},
+		{tool: "update_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": stale, "color": "#993366"},
+			expectError: true, why: "a version that moved"},
+		{tool: "update_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v}}", "color": "#993366",
+			"dry_run": true}},
+		{tool: "update_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v}}", "name": "live-renamed-" + w,
+			"color": "#993366", "description": "Renamed by the live run", "priority": 4}, save: map[string]string{"label_v2": "label.version"}},
+		{tool: "delete_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v2}}", "confirm": true,
+			"dry_run": true}},
+		{tool: "delete_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v2}}", "confirm": true}},
+		{tool: "create_milestone", args: map[string]any{"project": p, "title": "Live made " + s.Name, "dry_run": true}},
+		{tool: "create_milestone", args: map[string]any{"project": p, "title": "Live made " + s.Name, "description": "A milestone the live run made",
+			"start_date": "2030-01-01", "due_date": "2030-03-31"}, save: map[string]string{"ms": "milestone.id", "ms_at": "milestone.updated_at"}},
+		{tool: "update_milestone", args: map[string]any{"project": p, "milestone_id": "{{ms}}", "updated_at": "{{ms_at}}", "state": "close",
+			"dry_run": true}},
+		{tool: "update_milestone", args: map[string]any{"project": p, "milestone_id": "{{ms}}", "updated_at": "{{ms_at}}",
+			"title": "Live changed " + s.Name, "description": "Changed", "start_date": "2030-02-01", "due_date": "2030-04-30", "state": "close"},
+			save: map[string]string{"ms_at2": "milestone.updated_at"}},
+		{tool: "delete_milestone", args: map[string]any{"project": p, "milestone_id": "{{ms}}", "updated_at": "{{ms_at2}}", "confirm": true,
+			"dry_run": true}},
+		{tool: "delete_milestone", args: map[string]any{"project": p, "milestone_id": "{{ms}}", "updated_at": "{{ms_at2}}", "confirm": true}},
+
+		// A tag, made and deleted.
+		{tool: "create_tag", args: map[string]any{"project": p, "tag_name": "live-tag-" + w, "ref": s.Default, "dry_run": true}},
+		{tool: "create_tag", args: map[string]any{"project": p, "tag_name": "live-tag-" + w, "ref": s.Default, "message": "A live tag"},
+			save: map[string]string{"tag_sha": "commit_sha"}},
+		{tool: "delete_tag", args: map[string]any{"project": p, "tag_name": "live-tag-" + w, "sha": "{{tag_sha}}", "confirm": true, "dry_run": true}},
+		{tool: "delete_tag", args: map[string]any{"project": p, "tag_name": "live-tag-" + w, "sha": "{{tag_sha}}", "confirm": true}},
 	}
 }
 
@@ -633,6 +726,14 @@ var rules = map[string]rule{
 		}
 		return nil
 	},
+	"move_issue": func(st step, s scratch) error {
+		if st.args["to_project"] != s.Path+"-b" {
+			return fmt.Errorf("%s: an issue moves only to the run's second project", st.tool)
+		}
+		return inProject(st, s)
+	},
+	"link_issues":           linkRule,
+	"unlink_issues":         linkRule,
 	"search_projects":       searchRule,
 	"search_issues":         searchRule,
 	"search_merge_requests": searchRule,
@@ -651,9 +752,20 @@ func init() {
 		"delete_wiki_page", "list_releases", "get_release", "create_release", "list_environments", "list_deployments",
 		// Without a project these read or write the maintainer's own
 		// snippets and activity, which are not the run's.
-		"list_snippets", "get_snippet", "create_snippet", "list_events"} {
+		"list_snippets", "get_snippet", "create_snippet", "list_events",
+		"get_blame", "list_job_artifacts", "get_job_artifact", "cherry_pick_commit", "revert_commit", "rebase_merge_request",
+		"create_label", "update_label", "delete_label", "create_milestone", "update_milestone", "delete_milestone",
+		"create_tag", "delete_tag"} {
 		rules[tool] = inProject
 	}
+}
+
+// linkRule: both issues are the run's.
+func linkRule(st step, s scratch) error {
+	if t, ok := st.args["target_project"]; ok && t != s.Path {
+		return fmt.Errorf("%s: the other issue is the scratch project's", st.tool)
+	}
+	return inProject(st, s)
 }
 
 func anything(step, scratch) error { return nil }

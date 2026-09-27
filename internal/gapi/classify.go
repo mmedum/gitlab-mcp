@@ -161,6 +161,10 @@ func classifyStatus(call Call, name string, repeatable bool, status int, h http.
 	switch {
 	case (status == http.StatusBadRequest || status == http.StatusForbidden) && jobState.MatchString(strings.TrimSpace(a.env.message)):
 		return a.fail(ClassConflict, "GitLab refused %s in the job's current state: %s", a.name, a.detail)
+	case status == http.StatusBadRequest && (strings.HasPrefix(call.Name, "cherry_pick_commit") || strings.HasPrefix(call.Name, "revert_commit")):
+		// A change that does not apply to the branch: the call was sound
+		// and the branch's state refused it.
+		return a.fail(ClassConflict, "GitLab could not apply the change to the branch: %s", a.detail)
 	case status == http.StatusTooManyRequests:
 		return a.rateLimited()
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:

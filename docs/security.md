@@ -89,9 +89,9 @@ Every tool has one kind, and the kind decides whether it is registered:
 | Kind | What | Registered |
 |---|---|---|
 | Read | every GET | always |
-| Write | issues, comments, reviews, branches, commits to unprotected branches, merge requests, todos, wiki, snippets | unless `GITLAB_MCP_READ_ONLY=true` |
-| Ship | merge, approve, unapprove, run, retry, play and cancel CI, create a release | only with `GITLAB_MCP_ENABLE_SHIP=true` |
-| Destructive | delete a branch, a comment, a wiki page | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
+| Write | issues and their links, comments, reviews, branches, commits, cherry-picks and reverts to unprotected branches, merge requests, todos, wiki, snippets, labels, milestones, unprotected tags | unless `GITLAB_MCP_READ_ONLY=true` |
+| Ship | merge, approve, unapprove, rebase, run, retry, play and cancel CI, create a release, move an issue to another project | only with `GITLAB_MCP_ENABLE_SHIP=true` |
+| Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
 
 A review that would approve counts as Ship: without the flag the call
 is `[blocked]`.
@@ -166,6 +166,15 @@ replace it with a `read_api` one.
   inputs on `retry_job` and `play_job` are named the same way. GitLab
   refuses a name a job's inputs do not include; a job that declares no
   inputs ignores them.
+- **A moved issue is seen by no one new.** `move_issue` needs both
+  projects in `GITLAB_MCP_WRITE_NAMESPACES` when it is set, and refuses
+  a move to a project more people can see than the one the issue is in.
+- **Protected tags stay a person's.** `create_tag` refuses a name a
+  protected-tag rule covers, since a protected tag's pipelines see
+  protected variables and may deploy; `delete_tag` refuses a protected
+  tag.
+- **Job artifacts are masked like logs.** `get_job_artifact` replaces
+  token and key shapes, and shows no binary file.
 - **Release links stay in the project.** `create_release` takes asset
   links only to the project's own pages and API paths on gitlab.com, its
   packages included, with no credentials in the URL, and

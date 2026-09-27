@@ -49,6 +49,8 @@ evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
 | `list_discussions` | The comment threads on an issue or a merge request |
 | `add_comment` | Comment on an issue or merge request, reply in a thread, or start one, on a diff line or not |
 | `resolve_discussion` | Resolve or reopen a thread on a merge request or an issue |
+| `link_issues` | Link two issues, in one project or two |
+| `unlink_issues` | Remove the link between two issues |
 | `search_merge_requests` | Find merge requests across gitlab.com or a project |
 | `get_merge_request` | One merge request with its approvals |
 | `list_mr_files` | The files a merge request changes, with line counts and GitLab's markers |
@@ -69,11 +71,16 @@ evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
 | `list_tags` | A project's tags |
 | `create_branch` | Create a branch from a ref |
 | `create_commit` | Commit file changes to a branch; never the default or a protected one |
+| `get_blame` | Who last changed each line of a file, bounded |
+| `cherry_pick_commit` | Apply a commit to a branch; never the default or a protected one |
+| `revert_commit` | Undo a commit on a branch with a new one; never the default or a protected one |
 | `list_pipelines` | A project's CI pipelines |
 | `get_pipeline` | One pipeline with the jobs that failed, trigger jobs included |
 | `list_jobs` | A pipeline's jobs |
 | `get_job_log` | A window of a job's log, secrets masked; the failing section on request |
 | `lint_ci` | Check a project's CI configuration at a ref, or configuration you pass |
+| `list_job_artifacts` | The files a job kept as artifacts |
+| `get_job_artifact` | One text file of a job's artifacts, secrets masked, bounded |
 | `list_labels` | The labels a project's issues and merge requests can carry |
 | `list_milestones` | A project's or a group's milestones |
 | `search` | Code, commits, comments and more, in a project, a group or everywhere |
@@ -82,6 +89,8 @@ evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
 | `merge_merge_request` | Merge at the head you reviewed, or when the pipeline succeeds (Ship) |
 | `approve_merge_request` | Approve at the head you reviewed (Ship) |
 | `unapprove_merge_request` | Withdraw your approval (Ship) |
+| `rebase_merge_request` | Rebase a merge request's source branch, from the head you reviewed (Ship) |
+| `move_issue` | Move an issue to another project, never to one more people can see (Ship) |
 | `run_pipeline` | Run a pipeline for a ref, with variables whose values are never shown (Ship) |
 | `retry_pipeline` | Retry a pipeline's failed and canceled jobs (Ship) |
 | `retry_job` | Run a finished job again, with inputs (Ship) |
@@ -99,12 +108,20 @@ evaluations and the frozen 1.0 surface come next. `docs/architecture.md`
 | `list_releases` | A project's releases (`releases` toolset) |
 | `get_release` | One release and its notes (`releases` toolset) |
 | `create_release` | Create a release, and its tag at a ref, with asset links to the project's own pages (`releases` toolset, Ship) |
+| `create_tag` | Create a tag at a ref; never a protected one (`releases` toolset) |
+| `delete_tag` | Delete a tag; never a protected one (`releases` toolset, Destructive) |
+| `create_label` | Create a project label (`planning` toolset) |
+| `update_label` | Change a project label unchanged since you read it (`planning` toolset) |
+| `delete_label` | Delete a project label (`planning` toolset, Destructive) |
+| `create_milestone` | Create a project milestone (`planning` toolset) |
+| `update_milestone` | Change, close or reopen a milestone unchanged since you read it (`planning` toolset) |
+| `delete_milestone` | Delete a project milestone (`planning` toolset, Destructive) |
 | `list_environments` | A project's environments and their last deployment (`deployments` toolset) |
 | `list_deployments` | What was deployed where, and by which job (`deployments` toolset) |
 | `list_events` | Recent activity, yours or a project's (`activity` toolset) |
 
 Ship and Destructive tools are registered only with the settings below,
-and the five toolsets only when `GITLAB_MCP_TOOLSETS` names them.
+and the six toolsets only when `GITLAB_MCP_TOOLSETS` names them.
 
 Three resources carry the same text for clients that attach rather
 than call: an issue, a merge request and a job log.

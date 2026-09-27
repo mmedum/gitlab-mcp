@@ -61,6 +61,14 @@ lifted verbatim.
 - `add_review_comment` reports the `line_code` GitLab computed for a draft on a line.
 - `retry_job` and `play_job` take values for the inputs a job declares.
 - `create_release` takes asset links, only to the project's own pages and packages.
+- `link_issues` and `unlink_issues` relate two issues, in one project or two.
+- `move_issue` moves an issue to another project, never to one more people can see; it is Ship.
+- `rebase_merge_request` rebases a merge request's source branch from the head you reviewed; it is Ship.
+- `cherry_pick_commit` and `revert_commit` commit to a branch, never the default or a protected one, and their dry run says whether the change applies.
+- `get_blame` shows who last changed each line of a file.
+- `list_job_artifacts` and `get_job_artifact` read a job's artifacts, one text file at a time, with secrets masked.
+- The `planning` toolset: `create_label`, `update_label`, `delete_label`, `create_milestone`, `update_milestone` and `delete_milestone`; a label carries a `version` its writes take.
+- The `releases` toolset gains `create_tag`, which refuses protected names, and `delete_tag`.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 

@@ -121,7 +121,7 @@ func TestToolsetsAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"activity", "deployments", "releases", "snippets", "wiki"}; !slices.Equal(c.Toolsets, want) {
+	if want := []string{"activity", "deployments", "planning", "releases", "snippets", "wiki"}; !slices.Equal(c.Toolsets, want) {
 		t.Errorf("Toolsets = %v, want %v", c.Toolsets, want)
 	}
 }
@@ -158,7 +158,7 @@ func TestInvalidValuesReportedTogether(t *testing.T) {
 	}
 	for _, want := range []string{
 		EnvTestInstance, EnvProfile, EnvClientID, EnvReadOnly,
-		"unknown toolset issues, pipelines (want activity, deployments, releases, snippets, wiki, or all)",
+		"unknown toolset issues, pipelines (want activity, deployments, planning, releases, snippets, wiki, or all)",
 		`"example-group/../x"`, `"a//b"`,
 		EnvLogLevel, EnvLogFormat, EnvHTTPTimeout,
 	} {

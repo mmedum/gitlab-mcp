@@ -1,7 +1,7 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 5 done and in review, 2026-09-27; phase 6 is next,
-its kinds decided in §17.13. Nothing is tagged.** This document holds the platform facts, the design bets, a
+**Status: phases 5 and 6 done and in review, 2026-09-27; every phase
+is built. Nothing is tagged.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
@@ -374,9 +374,9 @@ instructions name the flags and what they add, which answers that
 without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
-`deployments` and `activity` are off by default so the default surface
-stays well under the 64-tool point where one client starts regrouping
-tools. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
+`deployments`, `activity` and `planning` are off by default so the
+default surface, fifty tools, stays under the 64-tool point where one
+client starts regrouping tools. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
 
@@ -737,6 +737,10 @@ request adds source and target branches, `diff_refs`, head `sha`,
 `detailed_merge_status`, draft state, the head pipeline's status and
 the approval state. `list_discussions` renders threads newest-first
 under the budget, with position and resolved state for diff threads.
+`link_issues` and `unlink_issues` relate two issues, both projects held
+to the write allow-list since a link shows on both. `move_issue` (Ship)
+takes the issue's `updated_at`, holds both projects to the allow-list,
+and refuses a project more people can see than the one the issue is in.
 
 ### 7.3 Reviewing a merge request
 
@@ -760,7 +764,8 @@ location (§6.2):
   which needs Ship).
 
 `resolve_discussion` resolves or reopens a thread on a merge request,
-or on an issue with `type: issue`. A draft on a line reports the
+or on an issue with `type: issue`. `rebase_merge_request` (Ship) takes
+the head `sha` reviewed and refuses a protected source branch. A draft on a line reports the
 `line_code` GitLab computed for it.
 
 ### 7.4 Where an inline comment lands
@@ -783,7 +788,13 @@ uses it, and spike K checks it against a live instance.
 ### 7.5 The repository
 
 `get_file` returns text inside a boundary with `last_commit_id`, blob
-id, size and encoding; binary content returns metadata only. `list_tree`
+id, size and encoding; binary content returns metadata only. `get_blame`
+names who last changed each run of lines. `cherry_pick_commit` and
+`revert_commit` add a commit to a branch under `create_commit`'s guard,
+and their dry run asks GitLab's own whether the change applies. Under
+the `releases` toolset, `create_tag` refuses a name a protected-tag rule
+covers and `delete_tag` a protected tag, and takes the tag's commit as
+its witness. `list_tree`
 pages with keyset. `list_branches`, `list_tags`, `list_commits`,
 `get_commit` (with a budgeted diff) and `compare_refs`.
 
@@ -797,7 +808,8 @@ commit and the branch head afterwards.
 
 `list_pipelines`, `get_pipeline` (with its failed jobs, and its failed
 trigger jobs with the downstream pipeline each started, which the job
-listing leaves out), `list_jobs`, `get_job_log` (tail by default;
+listing leaves out), `list_jobs`, `list_job_artifacts` and `get_job_artifact` (one text file,
+masked as a log is, under the file budget), `get_job_log` (tail by default;
 `byte_offset` and `byte_limit` to page; `failed_only`; ANSI stripped;
 collapsible sections folded to one line each; masked per §4.1), `lint_ci` (the project's
 configuration at a ref, by GET; supplied content by POST, refused in
@@ -835,7 +847,8 @@ pipeline is written off (§8a).
 ### 7.7 Planning, todos and search
 
 `list_labels`, `list_milestones` (reads; assignment is a field on issue
-and merge request updates). `list_todos`, `mark_todos_done` (by id; at
+and merge request updates). A label carries a `version`, a hash of what
+an update can change, since GitLab keeps no version of one. `list_todos`, `mark_todos_done` (by id; at
 most 100). `search` per §7.1.
 
 ### 7.8 Optional toolsets
@@ -847,7 +860,13 @@ most 100). `search` per §7.1.
   visibility only; a public or internal snippet from a model is how
   private content leaves (§4.7), so visibility is not an input.
 - `releases`: `list_releases`, `get_release`, `create_release` (Ship:
-  it creates a tag and starts tag pipelines).
+  it creates a tag and starts tag pipelines), `create_tag` (Write,
+  refusing protected names), `delete_tag` (Destructive).
+- `planning`: `create_label`, `update_label` (with the label's
+  `version`), `delete_label` (Destructive), `create_milestone`,
+  `update_milestone` (with `updated_at`; closes and reopens),
+  `delete_milestone` (Destructive). A project's own only; a group's label
+  is refused. §17.11 would add epics here after 1.0.
 - `deployments`: `list_environments`, `list_deployments`.
 - `activity`: `list_events`.
 
@@ -863,9 +882,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Sixty-six tools. With the default toolsets: forty-three by default,
-thirty-one in read-only mode, fifty-three with Ship and Destructive
-both enabled. Every toolset and flag on registers all sixty-six.
+Eighty-three tools. With the default toolsets: fifty by default,
+thirty-four in read-only mode, sixty-two with Ship and Destructive
+both enabled. Every toolset and flag on registers all eighty-three.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
@@ -886,6 +905,8 @@ Destructive kinds, as a signal and not a control.
 | `list_discussions` | Read | default | `GET …/issues|merge_requests/:iid/discussions` |
 | `add_comment` | Write | default | `POST …/notes`, `…/discussions`, `…/discussions/:id/notes` |
 | `resolve_discussion` | Write | default | `PUT …/issues|merge_requests/:iid/discussions/:id` |
+| `link_issues` | Write | default | `GET`/`POST …/issues/:iid/links` |
+| `unlink_issues` | Write | default | `DELETE …/issues/:iid/links/:id` |
 | `search_merge_requests` | Read | default | `GET /merge_requests`, `/projects/:id/merge_requests` |
 | `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals` |
 | `list_mr_files` | Read | default | `GET …/merge_requests/:iid/diffs` |
@@ -906,11 +927,16 @@ Destructive kinds, as a signal and not a control.
 | `list_tags` | Read | default | `GET …/repository/tags` |
 | `create_branch` | Write | default | `POST …/repository/branches` |
 | `create_commit` | Write | default | `POST …/repository/commits` |
+| `get_blame` | Read | default | `GET …/repository/files/:path/blame` |
+| `cherry_pick_commit` | Write | default | `POST …/repository/commits/:sha/cherry_pick` (refuses default and protected branches) |
+| `revert_commit` | Write | default | `POST …/repository/commits/:sha/revert` (refuses default and protected branches) |
 | `list_pipelines` | Read | default | `GET …/pipelines` |
 | `get_pipeline` | Read | default | `GET …/pipelines/:id`, `/jobs`, `/trigger_jobs` |
 | `list_jobs` | Read | default | `GET …/pipelines/:id/jobs` |
 | `get_job_log` | Read | default | `GET …/jobs/:id/trace`, in ranges |
 | `lint_ci` | Read | default | `GET …/ci/lint`; `POST …/ci/lint` when writes are on |
+| `list_job_artifacts` | Read | default | `GET …/jobs/:id/artifacts/tree` |
+| `get_job_artifact` | Read | default | `GET …/jobs/:id/artifacts/:path` (masked as a log) |
 | `list_labels` | Read | default | `GET …/labels` |
 | `list_milestones` | Read | default | `GET …/milestones`, group milestones |
 | `search` | Read | default | `GET /search`, `/groups/:id/search`, `/projects/:id/search` |
@@ -919,6 +945,8 @@ Destructive kinds, as a signal and not a control.
 | `merge_merge_request` | Ship | default | `PUT …/merge_requests/:iid/merge` |
 | `approve_merge_request` | Ship | default | `POST …/merge_requests/:iid/approve` |
 | `unapprove_merge_request` | Ship | default | `POST …/merge_requests/:iid/unapprove` |
+| `rebase_merge_request` | Ship | default | `PUT …/merge_requests/:iid/rebase` (takes the head `sha`) |
+| `move_issue` | Ship | default | `POST …/issues/:iid/move` (never to a more visible project) |
 | `run_pipeline` | Ship | default | `POST …/pipeline` |
 | `retry_pipeline` | Ship | default | `POST …/pipelines/:id/retry` |
 | `retry_job` | Ship | default | `POST …/jobs/:id/retry` |
@@ -936,6 +964,14 @@ Destructive kinds, as a signal and not a control.
 | `list_releases` | Read | releases | `GET …/releases` |
 | `get_release` | Read | releases | `GET …/releases/:tag` |
 | `create_release` | Ship | releases | `POST …/releases`, with asset links into the project |
+| `create_tag` | Write | releases | `POST …/repository/tags` (refuses protected names) |
+| `delete_tag` | Destructive | releases | `DELETE …/repository/tags/:name` (refuses protected tags) |
+| `create_label` | Write | planning | `POST …/labels` |
+| `update_label` | Write | planning | `PUT …/labels/:id` (takes the label's `version`) |
+| `delete_label` | Destructive | planning | `DELETE …/labels/:id` |
+| `create_milestone` | Write | planning | `POST …/milestones` |
+| `update_milestone` | Write | planning | `PUT …/milestones/:id` (takes `updated_at`) |
+| `delete_milestone` | Destructive | planning | `DELETE …/milestones/:id` |
 | `list_environments` | Read | deployments | `GET …/environments` |
 | `list_deployments` | Read | deployments | `GET …/deployments` |
 | `list_events` | Read | activity | `GET /events`, `…/events` |
@@ -971,15 +1007,15 @@ The groups below are the design's verdicts; the TSV is the record.
 |---|---|
 | user, metadata, version | Used: `get_me`, login, `doctor`. `/version` written off as deprecated for `/metadata`. Personal access token `self` routes written off with the token path (§10) |
 | projects (read), groups (read), members (read), users (search) | Used for navigation. Project create, update, fork, transfer, archive, share, import and export written off: administration |
-| issues, issue notes and discussions | Used, starting and resolving threads included. Move, clone, subscribe, time tracking, award emoji, issue links deferred, move and links to phase 6; delete written off (Owner-only, permanent) |
-| merge requests, notes, discussions | Used. Rebase deferred (Ship candidate); `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
+| issues, issue notes and discussions | Used, starting and resolving threads, links and moves included (a move is Ship). Clone, subscribe, time tracking and award emoji deferred; delete written off (Owner-only, permanent) |
+| merge requests, notes, discussions | Used; rebase gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
 | draft notes | Used: the review path |
 | approvals (merge-request level) | Used: approve, unapprove, state. Approval rules and project approval settings written off: governance configuration, Premium |
-| repository files, tree, commits, branches, tags, compare | Used. Blame and raw archive deferred; cherry-pick and revert deferred as Ship candidates; commit statuses written off (a CI integration's surface); tag create and delete deferred; "delete merged branches" written off |
-| protected branches and tags | Read only, by `create_commit`'s guard. Every write written off |
-| pipelines, jobs, CI lint | Used, trigger jobs included; the deprecated `bridges` listing written off for `trigger_jobs`, which GitLab serves with the same handler. Pipeline variables written off with CI variables: the listing carries their values. Pipeline delete written off: it destroys logs and artifacts and is no assistant task, and GitLab's own server shows how easily it becomes a default. Artifact download deferred; artifact delete written off |
+| repository files, tree, commits, branches, tags, compare | Used, blame included. Cherry-pick and revert used as Write behind the protected-branch guard (§17.13); tag create gated under `releases`, tag delete Destructive. Raw archive deferred; commit statuses written off (a CI integration's surface); "delete merged branches" written off |
+| protected branches and tags | Read only, by `create_commit`'s and `create_tag`'s guards; the protected-tag listing, written off until phase 6, is read for `create_tag` by §17.13. Every write written off |
+| pipelines, jobs, CI lint | Used, trigger jobs and one text file of a job's artifacts included; the deprecated `bridges` listing written off for `trigger_jobs`, which GitLab serves with the same handler. Pipeline variables written off with CI variables: the listing carries their values. Pipeline delete written off: it destroys logs and artifacts and is no assistant task, and GitLab's own server shows how easily it becomes a default. Whole artifact archives deferred; artifact delete written off |
 | pipeline schedules, triggers, variables, secure files | Written off: CI configuration and secrets |
-| labels, milestones | Read used. Create, update and delete deferred to phase 6 |
+| labels, milestones | Read used; a project's own create, update and delete gated under `planning`, deletes Destructive. Group label and milestone writes, promote and subscribe deferred; the label routes addressed without a name written off as deprecated |
 | search | Used |
 | todos | Used |
 | wikis (project) | Used under the `wiki` toolset. Group wikis deferred (Premium) |
@@ -1069,7 +1105,7 @@ something to do.
 | default | Read and Write | `api` |
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds Ship | `api` (no change: §2.6) |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds Destructive | `api` (no change) |
-| `GITLAB_MCP_TOOLSETS` | adds `wiki`, `snippets`, `releases`, `deployments`, `activity`, or `all` | — |
+| `GITLAB_MCP_TOOLSETS` | adds `wiki`, `snippets`, `releases`, `deployments`, `activity`, `planning`, or `all` | — |
 | `GITLAB_MCP_WRITE_NAMESPACES` | confines Write, Ship, Destructive (§4.7) | — |
 
 No setting chooses the instance: it is gitlab.com (§4.9).
@@ -1546,6 +1582,19 @@ issue move and links, label and milestone writes, rebase, cherry-pick,
 revert, blame, job artifacts, and tag writes. Each is checked against
 GitLab's source before it is built, and runs live.
 
+*Built 2026-09-27, simplified and reviewed (§16a). Seventeen tools, the
+surface now eighty-three and the schema baseline holding them all. Every
+operation was checked against GitLab's source at v19.4.1-ee first (§18
+rows 84–89). Three live runs on gitlab.com drove every tool and option
+but the two page tokens already waived, and their transcripts were read:
+the first found the plan's cherry-pick source conflicting with the
+default branch, which the tool reported as GitLab's refusal, and a pick
+that does not apply answering 400, now `[conflict]`; the second a revert
+reported in a pick's words, and an artifact listing too short to page;
+the third was clean. The security review found a fork's rebase and a members-only
+issue's move unguarded; the code review, blame windows and settles;
+each is fixed. Owed: nothing.*
+
 ### 16a. Found by review, and fixed
 
 Each phase's `/code-review high` and `/security-review` findings are
@@ -1703,6 +1752,27 @@ candidates:
 | `failed_only` reads up to 2 MB for a failing job with no failure line | Kept: the bound is the design; the runner writes the line last |
 | A `file_offset` past the end named the wrong number of files | Phase 5 commit; the message names none and points at `list_mr_files` |
 | `resolve_discussion` read an unknown type as a merge request | Phase 5 commit; refused `[invalid]` |
+
+**Phase 6.** `/simplify`: one label row and one milestone row for the
+reads and the writes; `names` for what an update changed and
+`changedLine` for saying it; one `protectingRule` for the branch and tag
+guards; `get_job_artifact` through `fileContent`; the enums a schema and
+its check share exported once; witnesses parsed by `parseWitness`; the
+fake's protected tags matched by wildcard. Skipped: embedded input
+structs (`register` reads top-level fields), one body for cherry-pick and
+revert (the fields gate holds revert's, which takes no message), and
+dropping the read after a rebase (it carries `merge_error`).
+`/security-review`: two findings at confidence 8, fixed
+(`audit/security-reviews/phase-6.md`). `/code-review high`: five, all
+fixed:
+
+| Found | Fixed |
+|---|---|
+| A full blame window this server chose gave no `next_line`; the test was inverted | Phase 6 commit; a full window continues, with a test |
+| One run of blame lines larger than the budget was shown whole | Phase 6 commit; the run is cut at the budget and `next_line` goes on |
+| A lost cherry-pick with its own message settled "not created" | Phase 6 commit; settled by the new head's parent being the head read before, unknown otherwise |
+| A group's label was not found rather than refused | Phase 6 commit; the label read includes ancestor groups |
+| A lost label or milestone create could settle on an older one | Phase 6 commit; `create_label` refuses a name that exists, and a milestone counts only if made after the call started |
 
 ### Closing a phase
 
@@ -1951,3 +2021,9 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 81 | A release's asset links may point anywhere | Maintainer, 2026-09-27; `lib/api/entities/release.rb` at v19.4.1-ee | **Changed.** `create_release` takes links only into the release's own project, under its web path or its API path, on the instance's origin with no credentials in the URL, refused `[blocked]` before anything is sent: a release page sends every reader wherever its links lead, and gitlab.com serves anyone's files (phase 5 code review). Links are taken at create only; link writes on a published release stay written off |
 | 82 | A lost `run_pipeline` can be told from another run on the same ref by its variables | `GET …/pipelines/:id/variables` at v19.4.1-ee | **Rejected.** The listing returns the variables' values, which §8a writes off with CI variables; the settle stays by ref, source, account and time (§17a) |
 | 83 | `list_discussions` can read only the newest pages of threads | §7.2 and the tool's contract | **Rejected.** Threads are shown by last activity, and a reply moves an old thread to the top, so ordering them needs every thread. GitLab lists them by creation only |
+| 84 | A label's update and delete can carry a witness GitLab holds | `lib/api/entities/label.rb` and `lib/api/labels.rb` at v19.4.1-ee | **Refuted (tier 1).** A label exposes no timestamp or version. `list_labels` returns `version`, a hash of the name, color, description, priority and archived state, and `update_label` and `delete_label` read the label first and refuse `[stale]` if it moved, as the wiki's hash does (§4.6) |
+| 85 | Cherry-pick and revert are Ship | §8a before phase 6; `lib/api/commits.rb` at v19.4.1-ee | **Changed (maintainer, §17.13).** They are a commit to a branch, as `create_commit` makes, behind the same refusal of the default and protected branches, so they are Write. GitLab's own `dry_run` commits nothing, and a dry run asks it; a change that does not apply answers 400, which is `[conflict]` (phase 6 live run) |
+| 86 | The protected-tag listing is needed by no guard | §8a before phase 6 | **Changed (maintainer, §17.13).** `create_tag` refuses a name a protected-tag rule covers, matched as GitLab's RefMatcher matches, so the listing is read; every protected-tag write stays written off |
+| 87 | Moving an issue is an ordinary write | `lib/api/issues.rb` and `WorkItems::DataSync::MoveService` at v19.4.1-ee | **Changed (maintainer, §17.13).** A move copies the issue, comments included, into another project, where other people may see it. `move_issue` is Ship, holds both projects to the allow-list, and refuses a project more people can see than the source |
+| 88 | A file in a job's artifacts is addressed with its slashes unescaped | `lib/api/ci/job_artifacts.rb` at v19.4.1-ee; the phase 6 live run | **Refuted (tier 1, live).** The path sent as one segment, its slash escaped `%2F`, read `reports/summary.txt`; Workhorse extracts the one file, and the answer is not a redirect |
+| 89 | A rebase answers when it is done | `lib/api/merge_requests.rb` at v19.4.1-ee; the phase 6 live run | **Refuted (tier 1, live).** GitLab answers 202 `{"rebase_in_progress": …}` and rebases in the background. `rebase_merge_request` reads the merge request with `include_rebase_in_progress` after, and says whether it still runs |

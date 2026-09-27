@@ -68,10 +68,27 @@ var plainInputs = map[string]string{
 	"create_snippet.description": "a snippet's description: Snippets::CreateService runs no quick action (§18 row 67)",
 	"create_release.description": "release notes: Releases::CreateService runs no quick action (§18 row 67)",
 	"create_release.name":        "a release's name: Releases::CreateService runs no quick action (§18 row 67)",
-	"create_release.tag_name":    "a Git tag name, which GitLab takes as a ref, not Markdown",
 	"create_release.tag_message": "an annotated tag's message, written into Git; Releases::CreateService runs no quick action (§18 row 67)",
 	"create_release.milestones":  "milestone titles GitLab looks up by title, never as Markdown",
 	"create_release.released_at": "a time, checked as RFC 3339 and sent as one",
+	"to_project":                 "a project the server resolves to its id and sends as to_project_id; never sent as text",
+	"target_project":             "a project the server resolves to its id and sends as target_project_id; never sent as text",
+	"link_type":                  "a closed value, relates_to, blocks or is_blocked_by, which GitLab takes as the link's type",
+	"version":                    "the label witness, compared with a hash of a fresh read and never sent",
+	"commit":                     "a commit SHA in the request path, which GitLab takes as a ref, not Markdown",
+	"start_date":                 "a day, checked as YYYY-MM-DD and sent as a date",
+	"color":                      "a color, #RRGGBB or a CSS name, which GitLab validates as one",
+	"create_label.name":          "a label's name: Labels::CreateService runs no quick action (app/services/labels/create_service.rb at v19.4.1-ee)",
+	"update_label.name":          "a label's new name: Labels::UpdateService runs no quick action (app/services/labels/update_service.rb at v19.4.1-ee)",
+	"create_label.description":   "a label's description: Labels::CreateService runs no quick action (app/services/labels/create_service.rb at v19.4.1-ee)",
+	"update_label.description":   "a label's description: Labels::UpdateService runs no quick action (app/services/labels/update_service.rb at v19.4.1-ee)",
+	"create_milestone.description": "a milestone's description: Milestones::CreateService runs no quick action " +
+		"(app/services/milestones/create_service.rb at v19.4.1-ee)",
+	"update_milestone.description": "a milestone's description: Milestones::UpdateService runs no quick action " +
+		"(app/services/milestones/update_service.rb at v19.4.1-ee)",
+	"tag_name":                   "a Git tag name, which GitLab takes as a ref, not Markdown",
+	"create_tag.message":         "an annotated tag's message, written into Git; Tags::CreateService runs no quick action (app/services/tags/create_service.rb at v19.4.1-ee)",
+	"cherry_pick_commit.message": "a commit message the Commits API writes into Git; it runs no quick action, as for create_commit",
 }
 
 // minWriteTools is the floor on write tools the gate examined: the

@@ -34,7 +34,7 @@ GET /projects/{id}/issues/{noteable_id}/discussions	used	1	Client.ListIssueDiscu
 GET /merge_requests	used	1	Client.SearchMergeRequests: search_merge_requests across the instance
 GET /groups/{id}/merge_requests	used	1	Client.SearchMergeRequests: search_merge_requests inside one group
 GET /projects/{id}/merge_requests	used	1	Client.SearchMergeRequests: search_merge_requests inside one project
-GET /projects/{id}/merge_requests/{merge_request_iid}	used	1	Client.GetMergeRequest: get_merge_request
+GET /projects/{id}/merge_requests/{merge_request_iid}	used	1	Client.GetMergeRequest: get_merge_request; Client.GetMergeRequestRebase: rebase_merge_request reads whether its rebase runs
 GET /projects/{id}/merge_requests/{merge_request_iid}/approvals	used	1	Client.GetMergeRequestApprovals: get_merge_request's approval state
 GET /projects/{id}/merge_requests/{noteable_id}/discussions	used	1	Client.ListMergeRequestDiscussions: list_discussions and get_merge_request's summary
 GET /projects/{id}/repository/files/{file_path}	used	1	Client.GetFile: get_file
@@ -225,7 +225,7 @@ PUT /namespaces/{id}	written-off	1	namespace update: administration (§8a)
 
 # Issues (§8a): move, clone, subscribe, time tracking, reactions and links deferred to §17a; delete written off
 DELETE /projects/{id}/issues/{issue_iid}	written-off	1	issue delete: Owner-only and permanent (§8a)
-POST /projects/{id}/issues/{issue_iid}/move	deferred	1	moving an issue between projects (§17a)
+POST /projects/{id}/issues/{issue_iid}/move	gated	1	Client.MoveIssue: move_issue, Ship (§17.13)
 POST /projects/{id}/issues/{issue_iid}/clone	deferred	1	cloning an issue (§17a)
 PUT /projects/{id}/issues/{issue_iid}/reorder	deferred	1	board order, no task in §8 needs it (§17a)
 GET /projects/{id}/issues/{issue_iid}/closed_by	deferred	1	merge requests that close an issue; get_issue may add it (§17a)
@@ -235,7 +235,10 @@ POST /projects/{id}/issues/{issue_iid}/todo	deferred	1	creating a to-do for ones
 GET /projects/{id}/issues/{issue_iid}/user_agent_detail	written-off	1	user agent details: an administrator's spam tooling (§8a)
 * /projects/{id}/issues/{issue_iid}/award_emoji*	deferred	4	emoji reactions on issues (§17a)
 * /projects/{id}/issues/{issue_iid}/notes/{note_id}/award_emoji*	deferred	4	emoji reactions on issue comments (§17a)
-* /projects/{id}/issues/{issue_iid}/links*	deferred	4	links between issues (§17a)
+GET /projects/{id}/issues/{issue_iid}/links	used	1	Client.ListIssueLinks: link_issues and unlink_issues find the link first
+POST /projects/{id}/issues/{issue_iid}/links	used	1	Client.CreateIssueLink: link_issues
+DELETE /projects/{id}/issues/{issue_iid}/links/{issue_link_id}	used	1	Client.DeleteIssueLink: unlink_issues
+* /projects/{id}/issues/{issue_iid}/links*	deferred	1	one link by id; the listing carries it (§17a)
 * /projects/{id}/issues/{issue_iid}/metric_images*	deferred	5	incident metric images: operations tooling, not in 1.0
 POST /projects/{id}/issues/{issue_iid}/add_spent_time	deferred	1	issue time tracking (§17a)
 POST /projects/{id}/issues/{issue_iid}/reset_spent_time	deferred	1	issue time tracking (§17a)
@@ -259,7 +262,7 @@ GET /issues_statistics	deferred	1	issue counts; search_issues reports X-Total
 # Merge requests (§8a): rebase deferred, /changes and delete written off
 DELETE /projects/{id}/merge_requests/{merge_request_iid}	written-off	1	merge request delete: Owner-only and permanent (§8a)
 GET /projects/{id}/merge_requests/{merge_request_iid}/changes	written-off	1	deprecated for /diffs (§8a)
-PUT /projects/{id}/merge_requests/{merge_request_iid}/rebase	deferred	1	rebase: a Ship candidate (§8a, §17a)
+PUT /projects/{id}/merge_requests/{merge_request_iid}/rebase	gated	1	Client.RebaseMergeRequest: rebase_merge_request, Ship (§17.13)
 GET /projects/{id}/merge_requests/{merge_request_iid}/raw_diffs	deferred	1	the whole diff as one text; get_mr_diff reads /diffs, which says what GitLab cut
 GET /projects/{id}/merge_requests/{merge_request_iid}/versions	deferred	1	diff versions; diffpos needs only diff_refs (§7.4)
 GET /projects/{id}/merge_requests/{merge_request_iid}/versions/{version_id}	deferred	1	one diff version; diffpos needs only diff_refs (§7.4)
@@ -313,7 +316,7 @@ PUT /projects/{id}/merge_requests/{noteable_id}/notes/{note_id}	deferred	1	editi
 # Repository (§8a): blame and archive deferred, cherry-pick and revert Ship candidates, statuses written off
 GET /projects/{id}/repository/files/{file_path}/raw	deferred	1	raw file content; get_file carries it with the witness (§4.6)
 HEAD /projects/{id}/repository/files/{file_path}	deferred	1	file metadata without content; get_file carries it
-GET /projects/{id}/repository/files/{file_path}/blame	deferred	1	file blame, line by line (§8a)
+GET /projects/{id}/repository/files/{file_path}/blame	used	1	Client.Blame: get_blame
 HEAD /projects/{id}/repository/files/{file_path}/blame	deferred	1	blame metadata (§8a)
 POST /projects/{id}/repository/files/{file_path}	deferred	1	creating one file; create_commit carries every file action in one commit
 PUT /projects/{id}/repository/files/{file_path}	deferred	1	updating one file; create_commit carries every file action in one commit
@@ -321,8 +324,8 @@ DELETE /projects/{id}/repository/files/{file_path}	deferred	1	deleting one file;
 GET /projects/{id}/repository/archive	deferred	1	raw archive download (§8a)
 GET /projects/{id}/snapshot	deferred	1	a repository snapshot download, like the archive (§8a)
 * /projects/{id}/repository/blobs*	deferred	3	blobs by SHA; get_file reads by path and ref (§17a)
-POST /projects/{id}/repository/commits/{sha}/cherry_pick	deferred	1	cherry-pick: a Ship candidate (§8a)
-POST /projects/{id}/repository/commits/{sha}/revert	deferred	1	revert: a Ship candidate (§8a)
+POST /projects/{id}/repository/commits/{sha}/cherry_pick	used	1	Client.CherryPick: cherry_pick_commit, Write behind the protected-branch guard (§17.13)
+POST /projects/{id}/repository/commits/{sha}/revert	used	1	Client.Revert: revert_commit, Write behind the protected-branch guard (§17.13)
 GET /projects/{id}/repository/commits/{sha}/statuses	written-off	1	commit statuses: a CI integration's surface (§8a)
 POST /projects/{id}/statuses/{sha}	written-off	1	setting a commit status: a CI integration's surface (§8a)
 GET /projects/{id}/repository/commits/{sha}/comments	deferred	1	legacy commit comments; commit discussions supersede them (§17a)
@@ -346,8 +349,8 @@ GET /projects/{id}/repository/branches/{branch}	used	1	Client.GetBranch: create_
 HEAD /projects/{id}/repository/branches/{branch}	deferred	1	branch existence; list_branches with search finds it
 PUT /projects/{id}/repository/branches/{branch}/protect	written-off	1	protecting a branch: every protection write is written off (§8a)
 PUT /projects/{id}/repository/branches/{branch}/unprotect	written-off	1	unprotecting a branch: every protection write is written off (§8a)
-POST /projects/{id}/repository/tags	deferred	1	creating a tag, deferred (§8a)
-DELETE /projects/{id}/repository/tags/{tag_name}	deferred	1	deleting a tag, deferred (§8a)
+POST /projects/{id}/repository/tags	gated	1	Client.CreateTag: create_tag, releases toolset (§17.13)
+DELETE /projects/{id}/repository/tags/{tag_name}	gated	1	Client.DeleteTag: delete_tag, Destructive (§17.13)
 GET /projects/{id}/repository/tags/{tag_name}/signature	deferred	1	a tag signature (§17a)
 
 # Protected branches and tags (§8a): read by create_commit's guard, every write written off
@@ -355,7 +358,8 @@ GET /projects/{id}/protected_branches/{name}	deferred	1	one rule; the guard read
 POST /projects/{id}/protected_branches	written-off	1	branch protection writes are written off (§8a)
 PATCH /projects/{id}/protected_branches/{name}	written-off	1	branch protection writes are written off (§8a)
 DELETE /projects/{id}/protected_branches/{name}	written-off	1	branch protection writes are written off (§8a)
-* /projects/{id}/protected_tags*	written-off	4	protected tags: reads unneeded by any guard, every write written off (§8a)
+GET /projects/{id}/protected_tags	gated	1	Client.ListProtectedTags: create_tag refuses a name a rule covers (§17.13)
+* /projects/{id}/protected_tags*	written-off	3	protected tag writes, and one rule, which the listing carries (§8a)
 * /groups/{id}/protected_branches*	written-off	5	group protected branches: governance, Premium (§8a)
 
 # CI (§8a): pipelines, jobs and lint used; schedules, triggers, variables and secure files written off
@@ -376,8 +380,8 @@ DELETE /projects/{id}/jobs/{job_id}/artifacts	written-off	1	artifact delete (§8
 DELETE /projects/{id}/artifacts	written-off	1	artifact delete (§8a)
 POST /projects/{id}/jobs/{job_id}/artifacts/keep	written-off	1	artifact retention: CI storage administration (§8a)
 GET /projects/{id}/jobs/{job_id}/artifacts	deferred	1	artifact download (§8a)
-GET /projects/{id}/jobs/{job_id}/artifacts/tree	deferred	1	artifact download (§8a)
-GET /projects/{id}/jobs/{job_id}/artifacts/{artifact_path}	deferred	1	artifact download (§8a)
+GET /projects/{id}/jobs/{job_id}/artifacts/tree	used	1	Client.ListArtifacts: list_job_artifacts
+GET /projects/{id}/jobs/{job_id}/artifacts/{artifact_path}	used	1	Client.GetArtifact: get_job_artifact, one file as Workhorse extracts it
 GET /projects/{id}/jobs/artifacts/{ref_name}/download	deferred	1	artifact download (§8a)
 GET /projects/{id}/jobs/artifacts/{ref_name}/raw/{artifact_path}	deferred	1	artifact download (§8a)
 * /projects/{id}/pipeline_schedules*	written-off	12	pipeline schedules: CI configuration (§8a)
@@ -395,14 +399,20 @@ GET /projects/{id}/jobs/artifacts/{ref_name}/raw/{artifact_path}	deferred	1	arti
 * /projects/{id}/catalog*	written-off	1	CI/CD catalog publishing: a Ship-like release of CI components, administration (§8a)
 
 # Labels and milestones (§8a): read used, create, update and delete deferred to §17a
-* /projects/{id}/labels/*	deferred	7	label create, update, delete, promote and subscribe (§17a)
-POST /projects/{id}/labels	deferred	1	label create, update and delete (§17a)
-PUT /projects/{id}/labels	deferred	1	label create, update and delete (§17a)
-DELETE /projects/{id}/labels	deferred	1	label create, update and delete (§17a)
+GET /projects/{id}/labels/{name}	gated	1	Client.GetLabel: update_label and delete_label read the label they hold to its version, planning toolset
+PUT /projects/{id}/labels/{name}	gated	1	Client.UpdateLabel: update_label, planning toolset (§17.13)
+DELETE /projects/{id}/labels/{name}	gated	1	Client.DeleteLabel: delete_label, Destructive (§17.13)
+* /projects/{id}/labels/*	deferred	4	label promote and subscribe (§17a)
+POST /projects/{id}/labels	gated	1	Client.CreateLabel: create_label, planning toolset (§17.13)
+PUT /projects/{id}/labels	written-off	1	deprecated in GitLab 12.4 for PUT /projects/{id}/labels/{name}
+DELETE /projects/{id}/labels	written-off	1	deprecated in GitLab 12.4 for DELETE /projects/{id}/labels/{name}
 GET /groups/{id}/labels	deferred	1	group labels; list_labels lists the project's, ancestors included (§17a)
 * /groups/{id}/labels*	deferred	8	group label create, update, delete and subscribe (§17a)
-* /projects/{id}/milestones/*	deferred	7	one milestone, its issues and merge requests, burndown, update, delete and promote (§17a)
-POST /projects/{id}/milestones	deferred	1	milestone create (§17a)
+GET /projects/{id}/milestones/{milestone_id}	gated	1	Client.GetMilestone: update_milestone and delete_milestone hold the milestone to its updated_at, planning toolset
+PUT /projects/{id}/milestones/{milestone_id}	gated	1	Client.UpdateMilestone: update_milestone, planning toolset (§17.13)
+DELETE /projects/{id}/milestones/{milestone_id}	gated	1	Client.DeleteMilestone: delete_milestone, Destructive (§17.13)
+* /projects/{id}/milestones/*	deferred	4	a milestone's issues and merge requests, burndown and promote (§17a)
+POST /projects/{id}/milestones	gated	1	Client.CreateMilestone: create_milestone, planning toolset (§17.13)
 * /groups/{id}/milestones/*	deferred	6	one group milestone, its lists, update and delete (§17a)
 POST /groups/{id}/milestones	deferred	1	group milestone create (§17a)
 

@@ -84,6 +84,8 @@ type project struct {
 	mrDiffs map[int64][]gitlab.Diff
 	drafts  map[int64][]gitlab.DraftNote
 	tags    []gitlab.Tag
+	// protectedTags are the project's protected-tag rules.
+	protectedTags []gitlab.ProtectedTag
 
 	// CI: pipelines newest last, their jobs, each job's stored log, and
 	// the CI configuration per branch.

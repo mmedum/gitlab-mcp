@@ -74,8 +74,10 @@ func (s *Server) fillReview(p *project, mr *gitlab.MergeRequest) {
 	}
 }
 
-// fillTags tags release/1.0's head and main's head.
+// fillTags tags release/1.0's head and main's head, and protects every
+// release-* tag.
 func (s *Server) fillTags(p *project) {
+	p.protectedTags = []gitlab.ProtectedTag{{Name: "release-*"}}
 	release := p.commits["release/1.0"][0]
 	created := release.CommittedDate.Add(time.Hour)
 	p.tags = []gitlab.Tag{
