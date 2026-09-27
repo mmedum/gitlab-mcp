@@ -2,6 +2,7 @@ package gapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strconv"
 
@@ -74,6 +75,23 @@ type LabelUpdate struct {
 	Color       string  `json:"color,omitempty"`
 	Description *string `json:"description,omitempty"`
 	Priority    *int    `json:"priority,omitempty"`
+	// ClearPriority sends priority as null, which GitLab reads as
+	// removing it (lib/api/helpers/label_helpers.rb at v19.4.1-ee).
+	ClearPriority bool `json:"-"`
+}
+
+// MarshalJSON sends priority as null when ClearPriority is set.
+func (u LabelUpdate) MarshalJSON() ([]byte, error) {
+	type plain LabelUpdate
+	if !u.ClearPriority {
+		return json.Marshal(plain(u))
+	}
+	// The outer Priority shadows the embedded one and has no omitempty,
+	// so a nil pointer is sent as null.
+	return json.Marshal(struct {
+		plain
+		Priority *int `json:"priority"`
+	}{plain: plain(u)})
 }
 
 // GetLabel reads one label by id, a group's included, so a write can

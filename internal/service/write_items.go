@@ -133,6 +133,9 @@ func (s *Service) UpdateIssue(ctx context.Context, in IssueUpdate) (model.IssueW
 	if err != nil {
 		return model.IssueWrite{}, err
 	}
+	if in.DueDate, err = clearing("due_date", in.DueDate, in.ClearDueDate); err != nil {
+		return model.IssueWrite{}, err
+	}
 	if in.DueDate != nil {
 		if err := checkDate("due_date", *in.DueDate); err != nil {
 			return model.IssueWrite{}, err
@@ -172,12 +175,6 @@ func (s *Service) UpdateIssue(ctx context.Context, in IssueUpdate) (model.IssueW
 			"who can see the project's issues, which this server does only when %s=true; nothing was sent", config.EnvEnableShip)
 	}
 	body.AssigneeIDs = assigneeSet(before.Assignees, addIDs, in.AddAssignees, in.RemoveAssignees)
-	if in.ClearDueDate {
-		if in.DueDate != nil {
-			return model.IssueWrite{}, gapi.Errf(gapi.ClassInvalid, "pass due_date or clear_due_date, not both")
-		}
-		body.DueDate = new(string)
-	}
 	var notes []string
 	body.StateEvent, notes = stateEvent(in.State, before.State)
 
@@ -225,9 +222,10 @@ func assigneeSet(current []gitlab.UserBasic, addIDs []int64, add, remove []strin
 // milestoneChange is the milestone id to send: nil to leave it, 0 to
 // clear it.
 func (s *Service) milestoneChange(ctx context.Context, p gapi.Project, title *string, clear bool) (*int64, error) {
+	if err := notBoth("milestone", title != nil, clear); err != nil {
+		return nil, err
+	}
 	switch {
-	case clear && title != nil:
-		return nil, gapi.Errf(gapi.ClassInvalid, "pass milestone or clear_milestone, not both")
 	case clear:
 		return new(int64), nil
 	case title == nil:

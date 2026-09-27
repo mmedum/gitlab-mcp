@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `update_label` takes `clear_description` and `clear_priority`, and `update_milestone` takes `clear_description`, `clear_start_date` and `clear_due_date`.
+
 ## [1.0.0] - 2026-09-27
 
 ### Added

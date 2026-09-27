@@ -293,7 +293,9 @@ func (s *Server) label(w http.ResponseWriter, r *http.Request, p *project, id st
 		if v, ok := b.str("description"); ok {
 			l.Description = v
 		}
-		if v, ok := priority(b); ok {
+		if b.isNull("priority") {
+			l.Priority = nil
+		} else if v, ok := priority(b); ok {
 			l.Priority = &v
 		}
 		writeJSON(w, http.StatusOK, *l)

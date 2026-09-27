@@ -2,6 +2,7 @@ package gapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -398,5 +399,22 @@ func TestNotesBucketIsSeparate(t *testing.T) {
 	}
 	if BucketNotes.String() != "notes" || BucketGeneral.String() != "general" {
 		t.Error("bucket names")
+	}
+}
+
+func TestLabelUpdateClearsPriorityWithNull(t *testing.T) {
+	two := 2
+	for _, c := range []struct {
+		in   LabelUpdate
+		want string
+	}{
+		{LabelUpdate{Color: "#aa0000"}, `{"color":"#aa0000"}`},
+		{LabelUpdate{Priority: &two}, `{"priority":2}`},
+		{LabelUpdate{ClearPriority: true}, `{"priority":null}`},
+	} {
+		got, err := json.Marshal(c.in)
+		if err != nil || string(got) != c.want {
+			t.Errorf("%+v: %s, %v; want %s", c.in, got, err, c.want)
+		}
 	}
 }

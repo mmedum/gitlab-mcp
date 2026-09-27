@@ -1822,7 +1822,7 @@ the release chain (`audit/security-reviews/v1.0.0.md`). It found:
 | A milestone title, free prose, printed outside the boundary in `get_issue` and `get_merge_request` | Its own line, inside the boundary |
 | Snippet file names reached an error message as written | Made plain, as paths are |
 | A manual registry publish could send a prerelease | `server-json` publishes `X.Y.Z` only |
-| `update_label` and `update_milestone` said empty clears a field; §17.7 reads it as absent | The descriptions no longer say so; clearing is deferred (§17a) |
+| `update_label` and `update_milestone` said empty clears a field; §17.7 reads it as absent | The descriptions no longer say so; clearing was deferred (§17a), then added after 1.0 as `clear_*` inputs |
 
 ### Closing a phase
 
@@ -1948,12 +1948,11 @@ REST call can close:
   pipeline's variables would tell them apart, and reading them reads
   their values (§18 row 82). Found in phase 3.
 
-The 1.0 security review added one, which is additive:
-
-- `update_label` and `update_milestone` cannot clear a description or a
-  date: §17.7 reads `""` as absent, and their descriptions no longer say
-  empty clears. `clear_*` inputs, as `update_issue` has, are additive
-  and wait for after 1.0.
+The 1.0 security review added a third, closed after 1.0:
+`update_label` and `update_milestone` could not clear a description or a
+date, since §17.7 reads `""` as absent. They now take `clear_*` inputs,
+as `update_issue` does, and `update_label` also clears a priority
+(§18 row 92).
 
 Operations `testdata/api-coverage.tsv` defers with a citation of §17a
 are deferred past 1.0, each for the reason its row gives. The feature
@@ -2086,3 +2085,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 89 | A rebase answers when it is done | `lib/api/merge_requests.rb` at v19.4.1-ee; the phase 6 live run | **Refuted (tier 1, live).** GitLab answers 202 `{"rebase_in_progress": …}` and rebases in the background. `rebase_merge_request` reads the merge request with `include_rebase_in_progress` after, and says whether it still runs |
 | 90 | A token's `expires_in` is its lifetime, added to `created_at` | Doorkeeper 5.9.0 `Expirable#expires_in_seconds` and `AccessTokenMixin#as_json`, the version v19.4.1-ee locks; `app/controllers/oauth/token_info_controller.rb`; the 1.0 live run | **Refuted (tier 1, live).** `/oauth/token/info` answers the seconds left when it answers. `get_me` added them to `created_at` and reported a token read 1 h 41 min after issue as expired an hour before; it now adds them to the time of the read, and the next run reported 11:53:38Z, the expiry the first run's numbers imply |
 | 91 | A cancel's answer shows whether anything was canceled | `lib/api/ci/pipelines.rb`, `Ci::CancelPipelineService`, `CommitStatus` and `Ci::HasStatus` at v19.4.1-ee; the 1.0 live run | **Refuted (tier 1, live).** GitLab cancels the jobs inside the request, then answers `pipeline.reset`; each job's transition queues `PipelineProcessWorker`, which recomputes the pipeline's status after. A pipeline canceled seconds after it started answered `running`, and `cancel_pipeline` said nothing could be canceled, while its two deployments were listed canceled later in the run; the next run's cancel answered `canceling`, so gitlab.com answers either way, and a third, with the fix, answered `running` and reported `canceled`. `CANCELABLE_STATUSES`, which the job scope shares, includes `manual`. It now reports `canceled` when the status read first was cancelable, the source is not `external` and the answer is not finished, and says the status catches up |
+| 92 | A label's priority and a milestone's description and dates cannot be cleared through the API | `lib/api/helpers/label_helpers.rb`, `app/services/labels/update_service.rb`, `lib/api/milestone_responses.rb` and `app/services/milestones/update_service.rb` at v19.4.1-ee; the post-1.0 live run | **Refuted (tier 1, live).** A present `priority` of `null` unprioritizes the label, and `at_least_one_of` counts keys, so it may be the only field sent; an empty description or date is assigned as given. `update_label` sends `null` for `clear_priority`, and both tools send `""` for the other `clear_*` inputs. The live run read each field back cleared |
