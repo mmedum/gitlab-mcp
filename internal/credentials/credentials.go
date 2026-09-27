@@ -105,6 +105,11 @@ type Store struct {
 	// answers "nothing" is reported as a keyring that will not answer
 	// rather than as a token that was never there.
 	ExpectKeyring bool
+
+	// lastSaved keeps this store's saves in order where the clock cannot:
+	// on Windows two saves can read the same time, and the pair saved
+	// last must still compare later.
+	lastSaved time.Time
 }
 
 // record is what the keyring entry and the file hold.
@@ -292,6 +297,10 @@ func (s *Store) Save(tok *oauth2.Token) (Source, error) {
 		Expiry:       tok.Expiry.UTC(),
 		SavedAt:      time.Now().UTC(),
 	}
+	if !r.SavedAt.After(s.lastSaved) {
+		r.SavedAt = s.lastSaved.Add(time.Microsecond)
+	}
+	s.lastSaved = r.SavedAt
 	if v := s.env(EnvVar); v != "" {
 		r.EnvSeed = seed(v)
 	}

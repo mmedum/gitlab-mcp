@@ -538,3 +538,17 @@ func TestReadStoredTakesThePairSavedLast(t *testing.T) {
 		})
 	}
 }
+
+// A store's saves compare in the order they were made even when the
+// clock reads the same for both, as it can on Windows.
+func TestSavesStayInOrderOnACoarseClock(t *testing.T) {
+	s, _ := store(t, newFake(), false)
+	s.lastSaved = time.Now().Add(time.Hour)
+	before := s.lastSaved
+	if _, err := s.Save(tok("new", "new")); err != nil {
+		t.Fatal(err)
+	}
+	if !s.lastSaved.After(before) {
+		t.Errorf("the save stamped %v, not after %v", s.lastSaved, before)
+	}
+}

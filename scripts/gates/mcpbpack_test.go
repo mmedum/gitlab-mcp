@@ -105,6 +105,9 @@ func TestMcpbPackWritesAndReadsBack(t *testing.T) {
 		}
 	}
 
+	// Windows will not replace a file that is open.
+	_ = zr.Close()
+
 	// Same inputs, same bytes.
 	first, _ := os.ReadFile(bundle)
 	if _, err := mcpbPackTo(&out, root, dist, "1.2.3", bundle, false); err != nil {

@@ -3,6 +3,7 @@ package gitlabtest
 import (
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -241,12 +242,21 @@ func (s *Server) createLabel(w http.ResponseWriter, r *http.Request, p *project)
 	l := gitlab.Label{ID: s.nextLabel(), Name: name, IsProjectLabel: true}
 	l.Color, _ = b.str("color")
 	l.Description, _ = b.str("description")
-	if n, ok := b.integer("priority"); ok {
-		v := int(n)
+	if v, ok := priority(b); ok {
 		l.Priority = &v
 	}
 	p.labels = append(p.labels, l)
 	writeJSON(w, http.StatusCreated, l)
+}
+
+// priority is a label's priority from a request, as GitLab's Integer
+// param takes it.
+func priority(b body) (int, bool) {
+	n, ok := b.integer("priority")
+	if !ok || n < math.MinInt32 || n > math.MaxInt32 {
+		return 0, false
+	}
+	return int(n), true
 }
 
 func (s *Server) nextLabel() int64 {
@@ -283,8 +293,7 @@ func (s *Server) label(w http.ResponseWriter, r *http.Request, p *project, id st
 		if v, ok := b.str("description"); ok {
 			l.Description = v
 		}
-		if n, ok := b.integer("priority"); ok {
-			v := int(n)
+		if v, ok := priority(b); ok {
 			l.Priority = &v
 		}
 		writeJSON(w, http.StatusOK, *l)

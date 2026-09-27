@@ -1774,6 +1774,17 @@ fixed:
 | A group's label was not found rather than refused | Phase 6 commit; the label read includes ancestor groups |
 | A lost label or milestone create could settle on an older one | Phase 6 commit; `create_label` refuses a name that exists, and a milestone counts only if made after the call started |
 
+**The first pull request.** Its CI ran phases 1 to 6 on Linux, macOS and
+Windows for the first time, and found:
+
+| Found | Fixed |
+|---|---|
+| `schema-ack` failed building a base from before the server | A base without `cmd/gitlab-mcp` has an empty surface, with a test |
+| On Windows two token saves read the same clock, and after a half-failed save the older keyring pair won | A store's saves are stamped strictly in order, with a test |
+| On Windows the bundle test repacked over a bundle it still held open | The test closes it first |
+| CodeQL: the fake's label priority narrowed without a bound | Bounded to the 32-bit range GitLab takes |
+| CodeQL: the leak gate's owner-link pattern is unanchored | Dismissed as a false positive: a scanner that finds links anywhere in text |
+
 ### Closing a phase
 
 1. `make check` green; the live driver run and its transcript read.
