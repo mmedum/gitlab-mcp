@@ -32,6 +32,16 @@ lifted verbatim.
 - `resolve_url` names `get_pipeline`, `get_job_log` and `compare_refs` for pipeline, job and compare links.
 - Read-only mode (`GITLAB_MCP_READ_ONLY`) registers only the read tools and requests only `read_api`.
 - The quick-action guard every later write goes through.
+- Write tools: `create_issue`, `update_issue`, `add_comment`, `resolve_discussion`, `create_merge_request`, `update_merge_request`, `create_branch`, `create_commit` and `mark_todos_done`.
+- Reviews in drafts: `add_review_comment`, `delete_review_comment` and `submit_review`, which publishes every draft at once; an approving review needs `GITLAB_MCP_ENABLE_SHIP=true`.
+- Inline comments land where asked: the server computes GitLab's diff position from a file, line and side, and reports where the comment landed.
+- A line GitLab would run as a quick action refuses the write, or is sent as text with `escape_commands`.
+- Every write takes `dry_run`, and names the project's visibility in its result.
+- Updates to issues and merge requests require the `updated_at` you read, and are refused `[stale]` if it moved.
+- `create_commit` refuses the default branch and every protected branch, and `create_branch` refuses a name a protected-branch rule covers; code reaches them through a merge request.
+- A create whose answer is lost is never repeated: the server reads to say whether it happened.
+- `GITLAB_MCP_WRITE_NAMESPACES` confines writes to the groups and projects it names.
+- `lint_ci` checks configuration you pass, before it is committed; it may not use `include:`, since GitLab fetches what an include names.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 

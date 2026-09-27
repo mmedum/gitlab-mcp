@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -307,6 +308,87 @@ func TestSummaryCounts(t *testing.T) {
 		a, b := resolution(gitlab.Discussion{Notes: c.notes})
 		if a != c.resolvable || b != c.resolved {
 			t.Errorf("case %d: %v %v", i, a, b)
+		}
+	}
+}
+
+func TestProtectedMatchIsGitLabsWildcard(t *testing.T) {
+	for _, c := range []struct {
+		rule, branch string
+		want         bool
+	}{
+		{"main", "main", true}, {"main", "main2", false},
+		{"release/*", "release/1.0", true}, {"release/*", "release/a/b", true}, {"release/*", "release", false},
+		{"*-stable", "13-stable", true}, {"*-stable", "13-stable-x", false},
+		{"*", "anything", true}, {"a*b*c", "axxbyyc", true}, {"a*b*c", "axxcyyb", false}, {"ab*ab", "ab", false},
+	} {
+		if got := protectedMatch(c.rule, c.branch); got != c.want {
+			t.Errorf("%q against %q = %v", c.rule, c.branch, got)
+		}
+	}
+}
+
+func TestParallelRunsAllAndReportsTheFirstErrorInOrder(t *testing.T) {
+	var ran [3]bool
+	first, second := errors.New("first"), errors.New("second")
+	err := parallel(
+		func() error { time.Sleep(20 * time.Millisecond); ran[0] = true; return first },
+		func() error { ran[1] = true; return second },
+		func() error { ran[2] = true; return nil },
+	)
+	if !errors.Is(err, first) || ran != [3]bool{true, true, true} {
+		t.Errorf("err %v, ran %v", err, ran)
+	}
+	if parallel() != nil {
+		t.Error("nothing to run failed")
+	}
+}
+
+func TestSuppliedLintContentMayNotInclude(t *testing.T) {
+	for name, content := range map[string]string{
+		"top level":       "include:\n  - remote: https://example.invalid/x.yml\n",
+		"shorthand":       "include: 'https://example.invalid/x.yml'\n",
+		"trigger":         "deploy:\n  trigger:\n    include: https://example.invalid/x.yml\n",
+		"escaped key":     "\"\\u0069nclude\": https://example.invalid/x.yml\n",
+		"flow mapping":    "{include: https://example.invalid/x.yml}\n",
+		"anchored":        ".base: &b\n  include: x.yml\njob:\n  <<: *b\n",
+		"second document": "a: 1\n---\ninclude: x.yml\n",
+		"does not parse":  "include: [unclosed\n",
+		"tab indentation": "job:\n\tinclude: x.yml\n",
+	} {
+		if err := refuseIncludes(content); !gapi.IsClass(err, gapi.ClassBlocked) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, content := range map[string]string{
+		"plain":           "build:\n  script:\n    - echo hi\n",
+		"include as text": "build:\n  script:\n    - echo include me\n",
+		"empty":           "",
+	} {
+		if err := refuseIncludes(content); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestWithDraftIsGitLabsRule(t *testing.T) {
+	for _, c := range []struct {
+		title string
+		draft bool
+		want  string
+	}{
+		{"Fix it", true, "Draft: Fix it"},
+		{"Draft: Fix it", true, "Draft: Fix it"},
+		{"[Draft] Fix it", true, "[Draft] Fix it"},
+		{"Draft release notes", true, "Draft: Draft release notes"},
+		{"WIP: cleanup", true, "Draft: WIP: cleanup"},
+		{"Draft: Fix it", false, "Fix it"},
+		{"(draft) [DRAFT] draft: Fix it", false, "Fix it"},
+		{"Draft release notes", false, "Draft release notes"},
+		{"WIP: cleanup", false, "WIP: cleanup"},
+	} {
+		if got := withDraft(c.title, c.draft); got != c.want {
+			t.Errorf("withDraft(%q, %v) = %q, want %q", c.title, c.draft, got, c.want)
 		}
 	}
 }

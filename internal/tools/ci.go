@@ -132,6 +132,7 @@ type lintCIIn struct {
 	Simulate    bool     `json:"simulate,omitempty" jsonschema:"Simulate creating a pipeline for ref, which also finds what a static check cannot, such as rules no job matches. Nothing is created"`
 	IncludeJobs bool     `json:"include_jobs,omitempty" jsonschema:"List the jobs the configuration defines"`
 	Offset      int      `json:"offset,omitempty" jsonschema:"The character offset of the merged configuration to continue from, as a previous result's merged_yaml_budget.continue_offset gave it; default 0"`
+	Content     string   `json:"content,omitempty" jsonschema:"CI configuration to check instead of the committed one, in the project's context. It may not use include, since GitLab fetches what an include names while linting; commit it and lint at ref for that. Sent by POST, so refused in read-only mode"`
 }
 
 func lintCI() definition {
@@ -139,11 +140,12 @@ func lintCI() definition {
 		sp: spec{Name: "lint_ci", Kind: Read, Description: "Check a project's CI configuration at a ref, as GitLab reads " +
 			"it: whether it is valid, its errors and warnings, optionally the jobs it defines, and the configuration with " +
 			"every include expanded, cut at 60,000 characters with the offset to continue from. simulate asks GitLab to " +
-			"simulate creating a pipeline, which catches more and creates nothing. Errors quote the configuration, which " +
+			"simulate creating a pipeline, which catches more and creates nothing. content checks configuration you pass " +
+			"instead of the committed file, before it is committed, and may not use include. Errors quote the configuration, which " +
 			"is untrusted text, and are shown between untrusted-content markers."},
 		run: func(ctx context.Context, svc *service.Service, in lintCIIn) (model.Lint, error) {
 			return svc.LintCI(ctx, service.LintQuery{Project: string(in.Project), Ref: in.Ref, Simulate: in.Simulate,
-				IncludeJobs: in.IncludeJobs, Offset: in.Offset})
+				IncludeJobs: in.IncludeJobs, Offset: in.Offset, Content: in.Content})
 		},
 		text: render.Lint,
 	}

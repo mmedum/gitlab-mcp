@@ -25,7 +25,7 @@ func TestGetMe(t *testing.T) {
 		"instance.edition":          "Community",
 		"instance.known":            true,
 		"token.kind":                "oauth",
-		"registered.tools":          float64(31),
+		"registered.tools":          float64(43),
 		"registered.read_only":      false,
 		"write_namespaces.confined": false,
 	} {
@@ -41,8 +41,8 @@ func TestGetMe(t *testing.T) {
 	if got := fmt.Sprint(get(out, "token", "scopes")); got != "[api]" {
 		t.Errorf("scopes = %s, want [api]", got)
 	}
-	if got := fmt.Sprint(get(out, "registered", "kinds")); got != "[read]" {
-		t.Errorf("kinds = %s, want [read]", got)
+	if got := fmt.Sprint(get(out, "registered", "kinds")); got != "[read write]" {
+		t.Errorf("kinds = %s, want [read write]", got)
 	}
 	if !strings.Contains(text, "Signed in as @alice") || !strings.Contains(text, "GitLab 19.4.0, Community Edition") {
 		t.Errorf("text:\n%s", text)
@@ -438,9 +438,9 @@ func TestSurfaceCounts(t *testing.T) {
 		cfg  config.Config
 		want int
 	}{
-		{"default", config.Config{}, 31},
+		{"default", config.Config{}, 43},
 		{"read-only", config.Config{ReadOnly: true}, 31},
-		{"full", FullSurface(config.Config{}), 31},
+		{"full", FullSurface(config.Config{}), 43},
 	}
 	for _, c := range cases {
 		if got := len(Surface(c.cfg, nil)); got != c.want {

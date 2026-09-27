@@ -1126,3 +1126,32 @@ func TestARefusedTokenIsDroppedOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestAListingJumpsToAPageByNumber(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	p := ProjectByID(2001)
+	first, page, err := f.client.SearchIssues(t.Context(), ItemQuery{Project: p, State: "all"}, ListOptions{PerPage: 10})
+	if err != nil || page.Pages < 2 {
+		t.Fatalf("pages = %d, %v", page.Pages, err)
+	}
+	last, _, err := f.client.SearchIssues(t.Context(), ItemQuery{Project: p, State: "all"}, ListOptions{PerPage: 10, Page: page.Pages})
+	if err != nil || len(last) == 0 || last[0].IID == first[0].IID {
+		t.Fatalf("the last page = %v, %v", last, err)
+	}
+	if _, _, err := f.client.SearchIssues(t.Context(), ItemQuery{Project: p}, ListOptions{Page: 2, PageToken: page.NextToken}); err == nil {
+		t.Error("a page number and a page token together were accepted")
+	}
+}
+
+// A POST that says it changes nothing may run under a dry run; any
+// other is refused before it is sent.
+func TestADryRunLetsAReadOnlyPostThrough(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	ctx := WithDryRun(t.Context())
+	if _, err := f.client.LintCIContent(ctx, ProjectByID(2001), "build:\n  script: [x]\n", LintQuery{}); err != nil {
+		t.Errorf("a read-only POST was refused under a dry run: %v", err)
+	}
+	if _, err := f.client.CreateIssue(ctx, ProjectByID(2001), IssueCreate{Title: "x"}); !errors.Is(err, ErrDryRunWrite) {
+		t.Errorf("a create under a dry run: %v", err)
+	}
+}

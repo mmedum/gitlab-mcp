@@ -721,7 +721,10 @@ type Lint struct {
 	Project  ProjectRef `json:"project"`
 	Ref      string     `json:"ref" jsonschema:"The ref whose configuration was linted; empty for the default branch"`
 	Simulate bool       `json:"simulated" jsonschema:"True when GitLab simulated creating a pipeline"`
-	Valid    bool       `json:"valid"`
+	// Supplied is true when the caller's content was linted rather than
+	// the committed configuration.
+	Supplied bool `json:"supplied" jsonschema:"True when the content passed in was linted rather than the configuration committed at ref"`
+	Valid    bool `json:"valid"`
 	// Errors and warnings quote the configuration, which people other
 	// than the caller wrote.
 	UntrustedErrors   []string  `json:"untrusted_errors"`
@@ -861,4 +864,180 @@ type Search struct {
 	Where   string      `json:"where" jsonschema:"instance, group or project"`
 	Rows    []SearchRow `json:"rows"`
 	Listing Listing     `json:"listing"`
+}
+
+// ---------------------------------------------------------------- writes
+
+// Write is what every write result carries besides its own fields: where
+// it went, whether it was only a preview, and what the quick-action guard
+// did to the text sent (§4.2, §4.7, §4.11). Each result has its own
+// Outcome beside it, because `scripts/gates outcomes` holds every writing
+// function to set one.
+type Write struct {
+	// DryRun is true when nothing was sent: the result says what would
+	// have been.
+	DryRun bool `json:"dry_run" jsonschema:"True when nothing was written; the result describes what would have been"`
+	// WouldSend is the request a dry run stopped before, nil otherwise.
+	WouldSend *Preview `json:"would_send" jsonschema:"The request a dry run did not send; null when something was written"`
+	// Target is where the write went, or would have.
+	Target WriteTarget `json:"target"`
+	// EscapedCommands are the lines the guard escaped because
+	// escape_commands was true.
+	EscapedCommands []EscapedLine `json:"escaped_commands" jsonschema:"Lines GitLab would have run as quick actions, sent with a leading backslash so they show as text"`
+	Notes           []string      `json:"notes"`
+}
+
+// WriteTarget names the project a write went to and who can see it: a
+// write to a public project is visible to everyone (§4.7).
+type WriteTarget struct {
+	Project    ProjectRef `json:"project"`
+	Visibility string     `json:"visibility" jsonschema:"public, internal or private: who can see what was written"`
+}
+
+// Preview is the request a dry run stopped before.
+type Preview struct {
+	Method    string   `json:"method"`
+	Operation string   `json:"operation" jsonschema:"What the request does, such as create an issue"`
+	Fields    []string `json:"fields" jsonschema:"The request fields that would be sent; only these would change"`
+}
+
+// EscapedLine is one line the quick-action guard escaped.
+type EscapedLine struct {
+	Input   string `json:"input" jsonschema:"The input the line was in"`
+	Line    int    `json:"line" jsonschema:"The 1-based line number in that input"`
+	Command string `json:"command" jsonschema:"The command name, without the slash"`
+}
+
+// Removed counts what replacing a text wholesale took out (§4.6).
+type Removed struct {
+	Chars int `json:"chars"`
+	Lines int `json:"lines"`
+}
+
+// IssueWrite is create_issue's and update_issue's result.
+type IssueWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created, updated, unchanged or dry_run"`
+	Write
+	IID          int64      `json:"iid"`
+	WebURL       string     `json:"web_url"`
+	State        string     `json:"state"`
+	LabelsBefore []string   `json:"labels_before" jsonschema:"The labels before an update; empty for a create"`
+	Labels       []string   `json:"labels" jsonschema:"The labels GitLab reported after the write"`
+	Assignees    []string   `json:"assignees" jsonschema:"Usernames"`
+	Milestone    *Milestone `json:"milestone"`
+	DueDate      string     `json:"due_date"`
+	Confidential bool       `json:"confidential"`
+	UpdatedAt    *time.Time `json:"updated_at" jsonschema:"Pass as updated_at to the next update_issue"`
+	// Changed names the fields that differ from before, as read back.
+	Changed []string `json:"changed" jsonschema:"The fields whose value differs after the write, as GitLab reported it"`
+	// DescriptionRemoved is set when a description was replaced.
+	DescriptionRemoved *Removed `json:"description_removed" jsonschema:"What replacing the description took out; null when it was not replaced"`
+}
+
+// MergeRequestWrite is create_merge_request's and update_merge_request's
+// result.
+type MergeRequestWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created, updated, unchanged or dry_run"`
+	Write
+	IID                int64      `json:"iid"`
+	WebURL             string     `json:"web_url"`
+	State              string     `json:"state"`
+	Draft              bool       `json:"draft"`
+	SourceBranch       string     `json:"source_branch"`
+	TargetBranch       string     `json:"target_branch"`
+	LabelsBefore       []string   `json:"labels_before" jsonschema:"The labels before an update; empty for a create"`
+	Labels             []string   `json:"labels"`
+	Assignees          []string   `json:"assignees" jsonschema:"Usernames"`
+	Reviewers          []string   `json:"reviewers" jsonschema:"Usernames"`
+	Milestone          *Milestone `json:"milestone"`
+	RemoveSourceBranch bool       `json:"remove_source_branch"`
+	Squash             bool       `json:"squash"`
+	UpdatedAt          *time.Time `json:"updated_at" jsonschema:"Pass as updated_at to the next update_merge_request. Null after a create: GitLab moves a new merge request's updated_at within seconds, so read it again first"`
+	Changed            []string   `json:"changed" jsonschema:"The fields whose value differs after the write, as GitLab reported it"`
+	DescriptionRemoved *Removed   `json:"description_removed" jsonschema:"What replacing the description took out; null when it was not replaced"`
+}
+
+// CommentWrite is add_comment's and add_review_comment's result.
+type CommentWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created or dry_run"`
+	Write
+	// Kind is comment, thread, reply or draft.
+	Kind         string        `json:"kind" jsonschema:"comment (a standalone comment), thread (a new resolvable thread), reply, or draft (an unpublished review comment)"`
+	NoteID       int64         `json:"note_id" jsonschema:"The comment's id; for a draft, the draft's id"`
+	DiscussionID string        `json:"discussion_id" jsonschema:"The thread it is in; empty for a draft that starts one"`
+	Position     *DiffPosition `json:"position" jsonschema:"Where on the diff it landed, as GitLab stored it; null for a comment not on a line"`
+	LineRange    *LineSpan     `json:"line_range" jsonschema:"The lines a multi-line comment covers; null for one line"`
+}
+
+// LineSpan is the first and last line of a multi-line diff comment on
+// one side.
+type LineSpan struct {
+	Side  string `json:"side" jsonschema:"new or old"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+}
+
+// DiscussionWrite is resolve_discussion's result.
+type DiscussionWrite struct {
+	Outcome string `json:"outcome" jsonschema:"resolved, reopened, unchanged or dry_run"`
+	Write
+	DiscussionID string `json:"discussion_id"`
+	Resolved     bool   `json:"resolved" jsonschema:"The thread's state after the call, as GitLab reported it"`
+}
+
+// DraftDelete is delete_review_comment's result.
+type DraftDelete struct {
+	Outcome string `json:"outcome" jsonschema:"deleted or dry_run"`
+	Write
+	DraftID   int64 `json:"draft_id"`
+	Remaining int   `json:"remaining" jsonschema:"Your drafts still on the merge request, read after the delete"`
+}
+
+// ReviewSubmit is submit_review's result.
+type ReviewSubmit struct {
+	Outcome string `json:"outcome" jsonschema:"published or dry_run"`
+	Write
+	Published     int    `json:"published" jsonschema:"Drafts that were published"`
+	Remaining     int    `json:"remaining" jsonschema:"Your drafts still unpublished, read after the call"`
+	Summary       bool   `json:"summary" jsonschema:"True when a summary comment was sent with the review"`
+	ReviewerState string `json:"reviewer_state" jsonschema:"The reviewer state sent, empty when none"`
+}
+
+// BranchWrite is create_branch's result.
+type BranchWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created or dry_run"`
+	Write
+	Branch    string `json:"branch"`
+	CommitSHA string `json:"commit_sha" jsonschema:"The commit the branch points at"`
+	Protected bool   `json:"protected"`
+	WebURL    string `json:"web_url"`
+}
+
+// CommitWrite is create_commit's result.
+type CommitWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created or dry_run"`
+	Write
+	SHA        string   `json:"sha"`
+	ShortID    string   `json:"short_id"`
+	Branch     string   `json:"branch"`
+	BranchHead string   `json:"branch_head" jsonschema:"The branch's head read after the commit"`
+	ParentIDs  []string `json:"parent_ids"`
+	Additions  int      `json:"additions"`
+	Deletions  int      `json:"deletions"`
+	Files      []string `json:"files" jsonschema:"The paths the commit touched"`
+	WebURL     string   `json:"web_url"`
+}
+
+// TodosDone is mark_todos_done's result.
+type TodosDone struct {
+	Outcome string `json:"outcome" jsonschema:"done, partly_done, none_done or dry_run"`
+	Write
+	Items []TodoDone `json:"items"`
+}
+
+// TodoDone is one to-do item mark_todos_done was given.
+type TodoDone struct {
+	ID      int64  `json:"id"`
+	Outcome string `json:"outcome" jsonschema:"done, not_found, or would_mark in a dry run"`
+	Error   string `json:"error" jsonschema:"Why it was not marked; empty when it was"`
 }

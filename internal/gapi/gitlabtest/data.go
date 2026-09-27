@@ -76,6 +76,9 @@ type project struct {
 	commits   map[string][]gitlab.Commit // branch → newest first
 	diffs     map[string][]gitlab.Diff   // sha → diffs
 	protected []gitlab.ProtectedBranch
+	// fileCommits is, per branch a write has moved, the last commit that
+	// touched each file; a branch absent here counts its head (§2.10).
+	fileCommits map[string]map[string]string
 
 	// Review: each merge request's diffs, and the default user's drafts.
 	mrDiffs map[int64][]gitlab.Diff
@@ -169,6 +172,7 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		trees:       map[string]map[string]string{},
 		commits:     map[string][]gitlab.Commit{},
 		diffs:       map[string][]gitlab.Diff{},
+		fileCommits: map[string]map[string]string{},
 		mrDiffs:     map[int64][]gitlab.Diff{},
 		drafts:      map[int64][]gitlab.DraftNote{},
 		jobs:        map[int64][]gitlab.Job{},

@@ -29,6 +29,9 @@ type clientCall struct {
 	// Web is a call under the instance's web root rather than /api/v4,
 	// which the REST OpenAPI file does not describe.
 	Web bool
+	// ReadOnly is the literal's reason a non-GET changes nothing, "" when
+	// it gives none.
+	ReadOnly string
 	// Func is the function the literal sits in: "Client.GetIssue" for a
 	// method on *Client, else the function's own name.
 	Func string
@@ -115,32 +118,7 @@ func clientCalls(dir string) ([]clientCall, []string, error) {
 					return true
 				}
 				c := clientCall{Func: name, Pos: pkg.fset.Position(lit.Pos()).String(), Out: outs[lit], fn: fn, file: f}
-				var methodOK, pathOK bool
-				for _, el := range lit.Elts {
-					kv, ok := el.(*ast.KeyValueExpr)
-					if !ok {
-						continue
-					}
-					key, _ := kv.Key.(*ast.Ident)
-					if key == nil {
-						continue
-					}
-					switch key.Name {
-					case "Method":
-						c.Method, methodOK = stringLit(kv.Value)
-					case "Path":
-						c.Path, pathOK = stringLit(kv.Value)
-					case "Root":
-						if id, ok := kv.Value.(*ast.Ident); ok && id.Name == "RootWeb" {
-							c.Web = true
-						}
-					case "Query":
-						c.Query = kv.Value
-					case "Body":
-						c.Body = kv.Value
-					}
-				}
-				if !methodOK || !pathOK {
+				if methodOK, pathOK := c.readFields(lit); !methodOK || !pathOK {
 					problems = append(problems, fmt.Sprintf("%s: a Call in %s whose Method or Path is not a string literal; "+
 						"the gates bind a request to an operation by reading both", c.Pos, name))
 					return true
@@ -227,4 +205,36 @@ func sortedCalls(calls []clientCall) []clientCall {
 // parseOne parses one file.
 func parseOne(fset *token.FileSet, path string) (*ast.File, error) {
 	return parser.ParseFile(fset, path, nil, 0)
+}
+
+// readFields reads a Call literal's fields into c, and reports whether
+// Method and Path were string literals.
+func (c *clientCall) readFields(lit *ast.CompositeLit) (methodOK, pathOK bool) {
+	for _, el := range lit.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, _ := kv.Key.(*ast.Ident)
+		if key == nil {
+			continue
+		}
+		switch key.Name {
+		case "Method":
+			c.Method, methodOK = stringLit(kv.Value)
+		case "Path":
+			c.Path, pathOK = stringLit(kv.Value)
+		case "Root":
+			if id, ok := kv.Value.(*ast.Ident); ok && id.Name == "RootWeb" {
+				c.Web = true
+			}
+		case "Query":
+			c.Query = kv.Value
+		case "Body":
+			c.Body = kv.Value
+		case "ReadOnly":
+			c.ReadOnly, _ = stringLit(kv.Value)
+		}
+	}
+	return methodOK, pathOK
 }

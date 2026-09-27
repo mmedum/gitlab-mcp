@@ -1,6 +1,6 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 1 done and in review, 2026-09-27; phase 2 is next.
+**Status: phase 2 done and in review, 2026-09-27; phase 3 is next.
 Nothing is tagged.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
@@ -380,12 +380,17 @@ tools. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
 
-`create_commit` refuses the project's default branch and every branch
-matching a protected-branch rule, read at call time. It can create the
-branch it commits to (`start_branch`). The merge request is the review
-boundary, as a draft is in a mail server: everything that lands in a
-protected branch existed first as a merge request a person could read.
-Merging it is Ship.
+`create_commit` refuses the project's default branch and every
+protected branch: one that exists by its own `protected` flag, one it
+would create by the protected-branch rules, read at call time, and
+refused when there are more rules than one read covers. It can create
+the branch it commits to (`start_branch`). `create_branch` refuses a
+name the rules cover in the same way, since a new protected branch at a
+ref of the caller's choosing is code in a protected branch no merge
+request showed (phase 2 security review). The merge request is the
+review boundary, as a draft is in a mail server: everything that lands
+in a protected branch existed first as a merge request a person could
+read. Merging it is Ship.
 
 ### 4.5 A create is never retried; ambiguity is settled by reading
 
@@ -439,7 +444,9 @@ to post what it read. Two layers:
 1. **`GITLAB_MCP_WRITE_NAMESPACES`**, when set, confines every Write,
    Ship and Destructive call to projects under those namespaces; any
    other target is `[blocked]` naming the setting. This is the control.
-   `doctor` says whether it is set.
+   `doctor` says whether it is set. `mark_todos_done` is outside it: it
+   changes only the account's own to-do list, which nobody else sees,
+   and a to-do item is not a place content can be written to (phase 2).
 2. Every write result names the target project's visibility, so a write
    to a public project is visible as one.
 
@@ -776,8 +783,12 @@ commit and the branch head afterwards.
 `list_jobs`, `get_job_log` (tail by default; `byte_offset` and
 `byte_limit` to page; `failed_only`; ANSI stripped; collapsible sections
 folded to one line each; masked per §4.1), `lint_ci` (the project's
-configuration at a ref, by GET; supplied content by POST, Write only,
-in phase 2 with the write path, whose gates hold every POST).
+configuration at a ref, by GET; supplied content by POST, refused in
+read-only mode, and refused with an `include:` at any depth, found by
+parsing: GitLab fetches what an include names while linting, so a URL in
+supplied content would be a way out no write control sees (§4.7, phase 2
+security review). The POST declares itself read-only on its `Call`, so
+it runs under a dry run and states no outcome.
 
 A section's markers fold to one line naming the section where it
 starts, and nothing inside is hidden: folding the content would be an
@@ -1212,7 +1223,8 @@ gated. It covers gitlab.com, the only instance.
 ## 15. What must be verified live
 
 Each spike states its question and, when run, its verdict separately.
-A, B, C, D, F, H, J and L have run on gitlab.com (2026-09-26); the rest
+A, B, C, D, E, F, H, J, K, L and M have run on gitlab.com (2026-09-26
+and 2026-09-27); the rest
 have not. Spike I, the floor version, was dropped with self-managed support
 (§14, 2026-09-26).
 
@@ -1251,6 +1263,15 @@ have not. Spike I, the floor version, was dropped with self-managed support
   does not and renders as the same text; fenced, indented, quoted and
   inline commands do not; a command after a list item; CRLF. §4.2
   depends on every row.
+  *Verdict, gitlab.com, 2026-09-27: confirmed, and the guard agrees
+  with GitLab on all 48 rows (12 shapes, each as an issue note, a merge
+  request note, a new issue's description and a merge request
+  description update). A bare line, a line inside a paragraph, a line
+  after a list item and a blank line, and CRLF endings ran; fenced,
+  indented, `>` and `>>>` quoted, inline code, an HTML block, a line
+  straight after a list item and lone CR endings did not. Every
+  escaped line stayed inert and renders as the same text without the
+  backslash. A note that is only a command answered 202.*
 - **Spike F — error shapes.** The unknown-route 404 against a resource
   404; a licensed feature on Free (epics, approval rules) as 403 or
   404; a Rack::Attack 429 on gitlab.com. §6.5's mapping.
@@ -1281,6 +1302,12 @@ have not. Spike I, the floor version, was dropped with self-managed support
 - **Spike K — inline positions.** Comments computed by `diffpos` on
   added, removed and unchanged lines and a range, read back from the
   web view.
+  *Verdict, gitlab.com, 2026-09-27: confirmed through the API rather
+  than the web view. For an added line, a removed line, an unchanged
+  line addressed by either number, and a range on each side, GitLab
+  accepted the position `diffpos` computed and answered with the same
+  `line_code`, and for a range the same start and end codes. The web
+  view draws from those codes.*
 - **Spike L — moved projects and encoded paths.** A renamed project's
   GET redirect and its non-GET 405; a full path containing a dot and a
   nested group, percent-encoded once.
@@ -1292,6 +1319,11 @@ have not. Spike I, the floor version, was dropped with self-managed support
   is still open.*
 - **Spike M — settle by reading.** For each create of §4.5, whether the
   read finds what the create made within a second, or needs a delay.
+  *Verdict, gitlab.com, 2026-09-27: no delay is needed. An issue and a
+  merge request by author, `created_after` and title, a comment among
+  the threads, a draft among the account's drafts and a commit as the
+  branch head were each found by the first read, 265 to 387 ms after
+  the create answered. Pipelines and releases are phase 3's.*
 
 Spikes A–D register or use an OAuth application and are in the "ask
 before doing" of `CLAUDE.md`.
@@ -1357,6 +1389,18 @@ protected-branch guard, `mark_todos_done`, `lint_ci` on supplied
 content; settle-by-reading; the write allow-list. Spikes E, K, M. Spike E runs before any write tool is
 registered.
 
+*Built 2026-09-27, simplified and reviewed (§16a). Spike E ran first
+and the guard agreed with GitLab on all 48 rows before any write tool
+was registered; K and M followed, and a live check showed a branch's
+`protected` flag honors wildcard rules. Four live runs on gitlab.com
+drove every tool and option but the two page tokens already waived, and
+their transcripts were read: they found a new merge request's
+`updated_at` moving a second after the create, a commit's move emptying
+the file it moved, and an assignee change leaving `updated_at` in place
+(§18 rows 56–58); each is fixed or accounted for. Owed: nothing; §17.12
+asks whether pipelines a write starts stay Write, and §17a holds three
+new deferrals.*
+
 **Phase 3 — Ship, Destructive and toolsets.** The Ship tools
 with `sha` witnesses; `delete_branch`, `delete_comment`; the `wiki`,
 `snippets`, `releases`, `deployments` and `activity` toolsets. Spike G.
@@ -1389,6 +1433,15 @@ fixed in `637c982`, one recorded:
 | A cut commit message looked complete | `637c982`; `message_offset` and `message_budget` |
 | Discussions walked up to ten pages per read | Not fixed: `X-Total` counts system-only threads, so the proposed fix miscounts; §17a |
 
+GitHub's CodeQL on the phase 0 pull request: six alerts. Two were real
+on a 32-bit build, which no release targets: a `#L` line anchor parsed
+as 64 bits and narrowed to `int` without a bound (`instance/resolve.go`),
+fixed in phase 2 with a bound and a test. Four are in `gitlabtest`, which
+only tests link: three redirects that model GitLab's own (the OAuth
+callback to a registered loopback URI, checked before redirecting, and a
+moved project to the instance's own URL), and SHA-1 over fixture names
+to make fake commit ids. They are not defects.
+
 **Phase 1.** `/security-review`: no finding at confidence 8 or above
 (`audit/security-reviews/phase-1.md`), two below it recorded there.
 `/simplify`: the advanced-search refusal classified in the client, the
@@ -1409,6 +1462,31 @@ proposals skipped because a gate reads the shape they would remove.
 | A job log past 32 MiB cannot be read, and each window re-reads it | Not fixed: §17a |
 | `get_mr_diff` re-reads earlier pages on each continuation | Not fixed: §17a |
 | The driver's confinement accepts a group read without the run's word | Not a defect: every step's `group` argument is held to the run's namespace and word |
+
+**Phase 2.** `/simplify`: one project read per write; label checks by
+search and removals from the fresh read; previews from the request
+bodies; one settle helper for issues and merge requests, one position
+converter, one comment check; the 202 refusal in the client for every
+notes call; a new comment's thread found on the last page; one thread
+read for `resolve_discussion`; the commit guard trusting an existing
+branch's `protected` flag; independent reads in parallel; the lint POST
+declared read-only on its `Call`. `/security-review`: two findings at
+confidence 8, both fixed (`audit/security-reviews/phase-2.md`).
+`/code-review high`: ten findings; nine fixed, the behavior ones with a
+test that failed before the fix:
+
+| Found | Fixed |
+|---|---|
+| A new title alone cleared a merge request's draft state | Phase 2 commit; the state is kept unless `draft` says otherwise |
+| The draft prefix matched more than GitLab's and rewrote titles | Phase 2 commit; GitLab's pattern, add and strip |
+| The protected-rule read passed a branch past the rules it read | Phase 2 commit; refused when the read is incomplete |
+| A lost comment was looked for among the oldest threads | Phase 2 commit; the newest page, a reply in its thread |
+| A lost draft could be settled by an older one with the same text | Phase 2 commit; drafts present before the call are excluded |
+| The signed-in account was cached for settling across a new login | Phase 2 commit; read afresh |
+| `due_date` with `clear_due_date` cleared silently | Phase 2 commit; refused, as the milestone pair is |
+| To-do items and label checks ran one at a time | Phase 2 commit; in parallel, paced by the client |
+| A doc comment slipped from its function | Phase 2 commit |
+| Every standalone comment reads threads to name its thread | Not changed: at most two reads, the first page and the last, shared with the settling read; the thread id is what a reply needs |
 
 ### Closing a phase
 
@@ -1473,6 +1551,16 @@ proposals skipped because a gate reads the shape they would remove.
     v5. A post-1.0 `planning` toolset would be the first GraphQL use
     and would need its own coverage source. **Deferred to after 1.0.**
 
+12. **Pipelines a Write starts.** A commit, a new branch or a new merge
+    request on an unprotected branch starts the pipelines a push
+    starts, with the account's own permissions and the project's
+    unprotected variables only; Write never reaches a protected branch
+    (§4.4). Proposed: keep them Write, as the account's own push would
+    run them, and say so (`docs/security.md`). The alternative is to
+    append `[skip ci]` without Ship, which would stop the checks a
+    merge request is reviewed by. Raised by the phase 2 security review.
+    **Open.**
+
 ### 17a. Deferred cleanups
 
 - Two reads name an omission without a way to continue it, short of
@@ -1497,6 +1585,19 @@ proposals skipped because a gate reads the shape they would remove.
   them newest first. `X-Total` cannot replace the walk: it counts
   system-only threads, and the unresolved count and last activity need
   every note. Found in phase 0.
+
+- `add_comment` on an issue posts a standalone comment, and
+  `resolve_discussion` resolves merge request threads only: starting a
+  resolvable thread on an issue and resolving one
+  (`POST`/`PUT …/issues/:iid/discussions`) are deferred in §8a. Found
+  in phase 2.
+- The settling read of `add_comment` walks the same ten pages of
+  threads as `list_discussions`, so a lost comment not among them
+  settles as unknown rather than not created. Found in phase 2.
+- A draft's `line_code` and `merge_request_id` are not decoded:
+  `add_review_comment` reports the position GitLab stored, which is what
+  a caller acts on. Spike K compared the codes directly. Found in
+  phase 2.
 
 Candidates for after 1.0, from §8a: issue move and links,
 label and milestone writes, rebase, cherry-pick, revert, blame, artifact
@@ -1587,3 +1688,11 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 49 | A general draft note has no position | Phase 1 live run | **Refuted (tier 1, live).** It carries a position object with no paths, and GitLab returns drafts in no stable order. An empty position reads as none; drafts are sorted by id, which the page token counts in |
 | 50 | Code search across a group is refused as `Scope not supported without Elasticsearch!` | Phase 1 live run | **Refined (tier 1, live).** gitlab.com answers 400 `Scope supported only with advanced search or exact code search`. Both wordings map to `[unsupported]` |
 | 51 | A member's `access_level` is a string, as the OpenAPI file types it | Phase 1 live run | **Refuted (tier 1, live).** An integer, 50 for an owner. `testdata/api-fields.tsv` records it |
+| 52 | A diff note's `line_code` is `sha1(path)_old_new`, with 0 for the side a line lacks | `lib/gitlab/git.rb` `diff_line_code`, `lib/gitlab/diff/parser.rb`, `lib/gitlab/diff/line.rb` `legacy_id`, `lib/gitlab/word_diff/segments/diff_hunk.rb` at `829b21d2` | **Refined (tier 1).** Both counters are always set: a removed line carries the new side's running counter and an added line the old side's. A hunk's start is taken as written, count ignored, so after `@@ -5,0 +6,2 @@` an added line's old counter is 5. The path is `new_path`, else `old_path`. `internal/diffpos` follows it; spike K checks it live |
+| 53 | GitLab runs quick actions from an issue's or merge request's title as well as its description | `app/services/issuable_base_service.rb` `merge_quick_actions_into_params!` at `829b21d2` | **Refuted (tier 1).** Only the description is interpreted; a title is stored as it is. `scripts/gates bodies` lists titles as plain |
+| 54 | The OpenAPI file describes `POST /projects/:id/repository/commits` | The snapshot; `lib/api/commits.rb` at `829b21d2` | **Refuted (tier 1).** The file publishes one `file` field. The route takes `branch`, `commit_message`, `actions` (each `action`, `file_path`, `previous_path`, `content`, `encoding`, `last_commit_id`) and `start_branch`, and requires `content` on an update even when empty. `testdata/api-fields.tsv` records it |
+| 55 | GitLab's merge request API takes a `draft` field | The snapshot's PUT and POST bodies at v19.4.1-ee | **Refuted (tier 1).** Neither publishes one; the draft state is the title's `Draft:` prefix, which `update_merge_request` sets and strips |
+| 56 | The `updated_at` a create answers with is the witness for the next update | Phase 2 live run | **Refuted for merge requests (tier 1, live).** gitlab.com moved a new merge request's `updated_at` about 1.2 s after answering the create, so an update carrying the create's value was `[stale]`. An issue's held. `create_merge_request` no longer offers its value and says to read the merge request first |
+| 57 | Every change to an issue moves its `updated_at` | Phase 2 live run | **Refuted (tier 1, live).** Adding an assignee changed the issue and left `updated_at` where it was. A concurrent assignee change is not caught by the witness; `update_issue` computes the assignee set from its own fresh read, so it does not lose one |
+| 58 | A commit's move action without content keeps the file | `app/services/files/multi_service.rb` `transform_move_actions` at `829b21d2`; phase 2 live run | **Refined (tier 1).** Only a missing `content` keeps it: `content: ""` empties the moved file, which the first phase 2 run did. `create_commit` now sends content on a move only when given, and the third run's moved file kept its text |
+| 59 | A branch's own `protected` flag reflects wildcard rules | Phase 2 live run | **Confirmed (tier 1, live).** A branch made under a `guard-*/*`-style rule read as protected, and `create_commit` refused it by that flag; a new branch under the rule was refused by the rules. `create_commit` trusts the flag for a branch that exists and reads the rules only for one it would create. |

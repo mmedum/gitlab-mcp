@@ -28,8 +28,8 @@ Unofficial, and not affiliated with GitLab Inc. See `NOTICE`.
 ## Status
 
 Under construction: the release badge above names the newest tag, and
-`CHANGELOG.md` says what each one holds. Until the first tag, only the
-read tools below are being built; nothing writes yet.
+`CHANGELOG.md` says what each one holds. The read and write tools below
+are built; merging, approving, running CI and deleting come next.
 `docs/architecture.md` §16 is the plan.
 
 ## Tools
@@ -44,13 +44,22 @@ read tools below are being built; nothing writes yet.
 | `find_users` | Accounts by exact username or by name |
 | `search_issues` | Find issues across gitlab.com, a group or a project |
 | `get_issue` | One issue, its description marked as untrusted content |
+| `create_issue` | Create an issue; labels, assignees and milestone checked first |
+| `update_issue` | Change an issue's fields, refused if it changed since you read it |
 | `list_discussions` | The comment threads on an issue or a merge request |
+| `add_comment` | Comment on an issue or merge request, reply in a thread, or start one on a diff line |
+| `resolve_discussion` | Resolve or reopen a merge request thread |
 | `search_merge_requests` | Find merge requests across gitlab.com or a project |
 | `get_merge_request` | One merge request with its approvals |
 | `list_mr_files` | The files a merge request changes, with line counts and GitLab's markers |
 | `get_mr_diff` | A merge request's diffs, file by file, bounded |
 | `list_mr_commits` | A merge request's commits |
+| `create_merge_request` | Open a merge request from a branch |
+| `update_merge_request` | Change a merge request's fields, refused if it changed since you read it |
+| `add_review_comment` | A draft review comment, on the merge request or a diff line |
 | `list_review_comments` | Your unpublished review comments on a merge request |
+| `delete_review_comment` | Delete one of your drafts |
+| `submit_review` | Publish all your drafts at once, with a summary and reviewer state |
 | `get_file` | A file at a ref, bounded |
 | `list_tree` | A directory listing at a ref |
 | `list_branches` | A project's branches |
@@ -58,15 +67,18 @@ read tools below are being built; nothing writes yet.
 | `get_commit` | One commit and its diff, bounded |
 | `compare_refs` | The commits and diffs between two refs, bounded |
 | `list_tags` | A project's tags |
+| `create_branch` | Create a branch from a ref |
+| `create_commit` | Commit file changes to a branch; never the default or a protected one |
 | `list_pipelines` | A project's CI pipelines |
 | `get_pipeline` | One pipeline with the jobs that failed |
 | `list_jobs` | A pipeline's jobs |
 | `get_job_log` | A window of a job's log, secrets masked; the failing section on request |
-| `lint_ci` | Check a project's CI configuration at a ref |
+| `lint_ci` | Check a project's CI configuration at a ref, or configuration you pass |
 | `list_labels` | The labels a project's issues and merge requests can carry |
 | `list_milestones` | A project's or a group's milestones |
 | `search` | Code, commits, comments and more, in a project, a group or everywhere |
 | `list_todos` | Your to-do items |
+| `mark_todos_done` | Mark your to-do items done |
 
 Three resources carry the same text for clients that attach rather
 than call: an issue, a merge request and a job log.

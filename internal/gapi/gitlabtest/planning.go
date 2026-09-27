@@ -260,14 +260,18 @@ func (s *Server) listTodos(w http.ResponseWriter, r *http.Request, user string) 
 		case q.Get("type") != "" && t.TargetType != q.Get("type"):
 			continue
 		}
-		row := withExtra(t.Todo, nil)
-		if t.TargetType == "Commit" {
-			// GitLab gives a commit target its SHA as its id.
-			row["target"] = map[string]any{"id": fakeSHA("todo-commit"), "title": t.Target.Title}
-		}
-		rows = append(rows, row)
+		rows = append(rows, todoJSON(t))
 	}
 	writePage(s, w, r, rows)
+}
+
+func todoJSON(t todo) map[string]any {
+	row := withExtra(t.Todo, nil)
+	if t.TargetType == "Commit" {
+		// GitLab gives a commit target its SHA as its id.
+		row["target"] = map[string]any{"id": fakeSHA("todo-commit"), "title": t.Target.Title}
+	}
+	return row
 }
 
 // search answers a search over projects. where is instance, group or

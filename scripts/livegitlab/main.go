@@ -51,6 +51,7 @@ type options struct {
 	profile   string
 	keep      bool
 	record    string
+	spike     string
 }
 
 func main() {
@@ -60,11 +61,16 @@ func main() {
 	flag.StringVar(&o.profile, "profile", "", "the signed-in profile to use; empty takes the default")
 	flag.BoolVar(&o.keep, "keep", false, "leave the scratch projects in place for a look afterwards")
 	flag.StringVar(&o.record, "record", "testdata/live-cover-record.tsv", "where to write what the run sent")
+	flag.StringVar(&o.spike, "spike", "", "run only this spike after seeding (E), and drive no tool")
 	flag.Parse()
 
 	p := redact.NewPrinter(redact.NewRedactor(false))
 	if o.namespace == "" {
 		p.Fail("livegitlab: -namespace is required; the run creates its projects in -namespace and reads nothing else")
+		os.Exit(2)
+	}
+	if o.spike != "" && o.spike != "E" {
+		p.Fail("livegitlab: -spike takes E; the other spikes run with every run")
 		os.Exit(2)
 	}
 	err := run(context.Background(), o, p)
@@ -143,10 +149,14 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	if err != nil {
 		return fmt.Errorf("seed the scratch projects: %w", err)
 	}
+	if o.spike != "" {
+		spikes(ctx, settings, s, o.spike, p)
+		return nil
+	}
 	if err := waitForCI(ctx, client, &s, p); err != nil {
 		return err
 	}
-	spikes(ctx, settings, s, p)
+	spikes(ctx, settings, s, "", p)
 
 	serverEnv := []string{config.EnvLogLevel + "=info"}
 	if o.profile != "" {
@@ -191,11 +201,20 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 // scratch project before it goes out.
 func drive(sess *mcpstdio.Session, steps []step, s scratch, p *redact.Printer) (int, error) {
 	unexpected := 0
+	saved := map[string]any{}
 	for _, st := range steps {
 		if err := confined(st, s); err != nil {
 			return unexpected, fmt.Errorf("the plan reads outside the scratch project, which §9.1 forbids: %w", err)
 		}
-		args := st.args
+		if st.pause > 0 {
+			time.Sleep(st.pause)
+		}
+		args, missing := fill(st.args, saved)
+		if missing != "" {
+			unexpected++
+			p.Sayf("\n=== %s ===\n!! not sent: %s was never saved by an earlier step", st.tool, missing)
+			continue
+		}
 		for {
 			p.Sayf("\n=== %s %s ===", st.tool, mcpstdio.Encode(args))
 			if st.why != "" && !st.anyOutcome {
@@ -208,7 +227,12 @@ func drive(sess *mcpstdio.Session, steps []step, s scratch, p *redact.Printer) (
 			if err != nil {
 				return unexpected, err
 			}
+			// Ids the call made are masked before anything is printed.
+			learnIDs(p.Redactor(), res.Structured)
 			p.Say(res.Text)
+			if !res.IsError {
+				save(st.save, res.Structured, saved)
+			}
 			if !st.anyOutcome && res.IsError != st.expectError {
 				unexpected++
 				p.Say(map[bool]string{true: "!! expected a refusal and got a result", false: "!! unexpected tool error"}[st.expectError])

@@ -45,8 +45,8 @@ var outcomeExemptions = map[string]string{}
 type outcomesFloors struct{ files, boolFields, writes int }
 
 // realOutcomesFloors: the service's files, the boolean request fields it
-// branches on, and the writes. Phase 2 raises writes with the first one.
-var realOutcomesFloors = outcomesFloors{files: 7, boolFields: 12, writes: 0}
+// branches on, and the writes.
+var realOutcomesFloors = outcomesFloors{files: 11, boolFields: 12, writes: 12}
 
 func outcomes(out io.Writer, _ []string) error {
 	service, err := parsePackageDir(serviceDir)
@@ -101,7 +101,8 @@ func writesStateOutcomes(service, model parsedPackage, calls []clientCall) (int,
 	var problems []string
 	writeMethods := map[string]bool{}
 	for _, c := range calls {
-		if c.Method != "GET" && c.Method != "HEAD" {
+		// A call that says why it changes nothing states no outcome.
+		if c.Method != "GET" && c.Method != "HEAD" && c.ReadOnly == "" {
 			writeMethods[strings.TrimPrefix(c.Func, "Client.")] = true
 		}
 	}

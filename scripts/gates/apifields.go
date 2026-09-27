@@ -528,6 +528,15 @@ func localStruct(pkg parsedPackage, typ ast.Expr) *ast.StructType {
 
 // declaredType finds `var name T` or `name := T{}` in a function.
 func declaredType(fn *ast.FuncDecl, name string) ast.Expr {
+	// A parameter declares its type in the signature: a request struct
+	// the caller fills and the method sends as it is.
+	for _, p := range fn.Type.Params.List {
+		for _, id := range p.Names {
+			if id.Name == name {
+				return p.Type
+			}
+		}
+	}
 	var found ast.Expr
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if found != nil {

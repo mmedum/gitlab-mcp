@@ -172,12 +172,7 @@ func (s *Service) ListReviewComments(ctx context.Context, raw string, iid int64,
 		if d.DiscussionID != nil {
 			dn.DiscussionID = *d.DiscussionID
 		}
-		// A general draft carries a position with no paths rather than
-		// none (live, 2026-09-26).
-		if pos := d.Position; pos != nil && (pos.NewPath != "" || pos.OldPath != "") {
-			dn.Position = &model.DiffPosition{OldPath: pos.OldPath, NewPath: pos.NewPath, OldLine: pos.OldLine,
-				NewLine: pos.NewLine, HeadSHA: pos.HeadSHA}
-		}
+		dn.Position = diffPosition(d.Position)
 		out.Drafts = append(out.Drafts, dn)
 	}
 	total := len(drafts)

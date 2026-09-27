@@ -312,10 +312,8 @@ func (s *Service) filterThreads(all []gitlab.Discussion, q DiscussionQuery) []mo
 			if at := lastTime(n); at.After(t.LastActivity) {
 				t.LastActivity = at
 			}
-			if t.Position == nil && n.Position != nil {
-				pos := n.Position
-				t.Position = &model.DiffPosition{OldPath: pos.OldPath, NewPath: pos.NewPath, OldLine: pos.OldLine,
-					NewLine: pos.NewLine, HeadSHA: pos.HeadSHA}
+			if t.Position == nil {
+				t.Position = diffPosition(n.Position)
 			}
 			nm, _ := s.note(n, 0, render.NoteBudget) // offset 0 is never past the end
 			t.Notes = append(t.Notes, nm)
@@ -367,6 +365,16 @@ func (s *Service) oneNote(out model.Discussions, all []gitlab.Discussion, q Disc
 }
 
 // ------------------------------------------------------------ helpers
+
+// diffPosition is where a note sits on a diff, nil when it sits on none.
+// A general draft carries a position with no paths rather than none
+// (live, 2026-09-26), which is none here too.
+func diffPosition(pos *gitlab.Position) *model.DiffPosition {
+	if pos == nil || (pos.NewPath == "" && pos.OldPath == "") {
+		return nil
+	}
+	return &model.DiffPosition{OldPath: pos.OldPath, NewPath: pos.NewPath, OldLine: pos.OldLine, NewLine: pos.NewLine, HeadSHA: pos.HeadSHA}
+}
 
 func user(u gitlab.UserBasic) model.User { return model.User{Username: u.Username, Name: u.Name} }
 

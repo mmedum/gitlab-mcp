@@ -3,16 +3,21 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"math"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 
+	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 	"github.com/mmedum/gitlab-mcp/internal/model"
 	"github.com/mmedum/gitlab-mcp/internal/redact"
 	"github.com/mmedum/gitlab-mcp/internal/render"
+	"gopkg.in/yaml.v3"
 )
 
 // ListPipelines lists a project's pipelines (§7.6).
@@ -360,6 +365,8 @@ type LintQuery struct {
 	Simulate    bool
 	IncludeJobs bool
 	Offset      int
+	// Content is configuration to lint instead of the committed one.
+	Content string
 }
 
 // LintCI checks a project's CI configuration at a ref (§7.6). The merged
@@ -369,11 +376,17 @@ func (s *Service) LintCI(ctx context.Context, q LintQuery) (model.Lint, error) {
 	if err != nil {
 		return model.Lint{}, err
 	}
-	l, err := s.client.LintCI(ctx, p, gapi.LintQuery{Ref: q.Ref, Simulate: q.Simulate, IncludeJobs: q.IncludeJobs})
+	lq := gapi.LintQuery{Ref: q.Ref, Simulate: q.Simulate, IncludeJobs: q.IncludeJobs}
+	var l *gitlab.Lint
+	if q.Content == "" {
+		l, err = s.client.LintCI(ctx, p, lq)
+	} else {
+		l, err = s.lintContent(ctx, p, q.Content, lq)
+	}
 	if err != nil {
 		return model.Lint{}, err
 	}
-	out := model.Lint{Project: ref, Ref: q.Ref, Simulate: q.Simulate, Valid: l.Valid, UntrustedErrors: lines(l.Errors),
+	out := model.Lint{Project: ref, Ref: q.Ref, Simulate: q.Simulate, Supplied: q.Content != "", Valid: l.Valid, UntrustedErrors: lines(l.Errors),
 		UntrustedWarnings: lines(l.Warnings), Jobs: []model.LintJob{}}
 	for _, j := range l.Jobs {
 		out.Jobs = append(out.Jobs, model.LintJob{Name: j.Name, Stage: j.Stage, When: j.When, AllowFailure: j.AllowFailure})
@@ -384,6 +397,65 @@ func (s *Service) LintCI(ctx context.Context, q LintQuery) (model.Lint, error) {
 		return model.Lint{}, err
 	}
 	return out, nil
+}
+
+// lintContent lints configuration the caller supplied. GitLab takes it
+// only by POST, which a read_api token cannot send (§2.6), so read-only
+// mode refuses it before asking.
+func (s *Service) lintContent(ctx context.Context, p gapi.Project, content string, q gapi.LintQuery) (*gitlab.Lint, error) {
+	if s.cfg.ReadOnly {
+		return nil, gapi.Errf(gapi.ClassBlocked, "supplied content is linted by a POST, which read-only mode (%s) does not send; "+
+			"without content, lint_ci checks the configuration committed at ref", config.EnvReadOnly)
+	}
+	if err := refuseIncludes(content); err != nil {
+		return nil, err
+	}
+	return s.client.LintCIContent(ctx, p, content, q)
+}
+
+// refuseIncludes refuses supplied content with an include at any depth,
+// a job's trigger:include among them. GitLab fetches a remote include
+// from its own servers while linting, so a URL in supplied content is a
+// channel out that no write control sees (§4.7). The content is parsed
+// rather than searched, so an escaped, quoted or anchored key is found;
+// content that does not parse is refused too, since GitLab's parser may
+// read what this one cannot.
+func refuseIncludes(content string) error {
+	refusal := func(why string) error {
+		return gapi.Errf(gapi.ClassBlocked, "%s; nothing was sent. GitLab fetches what an include names while linting, so supplied "+
+			"content may not have one. Commit the configuration to a branch and lint it there with ref", why)
+	}
+	dec := yaml.NewDecoder(strings.NewReader(content))
+	for {
+		var doc yaml.Node
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return refusal("the content could not be read as YAML, so an include in it could not be ruled out")
+		}
+		if hasKey(&doc, "include") {
+			return refusal("the content has an include")
+		}
+	}
+}
+
+// hasKey reports whether a mapping anywhere under n has the key.
+func hasKey(n *yaml.Node, key string) bool {
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == key {
+				return true
+			}
+		}
+	}
+	for _, c := range n.Content {
+		if hasKey(c, key) {
+			return true
+		}
+	}
+	return n.Alias != nil && hasKey(n.Alias, key)
 }
 
 // lines prepares messages someone else's text is quoted in, one line

@@ -388,7 +388,7 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	if isWrite(call.Method) && IsDryRun(ctx) {
+	if isWrite(call) && IsDryRun(ctx) {
 		return nil, Wrap(ClassBlocked, ErrDryRunWrite,
 			"this was a dry run and %s would have written to GitLab, so it was refused before it was sent", p.name)
 	}
@@ -405,7 +405,7 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 	}
 	// A POST fails closed: it repeats after a failure that may have
 	// followed the write only when its call site says why that is safe.
-	p.repeatable = call.Method != http.MethodPost || call.Repeatable != ""
+	p.repeatable = call.Method != http.MethodPost || call.Repeatable != "" || call.ReadOnly != ""
 	return p, nil
 }
 
@@ -465,6 +465,14 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 				attempt-- // a refused token is not a failure of the call
 				continue
 			}
+		}
+		if v.err == nil && p.call.Bucket == BucketNotes && res.status == http.StatusAccepted {
+			// GitLab ran the body as quick actions and saved nothing. The
+			// guard exists so that never happens, so reaching it is a
+			// defect (§4.2), whichever route carried the note.
+			c.log.Error("gitlab ran quick actions from a comment and saved nothing; the quick-action guard missed them", "call", p.name)
+			return nil, &Error{Class: ClassUnexpected, Status: res.status, Message: "GitLab ran the comment as quick actions and saved no " +
+				"comment, which the quick-action guard exists to prevent. This is a defect in this server; please report it"}
 		}
 		if v.err == nil {
 			if err := c.decode(ctx, res, p.name, out); err != nil {

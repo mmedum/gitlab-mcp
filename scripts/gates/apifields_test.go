@@ -1,6 +1,9 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -333,5 +336,25 @@ func TestANegatedBranchIsDecidedByTheLiteral(t *testing.T) {
 	_, problems := checkFields(fixtureFieldSnapshot(), fixtureFieldRows(), calls, c, w, fixtureFieldFloors)
 	if joined := strings.Join(problems, "\n"); strings.Contains(joined, "reviewer_username") {
 		t.Errorf("the negated branch was walked:\n%s", joined)
+	}
+}
+
+// A body the method is handed is read from the parameter's type, as a
+// body built inside it is read from its declaration.
+func TestADeclaredTypeIsFoundInTheSignature(t *testing.T) {
+	src := `package p
+func (c *Client) Create(in IssueCreate, n int) { var local Other; _ = local }`
+	f, err := parser.ParseFile(token.NewFileSet(), "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := f.Decls[0].(*ast.FuncDecl)
+	for name, want := range map[string]string{"in": "IssueCreate", "local": "Other"} {
+		if got, ok := declaredType(fn, name).(*ast.Ident); !ok || got.Name != want {
+			t.Errorf("%s: got %v, want %s", name, declaredType(fn, name), want)
+		}
+	}
+	if declaredType(fn, "missing") != nil {
+		t.Error("an undeclared name was given a type")
 	}
 }

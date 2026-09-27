@@ -169,9 +169,8 @@ than the gate loosened.
   MCP tools; `internal/server/` SDK wiring and the schema dump;
   `internal/redact/` log and output masking; `internal/version/` the
   build's version.
-- Phase 2 adds the `diffpos` package under `internal/`: a diff note's
-  position computed from a unified diff, no network. It joins this list
-  when it exists.
+- `internal/diffpos/` a diff note's position computed from a unified
+  diff, no network.
 - `scripts/gates/` the repository's own checks, as Go;
   `scripts/internal/` what the gates and drivers share;
   `scripts/livegitlab/` the live driver; `scripts/evals/` the

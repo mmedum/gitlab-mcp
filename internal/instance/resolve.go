@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -215,6 +216,19 @@ func at(r []string, k int) string {
 	return ""
 }
 
+// lineNumber is positive bounded to what an int holds on every
+// platform, so a 32-bit build cannot wrap a huge anchor.
+func lineNumber(s string) (int, error) {
+	n, err := positive(s)
+	if err != nil {
+		return 0, err
+	}
+	if n > math.MaxInt32 {
+		return 0, invalidf("expected a line number, got %q", s)
+	}
+	return int(n), nil
+}
+
 // positive parses a positive decimal id; signs and zero are refused.
 func positive(s string) (int64, error) {
 	if s == "" || len(s) > 18 {
@@ -317,15 +331,15 @@ func applyFragment(ref *Ref, frag string) error {
 			return nil
 		}
 		start, end, ranged := strings.Cut(lines, "-")
-		n, err := positive(start)
+		n, err := lineNumber(start)
 		if err != nil {
 			return invalidf("the line anchor is not a line number: %v", err)
 		}
-		ref.Line = int(n)
+		ref.Line = n
 		if !ranged {
 			return nil
 		}
-		m, err := positive(strings.TrimPrefix(end, "L"))
+		m, err := lineNumber(strings.TrimPrefix(end, "L"))
 		if err != nil {
 			return invalidf("the line anchor is not a line range: %v", err)
 		}
@@ -333,7 +347,7 @@ func applyFragment(ref *Ref, frag string) error {
 			return invalidf("the line range ends before it starts")
 		}
 		if m > n {
-			ref.EndLine = int(m)
+			ref.EndLine = m
 		}
 	case KindIssue, KindMergeRequest:
 		id, ok := strings.CutPrefix(frag, "note_")

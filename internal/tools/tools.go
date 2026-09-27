@@ -17,11 +17,12 @@ func definitions() []definition {
 	return []definition{
 		getMe(), resolveURL(),
 		searchProjects(), getProject(), listMembers(), findUsers(),
-		searchIssues(), getIssue(), listDiscussions(),
-		searchMergeRequests(), getMergeRequest(), listMRFiles(), getMRDiff(), listMRCommits(), listReviewComments(),
-		getFile(), listTree(), listBranches(), listCommits(), getCommit(), compareRefs(), listTags(),
+		searchIssues(), getIssue(), createIssue(), updateIssue(), listDiscussions(), addComment(), resolveDiscussion(),
+		searchMergeRequests(), getMergeRequest(), listMRFiles(), getMRDiff(), listMRCommits(),
+		createMergeRequest(), updateMergeRequest(), addReviewComment(), listReviewComments(), deleteReviewComment(), submitReview(),
+		getFile(), listTree(), listBranches(), listCommits(), getCommit(), compareRefs(), listTags(), createBranch(), createCommit(),
 		listPipelines(), getPipeline(), listJobs(), getJobLog(), lintCI(),
-		listLabels(), listMilestones(), search(), listTodos(),
+		listLabels(), listMilestones(), search(), listTodos(), markTodosDone(),
 	}
 }
 

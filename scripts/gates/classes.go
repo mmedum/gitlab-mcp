@@ -33,9 +33,7 @@ const (
 // plannedClasses are declared and documented but not yet emitted, each
 // with the reason. A planned class the code has started emitting fails
 // until it leaves this list, so the list cannot outlive its reasons.
-var plannedClasses = map[string]string{
-	"ambiguous": "a milestone title or path matching more than one (§6.3) is resolved by the write path of phase 2",
-}
+var plannedClasses = map[string]string{}
 
 // classesFloors are the least the gate must have read.
 type classesFloors struct{ files, classes int }

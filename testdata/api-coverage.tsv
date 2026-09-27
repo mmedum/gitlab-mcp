@@ -68,24 +68,24 @@ GET /users	used	1	Client.ListUsers: find_users
 GET /todos	used	1	Client.ListTodos: list_todos
 
 # Phase 2: the write path (§16)
-POST /projects/{id}/ci/lint	deferred	1	phase 2 (§16): lint_ci on a configuration the caller passes; a POST that writes nothing, registered only when writes are on, and built with the write path so its gates hold it
-POST /projects/{id}/issues	deferred	1	phase 2 (§16): create_issue
-PUT /projects/{id}/issues/{issue_iid}	deferred	1	phase 2 (§16): update_issue, with the updated_at witness (§4.6)
-POST /projects/{id}/issues/{noteable_id}/notes	deferred	1	phase 2 (§16): add_comment on an issue
-POST /projects/{id}/issues/{noteable_id}/discussions	deferred	1	phase 2 (§16): add_comment starting an issue thread
-POST /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	phase 2 (§16): add_comment replying in an issue thread
-POST /projects/{id}/merge_requests/{noteable_id}/notes	deferred	1	phase 2 (§16): add_comment on a merge request
-POST /projects/{id}/merge_requests/{noteable_id}/discussions	deferred	1	phase 2 (§16): add_comment starting a merge request thread, inline positions included
-POST /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	phase 2 (§16): add_comment replying in a merge request thread
-PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	deferred	1	phase 2 (§16): resolve_discussion
-POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	deferred	1	phase 2 (§16): add_review_comment
-DELETE /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	deferred	1	phase 2 (§16): delete_review_comment, own drafts only
-POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/bulk_publish	deferred	1	phase 2 (§16): submit_review
-POST /projects/{id}/merge_requests	deferred	1	phase 2 (§16): create_merge_request
-PUT /projects/{id}/merge_requests/{merge_request_iid}	deferred	1	phase 2 (§16): update_merge_request, with the updated_at witness (§4.6)
-POST /projects/{id}/repository/branches	deferred	1	phase 2 (§16): create_branch
-POST /projects/{id}/repository/commits	deferred	1	phase 2 (§16): create_commit, refused on protected branches (§4.4)
-POST /todos/{id}/mark_as_done	deferred	1	phase 2 (§16): mark_todos_done
+POST /projects/{id}/ci/lint	used	1	Client.LintCIContent: lint_ci on a configuration the caller passes; a POST that writes nothing, refused in read-only mode
+POST /projects/{id}/issues	used	1	Client.CreateIssue: create_issue
+PUT /projects/{id}/issues/{issue_iid}	used	1	Client.UpdateIssue: update_issue, after the updated_at witness is checked (§4.6)
+POST /projects/{id}/issues/{noteable_id}/notes	used	1	Client.CreateIssueNote: add_comment on an issue
+POST /projects/{id}/issues/{noteable_id}/discussions	deferred	1	starting a thread on an issue; add_comment posts a standalone comment there, and a new thread only on a merge request's diff line (§17a)
+POST /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	used	1	Client.ReplyToIssueDiscussion: add_comment replying in an issue thread
+POST /projects/{id}/merge_requests/{noteable_id}/notes	used	1	Client.CreateMergeRequestNote: add_comment on a merge request
+POST /projects/{id}/merge_requests/{noteable_id}/discussions	used	1	Client.CreateMergeRequestDiscussion: add_comment starting a thread on a line of the diff, at a position diffpos computes (§7.4)
+POST /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes	used	1	Client.ReplyToMergeRequestDiscussion: add_comment replying in a merge request thread
+PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	used	1	Client.ResolveMergeRequestDiscussion: resolve_discussion
+POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	used	1	Client.CreateDraftNote: add_review_comment
+DELETE /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.DeleteDraftNote: delete_review_comment, own drafts only
+POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/bulk_publish	used	1	Client.PublishDraftNotes: submit_review; an approving review needs the Ship flag (§4.3)
+POST /projects/{id}/merge_requests	used	1	Client.CreateMergeRequest: create_merge_request
+PUT /projects/{id}/merge_requests/{merge_request_iid}	used	1	Client.UpdateMergeRequest: update_merge_request, after the updated_at witness is checked (§4.6)
+POST /projects/{id}/repository/branches	used	1	Client.CreateBranch: create_branch
+POST /projects/{id}/repository/commits	used	1	Client.CreateCommit: create_commit, refused on the default and protected branches (§4.4)
+POST /todos/{id}/mark_as_done	used	1	Client.MarkTodoDone: mark_todos_done
 
 # Phase 3: Ship, Destructive and the toolsets (§16); gated once called
 PUT /projects/{id}/merge_requests/{merge_request_iid}/merge	deferred	1	phase 3 (§16): merge_merge_request, Ship, with the sha witness
@@ -239,7 +239,7 @@ POST /projects/{id}/issues/{issue_iid}/time_estimate	deferred	1	issue time track
 GET /projects/{id}/issues/{issue_iid}/time_stats	deferred	1	issue time tracking (§17a)
 * /projects/{id}/issues/{subscribable_id}/*	deferred	2	subscribing to an issue's notifications (§17a)
 * /projects/{id}/issues/{eventable_id}/*	deferred	10	resource events of an issue: label, milestone, state and weight history (§17a)
-GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	deferred	1	one issue thread; list_discussions reads them all with a page token
+GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Client.GetIssueDiscussion: add_comment settles a lost reply by reading its thread
 PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	deferred	1	resolving an issue thread; resolve_discussion is for merge requests in §8 (§17a)
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one issue thread's comments; list_discussions carries them
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	one comment; list_discussions carries it
@@ -289,7 +289,7 @@ PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id
 PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}/publish	deferred	1	publishing one draft; submit_review publishes them together
 * /projects/{id}/merge_requests/{subscribable_id}/*	deferred	2	subscribing to a merge request's notifications (§17a)
 * /projects/{id}/merge_requests/{eventable_id}/*	deferred	6	resource events of a merge request: label, milestone and state history (§17a)
-GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	deferred	1	one thread; list_discussions reads them all with a page token
+GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	used	1	Client.GetMergeRequestDiscussion: resolve_discussion reads the thread's state before changing it
 GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one thread's comments; list_discussions carries them
 GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	one comment; list_discussions carries it
 PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	editing a comment in a thread (§17a)
@@ -339,7 +339,7 @@ GET /projects/{id}/repository/changelog	deferred	1	changelog generation, a relea
 POST /projects/{id}/repository/changelog	deferred	1	committing changelog data: a Ship candidate (§17a)
 PUT /projects/{id}/repository/submodules/{submodule}	deferred	1	updating a submodule commits to a branch (§17a)
 DELETE /projects/{id}/repository/merged_branches	written-off	1	deletes every merged branch at once (§8a)
-GET /projects/{id}/repository/branches/{branch}	deferred	1	one branch; list_branches with search finds it
+GET /projects/{id}/repository/branches/{branch}	used	1	Client.GetBranch: create_commit reads the branch head before and after, and settles a lost answer by it (§4.5)
 HEAD /projects/{id}/repository/branches/{branch}	deferred	1	branch existence; list_branches with search finds it
 PUT /projects/{id}/repository/branches/{branch}/protect	written-off	1	protecting a branch: every protection write is written off (§8a)
 PUT /projects/{id}/repository/branches/{branch}/unprotect	written-off	1	unprotecting a branch: every protection write is written off (§8a)

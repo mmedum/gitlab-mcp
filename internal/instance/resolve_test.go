@@ -193,3 +193,16 @@ func TestRefPathCandidates(t *testing.T) {
 		}
 	}
 }
+
+func TestALineAnchorPastWhatAnIntHoldsIsRefused(t *testing.T) {
+	for _, frag := range []string{"L2147483648", "L1-L2147483648"} {
+		ref := &Ref{Kind: KindFile}
+		if err := applyFragment(ref, frag); err == nil {
+			t.Errorf("#%s was accepted as %d–%d", frag, ref.Line, ref.EndLine)
+		}
+	}
+	ref := &Ref{Kind: KindFile}
+	if err := applyFragment(ref, "L2147483647"); err != nil || ref.Line != 2147483647 {
+		t.Errorf("the largest line was refused: %v", err)
+	}
+}

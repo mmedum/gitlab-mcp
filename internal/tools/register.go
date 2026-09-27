@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/internal/quickaction"
 	"github.com/mmedum/gitlab-mcp/internal/render"
 	"github.com/mmedum/gitlab-mcp/internal/scopes"
 	"github.com/mmedum/gitlab-mcp/internal/service"
@@ -92,7 +95,15 @@ type spec struct {
 	Bucket gapi.Bucket
 	// Enums closes a string input's values.
 	Enums map[string][]string
+	// Guarded are the inputs, by JSON name, that carry Markdown GitLab
+	// runs quick actions from. register routes each through
+	// internal/quickaction before the handler sees it and declares them
+	// under _meta, which `scripts/gates bodies` reads (§4.2).
+	Guarded []string
 }
+
+// quickActionMeta is the _meta key the guarded inputs are declared under.
+const quickActionMeta = "gitlab-mcp/quickaction"
 
 // Deps are what the tools need.
 type Deps struct {
@@ -180,9 +191,30 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 		mt.Meta = mcp.Meta{"anthropic/requiresUserInteraction": true}
 	}
 	c := &caller[In, Out]{t: t, d: d, in: in, inResolved: inResolved, outResolved: outResolved,
-		enums: enumsOf(t.sp.Enums), dryRun: boolField[In]("dry_run"), confirm: boolField[In]("confirm")}
+		enums: enumsOf(t.sp.Enums), dryRun: boolField[In]("dry_run"), confirm: boolField[In]("confirm"),
+		escape: boolField[In]("escape_commands"), guarded: stringFields[In](t.sp.Name, t.sp.Guarded), write: writeField[Out]()}
 	if t.sp.Kind == Destructive && c.confirm < 0 {
 		panic("tools: " + t.sp.Name + " is Destructive and has no confirm input")
+	}
+	if t.sp.Kind != Read && c.dryRun < 0 {
+		// §8: every tool that changes something can show what it would
+		// send first.
+		panic("tools: " + t.sp.Name + " writes and has no dry_run input")
+	}
+	if t.sp.Kind != Read && c.write < 0 {
+		panic("tools: " + t.sp.Name + " writes and its result does not carry model.Write")
+	}
+	if len(t.sp.Guarded) > 0 {
+		if t.sp.Kind == Read {
+			panic("tools: " + t.sp.Name + " is a read and declares guarded inputs")
+		}
+		if c.escape < 0 {
+			panic("tools: " + t.sp.Name + " guards inputs and has no escape_commands input")
+		}
+		if mt.Meta == nil {
+			mt.Meta = mcp.Meta{}
+		}
+		mt.Meta[quickActionMeta] = slices.Clone(t.sp.Guarded)
 	}
 	s.AddTool(mt, c.handle)
 }
@@ -197,6 +229,9 @@ type caller[In, Out any] struct {
 	enums       []enum
 	dryRun      int
 	confirm     int
+	escape      int
+	guarded     []guardedField
+	write       int // model.Write's field in Out, -1 for none
 }
 
 // handle is every call: decode, gate the call itself, run, render, log.
@@ -240,11 +275,18 @@ func (c *caller[In, Out]) handle(ctx context.Context, req *mcp.CallToolRequest) 
 		return errorResult(err), nil
 	}
 
+	escaped, err := c.guard(v)
+	if err != nil {
+		outcome = classOf(err)
+		return errorResult(err), nil
+	}
+
 	out, err := c.t.run(ctx, c.d.Service, in)
 	if err != nil {
 		outcome = classOf(err)
 		return errorResult(err), nil
 	}
+	c.finishWrite(&out, escaped)
 	structured, err := c.structured(out)
 	if err != nil {
 		outcome = classOf(err)
@@ -306,6 +348,98 @@ func (c *caller[In, Out]) structured(out Out) (json.RawMessage, error) {
 		return nil, gapi.Errf(gapi.ClassUnexpected, "the result of %s does not match its output schema: %s", c.t.sp.Name, err)
 	}
 	return data, nil
+}
+
+// ------------------------------------------------------------ guarding
+
+// guardedField is one input routed through the quick-action guard.
+type guardedField struct {
+	name  string
+	index int
+}
+
+// stringFields finds the declared inputs among In's string fields, a
+// *string included. A name that is not one is a programming error.
+func stringFields[In any](tool string, names []string) []guardedField {
+	isString := func(t reflect.Type) bool {
+		if t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		return t.Kind() == reflect.String
+	}
+	out := make([]guardedField, 0, len(names))
+	for _, name := range names {
+		i := fieldByJSON[In](name, isString)
+		if i < 0 {
+			panic(fmt.Sprintf("tools: %s declares %q guarded and has no string input by that name", tool, name))
+		}
+		out = append(out, guardedField{name: name, index: i})
+	}
+	return out
+}
+
+// guard puts every guarded input through internal/quickaction: refused
+// when it holds a line GitLab would run, unless escape_commands is set,
+// in which case each such line is escaped in place (§4.2). The handler
+// only ever sees text GitLab will not run.
+func (c *caller[In, Out]) guard(v reflect.Value) ([]model.EscapedLine, error) {
+	escape := c.escape >= 0 && v.Field(c.escape).Bool()
+	escaped := []model.EscapedLine{}
+	for _, g := range c.guarded {
+		f := v.Field(g.index)
+		if f.Kind() == reflect.Pointer {
+			if f.IsNil() {
+				continue
+			}
+			f = f.Elem()
+		}
+		if f.String() == "" {
+			continue
+		}
+		if !escape {
+			if _, err := quickaction.Check(f.String(), false); err != nil {
+				var be *quickaction.BlockedError
+				if errors.As(err, &be) {
+					return nil, gapi.Errf(gapi.ClassBlocked, "%s: %s", g.name, be.Message())
+				}
+				return nil, err
+			}
+			continue
+		}
+		body, lines := quickaction.Escape(f.String())
+		f.SetString(body)
+		for _, l := range lines {
+			escaped = append(escaped, model.EscapedLine{Input: g.name, Line: l.Number, Command: l.Command})
+		}
+	}
+	return escaped, nil
+}
+
+// writeField is the index of Out's model.Write, or -1 for a result
+// that carries none, as a read's does.
+func writeField[Out any]() int {
+	t := reflect.TypeFor[Out]()
+	if t.Kind() != reflect.Struct {
+		return -1
+	}
+	f, ok := t.FieldByName("Write")
+	if !ok || len(f.Index) != 1 || f.Type != reflect.TypeFor[model.Write]() {
+		return -1
+	}
+	return f.Index[0]
+}
+
+// finishWrite fills a write result's shared half: the lines the guard
+// escaped, and empty lists rather than null, as the output schema wants.
+func (c *caller[In, Out]) finishWrite(out *Out, escaped []model.EscapedLine) {
+	if c.write < 0 {
+		return
+	}
+	w := reflect.ValueOf(out).Elem().Field(c.write).Addr().Interface().(*model.Write)
+	w.EscapedCommands = escaped
+	if w.Notes == nil {
+		w.Notes = []string{}
+	}
 }
 
 // ------------------------------------------------------------ decoding
@@ -434,7 +568,7 @@ func inputSchema[T any](sp spec) *jsonschema.Schema {
 		switch {
 		case name == "max":
 			p.Minimum, p.Maximum = ptr(1.0), ptr(float64(gapi.MaxPerPage))
-		case name == "iid" || name == "pipeline_id" || name == "job_id":
+		case name == "iid" || name == "pipeline_id" || name == "job_id" || name == "line" || name == "end_line" || name == "draft_id":
 			p.Minimum = ptr(1.0)
 		case name == "offset" || strings.HasSuffix(name, "_offset"):
 			p.Minimum = ptr(0.0)
@@ -461,13 +595,19 @@ func inputSchema[T any](sp spec) *jsonschema.Schema {
 // confirm are found this way rather than declared by each tool, so a
 // tool that offers either cannot also have to remember to honor it.
 func boolField[In any](name string) int {
+	return fieldByJSON[In](name, func(t reflect.Type) bool { return t.Kind() == reflect.Bool })
+}
+
+// fieldByJSON finds a top-level field of In by its JSON name whose type
+// ok accepts, or -1.
+func fieldByJSON[In any](name string, ok func(reflect.Type) bool) int {
 	t := reflect.TypeFor[In]()
 	if t.Kind() != reflect.Struct {
 		return -1
 	}
 	for i := range t.NumField() {
 		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
-		if tag == name && t.Field(i).Type.Kind() == reflect.Bool {
+		if tag == name && ok(t.Field(i).Type) {
 			return i
 		}
 	}

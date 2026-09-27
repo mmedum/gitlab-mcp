@@ -182,3 +182,28 @@ func TestTheRealServiceStatesNoOutcomeFromTheRequest(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 }
+
+// A POST whose Call says why it changes nothing states no outcome; the
+// same POST without the reason does.
+func TestAReadOnlyPostStatesNoOutcome(t *testing.T) {
+	client := `package gapi
+
+type Call struct{ Method, Path, ReadOnly string }
+type Client struct{}
+func (c *Client) Do(_ any, _ Call, _ any) error { return nil }
+func (c *Client) Lint() error { return c.Do(nil, Call{Method: "POST", Path: "lint", READONLY}, nil) }
+`
+	model := "package model\n\ntype Lint struct{ Valid bool }\n"
+	service := `package service
+
+type Service struct{ c *gapi.Client }
+func (s *Service) Lint() (model.Lint, error) { return model.Lint{}, s.c.Lint() }
+`
+	for readOnly, wantWrites := range map[string]int{`ReadOnly: "linting creates nothing"`: 0, `ReadOnly: ""`: 1} {
+		s, m, _, calls := outcomePackages(t, strings.Replace(client, "READONLY", readOnly, 1), model, service)
+		writers, problems := writesStateOutcomes(s, m, calls)
+		if writers != wantWrites || len(problems) != wantWrites {
+			t.Errorf("%s: %d writers, problems %v", readOnly, writers, problems)
+		}
+	}
+}

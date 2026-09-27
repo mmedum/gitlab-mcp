@@ -54,6 +54,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, rest string) {
 	case get && match(seg, "merge_requests"):
 		s.listMRs(w, r, user, s.visibleProjects(user), "created_by_me")
 	case get && s.servePlanningTop(w, r, user, seg):
+	case r.Method == http.MethodPost && match(seg, "todos", "*", "mark_as_done"):
+		s.markTodoDone(w, user, seg[1])
 	case get && len(seg) == 3 && seg[0] == "groups":
 		s.serveGroup(w, r, user, seg[1], seg[2])
 	case len(seg) >= 2 && seg[0] == "projects":
@@ -110,13 +112,14 @@ func (s *Server) serveProject(w http.ResponseWriter, r *http.Request, p *project
 		s.serveIssue(w, r, p, user, seg[1], seg[2:])
 	case get && match(seg, "merge_requests"):
 		s.listMRs(w, r, user, []*project{p}, "all")
-	case get && len(seg) >= 2 && seg[0] == "merge_requests":
+	case len(seg) >= 2 && seg[0] == "merge_requests":
 		s.serveMR(w, r, p, user, seg[1], seg[2:])
 	case get && len(seg) >= 2 && seg[0] == "repository":
 		s.serveRepository(w, r, p, seg[1:])
 	case get && match(seg, "protected_branches"):
 		writePage(s, w, r, p.protected)
 	case get && (s.serveCI(w, r, p, seg) || s.servePlanning(w, r, p, seg)):
+	case s.serveProjectWrite(w, r, p, user, seg):
 	default:
 		routeNotFound(w)
 	}
@@ -134,8 +137,13 @@ func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, 
 		writeJSON(w, http.StatusOK, iss)
 	case get && match(rest, "discussions"):
 		s.listDiscussions(w, r, p.discussions["issue:"+iid])
-	case r.Method == http.MethodPost && match(rest, "notes"):
-		s.createIssueNote(w, r, p, iss, user)
+	case get && match(rest, "discussions", "*"):
+		if i := findDiscussion(p, "issue:"+iid, rest[1]); i >= 0 {
+			writeJSON(w, http.StatusOK, p.discussions["issue:"+iid][i])
+		} else {
+			message(w, http.StatusNotFound, "404 Discussion Not Found")
+		}
+	case s.serveIssueWrite(w, r, p, iss, user, rest):
 	default:
 		routeNotFound(w)
 	}
@@ -147,14 +155,22 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 		message(w, http.StatusNotFound, "404 Merge Request Not Found")
 		return
 	}
+	get := r.Method == http.MethodGet
 	switch {
-	case len(rest) == 0:
+	case get && len(rest) == 0:
 		writeJSON(w, http.StatusOK, mr)
-	case match(rest, "approvals"):
+	case get && match(rest, "approvals"):
 		s.approvals(w, p, mr)
-	case match(rest, "discussions"):
+	case get && match(rest, "discussions"):
 		s.listDiscussions(w, r, p.discussions["mr:"+iid])
-	case s.serveMRReview(w, r, p, mr, user, rest):
+	case get && match(rest, "discussions", "*"):
+		if i := findDiscussion(p, "mr:"+iid, rest[1]); i >= 0 {
+			writeJSON(w, http.StatusOK, p.discussions["mr:"+iid][i])
+		} else {
+			message(w, http.StatusNotFound, "404 Discussion Not Found")
+		}
+	case get && s.serveMRReview(w, r, p, mr, user, rest):
+	case s.serveMRWrite(w, r, p, mr, user, rest):
 	default:
 		routeNotFound(w)
 	}
@@ -169,6 +185,8 @@ func (s *Server) serveRepository(w http.ResponseWriter, r *http.Request, p *proj
 		s.listTree(w, r, p)
 	case match(seg, "branches"):
 		s.listBranches(w, r, p)
+	case match(seg, "branches", "*"):
+		s.getBranch(w, p, seg[1])
 	case match(seg, "commits"):
 		s.listCommits(w, r, p)
 	case match(seg, "commits", "*"):
@@ -614,7 +632,7 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request, p *project, pat
 	name := path[strings.LastIndex(path, "/")+1:]
 	writeJSON(w, http.StatusOK, gitlab.File{FileName: name, FilePath: path, Size: int64(len(content)), Encoding: "base64",
 		Content: base64.StdEncoding.EncodeToString([]byte(content)), ContentSHA256: hex.EncodeToString(sum[:]),
-		Ref: ref, BlobID: fakeSHA("blob", content), CommitID: head, LastCommitID: head})
+		Ref: ref, BlobID: fakeSHA("blob", content), CommitID: head, LastCommitID: lastCommit(p, branchOf(p, ref), path)})
 }
 
 func (s *Server) listTree(w http.ResponseWriter, r *http.Request, p *project) {

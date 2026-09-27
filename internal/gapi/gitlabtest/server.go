@@ -76,6 +76,12 @@ type Server struct {
 	nextIssueID   int64
 	nextMRID      int64
 	nextNoteID    int64
+	nextDraftID   int64
+	nextCommit    int64
+
+	// reviewerStates is the reviewer state each user last submitted with
+	// a review, by project, merge request and user.
+	reviewerStates map[string]string
 
 	// Planning state outside any one project: group milestones and
 	// labels, group members' access levels, and each user's to-do items.
@@ -169,6 +175,10 @@ type Fault struct {
 	// StallAfter writes the headers and part of Body, then waits this
 	// long before the rest.
 	StallAfter time.Duration
+	// AfterApply serves the request first, so a write lands, then
+	// discards that answer and sends the fault's: the answer to a write
+	// that succeeded was lost.
+	AfterApply bool
 }
 
 // Inject adds a fault.
@@ -284,6 +294,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/api/v4/"):
 		rest := strings.TrimPrefix(path, "/api/v4")
 		if f := s.takeFault(r.Method, rest); f != nil {
+			if f.AfterApply {
+				s.serveAPI(httptest.NewRecorder(), r, rest)
+			}
 			writeFault(w, f)
 			return
 		}

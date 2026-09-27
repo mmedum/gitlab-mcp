@@ -37,6 +37,11 @@ type Call struct {
 	// means the method decides: GET, PUT and DELETE repeat, POST does
 	// not. A create is never declared repeatable (§4.5).
 	Repeatable string
+	// ReadOnly is the reason a POST changes nothing, such as "linting
+	// creates nothing". Such a call may repeat and may run under a dry
+	// run, and `scripts/gates outcomes` asks it for no outcome. Empty
+	// means the method decides.
+	ReadOnly string
 	// Witness names the witness this write carries ("sha"). A 409 on a
 	// call with a witness means the witness moved, so it is stale rather
 	// than a conflict (§4.6).
@@ -77,11 +82,10 @@ func (b Bucket) String() string {
 	return "general"
 }
 
-// isWrite reports whether a call may change something. The method
-// decides; a POST that only reads is still refused under a dry run,
-// which errs the safe way.
-func isWrite(method string) bool {
-	return method != "GET" && method != "HEAD"
+// isWrite reports whether a call may change something: any method but
+// GET and HEAD, unless the call says why it changes nothing.
+func isWrite(call Call) bool {
+	return call.Method != "GET" && call.Method != "HEAD" && call.ReadOnly == ""
 }
 
 // fillPath fills a template's {} placeholders with escaped args. A count

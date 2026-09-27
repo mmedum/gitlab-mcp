@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mmedum/gitlab-mcp/scripts/internal/redact"
 )
 
 func sampleScratch() scratch {
@@ -191,5 +193,55 @@ func TestTheRecorderWritesWhatWasSent(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
 		t.Errorf("the write left %d files", len(entries))
+	}
+}
+
+func TestSavedValuesFillLaterSteps(t *testing.T) {
+	saved := map[string]any{}
+	save(map[string]string{"iid": "iid", "first": "todos.0.id", "none": "todos.9.id", "deep": "a.b"},
+		json.RawMessage(`{"iid": 7, "todos": [{"id": 95001}], "a": {"b": "x"}}`), saved)
+	if saved["iid"] != float64(7) || saved["first"] != float64(95001) || saved["deep"] != "x" {
+		t.Errorf("saved = %v", saved)
+	}
+	if _, ok := saved["none"]; ok {
+		t.Error("a path past the end was saved")
+	}
+	args, missing := fill(map[string]any{"iid": "{{iid}}", "ids": []any{"{{first}}"}, "nested": map[string]any{"x": "{{deep}}"},
+		"plain": "text"}, saved)
+	if missing != "" || args["iid"] != float64(7) || args["ids"].([]any)[0] != float64(95001) ||
+		args["nested"].(map[string]any)["x"] != "x" || args["plain"] != "text" {
+		t.Errorf("filled = %v, missing %q", args, missing)
+	}
+	if _, missing := fill(map[string]any{"iid": "{{never}}"}, saved); missing != "never" {
+		t.Errorf("missing = %q", missing)
+	}
+}
+
+func TestIdsAResultCarriesAreMasked(t *testing.T) {
+	red := redact.NewRedactor(false)
+	learnIDs(red, json.RawMessage(`{"note_id": 123456, "iid": 12, "items": [{"id": 95001}], "additions": 5000}`))
+	got := red.Do("note 123456, item 95001, iid 12, 5000 lines")
+	if strings.Contains(got, "123456") || strings.Contains(got, "95001") {
+		t.Errorf("ids are shown: %s", got)
+	}
+	if !strings.Contains(got, "iid 12") || !strings.Contains(got, "5000 lines") {
+		t.Errorf("a small iid or a count was masked: %s", got)
+	}
+}
+
+func TestWritesNameOnlyTheRunsAccount(t *testing.T) {
+	s := sampleScratch()
+	for _, st := range []step{
+		{tool: "create_issue", args: map[string]any{"project": s.Path, "title": "x", "assignees": []any{"someone-else"}}},
+		{tool: "update_merge_request", args: map[string]any{"project": s.Path, "iid": 1, "add_reviewers": []any{"someone-else"}}},
+		{tool: "mark_todos_done", args: map[string]any{"ids": []any{95001}}},
+	} {
+		if confined(st, s) == nil {
+			t.Errorf("%s %v was allowed", st.tool, st.args)
+		}
+	}
+	ok := step{tool: "create_issue", args: map[string]any{"project": s.Path, "title": "x", "assignees": []any{s.User}}}
+	if err := confined(ok, s); err != nil {
+		t.Errorf("the run's own account was refused: %v", err)
 	}
 }

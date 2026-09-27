@@ -1,0 +1,8 @@
+Merge request !4 was not changed.
+Project: example-group/alpha (project id 2001), private: only its members can see what is written there.
+https://gitlab.example.com/example-group/alpha/-/merge_requests/4; opened; draft yes; topic into main.
+Labels before: none.
+Labels: none; assignees none; reviewers @bob, @carol; milestone none.
+Delete the source branch when merged: no; squash: no.
+Nothing changed: GitLab reported every field as it was.
+updated_at is 2026-01-05T09:00:00Z; pass it to update_merge_request for the next change.

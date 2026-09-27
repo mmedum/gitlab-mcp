@@ -101,9 +101,16 @@ is `[blocked]`.
 allows commenting but not merging. `read_api` is the only narrower
 scope, and it allows no writes at all. So registration is the only
 control: leaving Ship unregistered stops *this server* merging,
-approving or running CI. It does not stop anything else that holds the
-token, which is why the token lives in the OS keyring and nowhere a
-tool can read it.
+approving or running, retrying, playing or cancelling pipelines. It does
+not stop anything else that holds the token, which is why the token
+lives in the OS keyring and nowhere a tool can read it.
+
+A commit, a new branch and a new merge request start the pipelines
+GitLab starts on a push, as your own push would. On a branch that is not
+protected those run with your permissions and your project's unprotected
+CI variables only. Write tools never create or commit to a protected
+branch (below), so they cannot start a pipeline that sees protected
+variables or deploys.
 
 Tool annotations are not a control either. The MCP specification says
 a client may not trust them, and a registered tool is one a model will
@@ -120,12 +127,18 @@ replace it with a `read_api` one.
 - **`GITLAB_MCP_WRITE_NAMESPACES`**, when set, confines every Write,
   Ship and Destructive call to projects under the listed groups or
   projects. Any other target is `[blocked]` naming the setting. Unset,
-  a write can go anywhere your account can write.
+  a write can go anywhere your account can write. `mark_todos_done` is
+  outside it: it changes only your own to-do list, which nobody else
+  sees.
 - Every write result names the target project's visibility, so a write
   to a public project shows as one.
 - **Code reaches a protected branch only through a merge request.**
-  `create_commit` refuses the project's default branch and every branch
-  matching a protected-branch rule, read at call time.
+  `create_commit` refuses the project's default branch and every
+  protected branch, and `create_branch` refuses a name a protected-branch
+  rule covers, read at call time.
+- **`lint_ci` sends nothing GitLab would fetch.** Configuration you pass
+  to it may not use `include:`, since GitLab fetches what an include
+  names while linting.
 - **A create is never retried.** Notes, issues, merge requests, commits,
   pipelines and releases are POSTs GitLab does not deduplicate. When the
   outcome is unclear the result is `[ambiguous_outcome]`, and the server

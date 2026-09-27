@@ -33,6 +33,11 @@ type ListOptions struct {
 	// PageToken is the NextToken of the previous page, or empty for the
 	// first.
 	PageToken string
+	// Page asks for one offset page by number, 1 first, for a caller
+	// that jumps rather than walks: the newest thread is on the last
+	// page. It is not used with PageToken, and only on an endpoint that
+	// pages by offset.
+	Page int
 }
 
 // Page describes one page of a listing.
@@ -42,6 +47,9 @@ type Page struct {
 	// Total is X-Total, or -1 when GitLab did not say. It stops saying
 	// once a count passes 10,000, and never says on keyset endpoints.
 	Total int
+	// Pages is X-Total-Pages, or -1 when GitLab did not say, which it
+	// stops saying with Total.
+	Pages int
 }
 
 // Complete reports whether there is no further page.
@@ -129,6 +137,12 @@ func (c *Client) list(ctx context.Context, call Call, opts ListOptions, out any)
 	maps.Copy(q, call.Query)
 	call.Query = q
 
+	if opts.Page > 0 && opts.PageToken != "" {
+		return Page{}, Errf(ClassUnexpected, "a listing takes a page number or a page token, not both")
+	}
+	if opts.Page > 0 {
+		q.Set("page", strconv.Itoa(opts.Page))
+	}
 	if opts.PageToken != "" {
 		var next map[string]string
 		if err := DecodeToken(opts.PageToken, binding(call, path), &next); err != nil {
@@ -158,9 +172,12 @@ func (c *Client) list(ctx context.Context, call Call, opts ListOptions, out any)
 	if err != nil {
 		return Page{}, err
 	}
-	page := Page{Total: -1}
+	page := Page{Total: -1, Pages: -1}
 	if n, err := strconv.Atoi(strings.TrimSpace(res.header.Get("X-Total"))); err == nil && n >= 0 {
 		page.Total = n
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(res.header.Get("X-Total-Pages"))); err == nil && n >= 0 {
+		page.Pages = n
 	}
 	next, err := c.nextParams(res, q)
 	if err != nil {

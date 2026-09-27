@@ -110,6 +110,10 @@ func (e envelope) detail(status int) string {
 // is no longer the file's last commit. It answers 400, not 409 (§2.10).
 var staleFile = regexp.MustCompile(`(?i)has changed since you started editing it`)
 
+// alreadyExists is a create refused because its name is taken: a branch,
+// or a file a commit would create. GitLab answers 400, not 409.
+var alreadyExists = regexp.MustCompile(`(?i)already exists`)
+
 // notFoundWhat pulls the resource out of "404 Project Not Found".
 var notFoundWhat = regexp.MustCompile(`(?i)^404\s+(.*?)\s*not\s+found$`)
 
@@ -242,6 +246,8 @@ func (a answer) clientError() verdict {
 		// The Files and Commits APIs refuse a moved last_commit_id with
 		// 400, not 409 (§2.10).
 		return a.fail(ClassStale, "the file changed since its last_commit_id was read: read it again and retry. GitLab said: %s", a.detail)
+	case a.status == http.StatusBadRequest && alreadyExists.MatchString(a.env.message):
+		return a.fail(ClassConflict, "GitLab refused %s because the name is taken: %s", a.name, a.detail)
 	case a.status == http.StatusPreconditionFailed:
 		return a.fail(ClassStale, "this changed since it was read: read it again and retry. GitLab said: %s", a.detail)
 	case a.status == http.StatusMethodNotAllowed && a.call.Method == http.MethodGet:

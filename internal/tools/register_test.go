@@ -19,8 +19,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/internal/service"
 )
 
-// register's rules, held with tools of every kind. Phase 0 ships only
-// reads, so these stand in for the writes to come.
+// register's rules, held with fake tools of every kind, so a rule is
+// tested apart from any one real tool.
 
 type fakeIn struct {
 	Confirm bool   `json:"confirm,omitempty" jsonschema:"Say that the deletion is meant"`
@@ -29,9 +29,9 @@ type fakeIn struct {
 }
 
 type fakeOut struct {
-	At     time.Time  `json:"at"`
-	Maybe  *time.Time `json:"maybe"`
-	DryRun bool       `json:"dry_run"`
+	At    time.Time  `json:"at"`
+	Maybe *time.Time `json:"maybe"`
+	model.Write
 }
 
 var fixedTime = time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
@@ -48,7 +48,7 @@ func fake(name string, k Kind, toolset string) definition {
 			case "panic":
 				panic("payload in a panic")
 			}
-			return fakeOut{At: fixedTime, DryRun: gapi.IsDryRun(ctx)}, nil
+			return fakeOut{At: fixedTime, Write: model.Write{DryRun: gapi.IsDryRun(ctx)}}, nil
 		},
 		text: func(o fakeOut, _ render.Boundary) string { return "at " + o.At.Format(time.RFC3339) },
 	}
@@ -307,5 +307,129 @@ func TestEveryOutputHasASchema(t *testing.T) {
 		if s == nil {
 			t.Fatal("nil schema")
 		}
+	}
+}
+
+// ------------------------------------------------------------ the guard
+
+type guardedIn struct {
+	Body           string  `json:"body" jsonschema:"A body"`
+	Title          *string `json:"title,omitempty" jsonschema:"A body behind a pointer"`
+	Plain          string  `json:"plain,omitempty" jsonschema:"Not a body"`
+	EscapeCommands bool    `json:"escape_commands,omitempty" jsonschema:"Escape instead of refusing"`
+	DryRun         bool    `json:"dry_run,omitempty" jsonschema:"Show what would be sent"`
+}
+
+type guardedOut struct {
+	Body  string `json:"body"`
+	Title string `json:"title"`
+	Plain string `json:"plain"`
+	model.Write
+}
+
+// guardedTool echoes what its handler was given, and counts its runs.
+func guardedTool(runs *int) definition {
+	return tool[guardedIn, guardedOut]{
+		sp: spec{Name: "fake_comment", Kind: Write, Guarded: []string{"body", "title"}, Description: "A fake comment."},
+		run: func(_ context.Context, _ *service.Service, in guardedIn) (guardedOut, error) {
+			*runs++
+			out := guardedOut{Body: in.Body, Plain: in.Plain}
+			if in.Title != nil {
+				out.Title = *in.Title
+			}
+			return out, nil
+		},
+		text: func(o guardedOut, _ render.Boundary) string { return o.Body },
+	}
+}
+
+func TestTheGuardRefusesAQuickActionBeforeTheHandler(t *testing.T) {
+	runs := 0
+	h := newHarness(t, harnessOptions{defs: []definition{guardedTool(&runs)}})
+	for _, args := range []map[string]any{
+		{"body": "Looks good.\n\n/merge"},
+		{"body": "fine", "title": "/close"},
+		{"body": "/approve", "dry_run": true},
+	} {
+		text := h.fails("fake_comment", args, "blocked")
+		if !strings.Contains(text, "GitLab would run") || !strings.Contains(text, "escape_commands") {
+			t.Errorf("the refusal does not say what and how: %s", text)
+		}
+	}
+	if !strings.Contains(h.fails("fake_comment", map[string]any{"body": "a\n\n/merge"}, "blocked"), "body: GitLab would run a quick action in this text: line 3 /merge") {
+		t.Error("the refusal does not name the input and the line")
+	}
+	if runs != 0 {
+		t.Errorf("the handler ran %d times on refused text", runs)
+	}
+	// A string that is not declared is not the guard's.
+	_, out := h.ok("fake_comment", map[string]any{"body": "fine", "plain": "/close"})
+	if get(out, "plain") != "/close" || runs != 1 {
+		t.Errorf("an undeclared input was touched: %v", out)
+	}
+}
+
+func TestTheGuardEscapesWhenAsked(t *testing.T) {
+	runs := 0
+	h := newHarness(t, harnessOptions{defs: []definition{guardedTool(&runs)}})
+	_, out := h.ok("fake_comment", map[string]any{"body": "Done.\n\n/close\n", "title": "/label ~x", "escape_commands": true})
+	if get(out, "body") != "Done.\n\n\\/close\n" || get(out, "title") != `\/label ~x` {
+		t.Errorf("the handler was not given escaped text: %v", out)
+	}
+	escaped, _ := out["escaped_commands"].([]any)
+	if len(escaped) != 2 {
+		t.Fatalf("escaped_commands = %v", out["escaped_commands"])
+	}
+	first, _ := escaped[0].(map[string]any)
+	if first["input"] != "body" || first["line"] != float64(3) || first["command"] != "close" {
+		t.Errorf("escaped_commands[0] = %v", first)
+	}
+	// Nothing to escape leaves an empty list, never null.
+	_, out = h.ok("fake_comment", map[string]any{"body": "plain", "escape_commands": true})
+	if l, ok := out["escaped_commands"].([]any); !ok || len(l) != 0 {
+		t.Errorf("escaped_commands = %v, want []", out["escaped_commands"])
+	}
+}
+
+func TestTheGuardedInputsAreDeclared(t *testing.T) {
+	runs := 0
+	h := newHarness(t, harnessOptions{defs: []definition{guardedTool(&runs)}})
+	got, _ := listed(t, h)["fake_comment"].Meta[quickActionMeta].([]any)
+	if len(got) != 2 || got[0] != "body" || got[1] != "title" {
+		t.Errorf("_meta[%q] = %v", quickActionMeta, got)
+	}
+}
+
+// A write that forgets a rule fails when the server starts, not when a
+// person first calls it.
+func TestRegisterRefusesAWriteMissingARule(t *testing.T) {
+	type noDryIn struct {
+		Body           string `json:"body" jsonschema:"A body"`
+		EscapeCommands bool   `json:"escape_commands,omitempty" jsonschema:"Escape"`
+	}
+	type noEscapeIn struct {
+		Body   string `json:"body" jsonschema:"A body"`
+		DryRun bool   `json:"dry_run,omitempty" jsonschema:"Dry"`
+	}
+	run := func(context.Context, *service.Service, guardedIn) (guardedOut, error) { return guardedOut{}, nil }
+	text := func(guardedOut, render.Boundary) string { return "" }
+	for name, def := range map[string]definition{
+		"no dry_run": tool[noDryIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Description: "x"},
+			run: func(context.Context, *service.Service, noDryIn) (guardedOut, error) { return guardedOut{}, nil }, text: text},
+		"no escape_commands": tool[noEscapeIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"body"}, Description: "x"},
+			run: func(context.Context, *service.Service, noEscapeIn) (guardedOut, error) { return guardedOut{}, nil }, text: text},
+		"no such input":  tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"nope"}, Description: "x"}, run: run, text: text},
+		"a non-string":   tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"dry_run"}, Description: "x"}, run: run, text: text},
+		"a guarded read": tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Read, Guarded: []string{"body"}, Description: "x"}, run: run, text: text},
+		"no model.Write": tool[fakeIn, time.Time]{sp: spec{Name: "x", Kind: Write, Description: "x"}, run: func(context.Context, *service.Service, fakeIn) (time.Time, error) { return time.Time{}, nil }, text: func(time.Time, render.Boundary) string { return "" }},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: registered without a panic", name)
+				}
+			}()
+			def.add(mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil), Deps{})
+		}()
 	}
 }

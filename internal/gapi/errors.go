@@ -112,6 +112,12 @@ func ClassOf(err error) (Class, bool) {
 	return "", false
 }
 
+// IsClass reports whether err carries class c.
+func IsClass(err error, c Class) bool {
+	got, ok := ClassOf(err)
+	return ok && got == c
+}
+
 // AsError returns err as a classified *Error, classing anything that
 // carries no class as unexpected. nil stays nil.
 func AsError(err error) *Error {

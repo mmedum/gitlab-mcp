@@ -268,28 +268,79 @@ func (s *Server) lint(w http.ResponseWriter, r *http.Request, p *project) {
 	if ref == "" {
 		ref = p.DefaultBranch
 	}
-	cfg, ok := p.ciConfig[ref]
-	if !ok {
-		writeJSON(w, http.StatusOK, gitlab.Lint{Valid: false, Errors: []string{"Please provide content of .gitlab-ci.yml"},
-			Warnings: []string{}, Jobs: []gitlab.LintJob{}})
-		return
-	}
-	out := gitlab.Lint{Valid: true, Errors: []string{}, Warnings: []string{}, MergedYAML: cfg, Jobs: []gitlab.LintJob{}}
-	if strings.Contains(cfg, "script: 42") {
-		out = gitlab.Lint{Valid: false, Errors: []string{"jobs:build:script config should be a string or a nested array of strings up to 10 levels deep"},
-			Warnings: []string{}, Jobs: []gitlab.LintJob{}}
-	}
-	if q.Get("dry_run") == "true" && out.Valid {
-		out.Warnings = append(out.Warnings, "jobs:deploy may allow multiple pipelines to run for a single action due to `rules:when` clause with no `workflow:rules`")
-	}
-	if q.Get("include_jobs") == "true" && out.Valid {
-		for _, j := range p.jobs[PipelineFailed] {
-			when := "on_success"
-			if j.Status == "manual" {
-				when = "manual"
+	writeJSON(w, http.StatusOK, lintConfig(p.ciConfig[ref], q.Get("dry_run") == "true", q.Get("include_jobs") == "true"))
+}
+
+// reservedKeys are the top-level keys of a configuration that are not
+// jobs.
+var reservedKeys = []string{"stages", "variables", "default", "include", "workflow", "image", "services",
+	"before_script", "after_script", "cache", "spec"}
+
+// lintJobs reads the jobs of a configuration by its layout: a top-level
+// key ending in a colon, and its stage, when and allow_failure lines.
+// Enough YAML for generated configurations, not a parser.
+func lintJobs(cfg string) ([]gitlab.LintJob, []string) {
+	var jobs []gitlab.LintJob
+	var scripted []bool
+	for line := range strings.SplitSeq(cfg, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case line == "" || strings.HasPrefix(trimmed, "#"):
+		case line[0] != ' ' && strings.HasSuffix(line, ":"):
+			name := strings.TrimSuffix(line, ":")
+			if slices.Contains(reservedKeys, name) || strings.HasPrefix(name, ".") {
+				continue
 			}
-			out.Jobs = append(out.Jobs, gitlab.LintJob{Name: j.Name, Stage: j.Stage, When: when, AllowFailure: j.AllowFailure})
+			jobs = append(jobs, gitlab.LintJob{Name: name, Stage: "test", When: "on_success"})
+			scripted = append(scripted, false)
+		case line[0] == ' ' && len(jobs) > 0:
+			j := &jobs[len(jobs)-1]
+			key, value, _ := strings.Cut(trimmed, ":")
+			value = strings.TrimSpace(value)
+			switch key {
+			case "stage":
+				j.Stage = value
+			case "when":
+				j.When = value
+			case "allow_failure":
+				j.AllowFailure = value == "true"
+			case "script", "trigger", "run":
+				scripted[len(scripted)-1] = true
+			}
 		}
 	}
-	writeJSON(w, http.StatusOK, out)
+	var errs []string
+	for i, j := range jobs {
+		if !scripted[i] {
+			errs = append(errs, "jobs:"+j.Name+" config should implement the script:, run:, or trigger: keyword")
+		}
+	}
+	if len(jobs) == 0 {
+		errs = append(errs, "jobs config should contain at least one visible job")
+	}
+	return jobs, errs
+}
+
+// lintConfig lints a configuration as GitLab's lint answers it.
+func lintConfig(cfg string, dryRun, includeJobs bool) gitlab.Lint {
+	if strings.TrimSpace(cfg) == "" {
+		return gitlab.Lint{Valid: false, Errors: []string{"Please provide content of .gitlab-ci.yml"},
+			Warnings: []string{}, Jobs: []gitlab.LintJob{}}
+	}
+	if strings.Contains(cfg, "script: 42") {
+		return gitlab.Lint{Valid: false, Errors: []string{"jobs:build:script config should be a string or a nested array of strings up to 10 levels deep"},
+			Warnings: []string{}, Jobs: []gitlab.LintJob{}}
+	}
+	jobs, errs := lintJobs(cfg)
+	if len(errs) > 0 {
+		return gitlab.Lint{Valid: false, Errors: errs, Warnings: []string{}, Jobs: []gitlab.LintJob{}}
+	}
+	out := gitlab.Lint{Valid: true, Errors: []string{}, Warnings: []string{}, MergedYAML: cfg, Jobs: []gitlab.LintJob{}}
+	if dryRun {
+		out.Warnings = append(out.Warnings, "jobs:deploy may allow multiple pipelines to run for a single action due to `rules:when` clause with no `workflow:rules`")
+	}
+	if includeJobs {
+		out.Jobs = jobs
+	}
+	return out
 }

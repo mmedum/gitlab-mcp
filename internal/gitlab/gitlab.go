@@ -234,19 +234,22 @@ type MergeRequest struct {
 	Milestone       *Milestone  `json:"milestone"`
 	// DetailedMergeStatus is kept as GitLab's string: the set grows
 	// between releases, and an enum here would fail on the next one.
-	DetailedMergeStatus         string         `json:"detailed_merge_status"`
-	HasConflicts                bool           `json:"has_conflicts"`
-	BlockingDiscussionsResolved bool           `json:"blocking_discussions_resolved"`
-	SHA                         string         `json:"sha"`
-	MergeCommitSHA              *string        `json:"merge_commit_sha"`
-	SquashCommitSHA             *string        `json:"squash_commit_sha"`
-	Squash                      bool           `json:"squash"`
-	UserNotesCount              int            `json:"user_notes_count"`
-	ChangesCount                string         `json:"changes_count"` // "12" or "1000+"
-	WebURL                      string         `json:"web_url"`
-	References                  References     `json:"references"`
-	DiffRefs                    *DiffRefs      `json:"diff_refs"`
-	HeadPipeline                *PipelineBasic `json:"head_pipeline"`
+	DetailedMergeStatus         string  `json:"detailed_merge_status"`
+	HasConflicts                bool    `json:"has_conflicts"`
+	BlockingDiscussionsResolved bool    `json:"blocking_discussions_resolved"`
+	SHA                         string  `json:"sha"`
+	MergeCommitSHA              *string `json:"merge_commit_sha"`
+	SquashCommitSHA             *string `json:"squash_commit_sha"`
+	Squash                      bool    `json:"squash"`
+	// ForceRemoveSourceBranch is the "delete the source branch when
+	// merged" setting; GitLab sends null when it was never set.
+	ForceRemoveSourceBranch bool           `json:"force_remove_source_branch"`
+	UserNotesCount          int            `json:"user_notes_count"`
+	ChangesCount            string         `json:"changes_count"` // "12" or "1000+"
+	WebURL                  string         `json:"web_url"`
+	References              References     `json:"references"`
+	DiffRefs                *DiffRefs      `json:"diff_refs"`
+	HeadPipeline            *PipelineBasic `json:"head_pipeline"`
 }
 
 // Approvals is GET /projects/:id/merge_requests/:iid/approvals. The
@@ -302,6 +305,22 @@ type Position struct {
 	NewPath      string `json:"new_path"`
 	OldLine      *int   `json:"old_line"`
 	NewLine      *int   `json:"new_line"`
+	// LineRange is a multi-line comment's first and last line.
+	LineRange *LineRange `json:"line_range"`
+}
+
+// LineRange is the first and last line a multi-line diff note covers.
+type LineRange struct {
+	Start LineRangeEnd `json:"start"`
+	End   LineRangeEnd `json:"end"`
+}
+
+// LineRangeEnd is one end of a LineRange.
+type LineRangeEnd struct {
+	LineCode string `json:"line_code"`
+	Type     string `json:"type"`
+	OldLine  *int   `json:"old_line"`
+	NewLine  *int   `json:"new_line"`
 }
 
 // File is GET /projects/:id/repository/files/:file_path. Content is

@@ -25,15 +25,42 @@ import (
 
 // plainInputs are write-tool string inputs that are not Markdown bodies,
 // keyed "tool.input", or "input" for every write tool that has it, each
-// with the reason GitLab does not evaluate quick actions in it. Empty
-// until phase 2 registers the first write: a row with nothing to excuse
-// fails, so the list cannot be written ahead of the tools.
-var plainInputs = map[string]string{}
+// with the reason GitLab does not evaluate quick actions in it. A row
+// with nothing to excuse fails, so the list cannot outlive the tools.
+var plainInputs = map[string]string{
+	"project":        "addresses the project in the request path; never sent as text",
+	"discussion_id":  "addresses a thread in the request path; never sent as text",
+	"updated_at":     "the witness, compared with a fresh read and never sent",
+	"type":           "a closed value that picks the route, issue or merge_request; never sent as text",
+	"state":          "a closed value sent as state_event, close or reopen, which GitLab does not parse as Markdown",
+	"reviewer_state": "a closed value, reviewed, requested_changes or approved, which GitLab does not parse as Markdown",
+	"side":           "a closed value, new or old, used to compute the diff position; never sent as text",
+	"file":           "a path the server looks up in the diff and sends as the position's old_path and new_path, which GitLab stores as a path, not Markdown",
+	"title": "GitLab interprets quick actions in the description alone (merge_quick_actions_into_params! in " +
+		"app/services/issuable_base_service.rb at 829b21d2); a title is stored as it is",
+	"labels":           "label names, each checked to exist and sent as the labels array, never as Markdown",
+	"add_labels":       "label names, each checked to exist and sent as the add_labels array, never as Markdown",
+	"remove_labels":    "label names sent as the remove_labels array, never as Markdown",
+	"assignees":        "usernames, each resolved to a user id before anything is sent",
+	"add_assignees":    "usernames, each resolved to a user id before anything is sent",
+	"remove_assignees": "usernames, each resolved to a user id before anything is sent",
+	"reviewers":        "usernames, each resolved to a user id before anything is sent",
+	"add_reviewers":    "usernames, each resolved to a user id before anything is sent",
+	"remove_reviewers": "usernames, each resolved to a user id before anything is sent",
+	"milestone":        "a milestone title, resolved to its id before anything is sent",
+	"due_date":         "a day, checked as YYYY-MM-DD and sent as a date",
+	"branch":           "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"ref":              "a Git branch, tag or SHA, which GitLab takes as a ref, not Markdown",
+	"source_branch":    "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"target_branch":    "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"start_branch":     "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"create_commit.message": "a commit message: the Commits API writes it into Git and runs no quick action from it; " +
+		"only issue and merge request descriptions and notes are interpreted",
+}
 
-// minWriteTools is the floor on write tools the gate examined. Phase 0
-// registers none; phase 2 raises it with the first write tool, because
-// from then on a dump with none is a dump of the wrong build.
-const minWriteTools = 0
+// minWriteTools is the floor on write tools the gate examined: the
+// twelve of phase 2. A dump with fewer is a dump of the wrong build.
+const minWriteTools = 12
 
 func bodies(out io.Writer, args []string) error {
 	d, err := readDump(args[0])

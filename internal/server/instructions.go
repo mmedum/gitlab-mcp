@@ -42,6 +42,14 @@ var toolPhrases = []phrase{
 		tail: "; a red pipeline is read from get_pipeline to the failed job's log."},
 	{lead: "Planning and people: ", tools: []string{"list_labels", "list_milestones", "list_members", "find_users", "list_todos"},
 		tail: "."},
+	{lead: "Change issues and merge requests with ", tools: []string{"create_issue", "update_issue", "create_merge_request",
+		"update_merge_request"}, tail: "; an update needs the updated_at of your latest read."},
+	{lead: "Comment with ", tools: []string{"add_comment", "resolve_discussion"}, tail: "."},
+	{lead: "Review in drafts with ", tools: []string{"add_review_comment", "delete_review_comment", "submit_review"},
+		tail: ": drafts are yours alone until submit_review publishes them together."},
+	{lead: "Change code on a branch with ", tools: []string{"create_branch", "create_commit"},
+		tail: ", never on the default or a protected branch; a merge request carries it there."},
+	{lead: "", tools: []string{"mark_todos_done"}, tail: " clears your own to-do items."},
 }
 
 const (
@@ -129,7 +137,8 @@ func mode(cfg config.Config, registered []service.Registered) string {
 	case !writes:
 		return "Every tool here only reads: none changes anything in GitLab."
 	}
-	return "Tools that write say so in their description and take dry_run."
+	return "Tools that write say so in their description and take dry_run. GitLab runs a line of a body starting with a " +
+		"slash, such as /close or /merge, as a command, so such a line refuses the call; escape_commands sends it as text instead."
 }
 
 func joinAnd(xs []string) string {

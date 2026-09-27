@@ -1,0 +1,5 @@
+Committed abcdef12 to topic.
+Project: example-group/alpha (project id 2001), public: anyone can see what is written there.
+Files: README.md, docs/new.md.
+https://gitlab.example.com/example-group/alpha/-/commit/abcdef12; +3 -1; parents 1234567890abcdef1234.
+The branch's head, read afterwards: abcdef123456.

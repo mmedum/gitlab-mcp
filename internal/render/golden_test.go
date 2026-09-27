@@ -218,3 +218,39 @@ func TestGoldensPhase1(t *testing.T) {
 		golden(t, name, got)
 	}
 }
+
+func TestGoldensPhase2(t *testing.T) {
+	public := model.WriteTarget{Project: alpha, Visibility: "public"}
+	cases := map[string]string{
+		"issue_update": IssueWrite(model.IssueWrite{Outcome: "updated", IID: 12, WebURL: "https://gitlab.example.com/example-group/alpha/-/issues/12",
+			State: "closed", LabelsBefore: []string{"bug"}, Labels: []string{"bug", "priority::high"}, Assignees: []string{"bob"},
+			Milestone: &model.Milestone{ID: 90001, Title: "Sprint 2", State: "active"}, DueDate: "2026-02-01", UpdatedAt: tp(t1),
+			Changed: []string{"state", "labels"}, DescriptionRemoved: &model.Removed{Chars: 42, Lines: 2},
+			Write: model.Write{Target: public, Notes: []string{"It was already open, so no state change was sent."},
+				EscapedCommands: []model.EscapedLine{{Input: "description", Line: 3, Command: "close"}}}}, bd),
+		"issue_dry_run": IssueWrite(model.IssueWrite{Outcome: "dry_run", Write: model.Write{DryRun: true, Target: public,
+			WouldSend: &model.Preview{Method: "POST", Operation: "create an issue", Fields: []string{"title", "labels"}}}}, bd),
+		"merge_request_unchanged": MergeRequestWrite(model.MergeRequestWrite{Outcome: "unchanged", IID: 4, WebURL: "https://gitlab.example.com/example-group/alpha/-/merge_requests/4",
+			State: "opened", Draft: true, SourceBranch: "topic", TargetBranch: "main", LabelsBefore: []string{}, Labels: []string{},
+			Reviewers: []string{"bob", "carol"}, UpdatedAt: tp(t0), Write: model.Write{Target: model.WriteTarget{Project: alpha, Visibility: "private"}}}, bd),
+		"comment_thread": CommentWrite(model.CommentWrite{Outcome: "created", Kind: "thread", NoteID: 50123, DiscussionID: "3f2a9c",
+			Position:  &model.DiffPosition{OldPath: "README.md", NewPath: "README.md", NewLine: intp(3), HeadSHA: "1234567890abcdef1234"},
+			LineRange: &model.LineSpan{Side: "new", Start: 1, End: 3}, Write: model.Write{Target: public}}, bd),
+		"discussion_resolve": DiscussionWrite(model.DiscussionWrite{Outcome: "resolved", DiscussionID: "3f2a9c", Resolved: true,
+			Write: model.Write{Target: public}}, bd),
+		"draft_delete": DraftDelete(model.DraftDelete{Outcome: "deleted", DraftID: 80012, Remaining: 2, Write: model.Write{Target: public}}, bd),
+		"review_submit": ReviewSubmit(model.ReviewSubmit{Outcome: "published", Published: 3, Summary: true, ReviewerState: "requested_changes",
+			Write: model.Write{Target: public}}, bd),
+		"branch_create": BranchWrite(model.BranchWrite{Outcome: "created", Branch: "topic", CommitSHA: "abcdef1234567890abcd",
+			WebURL: "https://gitlab.example.com/example-group/alpha/-/tree/topic", Write: model.Write{Target: public}}, bd),
+		"commit_create": CommitWrite(model.CommitWrite{Outcome: "created", SHA: "abcdef1234567890abcd", ShortID: "abcdef12", Branch: "topic",
+			BranchHead: "abcdef1234567890abcd", ParentIDs: []string{"1234567890abcdef1234"}, Additions: 3, Deletions: 1,
+			Files: []string{"README.md", "docs/new.md"}, WebURL: "https://gitlab.example.com/example-group/alpha/-/commit/abcdef12",
+			Write: model.Write{Target: public}}, bd),
+		"todos_done": TodosDone(model.TodosDone{Outcome: "partly_done", Items: []model.TodoDone{{ID: 95001, Outcome: "done"},
+			{ID: 99999, Outcome: "not_found", Error: "no such to-do item of yours"}}}, bd),
+	}
+	for name, got := range cases {
+		golden(t, name, got)
+	}
+}
