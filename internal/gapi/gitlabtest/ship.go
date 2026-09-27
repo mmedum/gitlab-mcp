@@ -215,8 +215,11 @@ func (s *Server) retryOne(p *project, j gitlab.Job) gitlab.Job {
 }
 
 // cancelPipeline is POST …/cancel. GitLab answers 200 with the pipeline
-// whether or not anything could be canceled.
+// whether or not anything could be canceled. It cancels the jobs in the
+// request and recomputes the pipeline's status in a worker after, so the
+// answer carries the status from before and the next read the new one.
 func (s *Server) cancelPipeline(w http.ResponseWriter, p *project, pl *gitlab.PipelineDetail) {
+	answer := *pl
 	if slices.Contains([]string{"created", "pending", "running", "manual", "scheduled"}, pl.Status) {
 		pl.Status, pl.UpdatedAt = "canceled", s.opts.Now().UTC()
 		for i, j := range p.jobs[pl.ID] {
@@ -225,7 +228,7 @@ func (s *Server) cancelPipeline(w http.ResponseWriter, p *project, pl *gitlab.Pi
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, pl)
+	writeJSON(w, http.StatusOK, answer)
 }
 
 // retryJob is POST …/jobs/:id/retry: a new job, or 403 "Job is not

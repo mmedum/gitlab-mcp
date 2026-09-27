@@ -1785,6 +1785,24 @@ Windows for the first time, and found:
 | CodeQL: the fake's label priority narrowed without a bound | Bounded to the 32-bit range GitLab takes |
 | CodeQL: the leak gate's owner-link pattern is unanchored | Dismissed as a false positive: a scanner that finds links anywhere in text |
 
+**The 1.0 live run.** Its transcript found:
+
+| Found | Fixed |
+|---|---|
+| `get_me` reported a token's expiry as `created_at` plus `expires_in`, which is the seconds left, so an hour-old token read as expired an hour before the read | The time of the read plus `expires_in`, with a test on an aged token (§18 row 90) |
+| `cancel_pipeline` said nothing could be canceled when GitLab answered before recomputing the pipeline's status | `canceled` whenever GitLab's cancel acts on the status read first; the fake answers as GitLab does (§18 row 91) |
+
+Its `/code-review high` found:
+
+| Found | Fixed |
+|---|---|
+| A pipeline that finished before the cancel landed would read `canceled` | A finished answer is `unchanged`; the decision is one function with a table test |
+| `get_me` took the time after the token read, so the expiry erred late | Taken before the request |
+| `cancel_pipeline`'s description and the `status` field promised the status after the call | Both say the status can lag and `get_pipeline` shows it settle |
+| A version in the README's prose | Removed; the status line keeps its version, which `staleness` requires |
+| `manual` is not cancelable | Refuted: `CANCELABLE_STATUSES` includes it, for the pipeline and its jobs (§18 row 91) |
+| `get_me` could read the expiry the token source holds instead of GitLab's answer | Left: `get_me` reports what GitLab says of the token it was sent, which is what a revoked or replaced token needs |
+
 ### Closing a phase
 
 1. `make check` green; the live driver run and its transcript read.
@@ -2038,3 +2056,5 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 87 | Moving an issue is an ordinary write | `lib/api/issues.rb` and `WorkItems::DataSync::MoveService` at v19.4.1-ee | **Changed (maintainer, §17.13).** A move copies the issue, comments included, into another project, where other people may see it. `move_issue` is Ship, holds both projects to the allow-list, and refuses a project more people can see than the source |
 | 88 | A file in a job's artifacts is addressed with its slashes unescaped | `lib/api/ci/job_artifacts.rb` at v19.4.1-ee; the phase 6 live run | **Refuted (tier 1, live).** The path sent as one segment, its slash escaped `%2F`, read `reports/summary.txt`; Workhorse extracts the one file, and the answer is not a redirect |
 | 89 | A rebase answers when it is done | `lib/api/merge_requests.rb` at v19.4.1-ee; the phase 6 live run | **Refuted (tier 1, live).** GitLab answers 202 `{"rebase_in_progress": …}` and rebases in the background. `rebase_merge_request` reads the merge request with `include_rebase_in_progress` after, and says whether it still runs |
+| 90 | A token's `expires_in` is its lifetime, added to `created_at` | Doorkeeper 5.9.0 `Expirable#expires_in_seconds` and `AccessTokenMixin#as_json`, the version v19.4.1-ee locks; `app/controllers/oauth/token_info_controller.rb`; the 1.0 live run | **Refuted (tier 1, live).** `/oauth/token/info` answers the seconds left when it answers. `get_me` added them to `created_at` and reported a token read 1 h 41 min after issue as expired an hour before; it now adds them to the time of the read, and the next run reported 11:53:38Z, the expiry the first run's numbers imply |
+| 91 | A cancel's answer shows whether anything was canceled | `lib/api/ci/pipelines.rb`, `Ci::CancelPipelineService`, `CommitStatus` and `Ci::HasStatus` at v19.4.1-ee; the 1.0 live run | **Refuted (tier 1, live).** GitLab cancels the jobs inside the request, then answers `pipeline.reset`; each job's transition queues `PipelineProcessWorker`, which recomputes the pipeline's status after. A pipeline canceled seconds after it started answered `running`, and `cancel_pipeline` said nothing could be canceled, while its two deployments were listed canceled later in the run; the next run's cancel answered `canceling`, so gitlab.com answers either way, and a third, with the fix, answered `running` and reported `canceled`. `CANCELABLE_STATUSES`, which the job scope shares, includes `manual`. It now reports `canceled` when the status read first was cancelable, the source is not `external` and the answer is not finished, and says the status catches up |

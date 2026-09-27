@@ -141,7 +141,8 @@ func cancelPipeline() definition {
 	return tool[pipelineIDIn, model.PipelineWrite]{
 		sp: spec{Name: "cancel_pipeline", Kind: Ship, Idempotent: true,
 			Description: "Cancel a pipeline's running and pending jobs. A pipeline that already finished is reported unchanged " +
-				"and nothing is sent. The result gives the status before and after." + shipNote},
+				"and nothing is sent. The result gives the status before and after; GitLab cancels the jobs before it answers and " +
+				"updates the pipeline's status shortly after, so get_pipeline shows where it settles." + shipNote},
 		run: func(ctx context.Context, svc *service.Service, in pipelineIDIn) (model.PipelineWrite, error) {
 			return svc.CancelPipeline(ctx, string(in.Project), in.PipelineID)
 		},

@@ -96,6 +96,25 @@ func TestResolveURLListsCandidatesItCannotSettle(t *testing.T) {
 	}
 }
 
+// GitLab's expires_in is the seconds left, so a token read an hour into
+// its two expires an hour after the read, not an hour after it was issued.
+func TestMeReportsExpiryFromTheSecondsLeft(t *testing.T) {
+	issued := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := issued
+	s, _ := newService(t, gitlabtest.Options{Now: func() time.Time { return clock }, AccessTokenTTL: 2 * time.Hour}, config.Config{})
+	clock = issued.Add(time.Hour)
+	before := time.Now()
+	me, err := s.Me(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now()
+	lo, hi := before.Add(time.Hour).Truncate(time.Second), after.Add(time.Hour)
+	if me.Token.ExpiresAt == nil || me.Token.ExpiresAt.Before(lo) || me.Token.ExpiresAt.After(hi) {
+		t.Errorf("expires_at = %v, want between %v and %v", me.Token.ExpiresAt, lo, hi)
+	}
+}
+
 func TestMeReadsMetadataWhenStartupCouldNot(t *testing.T) {
 	s, gl := newService(t, gitlabtest.Options{Version: "18.2.1", Enterprise: true}, config.Config{WriteNamespaces: []string{"example-group"}})
 	s.SetRegistered([]Registered{{Name: "get_me", Kind: scopes.KindRead}, {Name: "x", Kind: scopes.KindWrite}})

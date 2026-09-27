@@ -1108,7 +1108,7 @@ type PipelineWrite struct {
 	PipelineID   int64    `json:"pipeline_id"`
 	IID          int64    `json:"iid"`
 	StatusBefore string   `json:"status_before" jsonschema:"The status read before the call; empty for a new pipeline"`
-	Status       string   `json:"status" jsonschema:"The status GitLab reported after the call"`
+	Status       string   `json:"status" jsonschema:"The status GitLab reported after the call; after a cancel it can still read running while GitLab updates it"`
 	Ref          string   `json:"ref"`
 	SHA          string   `json:"sha"`
 	Source       string   `json:"source"`

@@ -169,3 +169,29 @@ func TestIssueAudience(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelOutcome(t *testing.T) {
+	pl := func(status, source string) *gitlab.PipelineDetail {
+		p := &gitlab.PipelineDetail{}
+		p.Status, p.Source = status, source
+		return p
+	}
+	for _, c := range []struct {
+		name           string
+		before, answer *gitlab.PipelineDetail
+		want           string
+	}{
+		{"answered canceled", pl("running", "push"), pl("canceled", "push"), "canceled"},
+		{"answered canceling", pl("running", "push"), pl("canceling", "push"), "canceled"},
+		// GitLab recomputes the status after it answers (§18 row 91).
+		{"answered before the status caught up", pl("running", "push"), pl("running", "push"), "canceled"},
+		{"manual jobs are canceled too", pl("manual", "push"), pl("manual", "push"), "canceled"},
+		{"finished before the cancel landed", pl("running", "push"), pl("success", "push"), "unchanged"},
+		{"already being canceled", pl("canceling", "push"), pl("canceling", "push"), "canceled"},
+		{"an external pipeline", pl("running", "external"), pl("running", "external"), "unchanged"},
+	} {
+		if got, _ := cancelOutcome(c.before, c.answer); got != c.want {
+			t.Errorf("%s: outcome %s, want %s", c.name, got, c.want)
+		}
+	}
+}

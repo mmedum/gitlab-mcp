@@ -104,9 +104,6 @@ type TokenInfoApplication struct {
 	UID string `json:"uid"`
 }
 
-// Created is CreatedAt as a time.
-func (t TokenInfo) Created() time.Time { return time.Unix(t.CreatedAt, 0).UTC() }
-
 // Namespace is the group or user a project lives under.
 type Namespace struct {
 	ID       int64  `json:"id"`
