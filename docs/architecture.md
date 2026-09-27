@@ -1,7 +1,7 @@
 # Architecture — gitlab-mcp
 
-**Status: phase 5 done and in review, 2026-09-27; phase 6 waits on
-§17.13. Nothing is tagged.** This document holds the platform facts, the design bets, a
+**Status: phase 5 done and in review, 2026-09-27; phase 6 is next,
+its kinds decided in §17.13. Nothing is tagged.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
@@ -1541,7 +1541,7 @@ project's files; each is fixed. Owed: nothing. The two cleanups left are
 argued in §17a (§18 rows 82, 83), and phase 6 waits on §17.13.*
 
 **Phase 6 — the feature candidates, before 1.0.** The tools §17.13
-proposes, once the maintainer has decided each one's kind and toolset:
+decides, each with its kind and toolset:
 issue move and links, label and milestone writes, rebase, cherry-pick,
 revert, blame, job artifacts, and tag writes. Each is checked against
 GitLab's source before it is built, and runs live.
@@ -1789,8 +1789,8 @@ candidates:
     checks a merge request is reviewed by. Raised by the phase 2
     security review.
 
-13. **The kinds and toolsets of phase 6.** Proposed, for the
-    maintainer to decide before phase 6 starts (`CLAUDE.md`, ask before
+13. **The kinds and toolsets of phase 6.** Proposed for the
+    maintainer to decide before phase 6 started (`CLAUDE.md`, ask before
     doing):
 
     | Tool | Kind | Toolset | Why |
@@ -1808,7 +1808,8 @@ candidates:
     | `create_tag` | Write | `releases` | It starts the tag pipelines, as `create_branch` starts a branch's; a tag a protection rule covers is refused |
     | `delete_tag` | Destructive | `releases` | |
 
-    **Open.**
+    **Decided 2026-09-27 (maintainer): as proposed.** The `planning`
+    toolset is the one §17.11 would extend with epics after 1.0.
 
 ### 17a. Deferred cleanups
 
