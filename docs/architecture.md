@@ -1,7 +1,7 @@
 # Architecture — gitlab-mcp
 
-**Status: phases 5 and 6 done and in review, 2026-09-27; every phase
-is built. Nothing is tagged.** This document holds the platform facts, the design bets, a
+**Status: 1.0.0, 2026-09-27: phases 0 to 6, the whole plan. Owed:
+nothing; §17.10 stands and §17.11 waits.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 

@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-27
+
 ### Added
 
 - `login`, `logout`, `status` and `doctor`, signing in with your own OAuth application through `--client-id`.
@@ -72,4 +74,5 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/b0a78ab...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/mmedum/gitlab-mcp/releases/tag/v1.0.0
