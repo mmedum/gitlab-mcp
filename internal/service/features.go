@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -239,13 +238,15 @@ func labelRow(l gitlab.Label) model.Label {
 // LabelRequest is create_label's and update_label's request. A nil field
 // is left as it is.
 type LabelRequest struct {
-	Project     string
-	LabelID     int64
-	Version     string
-	Name        string
-	Color       string
-	Description *string
-	Priority    *int
+	Project          string
+	LabelID          int64
+	Version          string
+	Name             string
+	Color            string
+	Description      *string
+	ClearDescription bool
+	Priority         *int
+	ClearPriority    bool
 }
 
 // CreateLabel creates a project label.
@@ -325,6 +326,13 @@ func (s *Service) projectLabel(ctx context.Context, t target, id int64, version 
 
 // UpdateLabel changes a project label. Only the fields given are sent.
 func (s *Service) UpdateLabel(ctx context.Context, in LabelRequest) (model.LabelWrite, error) {
+	description, err := clearing("description", in.Description, in.ClearDescription)
+	if err != nil {
+		return model.LabelWrite{}, err
+	}
+	if err := notBoth("priority", in.Priority != nil, in.ClearPriority); err != nil {
+		return model.LabelWrite{}, err
+	}
 	t, err := s.writeTarget(ctx, in.Project)
 	if err != nil {
 		return model.LabelWrite{}, err
@@ -333,7 +341,7 @@ func (s *Service) UpdateLabel(ctx context.Context, in LabelRequest) (model.Label
 	if err != nil {
 		return model.LabelWrite{}, err
 	}
-	body := gapi.LabelUpdate{Priority: in.Priority, Description: in.Description}
+	body := gapi.LabelUpdate{Priority: in.Priority, Description: description, ClearPriority: in.ClearPriority && before.Priority != nil}
 	if in.Name != "" && in.Name != before.Name {
 		body.NewName = in.Name
 	}
@@ -397,29 +405,32 @@ func (s *Service) DeleteLabel(ctx context.Context, raw string, id int64, version
 
 // ----------------------------------------------------------- milestones
 
-// day is a date as GitLab takes it.
-var day = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-
 // MilestoneStates are the state changes update_milestone takes.
 var MilestoneStates = []string{"close", "activate"}
 
 // MilestoneRequest is create_milestone's and update_milestone's request.
-// A nil field is left as it is; an empty date clears it.
+// A nil field is left as it is. The clear_ inputs are update's: each
+// clears its field.
 type MilestoneRequest struct {
-	Project     string
-	ID          int64
-	UpdatedAt   string
-	Title       string
-	Description *string
-	DueDate     *string
-	StartDate   *string
-	StateEvent  string
+	Project          string
+	ID               int64
+	UpdatedAt        string
+	Title            string
+	Description      *string
+	ClearDescription bool
+	DueDate          *string
+	ClearDueDate     bool
+	StartDate        *string
+	ClearStartDate   bool
+	StateEvent       string
 }
 
 func (in MilestoneRequest) check() error {
 	for name, d := range map[string]*string{"due_date": in.DueDate, "start_date": in.StartDate} {
-		if d != nil && *d != "" && !day.MatchString(*d) {
-			return gapi.Errf(gapi.ClassInvalid, "%s is a day, YYYY-MM-DD, or empty to clear it", name)
+		if d != nil {
+			if err := checkDate(name, *d); err != nil {
+				return err
+			}
 		}
 	}
 	if in.StateEvent != "" && !slices.Contains(MilestoneStates, in.StateEvent) {
@@ -494,6 +505,15 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneRequest) (mod
 func (s *Service) UpdateMilestone(ctx context.Context, in MilestoneRequest) (model.MilestoneWrite, error) {
 	witness, err := parseWitness(in.UpdatedAt)
 	if err != nil {
+		return model.MilestoneWrite{}, err
+	}
+	if in.Description, err = clearing("description", in.Description, in.ClearDescription); err != nil {
+		return model.MilestoneWrite{}, err
+	}
+	if in.DueDate, err = clearing("due_date", in.DueDate, in.ClearDueDate); err != nil {
+		return model.MilestoneWrite{}, err
+	}
+	if in.StartDate, err = clearing("start_date", in.StartDate, in.ClearStartDate); err != nil {
 		return model.MilestoneWrite{}, err
 	}
 	if err := in.check(); err != nil {

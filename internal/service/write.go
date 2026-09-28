@@ -105,6 +105,23 @@ func fieldsOf(body any) []string {
 	return out
 }
 
+// notBoth refuses a field given both a value and its clear_ input.
+func notBoth(name string, given, clear bool) error {
+	if given && clear {
+		return gapi.Errf(gapi.ClassInvalid, "pass %s or clear_%s, not both", name, name)
+	}
+	return nil
+}
+
+// clearing turns a clear_ input into the empty string that clears the
+// field, and refuses one given with a value.
+func clearing(name string, v *string, clear bool) (*string, error) {
+	if err := notBoth(name, v != nil, clear); err != nil || !clear {
+		return v, err
+	}
+	return new(string), nil
+}
+
 // field is one named condition, for names.
 type field struct {
 	name string

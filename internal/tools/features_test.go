@@ -73,7 +73,8 @@ func TestLinkAndUnlinkIssues(t *testing.T) {
 
 func TestLabelWrites(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: full})
-	_, out := h.ok("create_label", map[string]any{"project": alpha, "name": "triage", "color": "#aa0000", "description": "Needs a look"})
+	_, out := h.ok("create_label", map[string]any{"project": alpha, "name": "triage", "color": "#aa0000", "description": "Needs a look",
+		"priority": 2})
 	id, version := get(out, "label", "id"), get(out, "label", "version").(string)
 	if get(out, "outcome") != "created" || version == "" {
 		t.Fatalf("create: %v", out)
@@ -86,6 +87,24 @@ func TestLabelWrites(t *testing.T) {
 	version = get(up, "label", "version").(string)
 	if _, same := h.ok("update_label", map[string]any{"project": alpha, "label_id": id, "version": version, "color": "#00aa00"}); get(same, "outcome") != "unchanged" {
 		t.Errorf("no change: %v", same)
+	}
+	// A clear_ input removes the field, and refuses a value beside it.
+	h.fails("update_label", map[string]any{"project": alpha, "label_id": id, "version": version, "description": "x", "clear_description": true}, "invalid")
+	h.fails("update_label", map[string]any{"project": alpha, "label_id": id, "version": version, "priority": 1, "clear_priority": true}, "invalid")
+	_, dry := h.ok("update_label", map[string]any{"project": alpha, "label_id": id, "version": version, "clear_priority": true, "dry_run": true})
+	if get(dry, "outcome") != "dry_run" || strings.Join(strs(get(dry, "would_send", "fields")), ",") != "priority" {
+		t.Errorf("dry run clear: %v", dry)
+	}
+	_, cleared := h.ok("update_label", map[string]any{"project": alpha, "label_id": id, "version": version, "clear_description": true,
+		"clear_priority": true})
+	if strings.Join(strs(get(cleared, "changed")), ",") != "description,priority" || get(cleared, "label", "priority") != nil ||
+		get(cleared, "label", "untrusted_description") != "" {
+		t.Fatalf("clear: %v", cleared)
+	}
+	version = get(cleared, "label", "version").(string)
+	if _, again := h.ok("update_label", map[string]any{"project": alpha, "label_id": id, "version": version, "clear_description": true,
+		"clear_priority": true}); get(again, "outcome") != "unchanged" {
+		t.Errorf("clear again: %v", again)
 	}
 	// list_labels gives the same version.
 	_, list := h.ok("list_labels", map[string]any{"project": alpha, "search": "triage"})
@@ -100,7 +119,8 @@ func TestLabelWrites(t *testing.T) {
 
 func TestMilestoneWrites(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: full})
-	_, out := h.ok("create_milestone", map[string]any{"project": alpha, "title": "Q4", "due_date": "2026-12-31"})
+	_, out := h.ok("create_milestone", map[string]any{"project": alpha, "title": "Q4", "due_date": "2026-12-31", "start_date": "2026-10-01",
+		"description": "The fourth quarter"})
 	id, at := get(out, "milestone", "id"), get(out, "milestone", "updated_at")
 	if get(out, "outcome") != "created" || get(out, "milestone", "due_date") != "2026-12-31" {
 		t.Fatalf("create: %v", out)
@@ -111,7 +131,18 @@ func TestMilestoneWrites(t *testing.T) {
 	if get(up, "outcome") != "updated" || get(up, "milestone", "state") != "closed" {
 		t.Fatalf("close: %v", up)
 	}
-	_, del := h.ok("delete_milestone", map[string]any{"project": alpha, "milestone_id": id, "updated_at": get(up, "milestone", "updated_at"),
+	at = get(up, "milestone", "updated_at")
+	for _, pair := range [][2]string{{"due_date", "2027-01-31"}, {"start_date", "2027-01-01"}, {"description", "x"}} {
+		h.fails("update_milestone", map[string]any{"project": alpha, "milestone_id": id, "updated_at": at, pair[0]: pair[1],
+			"clear_" + pair[0]: true}, "invalid")
+	}
+	_, cleared := h.ok("update_milestone", map[string]any{"project": alpha, "milestone_id": id, "updated_at": at, "clear_description": true,
+		"clear_start_date": true, "clear_due_date": true})
+	if strings.Join(strs(get(cleared, "changed")), ",") != "description,due_date,start_date" ||
+		get(cleared, "milestone", "due_date") != nil || get(cleared, "milestone", "start_date") != nil {
+		t.Fatalf("clear: %v", cleared)
+	}
+	_, del := h.ok("delete_milestone", map[string]any{"project": alpha, "milestone_id": id, "updated_at": get(cleared, "milestone", "updated_at"),
 		"confirm": true})
 	if get(del, "outcome") != "deleted" {
 		t.Errorf("delete: %v", del)

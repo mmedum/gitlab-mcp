@@ -137,6 +137,18 @@ func TestStalenessPassesOnTheFixture(t *testing.T) {
 	}
 }
 
+// A release commit moves [Unreleased] under the new version before the
+// tag exists; its entries count as the changes since the last tag.
+func TestStalenessPassesOnAReleaseCut(t *testing.T) {
+	in := stalenessFixture()
+	in.docs[stalenessArch] = strings.Replace(in.docs[stalenessArch], "phase 0 of 5, nothing tagged yet", "v0.2.0", 1)
+	in.newestTag = "0.1.0"
+	in.changedSince = []string{"internal/p01/a.go"}
+	in.docs["CHANGELOG.md"] = "\n"
+	in.docs["CHANGELOG.md#all"] = "## [Unreleased]\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- A thing.\n\n## [0.1.0] - 2026-01-01\n"
+	wantClean(t, stalenessCheck(in).problems)
+}
+
 func TestStalenessRefuses(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -194,6 +206,13 @@ func TestStalenessRefuses(t *testing.T) {
 			in.newestTag = "0.1.0"
 			in.changedSince = []string{"internal/p01/a.go"}
 			in.docs["CHANGELOG.md"] = "\n### Added\n\n"
+		}, "1 shipped file(s) changed since v0.1.0"},
+		{"shipped Go since the tag with only the tag's own entries", func(in *stalenessInputs) {
+			in.docs[stalenessArch] = strings.Replace(in.docs[stalenessArch], "phase 0 of 5, nothing tagged yet", "v0.1.0", 1)
+			in.newestTag = "0.1.0"
+			in.changedSince = []string{"internal/p01/a.go"}
+			in.docs["CHANGELOG.md"] = "\n"
+			in.docs["CHANGELOG.md#all"] = "## [Unreleased]\n\n## [0.1.0] - 2026-01-01\n\n### Added\n\n- A thing.\n"
 		}, "1 shipped file(s) changed since v0.1.0"},
 		{"a version in prose", func(in *stalenessInputs) {
 			in.docs["docs/extra.md"] = "This is v1.2.3 of the server.\n"
