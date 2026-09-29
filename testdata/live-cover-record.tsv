@@ -178,12 +178,12 @@ get_blame.path	2
 get_blame.project	2
 get_blame.ref	1
 get_blame.start_line	1
-get_commit.*	3
+get_commit.*	4
 get_commit.diff_offset	1
 get_commit.file_offset	2
 get_commit.message_offset	1
-get_commit.project	3
-get_commit.sha	3
+get_commit.project	4
+get_commit.sha	4
 get_file.*	5
 get_file.offset	1
 get_file.path	5

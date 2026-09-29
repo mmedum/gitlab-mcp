@@ -158,6 +158,9 @@ func phase0(s scratch) []step {
 			"since": yesterday, "until": tomorrow}, paged: true},
 		{tool: "list_commits", args: map[string]any{"project": p, "path": s.File, "author": s.User}},
 		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.SHA}},
+		// A branch name, resolved to its commit, whose merge request is the
+		// scratch one; the offset reads after it skip the links.
+		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.Feature}},
 		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.Feature, "file_offset": 1, "message_offset": 7}},
 		{tool: "get_commit", args: map[string]any{"project": p, "sha": s.Feature, "file_offset": 0, "diff_offset": 5}},
 	}
