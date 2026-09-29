@@ -31,15 +31,15 @@ type issueLink struct {
 // serveFeatures serves the phase 6 routes; it reports whether the path
 // was one of them.
 func (s *Server) serveFeatures(w http.ResponseWriter, r *http.Request, p *project, user string, seg []string) bool {
-	return s.serveIssueFeatures(w, r, p, seg) || s.servePlanningFeatures(w, r, p, seg) || s.serveRepoFeatures(w, r, p, user, seg)
+	return s.serveIssueFeatures(w, r, p, user, seg) || s.servePlanningFeatures(w, r, p, seg) || s.serveRepoFeatures(w, r, p, user, seg)
 }
 
-func (s *Server) serveIssueFeatures(w http.ResponseWriter, r *http.Request, p *project, seg []string) bool {
+func (s *Server) serveIssueFeatures(w http.ResponseWriter, r *http.Request, p *project, user string, seg []string) bool {
 	switch {
 	case r.Method == http.MethodPost && match(seg, "issues", "*", "move"):
 		s.moveIssue(w, r, p, seg[1])
 	case r.Method == http.MethodGet && match(seg, "issues", "*", "links"):
-		s.listIssueLinks(w, p, seg[1])
+		s.listIssueLinks(w, p, user, seg[1])
 	case r.Method == http.MethodPost && match(seg, "issues", "*", "links"):
 		s.createIssueLink(w, r, p, seg[1])
 	case r.Method == http.MethodDelete && match(seg, "issues", "*", "links", "*"):
@@ -141,9 +141,9 @@ func (s *Server) moveIssue(w http.ResponseWriter, r *http.Request, p *project, i
 
 // listIssueLinks is GET …/issues/:iid/links: the other issue of each
 // link, from either side, with the link.
-func (s *Server) listIssueLinks(w http.ResponseWriter, p *project, iid string) {
+func (s *Server) listIssueLinks(w http.ResponseWriter, p *project, user, iid string) {
 	iss := findIssue(p, iid)
-	if iss == nil {
+	if iss == nil || !s.readable(p, iss, user) {
 		message(w, http.StatusNotFound, "404 Issue Not Found")
 		return
 	}
@@ -163,6 +163,9 @@ func (s *Server) listIssueLinks(w http.ResponseWriter, p *project, iid string) {
 		}
 		op := s.projectByID(otherProject)
 		other := findIssue(op, itoa(otherIID))
+		if !s.visible(op, user) || !s.readable(op, other, user) {
+			continue
+		}
 		out = append(out, gitlab.RelatedIssue{IID: other.IID, ProjectID: op.ID, Title: other.Title, State: other.State,
 			WebURL: other.WebURL, IssueLinkID: l.id, LinkType: typ})
 	}

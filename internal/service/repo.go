@@ -124,8 +124,9 @@ func commitRow(c gitlab.Commit) model.CommitRow {
 // the fileOffset-th changed file. A diff that does not fit is named, and
 // file_offset continues from it. The message is shown from
 // messageOffset, and a cut one says where to continue. The merge
-// requests that contain the commit are read at the same time, best
-// effort.
+// requests that contain the commit are read with the diffs, best
+// effort, and only on a first read: a read that continues from any
+// offset leaves them out.
 func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, diffOffset, messageOffset int) (model.Commit, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
@@ -139,16 +140,19 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, di
 		mrs      *model.LinkedItems
 		mrsErr   error
 	)
-	wg.Go(func() {
-		if c, err = s.client.GetCommit(ctx, p, sha); err == nil {
-			diffs, complete, err = s.commitDiffs(ctx, p, c.ID)
-		}
-	})
-	wg.Go(func() {
-		mrs, mrsErr = linked(func(opts gapi.ListOptions) ([]gitlab.LinkedMergeRequest, gapi.Page, error) {
-			return s.client.ListCommitMergeRequests(ctx, p, sha, opts)
-		}, linkedMergeRequest)
-	})
+	if c, err = s.client.GetCommit(ctx, p, sha); err != nil {
+		return model.Commit{}, err
+	}
+	// Both read the commit just read, by its id, so a branch that moves
+	// in between cannot mix two commits.
+	wg.Go(func() { diffs, complete, err = s.commitDiffs(ctx, p, c.ID) })
+	if fileOffset == 0 && diffOffset == 0 && messageOffset == 0 {
+		wg.Go(func() {
+			mrs, mrsErr = linked(func(opts gapi.ListOptions) ([]gitlab.LinkedMergeRequest, gapi.Page, error) {
+				return s.client.ListCommitMergeRequests(ctx, p, c.ID, opts)
+			}, linkedMergeRequest)
+		})
+	}
 	wg.Wait()
 	if err != nil {
 		return model.Commit{}, err
@@ -171,7 +175,7 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, di
 		AuthoredAt: c.AuthoredDate, CommitterName: c.CommitterName, CommittedAt: c.CommittedDate,
 		ParentIDs: nonNil(c.ParentIDs), UntrustedMessage: msg, MessageBudget: msgBudget, Files: d.Files,
 		NotShown: d.NotShown, FilesComplete: d.FilesComplete, NextFileOffset: d.NextFileOffset, DiffBudget: d.DiffBudget,
-		HiddenRemoved: d.HiddenRemoved, MergeRequests: mrs}
+		HiddenRemoved: d.HiddenRemoved, FileOffset: fileOffset, MergeRequests: mrs}
 	if c.Stats != nil {
 		out.Additions, out.Deletions = c.Stats.Additions, c.Stats.Deletions
 	}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -409,58 +410,104 @@ func TestGeneratedDataIsSynthetic(t *testing.T) {
 
 // The link lists answer GitLab's shapes: issue rows without references,
 // an external tracker's issue as {title, id}, and nothing about an issue
-// the user may not read.
+// the user may not read, on any route that lists issues.
 func TestLinks(t *testing.T) {
 	s := New(t, Options{ExternalTracker: true})
-	rows := func(path, token string) []map[string]any {
-		t.Helper()
-		req, _ := http.NewRequest("GET", s.URL+"/api/v4/projects/2001/"+path, nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		var out []map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-			t.Fatalf("%s: %d, %v", path, resp.StatusCode, err)
-		}
-		return out
-	}
-	iids := func(rows []map[string]any) []any {
-		var out []any
-		for _, r := range rows {
-			if r["iid"] != nil {
-				out = append(out, r["iid"])
-			} else {
-				out = append(out, r["id"])
-			}
-		}
-		return out
-	}
-	alice, carol := s.Token(), s.TokenFor("carol", "api")
-	closes := rows("merge_requests/1/closes_issues", alice)
-	if got := iids(closes); len(got) != 2 || got[0] != float64(1) || got[1] != float64(7) || closes[0]["references"] != nil {
+	alice, dave := s.Token(), s.TokenFor("dave", "api")
+	closes := linkRows(t, s, "merge_requests/1/closes_issues", alice)
+	if got := linkIDs(closes); fmt.Sprint(got) != "[1 6]" || closes[0]["references"] != nil {
 		t.Errorf("closes_issues = %v", closes)
 	}
-	related := rows("merge_requests/1/related_issues", carol)
-	if got := iids(related); len(got) != 3 || got[0] != float64(1) || got[1] != float64(2) || got[2] != "EXT-7" ||
-		related[2]["title"] != "External Issue EXT-7" {
-		t.Errorf("related_issues for carol = %v", related)
+	related := linkRows(t, s, "merge_requests/1/related_issues", dave)
+	if got := linkIDs(related); fmt.Sprint(got) != "[1 2 EXT-7]" || related[2]["title"] != "External Issue EXT-7" {
+		t.Errorf("related_issues for dave = %v", related)
 	}
-	if got := iids(rows("issues/1/closed_by", alice)); len(got) != 1 || got[0] != float64(1) {
+	// carol owns the group, so she reads the confidential issue without
+	// being its assignee.
+	s.projectByPath(ProjectAlpha).issues[5].Assignees = nil
+	if got := linkIDs(linkRows(t, s, "merge_requests/1/closes_issues", s.TokenFor("carol", "api"))); fmt.Sprint(got) != "[1 6]" {
+		t.Errorf("closes_issues for carol = %v", got)
+	}
+	if got := linkIDs(linkRows(t, s, "issues/1/closed_by", alice)); fmt.Sprint(got) != "[1]" {
 		t.Errorf("closed_by = %v", got)
 	}
-	if got := iids(rows("issues/1/related_merge_requests", alice)); len(got) != 1 || got[0] != float64(1) {
+	if got := linkIDs(linkRows(t, s, "issues/1/related_merge_requests", alice)); fmt.Sprint(got) != "[1]" {
 		t.Errorf("related_merge_requests = %v", got)
 	}
-	resp, _ := do(t, "GET", s.URL+"/api/v4/projects/2001/issues/7", carol, nil, "")
+	resp, _ := do(t, "GET", s.URL+"/api/v4/projects/2001/issues/6", dave, nil, "")
 	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("carol reads the confidential issue: %d", resp.StatusCode)
+		t.Errorf("dave reads the confidential issue: %d", resp.StatusCode)
 	}
-	for _, r := range rows("issues?per_page=100", carol) {
-		if r["iid"] == float64(7) {
-			t.Error("carol lists the confidential issue")
+	for _, path := range []string{"issues?per_page=100", "search?scope=issues&search=issue&per_page=100"} {
+		for _, r := range linkRows(t, s, path, dave) {
+			if r["iid"] == float64(6) {
+				t.Errorf("dave finds the confidential issue through %s", path)
+			}
 		}
 	}
+	link := `{"target_project_id":2001,"target_issue_iid":6}`
+	if resp, _ := do(t, "POST", s.URL+"/api/v4/projects/2001/issues/3/links", alice, strings.NewReader(link), "application/json"); resp.StatusCode != 201 {
+		t.Fatalf("link: %d", resp.StatusCode)
+	}
+	if got := linkRows(t, s, "issues/3/links", dave); len(got) != 0 {
+		t.Errorf("dave sees the confidential issue's link: %v", got)
+	}
+}
+
+// Closing follows GitLab's default pattern: a list closes each issue in
+// it, only a closing word's first letter may be upper case, commit
+// messages count, and only into the default branch.
+func TestClosingPattern(t *testing.T) {
+	s := New(t, Options{})
+	p := s.projectByPath(ProjectAlpha)
+	p.mrs[0].Description = "Closes #1, #2 and #3. CLOSES #4. Fixes: #5. See #6."
+	p.commits["feature/login"][0].Message = "Add login\n\nResolves #7\n"
+	if got := linkIDs(linkRows(t, s, "merge_requests/1/closes_issues", s.Token())); fmt.Sprint(got) != "[1 2 3 5 7]" {
+		t.Errorf("closes_issues = %v", got)
+	}
+	p.mrs[0].TargetBranch = "release/1.0"
+	if got := linkRows(t, s, "merge_requests/1/closes_issues", s.Token()); len(got) != 0 {
+		t.Errorf("a merge request into another branch closes %v", linkIDs(got))
+	}
+}
+
+// related_issues pages the issues and external ones together in the
+// order the text names them, then answers each page's issues first.
+func TestLinkedIssuesPaging(t *testing.T) {
+	s := New(t, Options{ExternalTracker: true})
+	s.projectByPath(ProjectAlpha).mrs[0].Description = "See EXT-1 and #2, then #1."
+	first := linkRows(t, s, "merge_requests/1/related_issues?per_page=2", s.Token())
+	second := linkRows(t, s, "merge_requests/1/related_issues?per_page=2&page=2", s.Token())
+	if fmt.Sprint(linkIDs(first)) != "[2 EXT-1]" || fmt.Sprint(linkIDs(second)) != "[1]" {
+		t.Errorf("pages %v and %v", linkIDs(first), linkIDs(second))
+	}
+}
+
+func linkRows(t *testing.T, s *Server, path, token string) []map[string]any {
+	t.Helper()
+	req, _ := http.NewRequest("GET", s.URL+"/api/v4/projects/2001/"+path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("%s: %d, %v", path, resp.StatusCode, err)
+	}
+	return out
+}
+
+// linkIDs names each row by its iid, or an external one by its id.
+func linkIDs(rows []map[string]any) []any {
+	var out []any
+	for _, r := range rows {
+		if r["iid"] != nil {
+			out = append(out, r["iid"])
+		} else {
+			out = append(out, r["id"])
+		}
+	}
+	return out
 }

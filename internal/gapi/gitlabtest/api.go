@@ -131,7 +131,7 @@ func (s *Server) serveProject(w http.ResponseWriter, r *http.Request, p *project
 		s.serveRepository(w, r, p, seg[1:])
 	case get && match(seg, "protected_branches"):
 		writePage(s, w, r, p.protected)
-	case get && (s.serveCI(w, r, p, seg) || s.servePlanning(w, r, p, seg) || s.serveToolsetRead(w, r, p, user, seg)):
+	case get && (s.serveCI(w, r, p, seg) || s.servePlanning(w, r, p, user, seg) || s.serveToolsetRead(w, r, p, user, seg)):
 	case s.serveProjectWrite(w, r, p, user, seg):
 	default:
 		routeNotFound(w)
@@ -140,7 +140,7 @@ func (s *Server) serveProject(w http.ResponseWriter, r *http.Request, p *project
 
 func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, user, iid string, rest []string) {
 	iss := findIssue(p, iid)
-	if iss == nil || !readable(p, iss, user) {
+	if iss == nil || !s.readable(p, iss, user) {
 		message(w, http.StatusNotFound, "404 Issue Not Found")
 		return
 	}
@@ -181,9 +181,9 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 	case get && match(rest, "approvals"):
 		s.approvals(w, p, mr, user)
 	case get && match(rest, "closes_issues"):
-		writePage(s, w, r, s.linkedIssues(p, mr, user, true))
+		s.linkedIssues(w, r, p, mr, user, true)
 	case get && match(rest, "related_issues"):
-		writePage(s, w, r, s.linkedIssues(p, mr, user, false))
+		s.linkedIssues(w, r, p, mr, user, false)
 	case get && match(rest, "notes", "*"):
 		s.getNote(w, p, mrTarget(mr), rest[1])
 	case get && match(rest, "discussions"):
@@ -591,7 +591,7 @@ func (s *Server) listIssues(w http.ResponseWriter, r *http.Request, user string,
 	var rows []*gitlab.Issue
 	for _, p := range projects {
 		for _, i := range p.issues {
-			if readable(p, i, user) && keep(q, itemFilter{state: i.State, title: i.Title, description: i.Description,
+			if s.readable(p, i, user) && keep(q, itemFilter{state: i.State, title: i.Title, description: i.Description,
 				author: i.Author.Username, labels: i.Labels, assignees: usernames(i.Assignees), created: i.CreatedAt,
 				updated: i.UpdatedAt}, user, defaultScope) {
 				rows = append(rows, i)

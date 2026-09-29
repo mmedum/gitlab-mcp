@@ -104,7 +104,7 @@ func (s *Server) fillPlanning(p *project) {
 
 // servePlanning serves a project's labels, milestones, members and
 // search; it reports whether the path was one of them.
-func (s *Server) servePlanning(w http.ResponseWriter, r *http.Request, p *project, seg []string) bool {
+func (s *Server) servePlanning(w http.ResponseWriter, r *http.Request, p *project, user string, seg []string) bool {
 	q := r.URL.Query()
 	switch {
 	case match(seg, "labels"):
@@ -140,7 +140,7 @@ func (s *Server) servePlanning(w http.ResponseWriter, r *http.Request, p *projec
 	case match(seg, "members", "all"):
 		writePage(s, w, r, s.members(p, q.Get("query")))
 	case match(seg, "search"):
-		s.search(w, r, []*project{p}, "project")
+		s.search(w, r, user, []*project{p}, "project")
 	default:
 		return false
 	}
@@ -156,7 +156,7 @@ func (s *Server) servePlanningTop(w http.ResponseWriter, r *http.Request, user s
 	case match(seg, "todos"):
 		s.listTodos(w, r, user)
 	case match(seg, "search"):
-		s.search(w, r, s.visibleProjects(user), "instance")
+		s.search(w, r, user, s.visibleProjects(user), "instance")
 	default:
 		return false
 	}
@@ -218,7 +218,7 @@ func (s *Server) serveGroupPlanning(w http.ResponseWriter, r *http.Request, user
 		}
 		writePage(s, w, r, filterMilestones(rows, q.Get("state"), q.Get("search"), q.Get("title")))
 	case "search":
-		s.search(w, r, s.groupProjects(user, g, true), "group")
+		s.search(w, r, user, s.groupProjects(user, g, true), "group")
 	default:
 		return false
 	}
@@ -277,7 +277,7 @@ func todoJSON(t todo) map[string]any {
 // search answers a search over projects. where is instance, group or
 // project; code, commits, comments and wiki pages across a group or the
 // instance need advanced search and are refused as GitLab refuses them.
-func (s *Server) search(w http.ResponseWriter, r *http.Request, projects []*project, where string) {
+func (s *Server) search(w http.ResponseWriter, r *http.Request, user string, projects []*project, where string) {
 	q := r.URL.Query()
 	scope, term := q.Get("scope"), strings.ToLower(q.Get("search"))
 	if term == "" {
@@ -291,7 +291,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request, projects []*proj
 	matches := func(text string) bool { return strings.Contains(strings.ToLower(text), term) }
 	var rows []any
 	for _, p := range projects {
-		hits, ok := s.scopeHits(p, q, where, matches)
+		hits, ok := s.scopeHits(p, q, user, where, matches)
 		if !ok {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "scope does not have a valid value"})
 			return
@@ -311,13 +311,13 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request, projects []*proj
 
 // scopeHits is one project's matches for a search's scope; ok is false
 // for a scope GitLab does not take.
-func (s *Server) scopeHits(p *project, q url.Values, where string, matches func(string) bool) ([]any, bool) {
+func (s *Server) scopeHits(p *project, q url.Values, user, where string, matches func(string) bool) ([]any, bool) {
 	var rows []any
 	state := q.Get("state")
 	switch q.Get("scope") {
 	case "issues":
 		for _, i := range p.issues {
-			if matches(i.Title+"\n"+i.Description) && (state == "" || state == i.State) {
+			if s.readable(p, i, user) && matches(i.Title+"\n"+i.Description) && (state == "" || state == i.State) {
 				rows = append(rows, i)
 			}
 		}

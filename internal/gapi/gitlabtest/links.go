@@ -11,23 +11,26 @@ import (
 )
 
 // The lists that link issues, merge requests and commits. GitLab derives
-// them from text: a merge request closes the issues its title and
-// description name after a closing word, and relates to every issue any
-// of its text mentions. Each list leaves out, without saying so, what the
-// user cannot read: here, a confidential issue.
+// them from text: a merge request into the default branch closes the
+// issues its title, description and commits name in a closing statement,
+// and relates to every issue any of its text mentions. Each list leaves
+// out, without saying so, what the user cannot read: here, a
+// confidential issue.
 
-// closingWord is GitLab's default closing pattern, less its rarer
-// spellings.
-const closingWord = `(?i:\b(?:clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing))\b:?\s+)`
+// closingStatement is GitLab's default issue_closing_pattern
+// (config/initializers/1_settings.rb at v19.4.1-ee) with the issue
+// reference narrowed to this project's #12: a list such as "Closes #1,
+// #2 and #3" closes each, and only a closing word's first letter may be
+// upper case.
+var closingStatement = regexp.MustCompile(`\b(?:(?:[Cc]los(?:e[sd]?|ing)|\b[Ff]ix(?:e[sd]|ing)?|\b[Rr]esolv(?:e[sd]?|ing)|` +
+	`\b[Ii]mplement(?:s|ed|ing)?)(?::?) +(?:(?:issues? +)?#\d+(?:(?: *,? +and +| *,? *)?)|(?:[A-Z][A-Z0-9_]+-\d+))+)`)
 
 var (
-	closingRef = regexp.MustCompile(closingWord + `#(\d+)\b`)
-	issueRef   = regexp.MustCompile(`(?:^|[^\w&/])#(\d+)\b`)
-	mrRef      = regexp.MustCompile(`(?:^|[^\w/])!(\d+)\b`)
-	// externalRef and closingExternalRef name an issue in ProjectAlpha's
-	// external tracker, when Options.ExternalTracker gives it one.
-	externalRef        = regexp.MustCompile(`\b(EXT-\d+)\b`)
-	closingExternalRef = regexp.MustCompile(closingWord + `(EXT-\d+)\b`)
+	// issueRef names an issue of this project, #12, or, when
+	// Options.ExternalTracker gives ProjectAlpha one, an issue in its
+	// external tracker, EXT-7.
+	issueRef = regexp.MustCompile(`(?:^|[^\w&/])#(\d+)\b|\b(EXT-\d+)\b`)
+	mrRef    = regexp.MustCompile(`(?:^|[^\w/])!(\d+)\b`)
 )
 
 // plannerLevel is the least access level that reads a confidential
@@ -35,29 +38,49 @@ var (
 const plannerLevel = 15
 
 // readable is GitLab's rule for a confidential issue: its author, its
-// assignees and members at Planner and above read it.
-func readable(p *project, iss *gitlab.Issue, user string) bool {
-	return !iss.Confidential || iss.Author.Username == user || has(usernames(iss.Assignees), user) ||
-		p.levels[user] >= plannerLevel
+// assignees and members at Planner and above, a group's members
+// included, read it.
+func (s *Server) readable(p *project, iss *gitlab.Issue, user string) bool {
+	if !iss.Confidential || iss.Author.Username == user || has(usernames(iss.Assignees), user) {
+		return true
+	}
+	for _, m := range s.members(p, "") {
+		if m.Username == user {
+			return m.AccessLevel >= plannerLevel
+		}
+	}
+	return false
 }
 
-// refs reads what pattern's first group captures, in order and once
-// each.
-func refs(pattern *regexp.Regexp, text string) []string {
-	var out []string
-	for _, m := range pattern.FindAllStringSubmatch(text, -1) {
-		if !slices.Contains(out, m[1]) {
-			out = append(out, m[1])
+// issueMention is one issue a text names: a GitLab issue by iid, or an
+// external tracker's by its id.
+type issueMention struct {
+	iid      int64
+	external string
+}
+
+// mentions reads the issues a text names, in order and once each.
+func mentions(text string) []issueMention {
+	var out []issueMention
+	for _, m := range issueRef.FindAllStringSubmatch(text, -1) {
+		var im issueMention
+		if m[1] != "" {
+			im.iid, _ = strconv.ParseInt(m[1], 10, 64)
+		} else {
+			im.external = m[2]
+		}
+		if !slices.Contains(out, im) {
+			out = append(out, im)
 		}
 	}
 	return out
 }
 
-// iids is refs for references by number.
-func iids(pattern *regexp.Regexp, text string) []int64 {
+// mrIIDs reads the merge requests a text names, in order and once each.
+func mrIIDs(text string) []int64 {
 	var out []int64
-	for _, r := range refs(pattern, text) {
-		if n, err := strconv.ParseInt(r, 10, 64); err == nil {
+	for _, m := range mrRef.FindAllStringSubmatch(text, -1) {
+		if n, err := strconv.ParseInt(m[1], 10, 64); err == nil && !slices.Contains(out, n) {
 			out = append(out, n)
 		}
 	}
@@ -76,20 +99,35 @@ func notesText(p *project, key string) string {
 	return b.String()
 }
 
+// commitMessages is the messages of the commits a merge request brings.
+func commitMessages(p *project, mr *gitlab.MergeRequest) string {
+	var b strings.Builder
+	for _, c := range mrCommits(p, mr) {
+		b.WriteString(c.Message + "\n")
+	}
+	return b.String()
+}
+
+// closingText is the closing statements GitLab reads from a merge
+// request into the default branch: in its title, description and commit
+// messages. One into any other branch closes nothing.
+func closingText(p *project, mr *gitlab.MergeRequest) string {
+	if mr.TargetBranch != p.DefaultBranch {
+		return ""
+	}
+	text := mr.Title + "\n" + mr.Description + "\n" + commitMessages(p, mr)
+	return strings.Join(closingStatement.FindAllString(text, -1), "\n")
+}
+
 // closes reports whether a merge request closes an issue when merged.
-func closes(mr *gitlab.MergeRequest, iid int64) bool {
-	return slices.Contains(iids(closingRef, mr.Title+"\n"+mr.Description), iid)
+func closes(p *project, mr *gitlab.MergeRequest, iid int64) bool {
+	return slices.Contains(mentions(closingText(p, mr)), issueMention{iid: iid})
 }
 
 // mrText is all of a merge request's text GitLab reads for mentions: its
 // title, description, comments and commit messages.
 func mrText(p *project, mr *gitlab.MergeRequest) string {
-	var b strings.Builder
-	b.WriteString(mr.Title + "\n" + mr.Description + "\n" + notesText(p, "mr:"+strconv.FormatInt(mr.IID, 10)))
-	for _, c := range mrCommits(p, mr) {
-		b.WriteString(c.Message + "\n")
-	}
-	return b.String()
+	return mr.Title + "\n" + mr.Description + "\n" + notesText(p, "mr:"+strconv.FormatInt(mr.IID, 10)) + commitMessages(p, mr)
 }
 
 // mrCommits are the commits a merge request brings: those on its source
@@ -119,10 +157,10 @@ func mrBasic(mr *gitlab.MergeRequest) map[string]any {
 // answers the full merge request entity.
 func relatedMRs(p *project, iss *gitlab.Issue) []gitlab.MergeRequest {
 	key := "issue:" + strconv.FormatInt(iss.IID, 10)
-	mentioned := iids(mrRef, iss.Description+"\n"+notesText(p, key))
+	mentioned := mrIIDs(iss.Description + "\n" + notesText(p, key))
 	out := []gitlab.MergeRequest{}
 	for _, mr := range p.mrs {
-		if slices.Contains(mentioned, mr.IID) || slices.Contains(iids(issueRef, mrText(p, mr)), iss.IID) {
+		if slices.Contains(mentioned, mr.IID) || slices.Contains(mentions(mrText(p, mr)), issueMention{iid: iss.IID}) {
 			out = append(out, *mr)
 		}
 	}
@@ -134,7 +172,7 @@ func relatedMRs(p *project, iss *gitlab.Issue) []gitlab.MergeRequest {
 func closedBy(p *project, iss *gitlab.Issue) []map[string]any {
 	out := []map[string]any{}
 	for _, mr := range p.mrs {
-		if closes(mr, iss.IID) {
+		if closes(p, mr, iss.IID) {
 			out = append(out, mrBasic(mr))
 		}
 	}
@@ -142,32 +180,48 @@ func closedBy(p *project, iss *gitlab.Issue) []map[string]any {
 }
 
 // linkedIssues is GET …/merge_requests/:iid/closes_issues when closing,
-// and …/related_issues otherwise: the issues the user can read, then any
-// external tracker's issues as {title, id} with a string id.
-func (s *Server) linkedIssues(p *project, mr *gitlab.MergeRequest, user string, closing bool) []map[string]any {
-	issues, external := issueRef, externalRef
+// and …/related_issues otherwise. As lib/api/merge_requests.rb does, the
+// readable issues and any external tracker's are paged together in the
+// order the text names them, and each page is then answered as its
+// GitLab issues followed by its external ones, {title, id} with a string
+// id.
+func (s *Server) linkedIssues(w http.ResponseWriter, r *http.Request, p *project, mr *gitlab.MergeRequest, user string, closing bool) {
 	text := mrText(p, mr)
 	if closing {
-		issues, external = closingRef, closingExternalRef
-		text = mr.Title + "\n" + mr.Description
+		text = closingText(p, mr)
 	}
-	out := []map[string]any{}
-	for _, iid := range iids(issues, text) {
-		iss := findIssue(p, strconv.FormatInt(iid, 10))
-		if iss == nil || !readable(p, iss, user) {
+	tracker := s.opts.ExternalTracker && p.PathWithNamespace == ProjectAlpha
+	var all []map[string]any
+	for _, m := range mentions(text) {
+		if m.external != "" {
+			if tracker {
+				all = append(all, map[string]any{"title": "External Issue " + m.external, "id": m.external})
+			}
+			continue
+		}
+		iss := findIssue(p, strconv.FormatInt(m.iid, 10))
+		if iss == nil || !s.readable(p, iss, user) {
 			continue
 		}
 		// The issue rows are GitLab's IssueBasic, which has no references.
 		row := withExtra(iss, nil)
 		delete(row, "references")
-		out = append(out, row)
+		all = append(all, row)
 	}
-	if s.opts.ExternalTracker && p.PathWithNamespace == ProjectAlpha {
-		for _, id := range refs(external, text) {
-			out = append(out, map[string]any{"title": "External Issue " + id, "id": id})
+	start, end, ok := s.offsetPage(w, r, len(all), false)
+	if !ok {
+		return
+	}
+	out := []map[string]any{}
+	var externals []map[string]any
+	for _, row := range all[start:end] {
+		if _, issue := row["iid"]; issue {
+			out = append(out, row)
+		} else {
+			externals = append(externals, row)
 		}
 	}
-	return out
+	writeJSON(w, http.StatusOK, append(out, externals...))
 }
 
 // commitMRs is GET …/repository/commits/:sha/merge_requests: the merge

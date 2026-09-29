@@ -17,5 +17,6 @@ Description: all 12 characters shown (budget 20000).
 Linked issues are as GitLab returned them: it leaves out confidential issues and any you cannot read.
 Issues it closes when merged: 1 shown of 21; the rest are not shown.
 - example-group/alpha#12 (project id 2001, iid 12): opened, https://gitlab.example.com/example-group/alpha/-/issues/12; title <<<0123456789abcdef>>>Crash on start<<</0123456789abcdef>>>
-Related issues: 1 shown.
+Related issues: 2 shown.
 - external issue EXT-7; title <<<0123456789abcdef>>>External Issue EXT-7<<</0123456789abcdef>>>
+- external issue; title <<<0123456789abcdef>>>External Issue not an id<<</0123456789abcdef>>>

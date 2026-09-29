@@ -227,8 +227,8 @@ func (s *Server) fillAlpha(p *project) {
 			by := s.user("alice")
 			iss.ClosedBy = &by
 		}
-		// Issue 7 is confidential, and neither carol nor dave may read it.
-		if i == 6 {
+		// Issue 6 is confidential, and dave may not read it.
+		if i == 5 {
 			iss.Confidential = true
 		}
 		s.addDiscussions(p, "issue", iss.IID, iss.ID, "Issue", iss.CreatedAt, nil)
@@ -271,8 +271,8 @@ func (s *Server) fillAlpha(p *project) {
 		s.fillReview(p, mr)
 		if i == 0 {
 			// The first links to issues: it closes #1 and the confidential
-			// #7, and mentions #2 and an external tracker's issue.
-			mr.Description += "\n\nCloses #1 and fixes #7. Relates to #2 and EXT-7."
+			// #6, and mentions #2 and an external tracker's issue.
+			mr.Description += "\n\nCloses #1 and fixes #6. Relates to #2 and EXT-7."
 		}
 		pos := &gitlab.Position{BaseSHA: base.ID, StartSHA: base.ID, HeadSHA: head.ID, PositionType: "text",
 			OldPath: "src/login.go", NewPath: "src/login.go", NewLine: intPtr(3)}
