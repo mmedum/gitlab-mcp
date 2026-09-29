@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/mmedum/gitlab-mcp/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
 )
 
 // Class is the closed error vocabulary of docs/architecture.md §6.5.

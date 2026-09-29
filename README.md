@@ -132,7 +132,7 @@ Download an archive for your platform from the
 [releases](https://github.com/mmedum/gitlab-mcp/releases) page, or:
 
 ```bash
-go install github.com/mmedum/gitlab-mcp/cmd/gitlab-mcp@latest
+go install github.com/mmedum/gitlab-mcp/v2/cmd/gitlab-mcp@latest
 ```
 
 Claude Desktop users can open the `.mcpb` bundle from the same release.

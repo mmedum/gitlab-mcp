@@ -13,10 +13,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/server"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/server"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/redact"
 )
 
 // toolFloor is the fewest tools a model must be offered for a task to

@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // The phase-1 reads of a merge request's review and the repository's

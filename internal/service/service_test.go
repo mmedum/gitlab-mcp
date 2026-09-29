@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
-	"github.com/mmedum/gitlab-mcp/internal/render"
-	"github.com/mmedum/gitlab-mcp/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
+	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
 )
 
 const alphaID = 2001

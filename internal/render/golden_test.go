@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
 )
 
 // Goldens for the readable half, from synthetic values only (§9.1). Run

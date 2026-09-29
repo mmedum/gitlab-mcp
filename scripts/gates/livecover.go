@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/tsv"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/tsv"
 )
 
 // The live-cover gate says how much of the tool surface the live driver

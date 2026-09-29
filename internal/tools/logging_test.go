@@ -11,7 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
 )
 
 // The rule this file holds (CLAUDE.md rule 3, docs/architecture.md

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
 )
 
 // The phase 6 tools against the in-memory instance (§17.13).

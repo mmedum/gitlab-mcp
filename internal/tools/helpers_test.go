@@ -10,11 +10,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
-	"github.com/mmedum/gitlab-mcp/internal/service"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v2/internal/service"
 )
 
 // harness is a client session against the tools registered over an

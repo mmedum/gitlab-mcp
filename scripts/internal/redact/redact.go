@@ -25,7 +25,7 @@ import (
 	"os"
 	"strings"
 
-	core "github.com/mmedum/gitlab-mcp/internal/redact"
+	core "github.com/mmedum/gitlab-mcp/v2/internal/redact"
 )
 
 // Kinds a driver registers with Known. They are the server's, so a

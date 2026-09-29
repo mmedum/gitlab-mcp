@@ -6,7 +6,7 @@ GO        ?= go
 EXE       := $(if $(filter Windows_NT,$(OS)),.exe,)
 BIN       ?= ./gitlab-mcp$(EXE)
 VERSION   ?= dev
-PKG        = github.com/mmedum/gitlab-mcp
+PKG        = github.com/mmedum/gitlab-mcp/v2
 LDFLAGS    = -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 # The packages coverage is measured over, cmd/ included. CI runs
 # `make cover`, so this is the only place the list is written.

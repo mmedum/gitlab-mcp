@@ -15,10 +15,16 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-29
+
 ### Added
 
 - **Breaking:** Before a merge, an approval, `play_job`, `create_release`, `create_tag`, a `run_pipeline` on the default branch or a protected ref, an `update_issue` that makes a confidential issue public, and every delete, the server asks you through the MCP client (form elicitation) when the client supports it; only an accept writes, so a client that declares elicitation and answers with nobody there can no longer make these writes.
 - `GITLAB_MCP_REQUIRE_PROMPT` (`--require-prompt`) refuses those writes as `[blocked]` when the client cannot ask you.
+
+### Changed
+
+- **Breaking:** the Go module path is now `github.com/mmedum/gitlab-mcp/v2`, as Go requires from v2 on; install with `go install github.com/mmedum/gitlab-mcp/v2/cmd/gitlab-mcp@latest`.
 
 ### Fixed
 
@@ -92,6 +98,7 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/mmedum/gitlab-mcp/releases/tag/v1.1.0
 [1.0.0]: https://github.com/mmedum/gitlab-mcp/releases/tag/v1.0.0

@@ -12,7 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
 )
 
 // The protocols a question goes out on: before 2026-07-28 the SDK asks

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/redact"
 )
 
 // The pure half of the live driver: the run's name, the plan of calls,

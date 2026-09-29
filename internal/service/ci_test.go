@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // held is a log reader that already holds the whole log, so it reads

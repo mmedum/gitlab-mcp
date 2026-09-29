@@ -3,9 +3,9 @@ package tools
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/internal/model"
-	"github.com/mmedum/gitlab-mcp/internal/render"
-	"github.com/mmedum/gitlab-mcp/internal/service"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
+	"github.com/mmedum/gitlab-mcp/v2/internal/service"
 )
 
 // The phase 6 tools, with the kinds and toolsets §17.13 decided.

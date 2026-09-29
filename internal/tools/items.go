@@ -5,10 +5,10 @@ import (
 	"maps"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/model"
-	"github.com/mmedum/gitlab-mcp/internal/render"
-	"github.com/mmedum/gitlab-mcp/internal/service"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
+	"github.com/mmedum/gitlab-mcp/v2/internal/service"
 )
 
 // itemFilters are the filters search_issues and search_merge_requests

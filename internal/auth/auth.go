@@ -31,11 +31,11 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
-	"github.com/mmedum/gitlab-mcp/internal/redact"
-	"github.com/mmedum/gitlab-mcp/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v2/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
 )
 
 // DefaultHTTPTimeout bounds one call to the OAuth endpoints when no

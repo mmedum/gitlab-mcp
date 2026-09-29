@@ -12,9 +12,9 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/mmedum/gitlab-mcp/internal/credentials"
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/credentials"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
 )
 
 // signIn runs the authorization and exchange without a browser and

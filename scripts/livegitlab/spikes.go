@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/app"
-	"github.com/mmedum/gitlab-mcp/internal/auth"
-	"github.com/mmedum/gitlab-mcp/internal/diffpos"
-	"github.com/mmedum/gitlab-mcp/internal/quickaction"
-	netredact "github.com/mmedum/gitlab-mcp/internal/redact"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/internal/app"
+	"github.com/mmedum/gitlab-mcp/v2/internal/auth"
+	"github.com/mmedum/gitlab-mcp/v2/internal/diffpos"
+	"github.com/mmedum/gitlab-mcp/v2/internal/quickaction"
+	netredact "github.com/mmedum/gitlab-mcp/v2/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/redact"
 )
 
 // The spikes of docs/architecture.md §15 the phases owe, against the

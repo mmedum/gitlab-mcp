@@ -1,8 +1,9 @@
 # Architecture — gitlab-mcp
 
-**Status: 1.1.0, 2026-09-27: phases 0 to 6, and clearing label and milestone fields.
-Phase 7, the person confirming what ships or deletes (§4.12), is built
-on a topic branch, unreleased; §17.10 stands and §17.11 waits.** This document holds the platform facts, the design bets, a
+**Status: 2.0.0, 2026-09-29: phases 0 to 7 — the person now confirms
+what ships or deletes (§4.12) — and the sign-in no longer refreshed
+before the server serves. The module path is `/v2`. §17.10 stands and
+§17.11 waits** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 

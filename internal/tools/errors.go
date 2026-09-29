@@ -6,7 +6,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
 )
 
 // Every error reaches the model as a tool result reading

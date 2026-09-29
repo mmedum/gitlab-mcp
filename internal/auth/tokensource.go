@@ -8,9 +8,9 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/mmedum/gitlab-mcp/internal/credentials"
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/internal/credentials"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/redact"
 )
 
 // DefaultRefreshMargin is how long before expiry a token is refreshed.
