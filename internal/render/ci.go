@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/model"
 )
@@ -158,23 +159,33 @@ func TestReport(r model.TestReport, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Test report of pipeline %d in %s\n", r.PipelineID, projectLine(r.Project))
 	if r.Partial {
-		fmt.Fprintf(&b, "The pipeline is %s, so the report may be partial: jobs still to run add to it.\n", Ident(r.PipelineStatus))
+		fmt.Fprintf(&b, "The report may be partial: %s, and jobs still to run add to it.\n", Ident(r.PartialReason))
 	}
-	if r.SuitesTotal == 0 {
+	switch {
+	case r.FromSummary && r.SuitesTotal == 0:
+		b.WriteString("The report is larger than this server reads, and GitLab's stored summary has nothing yet: a worker " +
+			"writes it after each job finishes. Try again later; get_job_log with failed_only reads a failed job's output.")
+		return b.String()
+	case r.FromSummary:
+		b.WriteString("The full report is larger than this server reads. These are GitLab's stored counts, written as each job " +
+			"finishes, which can lag behind; no case is listed. get_job_log with failed_only reads a failed job's output.\n")
+	case r.SuitesTotal == 0:
 		b.WriteString("The pipeline has no test report: no job uploaded a JUnit report (artifacts:reports:junit) that you may read.")
 		return b.String()
 	}
-	if r.FromSummary {
-		b.WriteString("The full report is larger than this server reads. These are GitLab's stored counts, written as each job " +
-			"finishes, which can lag behind; no case is listed. get_job_log with failed_only reads a failed job's output.\n")
+	if !r.FromSummary {
+		b.WriteString("GitLab caches the report for up to two minutes.\n")
 	}
 	b.WriteString("Total: " + testCounts(r.Total) + ".")
-	quoted := len(r.Failures) > 0
+	quoted := len(r.Failures) > 0 || r.UntrustedTotalSuiteError != ""
 	for _, s := range r.Suites {
 		quoted = quoted || s.UntrustedSuiteError != ""
 	}
 	if quoted {
 		b.WriteString("\n" + bd.Notice())
+	}
+	if r.UntrustedTotalSuiteError != "" {
+		b.WriteString("\nGitLab could not read a suite's report: " + bd.Inline(r.UntrustedTotalSuiteError))
 	}
 	fmt.Fprintf(&b, "\nSuites (%d of %d), those with failures first:", len(r.Suites), r.SuitesTotal)
 	for _, s := range r.Suites {
@@ -205,7 +216,7 @@ func TestReport(r model.TestReport, bd Boundary) string {
 		o := Origin{Kind: "test_output", Project: r.Project.Path, Item: "pipeline " + strconv.FormatInt(r.PipelineID, 10)}
 		b.WriteString("\n" + bd.Block(o, f.UntrustedOutput))
 		if f.OutputCut {
-			fmt.Fprintf(&b, "\nOutput cut at %d of %d characters.", TestOutputBudget, f.OutputChars)
+			fmt.Fprintf(&b, "\nOutput cut at %d of %d characters.", utf8.RuneCountInString(f.UntrustedOutput), f.OutputChars)
 		}
 	}
 	return b.String()
@@ -220,6 +231,9 @@ func failuresLine(r model.TestReport) string {
 	}
 	if r.NextOffset != nil {
 		s += fmt.Sprintf("; continue with offset=%d", *r.NextOffset)
+		if r.Partial {
+			s += ", though each call reads the report again and the cases can shift while the pipeline runs"
+		}
 	}
 	s += "."
 	if r.SecretsMasked > 0 {

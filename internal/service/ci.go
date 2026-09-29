@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"regexp"
@@ -136,10 +137,15 @@ func bridgeRow(b gitlab.Bridge) model.TriggerJobRow {
 	return row
 }
 
-// maxTestSuites and maxTestFailures bound one get_test_report result.
+// maxTestSuites and maxTestFailures bound one get_test_report result;
+// suite rows take at most a quarter of its budget.
 const (
 	maxTestSuites   = 100
 	maxTestFailures = 100
+	suiteBudget     = render.TestReportBudget / 4
+	// outputReach is how much of a case's output is prepared: far past
+	// what is shown, so a secret that straddles its end is never shown.
+	outputReach = 4 * render.TestOutputBudget
 )
 
 // unfinished are the pipeline states whose test report may still grow.
@@ -148,10 +154,12 @@ var unfinished = []string{"created", "waiting_for_resource", "preparing", "pendi
 
 // GetTestReport reads a pipeline's test report (§7.6): the counts, each
 // suite's, and the failed and errored cases from offset under the
-// budget. GitLab parses the report when read and does not page it; one
-// larger than the client reads falls back to the stored summary, which
-// has counts and no cases. Case names and output are the project's
-// tests' words: masked like a job log and prepared for the boundary.
+// budget. GitLab parses the report when read and does not page it, so
+// each call reads it again; one larger than the client reads falls back
+// to the stored summary, which has counts and no cases. The report takes
+// in child pipelines in the project, so a child still running makes it
+// partial too. Case names and output are the project's tests' words:
+// masked like a job log and prepared for the boundary.
 func (s *Service) GetTestReport(ctx context.Context, raw string, pipeline int64, offset int) (model.TestReport, error) {
 	if offset < 0 {
 		return model.TestReport{}, gapi.Errf(gapi.ClassInvalid, "offset is 0 or more")
@@ -161,37 +169,40 @@ func (s *Service) GetTestReport(ctx context.Context, raw string, pipeline int64,
 		return model.TestReport{}, err
 	}
 	var (
-		wg        sync.WaitGroup
-		pl        *gitlab.PipelineDetail
-		report    *gitlab.TestReport
-		reportErr error
+		wg                    sync.WaitGroup
+		pl                    *gitlab.PipelineDetail
+		report                *gitlab.TestReport
+		triggers              []gitlab.Bridge
+		reportErr, triggerErr error
 	)
 	wg.Go(func() { pl, err = s.client.GetPipeline(ctx, p, pipeline) })
 	wg.Go(func() { report, reportErr = s.client.GetTestReport(ctx, p, pipeline) })
+	wg.Go(func() {
+		triggers, _, triggerErr = s.client.ListPipelineTriggerJobs(ctx, p, pipeline, gapi.JobQuery{},
+			gapi.ListOptions{PerPage: gapi.MaxPerPage})
+	})
 	wg.Wait()
 	if err != nil {
 		return model.TestReport{}, err
 	}
-	out := model.TestReport{Project: ref, PipelineID: pl.ID, PipelineStatus: pl.Status, Partial: slices.Contains(unfinished, pl.Status),
-		Offset: offset, BudgetChars: render.TestReportBudget, Suites: []model.TestSuiteRow{}, Failures: []model.TestFailure{}}
+	// The trigger jobs only tell whether a child is still running; a
+	// failure to read them leaves that unsaid, as get_pipeline does.
+	if triggerErr != nil && !soft(triggerErr) {
+		return model.TestReport{}, triggerErr
+	}
+	out := model.TestReport{Project: ref, PipelineID: pl.ID, PipelineStatus: pl.Status, Offset: offset,
+		BudgetChars: render.TestReportBudget, Suites: []model.TestSuiteRow{}, Failures: []model.TestFailure{}}
+	out.Partial, out.PartialReason = partial(pl, triggers)
 	switch {
 	case gapi.TooLarge(reportErr):
-		sum, err := s.client.GetTestReportSummary(ctx, p, pipeline)
-		if err != nil {
-			return model.TestReport{}, err
-		}
-		t := sum.Total
-		out.FromSummary = true
-		out.Total = model.TestCounts{Total: t.Count, Success: t.Success, Failed: t.Failed, Skipped: t.Skipped, Error: t.Error, Seconds: t.Time}
-		out.FailuresTotal = t.Failed + t.Error
-		out.Suites, out.SuitesTotal = testSuites(sum.TestSuites)
-		return out, nil
+		return s.testSummary(ctx, p, pipeline, out)
 	case reportErr != nil:
 		return model.TestReport{}, reportErr
 	}
 	out.Total = model.TestCounts{Total: report.TotalCount, Success: report.SuccessCount, Failed: report.FailedCount,
 		Skipped: report.SkippedCount, Error: report.ErrorCount, Seconds: report.TotalTime}
-	out.Suites, out.SuitesTotal = testSuites(report.TestSuites)
+	var used int
+	out.Suites, out.SuitesTotal, used = testSuites(report.TestSuites, &out)
 	var failing []failingCase
 	for _, suite := range report.TestSuites {
 		for _, c := range suite.TestCases {
@@ -205,11 +216,12 @@ func (s *Service) GetTestReport(ctx context.Context, raw string, pipeline int64,
 		return model.TestReport{}, gapi.Errf(gapi.ClassInvalid, "offset %d is past the end of the failed and errored cases, "+
 			"which number %d", offset, len(failing))
 	}
-	used := 0
 	for i := offset; i < len(failing); i++ {
 		f, masked, hidden := failing[i].prepare()
 		cost := utf8.RuneCountInString(f.UntrustedName + f.UntrustedClassname + f.UntrustedFile + f.UntrustedOutput)
-		if len(out.Failures) > 0 && (used+cost > render.TestReportBudget || len(out.Failures) == maxTestFailures) {
+		// The first case always fits: suite rows take at most a quarter
+		// of the budget, and one case far less than the rest.
+		if used+cost > render.TestReportBudget || len(out.Failures) == maxTestFailures {
 			next := i
 			out.NextOffset = &next
 			break
@@ -222,26 +234,89 @@ func (s *Service) GetTestReport(ctx context.Context, raw string, pipeline int64,
 	return out, nil
 }
 
+// partial says whether a pipeline's report may still grow, and why: the
+// pipeline has not finished, or a child pipeline in its project, whose
+// jobs the report takes in, has not.
+func partial(pl *gitlab.PipelineDetail, triggers []gitlab.Bridge) (bool, string) {
+	if slices.Contains(unfinished, pl.Status) {
+		return true, "the pipeline is " + pl.Status
+	}
+	for _, b := range triggers {
+		d := b.DownstreamPipeline
+		if d != nil && d.ProjectID == pl.ProjectID && slices.Contains(unfinished, d.Status) {
+			return true, fmt.Sprintf("child pipeline %d is %s", d.ID, d.Status)
+		}
+	}
+	return false, ""
+}
+
+// testSummary fills a result from GitLab's stored summary, for a report
+// too large to read: counts, no cases.
+func (s *Service) testSummary(ctx context.Context, p gapi.Project, pipeline int64, out model.TestReport) (model.TestReport, error) {
+	if out.Offset > 0 {
+		return model.TestReport{}, gapi.Errf(gapi.ClassInvalid, "the report is larger than this server reads, so no case is "+
+			"listed and offset does not apply; call without it for the counts")
+	}
+	sum, err := s.client.GetTestReportSummary(ctx, p, pipeline)
+	if err != nil {
+		return model.TestReport{}, err
+	}
+	t := sum.Total
+	out.FromSummary = true
+	out.Total = model.TestCounts{Total: t.Count, Success: t.Success, Failed: t.Failed, Skipped: t.Skipped, Error: t.Error, Seconds: t.Time}
+	out.FailuresTotal = t.Failed + t.Error
+	if t.SuiteError != nil {
+		var masked, hidden int
+		out.UntrustedTotalSuiteError, masked, hidden = untrustedLine(*t.SuiteError)
+		out.SecretsMasked += masked
+		out.HiddenRemoved += hidden
+	}
+	out.Suites, out.SuitesTotal, _ = testSuites(sum.TestSuites, &out)
+	return out, nil
+}
+
 // testSuites lists suites with a failure, an error or a report GitLab
-// could not read first, at most maxTestSuites of them, and how many
-// there are.
-func testSuites(in []gitlab.TestSuite) ([]model.TestSuiteRow, int) {
+// could not read first, at most maxTestSuites of them and suiteBudget
+// characters, and returns how many there are and the characters used.
+// What it masks and handles is counted into out.
+func testSuites(in []gitlab.TestSuite, out *model.TestReport) ([]model.TestSuiteRow, int, int) {
 	rows := make([]model.TestSuiteRow, 0, min(len(in), maxTestSuites))
 	failing := func(t gitlab.TestSuite) bool { return t.FailedCount+t.ErrorCount > 0 || t.SuiteError != nil }
+	used, full := 0, false
 	for _, first := range []bool{true, false} {
 		for _, t := range in {
-			if failing(t) != first || len(rows) == maxTestSuites {
+			if failing(t) != first || full {
 				continue
 			}
 			row := model.TestSuiteRow{Name: t.Name, TestCounts: model.TestCounts{Total: t.TotalCount, Success: t.SuccessCount,
 				Failed: t.FailedCount, Skipped: t.SkippedCount, Error: t.ErrorCount, Seconds: t.TotalTime}}
+			masked, hidden := 0, 0
 			if t.SuiteError != nil {
-				row.UntrustedSuiteError, _ = render.Line(*t.SuiteError, render.NoteBudget)
+				row.UntrustedSuiteError, masked, hidden = untrustedLine(*t.SuiteError)
 			}
+			cost := utf8.RuneCountInString(row.Name + row.UntrustedSuiteError)
+			if len(rows) == maxTestSuites || used+cost > suiteBudget {
+				full = true
+				continue
+			}
+			used += cost
+			out.SecretsMasked += masked
+			out.HiddenRemoved += hidden
 			rows = append(rows, row)
 		}
 	}
-	return rows, len(in)
+	return rows, len(in), used
+}
+
+// untrustedLine prepares one line of a test report someone else wrote:
+// colors dropped, hidden characters removed before the masks run, so a
+// zero-width space cannot split a token past them, then cut. It returns
+// the line and how many secrets and hidden characters it handled.
+func untrustedLine(s string) (string, int, int) {
+	clean, hidden := render.Line(render.StripANSI(s), 0)
+	masked, n := redact.MaskSecrets(clean)
+	line, _ := render.Line(masked, render.TitleChars*2)
+	return line, n, hidden
 }
 
 // failingCase is a failed or errored case and the suite it is in.
@@ -253,16 +328,17 @@ type failingCase struct {
 // prepare makes a case ready to show: token shapes masked, hidden
 // characters handled, the output cut at render.TestOutputBudget. It
 // returns how many secrets it masked and hidden characters it handled.
+// Only the output's first outputReach characters are prepared; a key
+// block that runs past them is masked to their end.
 func (c failingCase) prepare() (model.TestFailure, int, int) {
 	masked, hidden := 0, 0
 	line := func(s *string) string {
 		if s == nil {
 			return ""
 		}
-		text, n := redact.MaskSecrets(render.StripANSI(*s))
-		masked += n
-		text, n = render.Line(text, render.TitleChars*2)
-		hidden += n
+		text, m, h := untrustedLine(*s)
+		masked += m
+		hidden += h
 		return text
 	}
 	f := model.TestFailure{Suite: c.suite, Status: c.Status, UntrustedName: line(&c.Name), UntrustedClassname: line(c.Classname),
@@ -271,17 +347,28 @@ func (c failingCase) prepare() (model.TestFailure, int, int) {
 	if c.SystemOutput != nil {
 		output = *c.SystemOutput
 	}
-	// JUnit puts the detail in system_output and leaves stack_trace null.
-	if c.StackTrace != nil && *c.StackTrace != "" && !strings.Contains(output, *c.StackTrace) {
-		output = strings.TrimSpace(output + "\n\nStack trace:\n" + *c.StackTrace)
-	}
-	text, n := redact.MaskSecrets(render.StripANSI(output))
+	head := output[:byteAt(output, outputReach)]
+	text, n := redact.MaskSecrets(render.StripANSI(head))
 	masked += n
 	text, n = render.Code(text)
 	hidden += n
 	shown, b := render.Cut(text, 0, render.TestOutputBudget)
 	f.UntrustedOutput, f.OutputChars, f.OutputCut = shown, b.TotalChars, b.ContinueOffset != nil
+	if len(head) < len(output) {
+		f.OutputChars, f.OutputCut = utf8.RuneCountInString(output), true
+	}
 	return f, masked, hidden
+}
+
+// byteAt is the byte index n characters into s, or its length.
+func byteAt(s string, n int) int {
+	for i := range s {
+		if n == 0 {
+			return i
+		}
+		n--
+	}
+	return len(s)
 }
 
 // JobLogQuery is get_job_log's query. Offsets are bytes of the log as

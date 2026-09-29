@@ -829,7 +829,7 @@ type TestFailure struct {
 	// UntrustedOutput is the failure message and the case's output, cut
 	// at render.TestOutputBudget.
 	UntrustedOutput string `json:"untrusted_output" jsonschema:"The failure message and what the case printed, token shapes masked"`
-	OutputChars     int    `json:"output_chars" jsonschema:"The output's full length in characters"`
+	OutputChars     int    `json:"output_chars" jsonschema:"The output's full length in characters; past 16,000, as GitLab sent it"`
 	OutputCut       bool   `json:"output_cut" jsonschema:"True when the output is longer than shown"`
 }
 
@@ -838,19 +838,22 @@ type TestReport struct {
 	Project        ProjectRef `json:"project"`
 	PipelineID     int64      `json:"pipeline_id"`
 	PipelineStatus string     `json:"pipeline_status"`
-	Partial        bool       `json:"partial" jsonschema:"True while the pipeline has not finished: jobs still to run add to the report"`
+	Partial        bool       `json:"partial" jsonschema:"True while the pipeline or a child pipeline in the project has not finished: jobs still to run add to the report. Even a finished pipeline's report may be up to two minutes old, as GitLab caches it"`
+	PartialReason  string     `json:"partial_reason" jsonschema:"Why the report may be partial, such as the pipeline is running; empty otherwise"`
 	// FromSummary is true when the report was too large to read.
-	FromSummary bool           `json:"from_summary" jsonschema:"True when the full report was larger than this server reads: the counts are GitLab's stored summary and no case is listed"`
-	Total       TestCounts     `json:"total"`
-	Suites      []TestSuiteRow `json:"suites" jsonschema:"Suites with a failure or an error first, at most 100"`
-	SuitesTotal int            `json:"suites_total"`
+	FromSummary bool `json:"from_summary" jsonschema:"True when the full report was larger than this server reads: the counts are GitLab's stored summary, written by a worker after each job and possibly behind or empty, and no case is listed"`
+	// UntrustedTotalSuiteError is the summary's first suite error.
+	UntrustedTotalSuiteError string         `json:"untrusted_total_suite_error" jsonschema:"From the summary, the first error GitLab stored for a suite it could not read; empty otherwise"`
+	Total                    TestCounts     `json:"total"`
+	Suites                   []TestSuiteRow `json:"suites" jsonschema:"Suites with a failure or an error first, at most 100 and a quarter of the budget"`
+	SuitesTotal              int            `json:"suites_total"`
 	// Failures are the failed and errored cases from Offset, as many as
 	// fit the budget.
 	Failures      []TestFailure `json:"failures"`
 	FailuresTotal int           `json:"failures_total" jsonschema:"Failed and errored cases in the report"`
 	Offset        int           `json:"offset" jsonschema:"The index of the first case shown among the failed and errored cases"`
-	NextOffset    *int          `json:"next_offset" jsonschema:"Pass as offset to read the next cases; null when the last is shown"`
-	BudgetChars   int           `json:"budget_chars" jsonschema:"The most characters of case names and output this result shows"`
+	NextOffset    *int          `json:"next_offset" jsonschema:"Pass as offset to read the next cases; null when the last is shown. Each call reads the report again, so while the pipeline runs the cases can shift"`
+	BudgetChars   int           `json:"budget_chars" jsonschema:"The most characters of suite names and errors, case names and output this result shows"`
 	SecretsMasked int           `json:"secrets_masked" jsonschema:"Token and key shapes replaced with [MASKED kind] in the cases shown"`
 	HiddenRemoved int           `json:"hidden_chars_removed" jsonschema:"Zero-width and bidirectional-control characters removed or made visible"`
 }

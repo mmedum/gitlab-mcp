@@ -98,6 +98,9 @@ type project struct {
 	// jobs whose report GitLab could not parse.
 	junit       map[int64][]gitlab.TestCase
 	suiteErrors map[int64]string
+	// summaryLags holds the test report summaries back, as before the
+	// worker that writes them has run.
+	summaryLags bool
 
 	// Planning: the project's own labels and milestones, and each
 	// member's access level; members above says only who may see it.

@@ -578,7 +578,7 @@ type TestReport struct {
 
 // TestSuite is one suite of a test report: a job's report, parallel jobs
 // merged. With SuiteError set it has no cases and its counts are 0. The
-// summary's suites carry no cases.
+// summary's suites carry no cases, and their build_ids are not decoded.
 type TestSuite struct {
 	Name         string     `json:"name"`
 	TotalTime    float64    `json:"total_time"`
@@ -591,9 +591,9 @@ type TestSuite struct {
 	TestCases    []TestCase `json:"test_cases"`
 }
 
-// TestCase is one case of a suite. For a JUnit failure or error the
-// detail is in SystemOutput and StackTrace is null: GitLab's parser
-// never sets it.
+// TestCase is one case of a suite. A failure's or an error's detail is
+// in SystemOutput. The case's stack_trace is not decoded: JUnit is
+// GitLab's only test report parser, and it never sets one.
 type TestCase struct {
 	Status        string  `json:"status"` // success, failed, skipped or error
 	Name          string  `json:"name"`
@@ -601,7 +601,6 @@ type TestCase struct {
 	File          *string `json:"file"`
 	ExecutionTime float64 `json:"execution_time"` // seconds
 	SystemOutput  *string `json:"system_output"`
-	StackTrace    *string `json:"stack_trace"`
 }
 
 // TestReportSummary is GET …/pipelines/:pipeline_id/test_report_summary:

@@ -134,7 +134,7 @@ func TestDecodeMergeRequest(t *testing.T) {
 }
 
 // A test report's times are fractional seconds, though the OpenAPI file
-// says integer, and a JUnit case's stack_trace is null.
+// says integer.
 func TestDecodeTestReport(t *testing.T) {
 	body := `{"total_time":1.25,"total_count":2,"success_count":1,"failed_count":1,"skipped_count":0,"error_count":0,
 		"test_suites":[{"name":"unit tests","total_time":1.25,"total_count":2,"success_count":1,"failed_count":1,
@@ -146,7 +146,7 @@ func TestDecodeTestReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := r.TestSuites[0].TestCases[0]
-	if r.TotalTime != 1.25 || c.ExecutionTime != 0.75 || c.StackTrace != nil || c.File != nil || *c.SystemOutput != "refused" {
+	if r.TotalTime != 1.25 || c.ExecutionTime != 0.75 || c.File != nil || *c.SystemOutput != "refused" {
 		t.Errorf("decoded %+v", r)
 	}
 	summary := `{"total":{"time":1.25,"count":2,"success":1,"failed":1,"skipped":0,"error":0,"suite_error":null},
