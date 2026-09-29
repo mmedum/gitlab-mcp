@@ -257,12 +257,42 @@ type Issue struct {
 	// allowed, with hidden text removed.
 	UntrustedDescription string `json:"untrusted_description"`
 	DescriptionBudget    Budget `json:"description_budget"`
+	// RelatedMergeRequests and ClosingMergeRequests are null when GitLab
+	// refused the read, and when offset continues the description.
+	RelatedMergeRequests *LinkedItems `json:"related_merge_requests" jsonschema:"Merge requests that mention the issue or that it mentions, the first 20. GitLab leaves out any the account cannot read. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	ClosingMergeRequests *LinkedItems `json:"closing_merge_requests" jsonschema:"Merge requests that close the issue when merged, the first 20. GitLab lists only those in the issue's own project and leaves out any the account cannot read. Null when they could not be read, and on a read with an offset, which does not read them again"`
 }
 
 // Tasks counts a description's checkboxes.
 type Tasks struct {
 	Count     int `json:"count"`
 	Completed int `json:"completed"`
+}
+
+// LinkedItems is the first page of the issues or merge requests an
+// item is linked to, exactly as GitLab returned it.
+type LinkedItems struct {
+	Items []LinkedItem `json:"items"`
+	More  bool         `json:"more" jsonschema:"True when GitLab has more than are shown"`
+	// Total is GitLab's count, null when GitLab did not say.
+	Total *int `json:"total" jsonschema:"GitLab's count, or null when it did not say"`
+}
+
+// LinkedItem is one linked issue or merge request.
+type LinkedItem struct {
+	Reference string `json:"reference" jsonschema:"GitLab's full reference, group/project#12 or group/project!12; empty for an external tracker's issue"`
+	IID       int64  `json:"iid"`
+	ProjectID int64  `json:"project_id"`
+	State     string `json:"state"`
+	WebURL    string `json:"web_url"`
+	// External marks an issue in an external tracker, which GitLab names
+	// by its id and a title alone.
+	External bool `json:"external" jsonschema:"True for an issue in an external tracker, which has only a title and an id"`
+	// ExternalID is that id, kept only when it is shaped like a tracker's
+	// id; the title carries it either way.
+	ExternalID *string `json:"external_id" jsonschema:"The id of an issue in an external tracker, such as PROJ-123; null for a GitLab item, and for an id not shaped like one"`
+	// UntrustedTitle is shortened to one line.
+	UntrustedTitle string `json:"untrusted_title"`
 }
 
 // ------------------------------------------------------------ merge requests
@@ -299,6 +329,10 @@ type MergeRequest struct {
 	UntrustedTitle       string            `json:"untrusted_title"`
 	UntrustedDescription string            `json:"untrusted_description"`
 	DescriptionBudget    Budget            `json:"description_budget"`
+	// ClosesIssues and RelatedIssues are null when GitLab refused the
+	// read, and when offset continues the description.
+	ClosesIssues  *LinkedItems `json:"closes_issues" jsonschema:"Issues GitLab closes when this merges, the first 20. GitLab leaves out confidential or unreadable issues and those in projects that do not close issues automatically. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	RelatedIssues *LinkedItems `json:"related_issues" jsonschema:"Issues the title, description, comments or commits mention, the first 20. GitLab leaves out confidential or unreadable issues. Null when they could not be read, and on a read with an offset, which does not read them again"`
 }
 
 // DiffRefs are the three SHAs a diff position is computed against.
@@ -479,6 +513,11 @@ type Commit struct {
 	// HiddenRemoved counts the hidden characters made visible in the
 	// diffs shown; the message's are in MessageBudget.
 	HiddenRemoved int `json:"hidden_chars_removed"`
+	// FileOffset is the changed file this result starts at.
+	FileOffset int `json:"file_offset" jsonschema:"The file_offset this result starts at; 0 unless file_offset was passed"`
+	// MergeRequests is null when GitLab refused the read, and when an
+	// offset continues the message or the diffs.
+	MergeRequests *LinkedItems `json:"merge_requests" jsonschema:"Merge requests in this project that contain the commit, the first 20. GitLab leaves out any the account cannot read. Null when they could not be read, and on a read with file_offset, diff_offset or message_offset, which does not read them again"`
 }
 
 // FileChange names a changed file.

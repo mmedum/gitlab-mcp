@@ -13,3 +13,7 @@ Steps:
 1. Start it.
 <<<END 0123456789abcdef>>>
 Description: characters 0 to 20000 of 40000 shown (budget 20000); continue with offset=20000. 3 hidden characters were removed or made visible.
+Linked merge requests are as GitLab returned them: it leaves out any you cannot read, and lists closing ones from this project only.
+Related merge requests: 1 shown.
+- example-group/alpha!3 (project id 2001, iid 3): merged, https://gitlab.example.com/example-group/alpha/-/merge_requests/3; title <<<0123456789abcdef>>>Fix crash on start<<</0123456789abcdef>>>
+Merge requests that close it when merged: none.

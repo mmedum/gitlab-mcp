@@ -227,6 +227,10 @@ func (s *Server) fillAlpha(p *project) {
 			by := s.user("alice")
 			iss.ClosedBy = &by
 		}
+		// Issue 6 is confidential, and dave may not read it.
+		if i == 5 {
+			iss.Confidential = true
+		}
 		s.addDiscussions(p, "issue", iss.IID, iss.ID, "Issue", iss.CreatedAt, nil)
 	}
 
@@ -265,6 +269,11 @@ func (s *Server) fillAlpha(p *project) {
 	for i := range s.opts.AlphaMergeRequests {
 		mr := s.addMR(p, fmt.Sprintf("Generated change %d", i+1), "feature/login", "main", authors[(i+1)%len(authors)], base.ID, head.ID)
 		s.fillReview(p, mr)
+		if i == 0 {
+			// The first links to issues: it closes #1 and the confidential
+			// #6, and mentions #2 and an external tracker's issue.
+			mr.Description += "\n\nCloses #1 and fixes #6. Relates to #2 and EXT-7."
+		}
 		pos := &gitlab.Position{BaseSHA: base.ID, StartSHA: base.ID, HeadSHA: head.ID, PositionType: "text",
 			OldPath: "src/login.go", NewPath: "src/login.go", NewLine: intPtr(3)}
 		s.addDiscussions(p, "mr", mr.IID, mr.ID, "MergeRequest", mr.CreatedAt, pos)

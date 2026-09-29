@@ -236,6 +236,10 @@ func TestCommitMessageBudget(t *testing.T) {
 	message := strings.Repeat("A line of the message.\n", 500) // 11,500 characters
 	body, _ := json.Marshal(gitlab.Commit{ID: sha, ShortID: sha[:8], Message: message})
 	inject := func() {
+		// The merge requests' fault goes first: the commit's path is a
+		// prefix of it.
+		gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/merge_requests",
+			alphaID, sha), Status: http.StatusOK, Body: "[]"})
 		gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s", alphaID, sha),
 			Status: http.StatusOK, Body: string(body)})
 	}
@@ -274,9 +278,12 @@ func TestCommitCountsHiddenTextOnce(t *testing.T) {
 	sha := c[0].ID
 	commit, _ := json.Marshal(gitlab.Commit{ID: sha, ShortID: sha[:8], Message: "Fix\u202e it\n"})
 	diffs, _ := json.Marshal([]gitlab.Diff{{OldPath: "a", NewPath: "a", Diff: "+x\u200b\u2066\n"}})
-	// The diff fault goes first: the commit's path is a prefix of it.
+	// The diff and merge request faults go first: the commit's path is a
+	// prefix of both.
 	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/diff", alphaID, sha),
 		Status: http.StatusOK, Body: string(diffs)})
+	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/merge_requests",
+		alphaID, sha), Status: http.StatusOK, Body: "[]"})
 	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s", alphaID, sha),
 		Status: http.StatusOK, Body: string(commit)})
 	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0, 0)
@@ -409,5 +416,56 @@ func TestWithDraftIsGitLabsRule(t *testing.T) {
 		if got := withDraft(c.title, c.draft); got != c.want {
 			t.Errorf("withDraft(%q, %v) = %q, want %q", c.title, c.draft, got, c.want)
 		}
+	}
+}
+
+// An issue row in closes_issues and related_issues has no references;
+// the full one is read from its web URL as resolve_url reads it, or left
+// empty.
+func TestIssueReference(t *testing.T) {
+	s, gl := newService(t, gitlabtest.Options{}, config.Config{})
+	cases := map[string]string{
+		"/example-group/sub/beta/-/issues/12":       "example-group/sub/beta#12",
+		"/example-group/alpha/-/issues/incident/12": "example-group/alpha#12",
+		"/example-group/alpha/-/work_items/12":      "example-group/alpha#12",
+		"/example-group/alpha/-/issues/13":          "",
+		"/groups/example-group/-/work_items/12":     "",
+		"/example-group/alpha/-/merge_requests/12":  "",
+		"https://elsewhere.invalid/g/p/-/issues/12": "",
+		"": "",
+	}
+	for path, want := range cases {
+		raw := path
+		if strings.HasPrefix(path, "/") {
+			raw = gl.URL + path
+		}
+		if got := s.issueReference(raw, 12); got != want {
+			t.Errorf("issueReference(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// get_commit reads the merge requests of the commit it read, by its full
+// id, not of the name it was given: a branch can move in between.
+func TestCommitMergeRequestsReadByID(t *testing.T) {
+	s, gl := newService(t, gitlabtest.Options{}, config.Config{})
+	c, _, err := s.client.ListCommits(t.Context(), gapi.ProjectByID(alphaID), gapi.CommitQuery{}, gapi.ListOptions{PerPage: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, short := c[0].ID, c[0].ID[:8]
+	gl.ResetRequests()
+	if _, err := s.GetCommit(t.Context(), "2001", short, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, r := range gl.Requests() {
+		if strings.HasSuffix(r.EscapedPath, "/merge_requests") {
+			paths = append(paths, r.EscapedPath)
+		}
+	}
+	want := fmt.Sprintf("/api/v4/projects/%d/repository/commits/%s/merge_requests", alphaID, full)
+	if len(paths) != 1 || paths[0] != want {
+		t.Errorf("merge requests read at %v, want %s", paths, want)
 	}
 }

@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `get_issue` lists the merge requests related to the issue and those that close it, `get_merge_request` the issues it closes and mentions, and `get_commit` the merge requests that contain the commit: the first 20 of each, as GitLab returns them.
+
 ## [2.0.0] - 2026-09-29
 
 ### Added

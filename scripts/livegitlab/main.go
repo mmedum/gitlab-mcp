@@ -513,6 +513,11 @@ func seed(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor)
 	} {
 		body := map[string]any{"source_branch": mr.source, "target_branch": s.Default, "title": mr.title,
 			"labels": s.Label, "description": "A synthetic merge request for the live run."}
+		if i == 0 {
+			// Links for get_issue, get_merge_request and get_commit to
+			// read: the merge request closes the issue, and holds Feature.
+			body["description"] = fmt.Sprintf("A synthetic merge request for the live run.\n\nCloses #%d.", s.Issue)
+		}
 		if err := c.Do(ctx, gapi.Call{Method: "POST", Path: "projects/{}/merge_requests", Args: []string{id}, Body: body,
 			Name: "live_merge_request"}, &item); err != nil {
 			return created, fmt.Errorf("open a merge request: %w", err)
