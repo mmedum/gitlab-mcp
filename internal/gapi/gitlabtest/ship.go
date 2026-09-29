@@ -373,6 +373,45 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request, p *project, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// updateNote is PUT …/notes/:note_id, as the notes API and
+// Notes::UpdateService make it: no If-Unmodified-Since, a note that is
+// not editable (a system note) refused 403 by NotePolicy, quick actions
+// run, and a body of commands alone deleting the note. Only its author or
+// a maintainer may edit it.
+func (s *Server) updateNote(w http.ResponseWriter, r *http.Request, p *project, t target, user, id string) {
+	b, ok := readBody(w, r)
+	if !ok || !b.require(w, "body") {
+		return
+	}
+	di, ni := findNote(p, t, id)
+	if di < 0 {
+		message(w, http.StatusNotFound, "404 Note Not Found")
+		return
+	}
+	ds := p.discussions[t.key()]
+	n := &ds[di].Notes[ni]
+	if n.System || n.Author.Username != user && p.levels[user] < 40 {
+		message(w, http.StatusForbidden, "403 Forbidden")
+		return
+	}
+	body, _ := b.str("body")
+	cmds, kept := extract(body)
+	s.runCommands(p, t, cmds, user)
+	if kept == "" && len(cmds) > 0 {
+		old := *n
+		ds[di].Notes = slices.Delete(ds[di].Notes, ni, ni+1)
+		if len(ds[di].Notes) == 0 {
+			p.discussions[t.key()] = slices.Delete(ds, di, di+1)
+		}
+		writeJSON(w, http.StatusOK, old)
+		return
+	}
+	n.Body = kept
+	n.UpdatedAt = s.opts.Now().UTC()
+	bump(t.updatedAt, n.UpdatedAt)
+	writeJSON(w, http.StatusOK, *n)
+}
+
 // TouchNote moves a note's updated_at, as an edit made elsewhere does.
 func (s *Server) TouchNote(projectPath, kind string, iid, noteID int64, at time.Time) bool {
 	s.mu.Lock()

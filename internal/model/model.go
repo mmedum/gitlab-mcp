@@ -993,6 +993,19 @@ type CommentWrite struct {
 	Position     *DiffPosition `json:"position" jsonschema:"Where on the diff it landed, as GitLab stored it; null for a comment not on a line"`
 	LineRange    *LineSpan     `json:"line_range" jsonschema:"The lines a multi-line comment covers; null for one line"`
 	LineCode     string        `json:"line_code" jsonschema:"For a draft on a line, GitLab's code for that line, which its web view places the draft by; empty otherwise"`
+	UpdatedAt    *time.Time    `json:"updated_at" jsonschema:"Pass as updated_at to update_comment; null for a dry run and a draft"`
+}
+
+// CommentUpdate is update_comment's result.
+type CommentUpdate struct {
+	Outcome string `json:"outcome" jsonschema:"updated, unchanged or dry_run"`
+	Write
+	Type      string     `json:"type" jsonschema:"issue or merge_request"`
+	IID       int64      `json:"iid"`
+	NoteID    int64      `json:"note_id"`
+	UpdatedAt *time.Time `json:"updated_at" jsonschema:"Pass as updated_at to the next update_comment; null for a dry run"`
+	// BodyRemoved is set when the body was replaced.
+	BodyRemoved *Removed `json:"body_removed" jsonschema:"What replacing the text took out; null when it was not replaced"`
 }
 
 // LineSpan is the first and last line of a multi-line diff comment on

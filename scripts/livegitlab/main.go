@@ -659,6 +659,9 @@ manual step:
       default: scratch
   script:
     - echo "a step a person starts for ${{ job.inputs.target }}"
+    # Still running when the run plays it a second time: GitLab plays a
+    # finished manual job again, as a retry, but never a running one.
+    - sleep 120
 
 slow log:
   stage: build
@@ -694,8 +697,10 @@ downstream:
     include: ci/child.yml
     strategy: depend
 
+# In the build stage, so a second failed job exists even when a build
+# job fails and the test stage is skipped: list_jobs pages one at a time.
 lint:
-  stage: test
+  stage: build
   allow_failure: true
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

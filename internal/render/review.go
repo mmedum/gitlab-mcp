@@ -12,6 +12,14 @@ import (
 
 func mrItem(iid int64) string { return "!" + strconv.FormatInt(iid, 10) }
 
+// noteableItem is an issue as #12 and a merge request as !12.
+func noteableItem(typ string, iid int64) string {
+	if typ == "merge_request" {
+		return mrItem(iid)
+	}
+	return "#" + strconv.FormatInt(iid, 10)
+}
+
 // MRFiles renders list_mr_files.
 func MRFiles(f model.MRFiles, _ Boundary) string {
 	var b strings.Builder

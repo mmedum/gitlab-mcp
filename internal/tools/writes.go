@@ -137,6 +137,35 @@ func addComment() definition {
 	}
 }
 
+type updateCommentIn struct {
+	Project        idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	Type           string   `json:"type" jsonschema:"issue or merge_request"`
+	IID            int64    `json:"iid" jsonschema:"The number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	NoteID         int64    `json:"note_id" jsonschema:"The comment's id, as list_discussions or add_comment gave it"`
+	Body           string   `json:"body" jsonschema:"The comment's new text, in Markdown, replacing the old one whole; the result counts what it removed"`
+	UpdatedAt      string   `json:"updated_at" jsonschema:"The comment's updated_at as list_discussions or the last update_comment returned it. The edit is refused [stale] if it changed since. A [stale] refusal is NOT a retry signal: read the comment again before deciding"`
+	EscapeCommands bool     `json:"escape_commands,omitempty" jsonschema:"GitLab runs a line starting with a slash, such as /close or /merge, as a command, in an edit too. By default such a line refuses the call; true sends each one as plain text instead, with a leading backslash that renders the same. There is no way to run them"`
+	DryRun         bool     `json:"dry_run,omitempty" jsonschema:"Check the comment and return what would be sent, and what the quick-action guard would do to the text, without writing anything"`
+}
+
+func updateComment() definition {
+	return tool[updateCommentIn, model.CommentUpdate]{
+		sp: spec{Name: "update_comment", Kind: Write, Idempotent: true, Guarded: []string{"body"},
+			Enums: map[string][]string{"type": {"issue", "merge_request"}},
+			Description: "Replace the text of one of your own comments on an issue or a merge request, keeping it where it " +
+				"is: in its thread, with its replies, on its diff line. Another person's comment is refused [blocked], even " +
+				"where GitLab would allow it. updated_at from your read is required, and the call is refused [stale] if the " +
+				"comment changed since. The result counts what the old text lost and gives the new updated_at. Anyone the " +
+				"new text newly mentions is notified. A quick-action line in the body refuses the call unless " +
+				"escape_commands is true." + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in updateCommentIn) (model.CommentUpdate, error) {
+			return svc.UpdateComment(ctx, service.CommentEdit{Project: string(in.Project), Type: in.Type, IID: in.IID, NoteID: in.NoteID,
+				Body: in.Body, UpdatedAt: in.UpdatedAt})
+		},
+		text: render.CommentUpdate,
+	}
+}
+
 type resolveDiscussionIn struct {
 	Project      idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
 	Type         string   `json:"type,omitempty" jsonschema:"issue or merge_request, what iid names; default merge_request"`

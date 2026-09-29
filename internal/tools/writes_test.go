@@ -599,6 +599,8 @@ func TestTheWriteAllowList(t *testing.T) {
 		t.Errorf("refusal: %s", text)
 	}
 	h.fails("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "x"}, "blocked")
+	h.fails("update_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": 1, "body": "x",
+		"updated_at": "2026-01-01T00:00:00Z"}, "blocked")
 	if writesSent(h) != sent {
 		t.Fatal("a write outside the allow-list was sent")
 	}
@@ -735,4 +737,175 @@ func TestTodosAreHeldToTheAllowList(t *testing.T) {
 func TestResolveDiscussionRefusesAnUnknownType(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	h.fails("resolve_discussion", map[string]any{"project": alpha, "type": "epic", "iid": 1, "discussion_id": "x"}, "invalid")
+}
+
+// ------------------------------------------------------ comment edits
+
+// noteIn finds a note in list_discussions and returns its thread and the
+// note as read.
+func noteIn(h *harness, typ string, iid int, id float64) (thread, note any) {
+	h.t.Helper()
+	_, out := h.ok("list_discussions", map[string]any{"project": alpha, "type": typ, "iid": iid})
+	for _, th := range get(out, "threads").([]any) {
+		for _, n := range get(th, "notes").([]any) {
+			if get(n, "id") == id {
+				return th, n
+			}
+		}
+	}
+	h.t.Fatalf("no note %v on %s %d", id, typ, iid)
+	return nil, nil
+}
+
+func TestUpdateComment(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	id, at := commentOf(h, gitlabtest.DefaultUser, false)
+	bobs, bobsAt := commentOf(h, "bob", false)
+	system, systemAt := commentOf(h, gitlabtest.DefaultUser, true)
+	args := func(id float64, at, body string) map[string]any {
+		return map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": id, "updated_at": at, "body": body}
+	}
+	threadBefore, _ := noteIn(h, "issue", 1, id)
+
+	before := writesSent(h)
+	text := h.fails("update_comment", args(bobs, bobsAt, "Mine now."), "blocked")
+	if !strings.Contains(text, "@bob") {
+		t.Errorf("another's comment: %s", text)
+	}
+	h.fails("update_comment", args(system, systemAt, "x"), "invalid")
+	h.fails("update_comment", args(id, "2020-01-01T00:00:00Z", "x"), "stale")
+	h.fails("update_comment", args(id, "yesterday", "x"), "invalid")
+	h.fails("update_comment", args(id, at, "  "), "invalid")
+	// A note is found only on the issue or merge request named.
+	h.fails("update_comment", map[string]any{"project": alpha, "type": "issue", "iid": 2, "note_id": id, "updated_at": at, "body": "x"},
+		"not_found")
+	text = h.fails("update_comment", args(id, at, "Done.\n/close"), "blocked")
+	if !strings.Contains(text, "/close") {
+		t.Errorf("quick action: %s", text)
+	}
+	_, out := h.ok("update_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": id, "updated_at": at,
+		"body": "Rewritten.", "dry_run": true})
+	if get(out, "outcome") != "dry_run" || get(out, "would_send", "method") != "PUT" {
+		t.Errorf("dry run = %v", out)
+	}
+	if writesSent(h) != before {
+		t.Fatal("a refusal or a dry run wrote")
+	}
+
+	text, out = h.ok("update_comment", args(id, at, "Rewritten.\nSecond line."))
+	if get(out, "outcome") != "updated" || get(out, "body_removed") == nil || get(out, "updated_at") == at {
+		t.Errorf("update = %v", out)
+	}
+	if !strings.Contains(text, "Updated comment") || !strings.Contains(text, "pass it to update_comment") {
+		t.Errorf("text:\n%s", text)
+	}
+	thread, note := noteIn(h, "issue", 1, id)
+	if get(note, "untrusted_body") != "Rewritten.\nSecond line." || get(thread, "id") != get(threadBefore, "id") {
+		t.Errorf("after the edit: thread %v, note %v", get(thread, "id"), note)
+	}
+	next := get(out, "updated_at").(string)
+	if get(note, "updated_at") != next {
+		t.Errorf("updated_at %v, list_discussions reads %v", next, get(note, "updated_at"))
+	}
+
+	// The old witness is stale now. The same text again sends nothing and
+	// reads as done, even with that old witness: an edit repeated after a
+	// lost answer is not stale.
+	h.fails("update_comment", args(id, at, "Again."), "stale")
+	sent := writesSent(h)
+	for _, witness := range []string{next, at} {
+		_, out = h.ok("update_comment", args(id, witness, "Rewritten.\nSecond line."))
+		if get(out, "outcome") != "unchanged" || get(out, "updated_at") != next || writesSent(h) != sent {
+			t.Errorf("same text with %s = %v, %d writes", witness, out, writesSent(h)-sent)
+		}
+	}
+}
+
+// add_comment returns the witness update_comment needs, so a comment
+// just posted is edited without reading the threads.
+func TestAddCommentGivesTheWitnessForAnEdit(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, posted := h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "Tpyo."})
+	if !strings.Contains(text, "pass it to update_comment") {
+		t.Errorf("text:\n%s", text)
+	}
+	_, out := h.ok("update_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": get(posted, "note_id"),
+		"updated_at": get(posted, "updated_at"), "body": "Typo."})
+	if get(out, "outcome") != "updated" {
+		t.Errorf("update = %v", out)
+	}
+}
+
+func TestUpdateCommentEscapesAQuickAction(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	id, at := commentOf(h, gitlabtest.DefaultUser, false)
+	_, out := h.ok("update_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": id, "updated_at": at,
+		"body": "Done.\n/close", "escape_commands": true})
+	if get(out, "outcome") != "updated" || get(out, "escaped_commands", 0, "command") != "close" {
+		t.Errorf("escaped = %v", out)
+	}
+	_, issue := h.ok("get_issue", map[string]any{"project": alpha, "iid": 1})
+	if get(issue, "state") != "opened" {
+		t.Error("an escaped /close closed the issue")
+	}
+}
+
+// A comment on a diff line keeps its thread and its place.
+func TestUpdateCommentOnADiffLine(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, posted := h.ok("add_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "body": "Rename this.",
+		"file": "README.md", "line": 3, "side": "new"})
+	id := get(posted, "note_id").(float64)
+	threadBefore, note := noteIn(h, "merge_request", 1, id)
+	_, out := h.ok("update_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "note_id": id,
+		"updated_at": get(note, "updated_at"), "body": "```suggestion:-0+0\nrenamed\n```"})
+	if get(out, "outcome") != "updated" {
+		t.Fatalf("update = %v", out)
+	}
+	thread, note := noteIn(h, "merge_request", 1, id)
+	if get(thread, "id") != get(threadBefore, "id") || fmt.Sprint(get(thread, "position")) != fmt.Sprint(get(threadBefore, "position")) {
+		t.Errorf("thread moved: %v, was %v", thread, threadBefore)
+	}
+	if !strings.Contains(fmt.Sprint(get(note, "untrusted_body")), "suggestion") {
+		t.Errorf("body %v", get(note, "untrusted_body"))
+	}
+}
+
+// The read-back: an answer whose updated_at did not move is an edit not
+// made; one that moved but reads otherwise landed, and says so.
+func TestUpdateCommentReadsTheEditBack(t *testing.T) {
+	for _, c := range []struct {
+		name, body, updatedAt string
+		wantClass             string
+	}{
+		{"not made", "old", "", "unexpected"},
+		{"answered empty", "", "2030-01-01T00:00:00Z", "unexpected"},
+		{"stored otherwise", "Something else, as GitLab stored it.", "2030-01-01T00:00:00Z", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, harnessOptions{})
+			id, at := commentOf(h, gitlabtest.DefaultUser, false)
+			_, note := noteIn(h, "issue", 1, id)
+			body, updatedAt := c.body, c.updatedAt
+			if body == "old" {
+				body = get(note, "untrusted_body").(string)
+			}
+			if updatedAt == "" {
+				updatedAt = at
+			}
+			project := h.gl.ProjectID(alpha)
+			h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: fmt.Sprintf("/projects/%d/issues/1/notes/", project), Status: 200,
+				Body: fmt.Sprintf(`{"id":%d,"body":%q,"updated_at":%q,"author":{"username":%q}}`, int64(id), body, updatedAt,
+					gitlabtest.DefaultUser)})
+			args := map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": id, "updated_at": at, "body": "Something else."}
+			if c.wantClass != "" {
+				h.fails("update_comment", args, c.wantClass)
+				return
+			}
+			text, out := h.ok("update_comment", args)
+			if get(out, "outcome") != "updated" || !strings.Contains(text, "differences from what was sent") {
+				t.Errorf("result = %v\n%s", out, text)
+			}
+		})
+	}
 }

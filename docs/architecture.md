@@ -1,8 +1,8 @@
 # Architecture — gitlab-mcp
 
 **Status: 2.0.0, 2026-09-29: phases 0 to 7 — the person now confirms
-what ships or deletes (§4.12) — and the sign-in no longer refreshed
-before the server serves. The module path is `/v2`. §17.10 stands and
+what ships or deletes (§4.12) — `update_comment`, and the sign-in no
+longer refreshed before the server serves. The module path is `/v2`. §17.10 stands and
 §17.11 waits** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
@@ -380,7 +380,7 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, fifty tools, stays under the 64-tool point where one
+default surface, fifty-one tools, stays under the 64-tool point where one
 client starts regrouping tools. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
@@ -432,6 +432,13 @@ else stays **unknown**, and the result says not to repeat the call.
   `[stale]` if it moved, and sends only the fields given. The window
   between the re-read and the PUT is not closed, and the result does
   not claim it is (§17b).
+- **Comment edits:** GitLab's note PUT ignores `If-Unmodified-Since`
+  (§18 row 93), so `update_comment` re-reads and compares `updated_at`
+  as the issue updates do, with the same window open. The same text
+  asked again reads as unchanged before the witness is compared, so an
+  edit repeated after a lost answer is not `[stale]`. The answer is
+  read back: an `updated_at` that did not move is `[unexpected]`, and a
+  text stored otherwise is reported.
 - **Wiki pages:** GitLab's wiki API exposes neither a version nor an
   `updated_at` (`lib/api/entities/wiki_page.rb`), so the witness is
   `content_sha256`, a hash of the content `get_wiki_page` returned. A
@@ -545,7 +552,7 @@ through MCP form elicitation, before thirteen writes: `merge_merge_request`,
 deletes of the Destructive kind. The set is the core the maintainer
 chose on 2026-09-29 (§14): the writes that ship, publish or destroy.
 Retrying, cancelling, rebasing, moving and commenting do not ask, since
-questions asked often are answered without reading (§18 row 93).
+questions asked often are answered without reading (§18 row 94).
 
 1. **A second gate, not a replacement.** Registration, `confirm` and
    every guard stay and are checked first. A call a guard refuses asks
@@ -564,7 +571,7 @@ questions asked often are answered without reading (§18 row 93).
    under approval policy `never` with full access, and VS Code when the
    person skips the question. A required choice naming the outcome would
    stop both, and was declined after the maintainer's check found it
-   slower and less clear than Accept (§18 row 95).
+   slower and less clear than Accept (§18 row 96).
 3. **No question possible.** A client that declares no form elicitation
    gets no question, and the flags and `confirm` are the guard, as
    before. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses those writes as
@@ -590,12 +597,12 @@ questions asked often are answered without reading (§18 row 93).
    a link; cut at 120 characters, a comment at 300 with the count of the
    rest. A client that draws the question as Markdown shows a code span
    literally, and a blank line between lines keeps them apart (§18 row
-   94). A closing line says text in backticks or code style is not the
+   95). A closing line says text in backticks or code style is not the
    server's.
 6. **One handler on every protocol.** The handler returns the question
    as an input request, the multi-round-trip pattern of 2026-07-28.
    Before that revision the SDK asks with `elicitation/create` and calls
-   the handler again within the same request (§18 row 93). A client
+   the handler again within the same request (§18 row 94). A client
    failure there is a JSON-RPC error inside the SDK, and middleware turns
    it into `[blocked]`.
 7. **The answer is bound to its question.** `requestState` is signed
@@ -744,7 +751,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `tools` | one `register` deciding annotations, kind, toolset and scope gating (no version gating: §4.9), `_meta`, the dry-run context and the rendering; `FullSurface(cfg)` for the schema dump; `dry_run` found by reflection; an explicit output schema with `date-time` for times; `Content` set so the SDK does not duplicate the JSON; an `unexpected` class for anything unclassified |
 | tool errors **(09-25)** | a `hinted{hint, err}` type with `Unwrap`, checked before the API-error branch, so a tool's guidance survives an upstream failure while the class still comes from the wrapped error; `refuse(protecting, unlock)` always naming what it protects and the exact argument to pass; enums named sorted in validation errors |
 | `gapi` | write and repeatability derived from the HTTP method, POST failing closed, declared exceptions only; a POST retried only on 429; `Retry-After` honored as a minimum; full-jitter backoff; the rate model of §11; **`CheckRedirect` returning `http.ErrUseLastResponse`**, a moved project's GET redirect resolved by re-reading the new path only when it is same-origin under the API root, with the request's query kept when the `Location` carries none; `Link: rel="next"` accepted only same-origin under the API root; every path segment escaped exactly once from typed parts, `..` refused; a headers deadline then a stall guard per read; a body cap; non-JSON bodies reported by status, content type and a prefix; transport errors stripped of path, query and host names; a create canceled after it may have been written `[ambiguous_outcome]`; a 401 `invalid_token` dropping the token and repeating a repeatable call once; **a context under which the client refuses every write**; a closed `Class` type with `Retryable()`; a `User-Agent`; unknown-field drift reported by path; a per-call counter |
-| `ask` (2026-09-29) | a form with no fields, accepting it the confirmation; `requestState` signed, single-use and bound to the tool, the arguments and the question; every quoted value a code span with backticks, grave and acute marks and quote marks folded, links broken, cut to one line, and a blank line between lines, because VS Code draws the message as Markdown; a failure after the answer `[ambiguous_outcome]` (§4.12, §18 rows 93–95) |
+| `ask` (2026-09-29) | a form with no fields, accepting it the confirmation; `requestState` signed, single-use and bound to the tool, the arguments and the question; every quoted value a code span with backticks, grave and acute marks and quote marks folded, links broken, cut to one line, and a blank line between lines, because VS Code draws the message as Markdown; a failure after the answer `[ambiguous_outcome]` (§4.12, §18 rows 94–96) |
 | logging test | every registered tool driven with canary values at debug; asserts the logs are non-empty and contain no canary |
 
 ## 6. Addressing
@@ -857,6 +864,8 @@ location (§6.2):
 
 - `add_comment` posts now — to an issue, a merge request, or a reply to
   a discussion; `thread` starts a resolvable thread on either.
+  `update_comment` replaces the text of one of the caller's own
+  comments, which keeps its thread, its replies and its diff position.
 - `add_review_comment` creates a **draft note**; `list_review_comments`
   and `delete_review_comment` manage the caller's drafts;
   `submit_review` publishes them all at once with an optional summary
@@ -982,9 +991,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Eighty-three tools. With the default toolsets: fifty by default,
-thirty-four in read-only mode, sixty-two with Ship and Destructive
-both enabled. Every toolset and flag on registers all eighty-three.
+Eighty-four tools. With the default toolsets: fifty-one by default,
+thirty-four in read-only mode, sixty-three with Ship and Destructive
+both enabled. Every toolset and flag on registers all eighty-four.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
@@ -1004,6 +1013,7 @@ Destructive kinds, as a signal and not a control.
 | `update_issue` | Write | default | `PUT /projects/:id/issues/:iid` |
 | `list_discussions` | Read | default | `GET …/issues|merge_requests/:iid/discussions` |
 | `add_comment` | Write | default | `POST …/notes`, `…/discussions`, `…/discussions/:id/notes` |
+| `update_comment` | Write | default | `PUT …/notes/:id` (own notes) |
 | `resolve_discussion` | Write | default | `PUT …/issues|merge_requests/:iid/discussions/:id` |
 | `link_issues` | Write | default | `GET`/`POST …/issues/:iid/links` |
 | `unlink_issues` | Write | default | `DELETE …/issues/:iid/links/:id` |
@@ -1711,7 +1721,7 @@ the maintainer on 2026-09-29, after the same was built in a sibling:
 the server asks the person, through MCP form elicitation, before the
 thirteen writes of §4.12, with the set the maintainer chose. The
 question is quoted in code spans and the form has no fields, as the
-maintainer's check in Claude Code found clearest (§18 rows 93–95).
+maintainer's check in Claude Code found clearest (§18 rows 94–96).
 
 *Built 2026-09-29. `run_pipeline` reads its ref only when a question
 could go out; `update_issue` asks only when it makes a
@@ -2123,7 +2133,7 @@ The standard at `~/.claude/mcp-server-standard.md`, read 2026-09-25.
 | The standard says | Here | Why |
 |---|---|---|
 | Errors use six classes | Thirteen (§6.5) | `stale` is forced by §2.10; `ambiguous_outcome` by §2.11; `forbidden` and `auth` ask for different fixes; `blocked` for the quick-action, branch and allow-list guards; `rate_limited` separates waiting from failing; `ambiguous` as the siblings use it; `unexpected` for what nothing else covers |
-| Never overwrite; compute a minimal diff | Held for files and commits (`last_commit_id`) and merges (`sha`); **not holdable** for issue, merge request and wiki updates | No `If-Match` in REST and `lock_version` only in the web controllers (§2.9). §4.6's `updated_at` witness narrows the lost-update window without closing it; only the fields given are sent |
+| Never overwrite; compute a minimal diff | Held for files and commits (`last_commit_id`) and merges (`sha`); **not holdable** for issue, merge request, wiki and comment updates | No `If-Match` in REST and `lock_version` only in the web controllers (§2.9). §4.6's `updated_at` witness narrows the lost-update window without closing it; only the fields given are sent |
 | Destructive tools are not registered unless enabled | Held, and extended to Ship | One sibling registers deletes and refuses per call. Not here: GitLab's `api` scope permits everything, so a registered Ship or Destructive tool is exactly the control an injected instruction gets to argue with, and the official server's unenforced filters (§1) show where "listed but callable" ends |
 | Read-only mode requests read-only scopes | Held (`read_api`) | Recorded because `read_api` is enforced by HTTP method, which is exactly right for REST |
 | §3b: `--client-secret` / `<PREFIX>_CLIENT_SECRET` names the client JSON | `--client-id` / `GITLAB_MCP_CLIENT_ID`; everything else in §3b held | GitLab shows an application id and offers no JSON, and a public client has no secret (§2.2); a flag named for a file and a secret nobody has would be a lie in the interface |
@@ -2242,6 +2252,7 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 90 | A token's `expires_in` is its lifetime, added to `created_at` | Doorkeeper 5.9.0 `Expirable#expires_in_seconds` and `AccessTokenMixin#as_json`, the version v19.4.1-ee locks; `app/controllers/oauth/token_info_controller.rb`; the 1.0 live run | **Refuted (tier 1, live).** `/oauth/token/info` answers the seconds left when it answers. `get_me` added them to `created_at` and reported a token read 1 h 41 min after issue as expired an hour before; it now adds them to the time of the read, and the next run reported 11:53:38Z, the expiry the first run's numbers imply |
 | 91 | A cancel's answer shows whether anything was canceled | `lib/api/ci/pipelines.rb`, `Ci::CancelPipelineService`, `CommitStatus` and `Ci::HasStatus` at v19.4.1-ee; the 1.0 live run | **Refuted (tier 1, live).** GitLab cancels the jobs inside the request, then answers `pipeline.reset`; each job's transition queues `PipelineProcessWorker`, which recomputes the pipeline's status after. A pipeline canceled seconds after it started answered `running`, and `cancel_pipeline` said nothing could be canceled, while its two deployments were listed canceled later in the run; the next run's cancel answered `canceling`, so gitlab.com answers either way, and a third, with the fix, answered `running` and reported `canceled`. `CANCELABLE_STATUSES`, which the job scope shares, includes `manual`. It now reports `canceled` when the status read first was cancelable, the source is not `external` and the answer is not finished, and says the status catches up |
 | 92 | A label's priority and a milestone's description and dates cannot be cleared through the API | `lib/api/helpers/label_helpers.rb`, `app/services/labels/update_service.rb`, `lib/api/milestone_responses.rb` and `app/services/milestones/update_service.rb` at v19.4.1-ee; the post-1.0 live run | **Refuted (tier 1, live).** A present `priority` of `null` unprioritizes the label, and `at_least_one_of` counts keys, so it may be the only field sent; an empty description or date is assigned as given. `update_label` sends `null` for `clear_priority`, and both tools send `""` for the other `clear_*` inputs. The live run read each field back cleared |
-| 93 | A server can ask the person to confirm a write through MCP form elicitation, on every protocol this server serves | The `ElicitRequestFormParams` type in the specification's `schema.ts` for 2025-06-18, 2025-11-25 and 2026-07-28, the 2026-07-28 multi-round-trip pattern, and the MCP Go SDK v1.8.0's `mcp/server.go` and `mcp/shared.go`, read 2026-09-28; this repository's tests on all three protocols | **Confirmed (tier 1).** A tool result may carry `inputRequests` and a signed `requestState`; before 2026-07-28 the SDK sends `elicitation/create` itself and calls the handler again in the same request. `requestedSchema` is an open map with no minimum, so `properties: {}` is valid. The answer comes from the client, and the 2026-07-28 revision lets it answer "from the user or other sources", so an accept is never proof a person read anything (§4.12) |
-| 94 | A client draws an elicitation question as plain text | VS Code `src/vs/workbench/contrib/mcp/browser/mcpElicitationService.ts` L100 and L173, and `src/vs/base/common/htmlContent.ts` L52-62, `main` at 251bcf5f, read 2026-09-29 | **Refuted.** VS Code builds a form question as `new MarkdownString(elicitation.message)`, untrusted: command links are off, but emphasis, link text, code spans and HTML-like text draw, and single line breaks join into one paragraph. Each quoted value is a code span, which CommonMark draws literally, with backticks and their lookalikes folded, and a blank line separates the lines. Backslash escaping was rejected: where a client draws plain text, the backslashes show inside names and branches, the data the person checks |
-| 95 | A required choice naming the outcome confirms better than an empty form | Codex `codex-rs/codex-mcp/src/elicitation.rs` L415-458 and L552-571, `main` at c248f6d4, and VS Code `mcpElicitationService.ts` L111-119 and L237-297, read 2026-09-29; the maintainer's check in Claude Code 2.1.284, protocol 2025-11-25, 2026-09-29, against a throwaway probe with three forms of one delete question | **Declined, for now.** For: Codex accepts a form with no properties by itself under approval policy `never` with full access, and a VS Code chat question the person skips resolves as `accept` with no content; a required choice survives both. Against: in Claude Code the choice list took the maintainer 60 seconds, against 8 for the empty form, and they found it confusing. The empty form stays, and both client behaviors are recorded as limits (§4.12) |
+| 93 | A comment edit can carry a witness GitLab enforces, as a delete does | `lib/api/helpers/notes_helpers.rb` `update_note`, `app/services/notes/update_service.rb` and `app/policies/note_policy.rb` at v19.4.1-ee; the update_comment live runs | **Refuted (tier 1, live).** `update_note` calls no `check_unmodified_since!`, so `update_comment` reads and compares `updated_at` first and the window stays open. `UpdateService` runs quick actions in the new text and deletes a note left with commands alone, so the body is guarded as a create's is. `NotePolicy` refuses `admin_note` on a note that is not editable, a system note among them (403), and grants it to the note's author; this server edits only the caller's own. A reply to a standalone comment moves the comment's `updated_at` on gitlab.com, so the witness `add_comment` returned is stale after one |
+| 94 | A server can ask the person to confirm a write through MCP form elicitation, on every protocol this server serves | The `ElicitRequestFormParams` type in the specification's `schema.ts` for 2025-06-18, 2025-11-25 and 2026-07-28, the 2026-07-28 multi-round-trip pattern, and the MCP Go SDK v1.8.0's `mcp/server.go` and `mcp/shared.go`, read 2026-09-28; this repository's tests on all three protocols | **Confirmed (tier 1).** A tool result may carry `inputRequests` and a signed `requestState`; before 2026-07-28 the SDK sends `elicitation/create` itself and calls the handler again in the same request. `requestedSchema` is an open map with no minimum, so `properties: {}` is valid. The answer comes from the client, and the 2026-07-28 revision lets it answer "from the user or other sources", so an accept is never proof a person read anything (§4.12) |
+| 95 | A client draws an elicitation question as plain text | VS Code `src/vs/workbench/contrib/mcp/browser/mcpElicitationService.ts` L100 and L173, and `src/vs/base/common/htmlContent.ts` L52-62, `main` at 251bcf5f, read 2026-09-29 | **Refuted.** VS Code builds a form question as `new MarkdownString(elicitation.message)`, untrusted: command links are off, but emphasis, link text, code spans and HTML-like text draw, and single line breaks join into one paragraph. Each quoted value is a code span, which CommonMark draws literally, with backticks and their lookalikes folded, and a blank line separates the lines. Backslash escaping was rejected: where a client draws plain text, the backslashes show inside names and branches, the data the person checks |
+| 96 | A required choice naming the outcome confirms better than an empty form | Codex `codex-rs/codex-mcp/src/elicitation.rs` L415-458 and L552-571, `main` at c248f6d4, and VS Code `mcpElicitationService.ts` L111-119 and L237-297, read 2026-09-29; the maintainer's check in Claude Code 2.1.284, protocol 2025-11-25, 2026-09-29, against a throwaway probe with three forms of one delete question | **Declined, for now.** For: Codex accepts a form with no properties by itself under approval policy `never` with full access, and a VS Code chat question the person skips resolves as `accept` with no content; a required choice survives both. Against: in Claude Code the choice list took the maintainer 60 seconds, against 8 for the empty form, and they found it confusing. The empty form stays, and both client behaviors are recorded as limits (§4.12) |

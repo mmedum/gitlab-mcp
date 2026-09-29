@@ -21,6 +21,8 @@ lifted verbatim.
 
 - **Breaking:** Before a merge, an approval, `play_job`, `create_release`, `create_tag`, a `run_pipeline` on the default branch or a protected ref, an `update_issue` that makes a confidential issue public, and every delete, the server asks you through the MCP client (form elicitation) when the client supports it; only an accept writes, so a client that declares elicitation and answers with nobody there can no longer make these writes.
 - `GITLAB_MCP_REQUIRE_PROMPT` (`--require-prompt`) refuses those writes as `[blocked]` when the client cannot ask you.
+- `update_comment` edits one of your own comments on an issue or a merge request in place, keeping its thread, replies and diff position.
+- `add_comment` returns the new comment's `updated_at`, which `update_comment` takes as its witness.
 
 ### Changed
 
