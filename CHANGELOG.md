@@ -15,6 +15,11 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `update_comment` edits one of your own comments on an issue or a merge request in place, keeping its thread, replies and diff position.
+- `add_comment` returns the new comment's `updated_at`, which `update_comment` takes as its witness.
+
 ### Fixed
 
 - A server no longer refreshes the sign-in before it serves when a login recorded its scopes, so a host that kills it during startup no longer signs the profile out.

@@ -151,6 +151,10 @@ replace it with a `read_api` one.
   carries a hash of the content you read, which the server compares
   with a fresh read; as with issues, a change made between that read and
   the write is not caught.
+- **Only your own comments are edited.** `update_comment` refuses
+  another person's comment, even where GitLab would allow the edit, and
+  a note GitLab wrote. GitLab holds no witness for an edit, so an edit
+  made between your read and the write is overwritten, as with issues.
 - **Deletes are narrow.** `delete_branch` refuses the default branch,
   every protected branch, and one GitLab does not count merged unless
   you pass `unmerged: true`, and needs the head `sha` you read.

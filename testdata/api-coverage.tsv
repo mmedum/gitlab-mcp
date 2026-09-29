@@ -251,10 +251,10 @@ GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Clien
 PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Client.ResolveIssueDiscussion: resolve_discussion on an issue
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one issue thread's comments; list_discussions carries them
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	one comment; list_discussions carries it
-PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	editing a comment in a thread (§17a)
+PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	editing a comment through its thread; update_comment uses the notes route
 DELETE /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	deleting a comment through its thread; delete_comment uses the notes route
 GET /projects/{id}/issues/{noteable_id}/notes	deferred	1	flat note listing; list_discussions carries every note with its thread
-PUT /projects/{id}/issues/{noteable_id}/notes/{note_id}	deferred	1	editing a comment (§17a)
+PUT /projects/{id}/issues/{noteable_id}/notes/{note_id}	used	1	Client.UpdateIssueNote: update_comment on an issue, own comments, updated_at read and compared first, since GitLab holds no witness for an edit
 GET /projects/{id}/issues_statistics	deferred	1	issue counts; search_issues reports X-Total
 GET /groups/{id}/issues_statistics	deferred	1	issue counts; search_issues reports X-Total
 GET /issues_statistics	deferred	1	issue counts; search_issues reports X-Total
@@ -299,10 +299,10 @@ PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id
 GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	used	1	Client.GetMergeRequestDiscussion: resolve_discussion reads the thread's state before changing it
 GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one thread's comments; list_discussions carries them
 GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	one comment; list_discussions carries it
-PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	editing a comment in a thread (§17a)
+PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	editing a comment through its thread; update_comment uses the notes route
 DELETE /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	deleting a comment through its thread; delete_comment uses the notes route
 GET /projects/{id}/merge_requests/{noteable_id}/notes	deferred	1	flat note listing; list_discussions carries every note with its thread
-PUT /projects/{id}/merge_requests/{noteable_id}/notes/{note_id}	deferred	1	editing a comment (§17a)
+PUT /projects/{id}/merge_requests/{noteable_id}/notes/{note_id}	used	1	Client.UpdateMergeRequestNote: update_comment on a merge request, a diff comment included, own comments, updated_at read and compared first, since GitLab holds no witness for an edit
 * /suggestions*	deferred	2	applying suggestions commits to the source branch: a Ship candidate (§17a)
 
 # Approval configuration (§8a): governance, Premium

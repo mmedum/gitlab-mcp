@@ -76,6 +76,25 @@ func (c *Client) CreateMergeRequestNote(ctx context.Context, p Project, iid int6
 		Body: noteBody{body}, Bucket: BucketNotes, Name: "add_comment"})
 }
 
+// UpdateIssueNote replaces the body of a comment on an issue. GitLab
+// holds no witness for an edit, so the caller reads first (§4.6).
+func (c *Client) UpdateIssueNote(ctx context.Context, p Project, iid, note int64, body string) (*gitlab.Note, error) {
+	var out gitlab.Note
+	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/issues/{}/notes/{}", Args: []string{p.segment(), idArg(iid), idArg(note)},
+		Body: noteBody{body}, Name: "update_comment"}, &out)
+	return &out, err
+}
+
+// UpdateMergeRequestNote replaces the body of a comment on a merge
+// request, one on a diff line included. GitLab holds no witness for an
+// edit, so the caller reads first (§4.6).
+func (c *Client) UpdateMergeRequestNote(ctx context.Context, p Project, iid, note int64, body string) (*gitlab.Note, error) {
+	var out gitlab.Note
+	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/merge_requests/{}/notes/{}", Args: []string{p.segment(), idArg(iid), idArg(note)},
+		Body: noteBody{body}, Name: "update_comment"}, &out)
+	return &out, err
+}
+
 // ReplyToIssueDiscussion adds a note to an issue's thread.
 func (c *Client) ReplyToIssueDiscussion(ctx context.Context, p Project, iid int64, discussion, body string) (*gitlab.Note, error) {
 	return c.createNote(ctx, Call{Method: "POST", Path: "projects/{}/issues/{}/discussions/{}/notes",

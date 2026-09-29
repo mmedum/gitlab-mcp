@@ -378,7 +378,7 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, fifty tools, stays under the 64-tool point where one
+default surface, fifty-one tools, stays under the 64-tool point where one
 client starts regrouping tools. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
@@ -430,6 +430,13 @@ else stays **unknown**, and the result says not to repeat the call.
   `[stale]` if it moved, and sends only the fields given. The window
   between the re-read and the PUT is not closed, and the result does
   not claim it is (§17b).
+- **Comment edits:** GitLab's note PUT ignores `If-Unmodified-Since`
+  (§18 row 93), so `update_comment` re-reads and compares `updated_at`
+  as the issue updates do, with the same window open. The same text
+  asked again reads as unchanged before the witness is compared, so an
+  edit repeated after a lost answer is not `[stale]`. The answer is
+  read back: an `updated_at` that did not move is `[unexpected]`, and a
+  text stored otherwise is reported.
 - **Wiki pages:** GitLab's wiki API exposes neither a version nor an
   `updated_at` (`lib/api/entities/wiki_page.rb`), so the witness is
   `content_sha256`, a hash of the content `get_wiki_page` returned. A
@@ -760,6 +767,8 @@ location (§6.2):
 
 - `add_comment` posts now — to an issue, a merge request, or a reply to
   a discussion; `thread` starts a resolvable thread on either.
+  `update_comment` replaces the text of one of the caller's own
+  comments, which keeps its thread, its replies and its diff position.
 - `add_review_comment` creates a **draft note**; `list_review_comments`
   and `delete_review_comment` manage the caller's drafts;
   `submit_review` publishes them all at once with an optional summary
@@ -885,9 +894,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Eighty-three tools. With the default toolsets: fifty by default,
-thirty-four in read-only mode, sixty-two with Ship and Destructive
-both enabled. Every toolset and flag on registers all eighty-three.
+Eighty-four tools. With the default toolsets: fifty-one by default,
+thirty-four in read-only mode, sixty-three with Ship and Destructive
+both enabled. Every toolset and flag on registers all eighty-four.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
@@ -907,6 +916,7 @@ Destructive kinds, as a signal and not a control.
 | `update_issue` | Write | default | `PUT /projects/:id/issues/:iid` |
 | `list_discussions` | Read | default | `GET …/issues|merge_requests/:iid/discussions` |
 | `add_comment` | Write | default | `POST …/notes`, `…/discussions`, `…/discussions/:id/notes` |
+| `update_comment` | Write | default | `PUT …/notes/:id` (own notes) |
 | `resolve_discussion` | Write | default | `PUT …/issues|merge_requests/:iid/discussions/:id` |
 | `link_issues` | Write | default | `GET`/`POST …/issues/:iid/links` |
 | `unlink_issues` | Write | default | `DELETE …/issues/:iid/links/:id` |
@@ -1977,7 +1987,7 @@ The standard at `~/.claude/mcp-server-standard.md`, read 2026-09-25.
 | The standard says | Here | Why |
 |---|---|---|
 | Errors use six classes | Thirteen (§6.5) | `stale` is forced by §2.10; `ambiguous_outcome` by §2.11; `forbidden` and `auth` ask for different fixes; `blocked` for the quick-action, branch and allow-list guards; `rate_limited` separates waiting from failing; `ambiguous` as the siblings use it; `unexpected` for what nothing else covers |
-| Never overwrite; compute a minimal diff | Held for files and commits (`last_commit_id`) and merges (`sha`); **not holdable** for issue, merge request and wiki updates | No `If-Match` in REST and `lock_version` only in the web controllers (§2.9). §4.6's `updated_at` witness narrows the lost-update window without closing it; only the fields given are sent |
+| Never overwrite; compute a minimal diff | Held for files and commits (`last_commit_id`) and merges (`sha`); **not holdable** for issue, merge request, wiki and comment updates | No `If-Match` in REST and `lock_version` only in the web controllers (§2.9). §4.6's `updated_at` witness narrows the lost-update window without closing it; only the fields given are sent |
 | Destructive tools are not registered unless enabled | Held, and extended to Ship | One sibling registers deletes and refuses per call. Not here: GitLab's `api` scope permits everything, so a registered Ship or Destructive tool is exactly the control an injected instruction gets to argue with, and the official server's unenforced filters (§1) show where "listed but callable" ends |
 | Read-only mode requests read-only scopes | Held (`read_api`) | Recorded because `read_api` is enforced by HTTP method, which is exactly right for REST |
 | §3b: `--client-secret` / `<PREFIX>_CLIENT_SECRET` names the client JSON | `--client-id` / `GITLAB_MCP_CLIENT_ID`; everything else in §3b held | GitLab shows an application id and offers no JSON, and a public client has no secret (§2.2); a flag named for a file and a secret nobody has would be a lie in the interface |
@@ -2096,3 +2106,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 90 | A token's `expires_in` is its lifetime, added to `created_at` | Doorkeeper 5.9.0 `Expirable#expires_in_seconds` and `AccessTokenMixin#as_json`, the version v19.4.1-ee locks; `app/controllers/oauth/token_info_controller.rb`; the 1.0 live run | **Refuted (tier 1, live).** `/oauth/token/info` answers the seconds left when it answers. `get_me` added them to `created_at` and reported a token read 1 h 41 min after issue as expired an hour before; it now adds them to the time of the read, and the next run reported 11:53:38Z, the expiry the first run's numbers imply |
 | 91 | A cancel's answer shows whether anything was canceled | `lib/api/ci/pipelines.rb`, `Ci::CancelPipelineService`, `CommitStatus` and `Ci::HasStatus` at v19.4.1-ee; the 1.0 live run | **Refuted (tier 1, live).** GitLab cancels the jobs inside the request, then answers `pipeline.reset`; each job's transition queues `PipelineProcessWorker`, which recomputes the pipeline's status after. A pipeline canceled seconds after it started answered `running`, and `cancel_pipeline` said nothing could be canceled, while its two deployments were listed canceled later in the run; the next run's cancel answered `canceling`, so gitlab.com answers either way, and a third, with the fix, answered `running` and reported `canceled`. `CANCELABLE_STATUSES`, which the job scope shares, includes `manual`. It now reports `canceled` when the status read first was cancelable, the source is not `external` and the answer is not finished, and says the status catches up |
 | 92 | A label's priority and a milestone's description and dates cannot be cleared through the API | `lib/api/helpers/label_helpers.rb`, `app/services/labels/update_service.rb`, `lib/api/milestone_responses.rb` and `app/services/milestones/update_service.rb` at v19.4.1-ee; the post-1.0 live run | **Refuted (tier 1, live).** A present `priority` of `null` unprioritizes the label, and `at_least_one_of` counts keys, so it may be the only field sent; an empty description or date is assigned as given. `update_label` sends `null` for `clear_priority`, and both tools send `""` for the other `clear_*` inputs. The live run read each field back cleared |
+| 93 | A comment edit can carry a witness GitLab enforces, as a delete does | `lib/api/helpers/notes_helpers.rb` `update_note`, `app/services/notes/update_service.rb` and `app/policies/note_policy.rb` at v19.4.1-ee; the update_comment live runs | **Refuted (tier 1, live).** `update_note` calls no `check_unmodified_since!`, so `update_comment` reads and compares `updated_at` first and the window stays open. `UpdateService` runs quick actions in the new text and deletes a note left with commands alone, so the body is guarded as a create's is. `NotePolicy` refuses `admin_note` on a note that is not editable, a system note among them (403), and grants it to the note's author; this server edits only the caller's own. A reply to a standalone comment moves the comment's `updated_at` on gitlab.com, so the witness `add_comment` returned is stale after one |

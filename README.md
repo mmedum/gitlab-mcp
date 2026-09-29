@@ -48,6 +48,7 @@ contract: tools keep their names and output fields.
 | `update_issue` | Change an issue's fields, refused if it changed since you read it |
 | `list_discussions` | The comment threads on an issue or a merge request |
 | `add_comment` | Comment on an issue or merge request, reply in a thread, or start one, on a diff line or not |
+| `update_comment` | Edit one of your own comments in place, in its thread and on its diff line |
 | `resolve_discussion` | Resolve or reopen a thread on a merge request or an issue |
 | `link_issues` | Link two issues, in one project or two |
 | `unlink_issues` | Remove the link between two issues |

@@ -189,10 +189,8 @@ func (s *Server) serveIssueWrite(w http.ResponseWriter, r *http.Request, p *proj
 		s.replyToDiscussion(w, r, p, t, user, rest[1])
 	case r.Method == http.MethodPut && match(rest, "discussions", "*"):
 		s.resolveDiscussion(w, r, p, t, user, rest[1])
-	case r.Method == http.MethodDelete && match(rest, "notes", "*"):
-		s.deleteNote(w, r, p, t, user, rest[1])
 	default:
-		return false
+		return s.serveNoteEdit(w, r, p, t, user, rest)
 	}
 	return true
 }
@@ -224,7 +222,22 @@ func (s *Server) serveMRWrite(w http.ResponseWriter, r *http.Request, p *project
 		s.approve(w, r, p, mr, user)
 	case post && match(rest, "unapprove"):
 		s.unapprove(w, p, mr, user)
-	case del && match(rest, "notes", "*"):
+	default:
+		return s.serveNoteEdit(w, r, p, t, user, rest)
+	}
+	return true
+}
+
+// serveNoteEdit routes an edit or a delete of one note, the same on an
+// issue and a merge request.
+func (s *Server) serveNoteEdit(w http.ResponseWriter, r *http.Request, p *project, t target, user string, rest []string) bool {
+	if !match(rest, "notes", "*") {
+		return false
+	}
+	switch r.Method {
+	case http.MethodPut:
+		s.updateNote(w, r, p, t, user, rest[1])
+	case http.MethodDelete:
 		s.deleteNote(w, r, p, t, user, rest[1])
 	default:
 		return false

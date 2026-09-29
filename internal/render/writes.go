@@ -160,6 +160,16 @@ func CommentWrite(w model.CommentWrite, _ Boundary) string {
 			fmt.Fprintf(&b, " It covers %s lines %d to %d.", r.Side, r.Start, r.End)
 		}
 	}
+	witnessLine(&b, w.UpdatedAt, "update_comment")
+	return b.String()
+}
+
+// CommentUpdate renders update_comment.
+func CommentUpdate(w model.CommentUpdate, _ Boundary) string {
+	var b strings.Builder
+	writeHead(&b, outcomeLine(w.Outcome, fmt.Sprintf("comment %d on %s", w.NoteID, noteableItem(w.Type, w.IID)), ""), w.Write)
+	removedLine(&b, "text", w.BodyRemoved)
+	witnessLine(&b, w.UpdatedAt, "update_comment")
 	return b.String()
 }
 

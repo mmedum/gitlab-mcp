@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 	"github.com/mmedum/gitlab-mcp/internal/model"
 )
 
@@ -119,8 +118,6 @@ type CommentDeletion struct {
 }
 
 // DeleteComment deletes one of the signed-in account's own comments.
-// GitLab lets a maintainer delete anyone's; this server does not, since
-// another person's words are theirs to withdraw.
 func (s *Service) DeleteComment(ctx context.Context, in CommentDeletion) (model.CommentDelete, error) {
 	witness, err := parseWitness(in.UpdatedAt)
 	if err != nil {
@@ -130,27 +127,16 @@ func (s *Service) DeleteComment(ctx context.Context, in CommentDeletion) (model.
 	if err != nil {
 		return model.CommentDelete{}, err
 	}
-	// The reads go through one variable; the delete is called by name, so
-	// `scripts/gates outcomes` sees that this function writes.
 	mr := in.Type == "merge_request"
+	note, err := s.ownComment(ctx, t.p, mr, in.IID, in.NoteID, "deletes")
+	if err != nil {
+		return model.CommentDelete{}, err
+	}
+	// The read-back goes through one variable; the delete is called by
+	// name, so `scripts/gates outcomes` sees that this function writes.
 	get := s.client.GetIssueNote
 	if mr {
 		get = s.client.GetMergeRequestNote
-	}
-	var note *gitlab.Note
-	var me *gitlab.User
-	if err := parallel(
-		func() (err error) { note, err = get(ctx, t.p, in.IID, in.NoteID); return err },
-		func() (err error) { me, err = s.me(ctx); return err },
-	); err != nil {
-		return model.CommentDelete{}, err
-	}
-	switch {
-	case note.System:
-		return model.CommentDelete{}, gapi.Errf(gapi.ClassInvalid, "that is a note GitLab wrote to record an event, not a comment")
-	case note.Author.Username != me.Username:
-		return model.CommentDelete{}, gapi.Errf(gapi.ClassBlocked, "the comment is @%s's, and this server deletes only your own; "+
-			"nothing was sent", note.Author.Username)
 	}
 	if err := checkWitness(witness, note.UpdatedAt, "comment"); err != nil {
 		return model.CommentDelete{}, err
