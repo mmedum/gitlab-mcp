@@ -1,5 +1,5 @@
 # Written by scripts/livegitlab at the end of a run; do not edit.
-# run of 2026-09-27 against a gitlab.com instance
+# run of 2026-09-29 against a gitlab.com instance
 # Columns: tool.option (tool.* for the call itself), times sent.
 add_comment.*	13
 add_comment.body	13
@@ -273,15 +273,15 @@ list_deployments.sort	2
 list_deployments.status	1
 list_deployments.updated_after	1
 list_deployments.updated_before	1
-list_discussions.*	6
-list_discussions.iid	6
+list_discussions.*	7
+list_discussions.iid	7
 list_discussions.include_system	2
 list_discussions.max	2
 list_discussions.note_id	1
 list_discussions.offset	1
 list_discussions.page_token	1
-list_discussions.project	6
-list_discussions.type	6
+list_discussions.project	7
+list_discussions.type	7
 list_discussions.unresolved_only	1
 list_environments.*	3
 list_environments.max	2
@@ -536,6 +536,15 @@ unlink_issues.iid	2
 unlink_issues.project	2
 unlink_issues.target_iid	2
 unlink_issues.target_project	1
+update_comment.*	6
+update_comment.body	6
+update_comment.dry_run	1
+update_comment.escape_commands	1
+update_comment.iid	6
+update_comment.note_id	6
+update_comment.project	6
+update_comment.type	6
+update_comment.updated_at	6
 update_issue.*	7
 update_issue.add_assignees	1
 update_issue.add_labels	1

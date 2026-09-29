@@ -123,11 +123,7 @@ func BranchDelete(w model.BranchDelete, _ Boundary) string {
 // CommentDelete renders delete_comment.
 func CommentDelete(w model.CommentDelete, _ Boundary) string {
 	var b strings.Builder
-	item := fmt.Sprintf("#%d", w.IID)
-	if w.Type == "merge_request" {
-		item = mrItem(w.IID)
-	}
-	writeHead(&b, fmt.Sprintf("Deleted comment %d on %s.", w.NoteID, item), w.Write)
+	writeHead(&b, fmt.Sprintf("Deleted comment %d on %s.", w.NoteID, noteableItem(w.Type, w.IID)), w.Write)
 	goneLine(&b, w.Write, "comment")
 	return b.String()
 }

@@ -280,7 +280,22 @@ func phase2(s scratch) []step {
 		// Comments and threads, and where an inline comment lands (spike K).
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A comment the live run wrote.",
 			"dry_run": true}},
-		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A comment the live run wrote."}},
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A comment the live run wrote."},
+			save: map[string]string{"issue_note": "note_id", "issue_note_at": "updated_at"}},
+		// The comment, edited in place before the reply: a reply makes it
+		// a thread, which moves its updated_at (§18 row 93).
+		{tool: "update_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{issue_note}}",
+			"updated_at": "{{issue_note_at}}", "body": "A comment the live run wrote, then edited.", "dry_run": true}},
+		{tool: "update_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{issue_note}}",
+			"updated_at": "2020-01-01T00:00:00Z", "body": "Stale."}, expectError: true, why: "a witness from before the comment"},
+		{tool: "update_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{issue_note}}",
+			"updated_at": "{{issue_note_at}}", "body": "Done.\n\n/close"},
+			expectError: true, why: "a quick-action line in the body, without escape_commands"},
+		{tool: "update_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{issue_note}}",
+			"updated_at": "{{issue_note_at}}", "body": "A comment the live run wrote, then edited.\n\n/close stays text.",
+			"escape_commands": true}},
+		{tool: "update_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{issue_note}}",
+			"updated_at": "{{issue_note_at}}", "body": "Again."}, expectError: true, why: "the witness the edit replaced"},
 		// A standalone comment does not name its thread; the newest one is it.
 		{tool: "list_discussions", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue},
 			save: map[string]string{"issue_thread": "threads.0.id"}},
@@ -291,7 +306,12 @@ func phase2(s scratch) []step {
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "body": "Escaped.\n\n/merge",
 			"escape_commands": true}},
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "body": "On an added line.",
-			"file": s.File, "line": 3, "side": "new"}, save: map[string]string{"mr_thread": "discussion_id"}},
+			"file": s.File, "line": 3, "side": "new"}, save: map[string]string{"mr_thread": "discussion_id", "mr_note": "note_id", "mr_note_at": "updated_at"}},
+		// Turned into a suggestion, in its thread on its line.
+		{tool: "update_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "note_id": "{{mr_note}}",
+			"updated_at": "{{mr_note_at}}", "body": "On an added line, as a suggestion:\n\n```suggestion:-0+0\nsuggested by the live run\n```"}},
+		// Still the thread it was, on its line, with the new text.
+		{tool: "list_discussions", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}},
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "body": "On a removed line.",
 			"file": s.File, "line": 3, "side": "old"}},
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "body": "On an unchanged line.",
@@ -755,7 +775,7 @@ func init() {
 	for _, tool := range []string{"get_project", "get_issue", "list_discussions", "get_merge_request", "list_mr_files",
 		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "lint_ci",
-		"list_todos", "create_issue", "update_issue", "add_comment", "resolve_discussion", "add_review_comment",
+		"list_todos", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "create_branch",
 		"create_commit",
 		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "retry_pipeline", "retry_job",

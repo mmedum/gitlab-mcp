@@ -213,7 +213,8 @@ func (s *Service) AddComment(ctx context.Context, in Comment) (model.CommentWrit
 			return s.findNote(ctx, t.p, in.IID, mr, in.DiscussionID, in.Body, start)
 		})
 	}
-	out := model.CommentWrite{Outcome: "created", Kind: kind, Write: model.Write{Target: t.ref}, NoteID: note.ID, DiscussionID: discussionID}
+	out := model.CommentWrite{Outcome: "created", Kind: kind, Write: model.Write{Target: t.ref}, NoteID: note.ID, DiscussionID: discussionID,
+		UpdatedAt: &note.UpdatedAt}
 	out.Position, out.LineRange = landed(note.Position)
 	return out, nil
 }
@@ -519,4 +520,99 @@ func (s *Service) ResolveDiscussion(ctx context.Context, raw, typ string, iid in
 		out.Outcome = "reopened"
 	}
 	return out, nil
+}
+
+// CommentEdit is update_comment's request.
+type CommentEdit struct {
+	Project   string
+	Type      string // issue or merge_request
+	IID       int64
+	NoteID    int64
+	Body      string
+	UpdatedAt string
+}
+
+// UpdateComment replaces the text of one of the signed-in account's own
+// comments, keeping it in its thread.
+func (s *Service) UpdateComment(ctx context.Context, in CommentEdit) (model.CommentUpdate, error) {
+	if strings.TrimSpace(in.Body) == "" {
+		return model.CommentUpdate{}, gapi.Errf(gapi.ClassInvalid, "body is empty")
+	}
+	witness, err := parseWitness(in.UpdatedAt)
+	if err != nil {
+		return model.CommentUpdate{}, err
+	}
+	t, err := s.writeTarget(ctx, in.Project)
+	if err != nil {
+		return model.CommentUpdate{}, err
+	}
+	mr := in.Type == "merge_request"
+	before, err := s.ownComment(ctx, t.p, mr, in.IID, in.NoteID, "edits")
+	if err != nil {
+		return model.CommentUpdate{}, err
+	}
+	out := model.CommentUpdate{Outcome: "unchanged", Write: model.Write{Target: t.ref}, Type: in.Type, IID: in.IID, NoteID: in.NoteID}
+	// Before the witness: an edit that landed and is asked again, after a
+	// lost answer, reads as done rather than stale.
+	if sameText(before.Body, in.Body) {
+		out.UpdatedAt = &before.UpdatedAt
+		out.Notes = []string{"The comment already reads so; nothing was sent."}
+		return out, nil
+	}
+	// GitLab holds no witness for an edit (§18 row 93), so the window
+	// between this read and the PUT stays open; the check narrows it.
+	if err := checkWitness(witness, before.UpdatedAt, "comment"); err != nil {
+		return model.CommentUpdate{}, err
+	}
+	if gapi.IsDryRun(ctx) {
+		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("PUT", "update the comment", []string{"body"})
+		return out, nil
+	}
+	var after *gitlab.Note
+	if mr {
+		after, err = s.client.UpdateMergeRequestNote(ctx, t.p, in.IID, in.NoteID, in.Body)
+	} else {
+		after, err = s.client.UpdateIssueNote(ctx, t.p, in.IID, in.NoteID, in.Body)
+	}
+	if err != nil {
+		return model.CommentUpdate{}, err
+	}
+	switch {
+	case after.ID != in.NoteID || after.UpdatedAt.IsZero() || strings.TrimSpace(after.Body) == "":
+		return model.CommentUpdate{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the edit without the comment; "+
+			"list_discussions shows what it holds")
+	case sameText(after.Body, in.Body):
+	case after.UpdatedAt.Equal(before.UpdatedAt):
+		return model.CommentUpdate{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the edit, but the comment is unchanged")
+	default:
+		out.Notes = []string{"GitLab stored the text with differences from what was sent; list_discussions shows it."}
+	}
+	out.Outcome, out.UpdatedAt, out.BodyRemoved = "updated", &after.UpdatedAt, removedFrom(before.Body, after.Body)
+	return out, nil
+}
+
+// ownComment reads a comment this server may change: not a note GitLab
+// wrote to record an event, and not another person's. GitLab lets a
+// maintainer change anyone's; another person's words are theirs.
+func (s *Service) ownComment(ctx context.Context, p gapi.Project, mr bool, iid, noteID int64, verb string) (*gitlab.Note, error) {
+	get := s.client.GetIssueNote
+	if mr {
+		get = s.client.GetMergeRequestNote
+	}
+	var note *gitlab.Note
+	var me *gitlab.User
+	if err := parallel(
+		func() (err error) { note, err = get(ctx, p, iid, noteID); return err },
+		func() (err error) { me, err = s.me(ctx); return err },
+	); err != nil {
+		return nil, err
+	}
+	switch {
+	case note.System:
+		return nil, gapi.Errf(gapi.ClassInvalid, "that is a note GitLab wrote to record an event, not a comment")
+	case note.Author.Username != me.Username:
+		return nil, gapi.Errf(gapi.ClassBlocked, "the comment is @%s's, and this server %s only your own; nothing was sent",
+			note.Author.Username, verb)
+	}
+	return note, nil
 }
