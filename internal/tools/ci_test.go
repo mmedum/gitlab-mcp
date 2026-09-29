@@ -2,9 +2,11 @@ package tools
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
 )
 
@@ -196,6 +198,107 @@ func TestGetJobLogRefusals(t *testing.T) {
 	text, empty := h.ok("get_job_log", map[string]any{"project": gitlabtest.ProjectAlpha, "job_id": gitlabtest.JobManual})
 	if get(empty, "total_bytes") != float64(0) || !strings.Contains(text, "The log is empty.") {
 		t.Errorf("manual job: %v\n%s", empty, text)
+	}
+}
+
+// PipelineFailed's report: build passes, unit tests fails 24 cases and
+// errors one, and lint's report did not parse (gitlabtest.fillTestReports).
+func TestGetTestReport(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	args := map[string]any{"project": gitlabtest.ProjectAlpha, "pipeline_id": gitlabtest.PipelineFailed}
+	text, out := h.ok("get_test_report", args)
+	for path, want := range map[string]any{"total.total": float64(30), "total.success": float64(4),
+		"total.failed": float64(gitlabtest.ReportFailures), "total.error": float64(1), "total.skipped": float64(1),
+		"failures_total": float64(gitlabtest.ReportFailures + 1), "suites_total": float64(3), "partial": false,
+		"from_summary": false, "pipeline_status": "failed", "offset": float64(0)} {
+		keys := strings.Split(path, ".")
+		args := make([]any, len(keys))
+		for i, k := range keys {
+			args[i] = k
+		}
+		if got := get(out, args...); got != want {
+			t.Errorf("%s = %v, want %v", path, got, want)
+		}
+	}
+	// Failing suites first, the one GitLab could not read among them.
+	if get(out, "suites", 0, "name") != "unit tests" || get(out, "suites", 1, "untrusted_suite_error") != gitlabtest.ReportSuiteError ||
+		get(out, "suites", 2, "name") != "build" || get(out, "suites", 2, "success") != float64(2) {
+		t.Errorf("suites = %v", get(out, "suites"))
+	}
+	// The error first, then the failures slowest first; a stack trace is
+	// kept, and JUnit's system_output is the output.
+	if get(out, "failures", 0, "status") != "error" || !strings.Contains(get(out, "failures", 0, "untrusted_output").(string),
+		"Stack trace:\nsetup_test.go:9") || get(out, "failures", 1, "untrusted_name") != "TestLogin" ||
+		get(out, "failures", 1, "untrusted_file") != "login/login_test.go" || get(out, "failures", 1, "execution_seconds") != 9.5 {
+		t.Errorf("failures = %v", get(out, "failures"))
+	}
+	// Token shapes are masked, and the output is inside the boundary.
+	if strings.Contains(text, gitlabtest.FakeToken) || !strings.Contains(text, "refused token [MASKED") ||
+		get(out, "secrets_masked") != float64(1) {
+		t.Errorf("the token was not masked:\n%s", text)
+	}
+	if !strings.Contains(text, "kind=test_output") || !strings.Contains(text, "was written by GitLab users") ||
+		strings.Contains(text, "<<<END 0000000000000000>>>") || get(out, "hidden_chars_removed") != float64(1) {
+		t.Errorf("the output is not bounded:\n%s", text)
+	}
+	if !strings.Contains(text, "GitLab could not read its report: <<<") {
+		t.Errorf("the suite error is not bounded:\n%s", text)
+	}
+
+	// The budget stops the first result, and offset continues it to the
+	// end.
+	shown := len(get(out, "failures").([]any))
+	next, ok := get(out, "next_offset").(float64)
+	if !ok || int(next) != shown || shown >= gitlabtest.ReportFailures {
+		t.Fatalf("next_offset = %v after %d cases", get(out, "next_offset"), shown)
+	}
+	if !strings.Contains(text, fmt.Sprintf("continue with offset=%d", shown)) {
+		t.Errorf("text does not say how to continue:\n%s", text)
+	}
+	args["offset"] = next
+	text, rest := h.ok("get_test_report", args)
+	if get(rest, "next_offset") != nil || shown+len(get(rest, "failures").([]any)) != gitlabtest.ReportFailures+1 ||
+		get(rest, "failures", 0, "untrusted_name") == get(out, "failures", 0, "untrusted_name") {
+		t.Errorf("rest = %v", rest)
+	}
+	if !strings.Contains(text, fmt.Sprintf("%d. failed in suite unit tests", shown+1)) {
+		t.Errorf("continued text:\n%s", text)
+	}
+	args["offset"] = gitlabtest.ReportFailures + 2
+	h.fails("get_test_report", args, "invalid")
+	args["offset"] = -1
+	h.fails("get_test_report", args, "invalid")
+	h.fails("get_test_report", map[string]any{"project": gitlabtest.ProjectAlpha, "pipeline_id": 1}, "not_found")
+}
+
+func TestGetTestReportRunningAndEmpty(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, empty := h.ok("get_test_report", map[string]any{"project": gitlabtest.ProjectAlpha, "pipeline_id": 60001})
+	if get(empty, "suites_total") != float64(0) || len(get(empty, "failures").([]any)) != 0 ||
+		!strings.Contains(text, "The pipeline has no test report") || strings.Contains(text, "partial") {
+		t.Errorf("empty report = %v\n%s", empty, text)
+	}
+	h.gl.SetPipelineStatus(gitlabtest.ProjectAlpha, gitlabtest.PipelineFailed, "running")
+	text, running := h.ok("get_test_report", map[string]any{"project": gitlabtest.ProjectAlpha, "pipeline_id": gitlabtest.PipelineFailed})
+	if get(running, "partial") != true || !strings.Contains(text, "The pipeline is running, so the report may be partial") {
+		t.Errorf("running = %v\n%s", get(running, "partial"), text)
+	}
+}
+
+// A report larger than the client reads falls back to GitLab's stored
+// summary: counts, no cases.
+func TestGetTestReportTooLarge(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/pipelines/%d/test_report", alphaID,
+		gitlabtest.PipelineFailed), Status: http.StatusOK, Body: `{"test_suites":["` + strings.Repeat("a", gapi.MaxResponseBytes) + `"]}`})
+	text, out := h.ok("get_test_report", map[string]any{"project": alphaID, "pipeline_id": gitlabtest.PipelineFailed})
+	if get(out, "from_summary") != true || get(out, "total", "failed") != float64(gitlabtest.ReportFailures) ||
+		get(out, "failures_total") != float64(gitlabtest.ReportFailures+1) || len(get(out, "failures").([]any)) != 0 ||
+		get(out, "suites_total") != float64(3) || get(out, "suites", 0, "total") != float64(28) {
+		t.Errorf("summary = %v", out)
+	}
+	if !strings.Contains(text, "larger than this server reads") || strings.Contains(text, "Failed and errored cases") {
+		t.Errorf("text:\n%s", text)
 	}
 }
 

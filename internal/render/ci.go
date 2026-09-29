@@ -147,6 +147,90 @@ func JobLog(l model.JobLog, bd Boundary) string {
 	return b.String()
 }
 
+// testCounts is one line of counts.
+func testCounts(c model.TestCounts) string {
+	return fmt.Sprintf("%d cases in %.2fs: %d passed, %d failed, %d errored, %d skipped", c.Total, c.Seconds, c.Success,
+		c.Failed, c.Error, c.Skipped)
+}
+
+// TestReport renders get_test_report.
+func TestReport(r model.TestReport, bd Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Test report of pipeline %d in %s\n", r.PipelineID, projectLine(r.Project))
+	if r.Partial {
+		fmt.Fprintf(&b, "The pipeline is %s, so the report may be partial: jobs still to run add to it.\n", Ident(r.PipelineStatus))
+	}
+	if r.SuitesTotal == 0 {
+		b.WriteString("The pipeline has no test report: no job uploaded a JUnit report (artifacts:reports:junit) that you may read.")
+		return b.String()
+	}
+	if r.FromSummary {
+		b.WriteString("The full report is larger than this server reads. These are GitLab's stored counts, written as each job " +
+			"finishes, which can lag behind; no case is listed. get_job_log with failed_only reads a failed job's output.\n")
+	}
+	b.WriteString("Total: " + testCounts(r.Total) + ".")
+	quoted := len(r.Failures) > 0
+	for _, s := range r.Suites {
+		quoted = quoted || s.UntrustedSuiteError != ""
+	}
+	if quoted {
+		b.WriteString("\n" + bd.Notice())
+	}
+	fmt.Fprintf(&b, "\nSuites (%d of %d), those with failures first:", len(r.Suites), r.SuitesTotal)
+	for _, s := range r.Suites {
+		b.WriteString("\n- " + Ident(s.Name) + ": ")
+		if s.UntrustedSuiteError != "" {
+			b.WriteString("GitLab could not read its report: " + bd.Inline(s.UntrustedSuiteError))
+			continue
+		}
+		b.WriteString(testCounts(s.TestCounts))
+	}
+	if r.FromSummary || r.FailuresTotal == 0 {
+		return b.String()
+	}
+	b.WriteString("\n" + failuresLine(r))
+	for i, f := range r.Failures {
+		fmt.Fprintf(&b, "\n%d. %s in suite %s: %s", r.Offset+i+1, Ident(f.Status), Ident(f.Suite), bd.Inline(f.UntrustedName))
+		if f.UntrustedClassname != "" {
+			b.WriteString(", class " + bd.Inline(f.UntrustedClassname))
+		}
+		if f.UntrustedFile != "" {
+			b.WriteString(", file " + bd.Inline(f.UntrustedFile))
+		}
+		fmt.Fprintf(&b, ", %.2fs", f.Seconds)
+		if f.UntrustedOutput == "" {
+			b.WriteString("; no output.")
+			continue
+		}
+		o := Origin{Kind: "test_output", Project: r.Project.Path, Item: "pipeline " + strconv.FormatInt(r.PipelineID, 10)}
+		b.WriteString("\n" + bd.Block(o, f.UntrustedOutput))
+		if f.OutputCut {
+			fmt.Fprintf(&b, "\nOutput cut at %d of %d characters.", TestOutputBudget, f.OutputChars)
+		}
+	}
+	return b.String()
+}
+
+// failuresLine says which failed and errored cases are shown.
+func failuresLine(r model.TestReport) string {
+	s := fmt.Sprintf("Failed and errored cases: %d to %d of %d shown (budget %d characters)", r.Offset+1,
+		r.Offset+len(r.Failures), r.FailuresTotal, r.BudgetChars)
+	if len(r.Failures) == 0 {
+		s = fmt.Sprintf("Failed and errored cases: none shown from offset %d of %d", r.Offset, r.FailuresTotal)
+	}
+	if r.NextOffset != nil {
+		s += fmt.Sprintf("; continue with offset=%d", *r.NextOffset)
+	}
+	s += "."
+	if r.SecretsMasked > 0 {
+		s += fmt.Sprintf(" %d secret shapes were replaced with [MASKED kind].", r.SecretsMasked)
+	}
+	if r.HiddenRemoved > 0 {
+		s += fmt.Sprintf(" %d hidden characters were removed or made visible.", r.HiddenRemoved)
+	}
+	return s
+}
+
 // Lint renders lint_ci.
 func Lint(l model.Lint, bd Boundary) string {
 	var b strings.Builder

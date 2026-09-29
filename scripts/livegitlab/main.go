@@ -602,8 +602,9 @@ func seedPhase1(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Red
 }
 
 // ciConfig is the scratch project's CI: on the default branch a job that
-// passes, a long job that prints a synthetic token and fails, and a job
-// allowed to fail; on any other branch the passing job alone, so a
+// passes, a long job that prints a synthetic token and fails, with a
+// synthetic JUnit report of two passing cases and one failing on that
+// token, and a job allowed to fail; on any other branch the passing job alone, so a
 // pipeline listing has more than one page at little cost. A trigger job
 // starts a child pipeline that fails, so get_pipeline has one to name. The passing
 // and the manual job declare an input, and the input slow adds a job that
@@ -688,11 +689,26 @@ unit tests:
     - mkdir -p reports
     - echo "the report repeats token ` + token + `" > reports/summary.txt
     - echo "a second report, so a listing pages" > reports/second.txt
+    - |
+      cat > reports/junit.xml <<'XML'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuites>
+        <testsuite name="live" tests="3" failures="1">
+          <testcase classname="example.live" name="TestPasses" file="live/live_test.go" time="0.01"/>
+          <testcase classname="example.live" name="TestAlsoPasses" file="live/live_test.go" time="0.02"/>
+          <testcase classname="example.live" name="TestFails" file="live/live_test.go" time="0.5">
+            <failure message="refused">live_test.go:12: the server refused token ` + token + `</failure>
+          </testcase>
+        </testsuite>
+      </testsuites>
+      XML
     - exit 1
   artifacts:
     when: always
     paths:
       - reports/
+    reports:
+      junit: reports/junit.xml
 
 downstream:
   stage: test

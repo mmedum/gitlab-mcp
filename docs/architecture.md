@@ -380,7 +380,7 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, fifty-one tools, stays under the 64-tool point where one
+default surface, fifty-two tools, stays under the 64-tool point where one
 client starts regrouping tools. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
@@ -958,6 +958,21 @@ what it read is named by its end marker. A window that starts inside a
 private key block is masked whole: the read looks 256 KB before the
 window for a header with no footer after it (§18 row 76).
 
+`get_test_report` reads the report GitLab builds from the JUnit reports
+a pipeline's jobs upload, child pipelines included. It shows the
+counts, each suite's (failing suites first, at most 100), and the
+failed and errored cases: name, class, file, time and output. The
+output is `system_output`, where JUnit puts the failure; `stack_trace`
+is added when a report carries one. Names and output are the project's
+tests' words, so they are masked as a log is (§4.1) and shown inside
+the boundary. One case's output is cut at 4,000 characters, and the
+cases shown at 40,000 characters or 100 cases; `offset` continues by
+case. GitLab parses the report when asked, caches it up to two minutes
+and does not page it, so while the pipeline runs the report is partial
+and the result says so. A report larger than the client reads (§11)
+falls back to the stored summary, counts without cases, which a worker
+writes after each job and can lag (§18 row 98).
+
 Ship: `run_pipeline` (ref, variables and inputs; variables named in the
 result, values masked), `retry_pipeline`, `retry_job` and `play_job`
 (each with values for the inputs the job declares: GitLab refuses a
@@ -1003,9 +1018,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Eighty-four tools. With the default toolsets: fifty-one by default,
-thirty-four in read-only mode, sixty-three with Ship and Destructive
-both enabled. Every toolset and flag on registers all eighty-four.
+Eighty-five tools. With the default toolsets: fifty-two by default,
+thirty-five in read-only mode, sixty-four with Ship and Destructive
+both enabled. Every toolset and flag on registers all eighty-five.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
@@ -1056,6 +1071,7 @@ Destructive kinds, as a signal and not a control.
 | `get_pipeline` | Read | default | `GET …/pipelines/:id`, `/jobs`, `/trigger_jobs` |
 | `list_jobs` | Read | default | `GET …/pipelines/:id/jobs` |
 | `get_job_log` | Read | default | `GET …/jobs/:id/trace`, in ranges |
+| `get_test_report` | Read | default | `GET …/pipelines/:id/test_report`, `/test_report_summary` when the report is too large |
 | `lint_ci` | Read | default | `GET …/ci/lint`; `POST …/ci/lint` when writes are on |
 | `list_job_artifacts` | Read | default | `GET …/jobs/:id/artifacts/tree` |
 | `get_job_artifact` | Read | default | `GET …/jobs/:id/artifacts/:path` (masked as a log) |
@@ -2269,3 +2285,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 95 | A client draws an elicitation question as plain text | VS Code `src/vs/workbench/contrib/mcp/browser/mcpElicitationService.ts` L100 and L173, and `src/vs/base/common/htmlContent.ts` L52-62, `main` at 251bcf5f, read 2026-09-29 | **Refuted.** VS Code builds a form question as `new MarkdownString(elicitation.message)`, untrusted: command links are off, but emphasis, link text, code spans and HTML-like text draw, and single line breaks join into one paragraph. Each quoted value is a code span, which CommonMark draws literally, with backticks and their lookalikes folded, and a blank line separates the lines. Backslash escaping was rejected: where a client draws plain text, the backslashes show inside names and branches, the data the person checks |
 | 96 | A required choice naming the outcome confirms better than an empty form | Codex `codex-rs/codex-mcp/src/elicitation.rs` L415-458 and L552-571, `main` at c248f6d4, and VS Code `mcpElicitationService.ts` L111-119 and L237-297, read 2026-09-29; the maintainer's check in Claude Code 2.1.284, protocol 2025-11-25, 2026-09-29, against a throwaway probe with three forms of one delete question | **Declined, for now.** For: Codex accepts a form with no properties by itself under approval policy `never` with full access, and a VS Code chat question the person skips resolves as `accept` with no content; a required choice survives both. Against: in Claude Code the choice list took the maintainer 60 seconds, against 8 for the empty form, and they found it confusing. The empty form stays, and both client behaviors are recorded as limits (§4.12) |
 | 97 | GitLab's link lists are complete and shaped as the OpenAPI file publishes them | `lib/api/issues.rb` L551-594, `lib/api/merge_requests.rb` L978-1030, `lib/api/commits.rb` L713-749, `app/services/issues/referenced_merge_requests_service.rb`, `app/models/merge_request.rb` `visible_closing_issues_for` and `related_issues`, and `lib/api/entities/issue_basic.rb`, `issuable_entity.rb` and `external_issue.rb` at v19.4.1-ee | **Refuted (tier 1).** Every list drops what the user cannot read without saying so; `closed_by` and a commit's merge requests are the project's own only; `closes_issues` also drops issues in projects that do not close issues automatically. `closes_issues` and `related_issues` mix IssueBasic rows, which carry no `references`, with an external tracker's `{title, id}`, whose `id` is a string. The file publishes `closes_issues` as MRNote, `related_issues` with no schema, and `related_merge_requests` as MergeRequestBasic though it answers the full entity. The three tools decode a few fields, keep `id` raw and show it only when it is shaped like a tracker's id, read an issue's reference from its `web_url` as `resolve_url` does, and say in each field and once in the text that the list is GitLab's, not all there is |
+| 98 | GitLab's test report is paged and shaped as the OpenAPI file publishes it, and its summary is as current | `lib/api/ci/pipelines.rb` L292-334, `app/models/ci/pipeline.rb` `accessible_test_reports`, `app/models/ci/build.rb` `test_report_readable_by?` and `max_test_cases_per_report`, `app/serializers/test_report_entity.rb`, `test_suite_entity.rb`, `test_case_entity.rb` and `test_report_summary_entity.rb`, `lib/gitlab/ci/parsers/test/junit.rb`, `lib/gitlab/ci/reports/test_suite.rb` and `test_case.rb`, and `app/services/ci/build_report_result_service.rb` at v19.4.1-ee | **Refuted (tier 1).** `test_report` answers every case of every suite in one body, with no paging, parsed from the latest jobs' artifacts when asked and cached up to two minutes; jobs still running add nothing, and jobs whose artifacts the user may not read are dropped without a word. gitlab.com caps a file at 500,000 cases. Times are floats, not the integers the file publishes. JUnit's failure text is in `system_output` and `stack_trace` is always null. `test_report_summary` is written by a worker after each job, so it lags; its `test_suites` is an array the file publishes as an object, and it carries no cases. `get_test_report` reads the full report, says when the pipeline has not finished, and falls back to the summary only when the report is over 32 MiB |

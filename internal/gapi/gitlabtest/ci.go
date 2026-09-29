@@ -65,6 +65,8 @@ func (s *Server) fillCI(p *project) {
 		DownstreamPipeline: &gitlab.DownstreamPipeline{ID: DownstreamFailed, ProjectID: 2002, Status: "failed",
 			WebURL: "https://gitlab.example.com/example-group/sub/beta/-/pipelines/62001"}}}
 
+	fillTestReports(p)
+
 	p.ciConfig["main"] = "stages: [build, test, deploy]\n\nbuild:\n  stage: build\n  script: make build\n\n" +
 		"unit tests:\n  stage: test\n  script: make test\n\nlint:\n  stage: test\n  script: make lint\n  allow_failure: true\n\n" +
 		"deploy:\n  stage: deploy\n  script: make deploy\n  when: manual\n"
@@ -281,6 +283,13 @@ func (s *Server) serveCI(w http.ResponseWriter, r *http.Request, p *project, seg
 			}
 		}
 		writePage(s, w, r, rows)
+	case match(seg, "pipelines", "*", "test_report"), match(seg, "pipelines", "*", "test_report_summary"):
+		pl := s.findPipeline(p, seg[1])
+		if pl == nil {
+			message(w, http.StatusNotFound, "404 Not found")
+			return true
+		}
+		s.testReport(w, p, pl, seg[2] == "test_report_summary")
 	case match(seg, "jobs", "*"):
 		j := findJob(p, seg[1])
 		if j == nil {

@@ -76,6 +76,7 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 		"get_pipeline":    {"pipeline_id": gitlabtest.PipelineFailed},
 		"list_jobs":       {"pipeline_id": gitlabtest.PipelineFailed, "scope": nil},
 		"get_job_log":     {"job_id": gitlabtest.JobFailed, "byte_offset": nil, "byte_limit": nil},
+		"get_test_report": {"pipeline_id": gitlabtest.PipelineFailed, "offset": nil},
 		"lint_ci":         {"ref": nil},
 		"list_labels":     {"search": nil},
 		"list_milestones": {"group": nil, "search": nil, "title": nil, "state": nil},
@@ -125,8 +126,8 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 	}
 	// The second pass went deep: GitLab answered the payload reads.
 	for _, call := range []string{"get_issue", "list_discussions", "get_merge_request", "get_file", "get_commit_diff",
-		"list_mr_diffs", "list_draft_notes", "compare_refs", "list_tags", "get_pipeline", "get_job_log", "lint_ci",
-		"list_labels", "list_milestones", "list_members", "list_todos", "search"} {
+		"list_mr_diffs", "list_draft_notes", "compare_refs", "list_tags", "get_pipeline", "get_job_log", "get_test_report",
+		"lint_ci", "list_labels", "list_milestones", "list_members", "list_todos", "search"} {
 		if !strings.Contains(out, `"call":"`+call+`","attempt":1,"status":200`) {
 			t.Errorf("no successful %s request was logged; the canaries never reached a payload", call)
 		}

@@ -225,6 +225,12 @@ func TestFieldsCannotStartALine(t *testing.T) {
 		"branches": func() string { return Branches(filled[model.Branches](payload), bd) },
 		"commits":  func() string { return Commits(filled[model.Commits](payload), bd) },
 		"commit":   func() string { return Commit(filled[model.Commit](payload), bd) },
+		"test_report": func() string {
+			r := filled[model.TestReport](payload)
+			r.FromSummary = false
+			r.FailuresTotal, r.SuitesTotal = 1, 1
+			return TestReport(r, bd)
+		},
 	}
 	breaks := func(r rune) bool { return r == '\n' || r == '\r' || r == '\u0085' || r == '\u2028' || r == '\u2029' }
 	for name, render := range renders {

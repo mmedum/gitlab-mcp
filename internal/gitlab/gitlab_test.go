@@ -65,7 +65,9 @@ var byName = map[string]reflect.Type{
 	"EnvironmentDeployment": reflect.TypeFor[EnvironmentDeployment](), "Deployment": reflect.TypeFor[Deployment](),
 	"DeploymentEnvironment": reflect.TypeFor[DeploymentEnvironment](), "DeploymentJob": reflect.TypeFor[DeploymentJob](),
 	"Event": reflect.TypeFor[Event](), "EventPush": reflect.TypeFor[EventPush](),
-	"Job": reflect.TypeFor[Job](), "JobPipe": reflect.TypeFor[JobPipe](), "JobArtifact": reflect.TypeFor[JobArtifact](),
+	"Job": reflect.TypeFor[Job](), "JobPipe": reflect.TypeFor[JobPipe](),
+	"TestReport": reflect.TypeFor[TestReport](), "TestSuite": reflect.TypeFor[TestSuite](), "TestCase": reflect.TypeFor[TestCase](),
+	"TestReportSummary": reflect.TypeFor[TestReportSummary](), "TestReportTotal": reflect.TypeFor[TestReportTotal](), "JobArtifact": reflect.TypeFor[JobArtifact](),
 	"Bridge": reflect.TypeFor[Bridge](), "ReleaseLink": reflect.TypeFor[ReleaseLink](),
 	"IssueLink": reflect.TypeFor[IssueLink](), "IssueBasic": reflect.TypeFor[IssueBasic](),
 	"RelatedIssue": reflect.TypeFor[RelatedIssue](), "ProtectedTag": reflect.TypeFor[ProtectedTag](),
@@ -128,6 +130,34 @@ func TestDecodeMergeRequest(t *testing.T) {
 	}
 	if mr.DiffRefs == nil || mr.DiffRefs.StartSHA != "c" || mr.HeadPipeline == nil || mr.HeadPipeline.Status != "success" {
 		t.Errorf("nested fields: %+v %+v", mr.DiffRefs, mr.HeadPipeline)
+	}
+}
+
+// A test report's times are fractional seconds, though the OpenAPI file
+// says integer, and a JUnit case's stack_trace is null.
+func TestDecodeTestReport(t *testing.T) {
+	body := `{"total_time":1.25,"total_count":2,"success_count":1,"failed_count":1,"skipped_count":0,"error_count":0,
+		"test_suites":[{"name":"unit tests","total_time":1.25,"total_count":2,"success_count":1,"failed_count":1,
+		"skipped_count":0,"error_count":0,"suite_error":null,"test_cases":[{"status":"failed","name":"TestLogin",
+		"classname":"example.test/login","file":null,"execution_time":0.75,"system_output":"refused","stack_trace":null,
+		"recent_failures":null}]}]}`
+	var r TestReport
+	if err := json.Unmarshal([]byte(body), &r); err != nil {
+		t.Fatal(err)
+	}
+	c := r.TestSuites[0].TestCases[0]
+	if r.TotalTime != 1.25 || c.ExecutionTime != 0.75 || c.StackTrace != nil || c.File != nil || *c.SystemOutput != "refused" {
+		t.Errorf("decoded %+v", r)
+	}
+	summary := `{"total":{"time":1.25,"count":2,"success":1,"failed":1,"skipped":0,"error":0,"suite_error":null},
+		"test_suites":[{"name":"unit tests","total_time":1.25,"total_count":2,"success_count":1,"failed_count":1,
+		"skipped_count":0,"error_count":0,"build_ids":[70002],"suite_error":null}]}`
+	var sum TestReportSummary
+	if err := json.Unmarshal([]byte(summary), &sum); err != nil {
+		t.Fatal(err)
+	}
+	if sum.Total.Time != 1.25 || sum.TestSuites[0].FailedCount != 1 {
+		t.Errorf("decoded %+v", sum)
 	}
 }
 

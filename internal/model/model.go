@@ -797,6 +797,64 @@ type Lint struct {
 	MergedYAMLBudget    Budget `json:"merged_yaml_budget"`
 }
 
+// TestCounts counts the cases of a test report or of one suite.
+type TestCounts struct {
+	Total   int     `json:"total"`
+	Success int     `json:"success"`
+	Failed  int     `json:"failed"`
+	Skipped int     `json:"skipped"`
+	Error   int     `json:"error" jsonschema:"Cases that could not run, as the report says"`
+	Seconds float64 `json:"seconds" jsonschema:"The time the cases took, as the report states it"`
+}
+
+// TestSuiteRow is one suite of a test report: one job's report, the
+// reports of parallel jobs merged.
+type TestSuiteRow struct {
+	Name string `json:"name" jsonschema:"The job's name, from the project's CI configuration"`
+	TestCounts
+	// UntrustedSuiteError is GitLab's message about a report it could not
+	// read, which can quote the report.
+	UntrustedSuiteError string `json:"untrusted_suite_error" jsonschema:"Why GitLab could not read the suite's report, whose counts are then 0; empty otherwise"`
+}
+
+// TestFailure is one failed or errored case. Its name, class, file and
+// output were written by the project's tests.
+type TestFailure struct {
+	Suite              string  `json:"suite"`
+	Status             string  `json:"status" jsonschema:"failed, or error for a case that could not run"`
+	UntrustedName      string  `json:"untrusted_name"`
+	UntrustedClassname string  `json:"untrusted_classname"`
+	UntrustedFile      string  `json:"untrusted_file"`
+	Seconds            float64 `json:"execution_seconds"`
+	// UntrustedOutput is the failure message and the case's output, cut
+	// at render.TestOutputBudget.
+	UntrustedOutput string `json:"untrusted_output" jsonschema:"The failure message and what the case printed, token shapes masked"`
+	OutputChars     int    `json:"output_chars" jsonschema:"The output's full length in characters"`
+	OutputCut       bool   `json:"output_cut" jsonschema:"True when the output is longer than shown"`
+}
+
+// TestReport is get_test_report's result.
+type TestReport struct {
+	Project        ProjectRef `json:"project"`
+	PipelineID     int64      `json:"pipeline_id"`
+	PipelineStatus string     `json:"pipeline_status"`
+	Partial        bool       `json:"partial" jsonschema:"True while the pipeline has not finished: jobs still to run add to the report"`
+	// FromSummary is true when the report was too large to read.
+	FromSummary bool           `json:"from_summary" jsonschema:"True when the full report was larger than this server reads: the counts are GitLab's stored summary and no case is listed"`
+	Total       TestCounts     `json:"total"`
+	Suites      []TestSuiteRow `json:"suites" jsonschema:"Suites with a failure or an error first, at most 100"`
+	SuitesTotal int            `json:"suites_total"`
+	// Failures are the failed and errored cases from Offset, as many as
+	// fit the budget.
+	Failures      []TestFailure `json:"failures"`
+	FailuresTotal int           `json:"failures_total" jsonschema:"Failed and errored cases in the report"`
+	Offset        int           `json:"offset" jsonschema:"The index of the first case shown among the failed and errored cases"`
+	NextOffset    *int          `json:"next_offset" jsonschema:"Pass as offset to read the next cases; null when the last is shown"`
+	BudgetChars   int           `json:"budget_chars" jsonschema:"The most characters of case names and output this result shows"`
+	SecretsMasked int           `json:"secrets_masked" jsonschema:"Token and key shapes replaced with [MASKED kind] in the cases shown"`
+	HiddenRemoved int           `json:"hidden_chars_removed" jsonschema:"Zero-width and bidirectional-control characters removed or made visible"`
+}
+
 // ------------------------------------------------------------ planning
 
 // Label is one row of list_labels.

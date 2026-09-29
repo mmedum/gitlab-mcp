@@ -18,6 +18,7 @@ lifted verbatim.
 ### Added
 
 - `get_issue` lists the merge requests related to the issue and those that close it, `get_merge_request` the issues it closes and mentions, and `get_commit` the merge requests that contain the commit: the first 20 of each, as GitLab returns them.
+- `get_test_report` reads a pipeline's test report: the counts, each suite's, and the failed and errored cases with their output, secrets masked, 40,000 characters at a time.
 
 ## [2.0.0] - 2026-09-29
 

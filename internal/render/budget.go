@@ -22,6 +22,10 @@ const (
 	DiffBudget = 40000
 	// CommitMessageBudget bounds a commit message.
 	CommitMessageBudget = 8000
+	// TestReportBudget bounds the failed cases of one test report
+	// result, and TestOutputBudget one case's output within that.
+	TestReportBudget = 40000
+	TestOutputBudget = 4000
 	// TitleChars bounds a one-line title.
 	TitleChars = 200
 )
