@@ -1029,3 +1029,50 @@ type EventPush struct {
 	CommitCount int     `json:"commit_count"`
 	CommitTitle *string `json:"commit_title"`
 }
+
+// LabelEvent is one row of GET …/issues|merge_requests/:iid/
+// resource_label_events.
+type LabelEvent struct {
+	ID        int64      `json:"id"`
+	User      *UserBasic `json:"user"`
+	CreatedAt time.Time  `json:"created_at"`
+	// Label is null for a label deleted since.
+	Label  *EventLabel `json:"label"`
+	Action string      `json:"action"` // add or remove
+}
+
+// EventLabel is the label a label event names.
+type EventLabel struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// StateEvent is one row of GET …/issues|merge_requests/:iid/
+// resource_state_events. SourceMergeRequestID is a global id, not an iid.
+type StateEvent struct {
+	ID                   int64      `json:"id"`
+	User                 *UserBasic `json:"user"`
+	CreatedAt            time.Time  `json:"created_at"`
+	State                string     `json:"state"`
+	SourceCommit         *string    `json:"source_commit"`
+	SourceMergeRequestID *int64     `json:"source_merge_request_id"`
+}
+
+// MilestoneEvent is one row of GET …/issues|merge_requests/:iid/
+// resource_milestone_events.
+type MilestoneEvent struct {
+	ID        int64      `json:"id"`
+	User      *UserBasic `json:"user"`
+	CreatedAt time.Time  `json:"created_at"`
+	Milestone *Milestone `json:"milestone"`
+	Action    string     `json:"action"` // add or remove
+}
+
+// WeightEvent is one row of GET …/issues/:iid/resource_weight_events.
+// Weight is null when the weight was removed.
+type WeightEvent struct {
+	ID        int64      `json:"id"`
+	User      *UserBasic `json:"user"`
+	CreatedAt time.Time  `json:"created_at"`
+	Weight    *int       `json:"weight"`
+}

@@ -527,6 +527,90 @@ func Discussions(d model.Discussions, bd Boundary) string {
 	return b.String()
 }
 
+// ItemEvents renders list_item_events.
+func ItemEvents(l model.ItemEvents, bd Boundary) string {
+	var b strings.Builder
+	sigil := "#"
+	if l.Type == "merge_request" {
+		sigil = "!"
+	}
+	fmt.Fprintf(&b, "Change history of %s%d in %s, newest first.\n", sigil, l.IID, projectLine(l.Project))
+	b.WriteString(listingLine("events", l.Listing))
+	b.WriteString("\nThe history is GitLab's label, state, milestone and weight events, and shows only what GitLab returns: " +
+		"events for labels you cannot read, and for milestones you cannot read or that were deleted, are left out.")
+	if l.Since != nil {
+		fmt.Fprintf(&b, " GitLab has more events than this server reads in one call: the history starts at %s, and older events are not shown.",
+			when(*l.Since))
+	}
+	for _, e := range l.Events {
+		if e.Milestone != nil {
+			b.WriteString("\n" + bd.Notice())
+			break
+		}
+	}
+	for _, e := range l.Events {
+		who := "someone GitLab does not name"
+		if e.User != nil {
+			who = "@" + Ident(e.User.Username)
+		}
+		fmt.Fprintf(&b, "\n- %s %s %s", when(e.CreatedAt), who, eventText(e, bd))
+	}
+	return b.String()
+}
+
+// eventText says what one event changed.
+func eventText(e model.ItemEvent, bd Boundary) string {
+	switch e.Kind {
+	case "label":
+		label := "a deleted label"
+		if e.Label != nil {
+			label = "the label " + Ident(*e.Label)
+		}
+		switch e.Action {
+		case "add":
+			return "added " + label
+		case "remove":
+			return "removed " + label
+		}
+		return Ident(e.Action) + " " + label
+	case "state":
+		s := "changed the state"
+		if e.State != nil {
+			switch *e.State {
+			case "opened", "closed", "reopened", "merged", "locked":
+				s = *e.State + " it"
+			default:
+				s = "changed the state to " + Ident(*e.State)
+			}
+		}
+		if e.SourceCommit != nil {
+			s += ", by commit " + Ident(*e.SourceCommit)
+		}
+		if e.SourceMergeRequestID != nil {
+			s += fmt.Sprintf(", by the merge request with global id %d (not its !number)", *e.SourceMergeRequestID)
+		}
+		return s
+	case "milestone":
+		m := "a milestone GitLab does not name"
+		if e.Milestone != nil {
+			m = fmt.Sprintf("the milestone %s (id %d)", bd.Inline(e.Milestone.UntrustedTitle), e.Milestone.ID)
+		}
+		switch e.Action {
+		case "add":
+			return "set " + m
+		case "remove":
+			return "removed " + m
+		}
+		return Ident(e.Action) + " " + m
+	case "weight":
+		if e.Weight == nil {
+			return "removed the weight"
+		}
+		return fmt.Sprintf("set the weight to %d", *e.Weight)
+	}
+	return "changed it (" + Ident(e.Kind) + ")"
+}
+
 // ----------------------------------------------------------- repository
 
 // File renders get_file.

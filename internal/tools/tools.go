@@ -17,8 +17,8 @@ func definitions() []definition {
 	return []definition{
 		getMe(), resolveURL(),
 		searchProjects(), getProject(), listMembers(), findUsers(),
-		searchIssues(), getIssue(), createIssue(), updateIssue(), listDiscussions(), addComment(), updateComment(), resolveDiscussion(),
-		linkIssues(), unlinkIssues(),
+		searchIssues(), getIssue(), createIssue(), updateIssue(), listDiscussions(), listItemEvents(), addComment(), updateComment(),
+		resolveDiscussion(), linkIssues(), unlinkIssues(),
 		searchMergeRequests(), getMergeRequest(), listMRFiles(), getMRDiff(), listMRCommits(),
 		createMergeRequest(), updateMergeRequest(), addReviewComment(), listReviewComments(), deleteReviewComment(), submitReview(),
 		getFile(), listTree(), listBranches(), listCommits(), getCommit(), compareRefs(), listTags(), createBranch(), createCommit(),

@@ -72,6 +72,8 @@ var byName = map[string]reflect.Type{
 	"IssueLink": reflect.TypeFor[IssueLink](), "IssueBasic": reflect.TypeFor[IssueBasic](),
 	"RelatedIssue": reflect.TypeFor[RelatedIssue](), "ProtectedTag": reflect.TypeFor[ProtectedTag](),
 	"LinkedMergeRequest": reflect.TypeFor[LinkedMergeRequest](), "LinkedIssue": reflect.TypeFor[LinkedIssue](),
+	"LabelEvent": reflect.TypeFor[LabelEvent](), "EventLabel": reflect.TypeFor[EventLabel](),
+	"StateEvent": reflect.TypeFor[StateEvent](), "MilestoneEvent": reflect.TypeFor[MilestoneEvent](), "WeightEvent": reflect.TypeFor[WeightEvent](),
 	"BlameRange": reflect.TypeFor[BlameRange](), "BlameCommit": reflect.TypeFor[BlameCommit](),
 	"ArtifactEntry": reflect.TypeFor[ArtifactEntry](), "RebaseState": reflect.TypeFor[RebaseState](), "MergeRequestRebase": reflect.TypeFor[MergeRequestRebase](), "DownstreamPipeline": reflect.TypeFor[DownstreamPipeline](), "Lint": reflect.TypeFor[Lint](),
 	"LintJob": reflect.TypeFor[LintJob](), "Label": reflect.TypeFor[Label](),

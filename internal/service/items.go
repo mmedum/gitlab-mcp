@@ -1,6 +1,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -466,6 +467,243 @@ func (s *Service) oneNote(out model.Discussions, all []gitlab.Discussion, q Disc
 		}
 	}
 	return model.Discussions{}, gapi.Errf(gapi.ClassNotFound, "comment %d is not on this %s", q.NoteID, strings.ReplaceAll(q.Type, "_", " "))
+}
+
+// ------------------------------------------------------------- events
+
+// maxEventPages bounds the pages of one kind of event read for one call:
+// ten of a hundred. GitLab lists events oldest first, so past that the
+// first page and the newest pages are read, and the timeline says where
+// it starts.
+const maxEventPages = 10
+
+// EventQuery is list_item_events' query.
+type EventQuery struct {
+	Project string
+	IID     int64
+	// Type is issue or merge_request: which IID names.
+	Type      string
+	Max       int
+	PageToken string
+}
+
+// binding names the query a list_item_events page token belongs to. The
+// token is this server's own: the timeline merges four listings.
+func (q EventQuery) binding(projectID int64) string {
+	sum := sha256.Sum256(fmt.Appendf(nil, "events/%d/%d/%s", projectID, q.IID, q.Type))
+	return hex.EncodeToString(sum[:12])
+}
+
+// eventStream is one kind of event as read.
+type eventStream struct {
+	events []model.ItemEvent
+	// cut is true when pages between the first and the newest were not
+	// read; events then holds the newest pages only.
+	cut bool
+}
+
+// ListItemEvents merges an issue's or a merge request's label, state,
+// milestone and weight events into one timeline, newest first (§7.2).
+// Each kind is read whole, up to maxEventPages; when one is cut, the
+// timeline starts at the oldest event read of it, so no kind is missing
+// from the part shown. Weight is an issue's only.
+func (s *Service) ListItemEvents(ctx context.Context, q EventQuery) (model.ItemEvents, error) {
+	p, ref, err := s.project(ctx, q.Project)
+	if err != nil {
+		return model.ItemEvents{}, err
+	}
+	start := 0
+	if q.PageToken != "" {
+		if err := gapi.DecodeToken(q.PageToken, q.binding(p.ID()), &start); err != nil {
+			return model.ItemEvents{}, err
+		}
+		if start < 0 {
+			return model.ItemEvents{}, gapi.Errf(gapi.ClassInvalid,
+				"page_token is not one this server issued: pass it exactly as returned, or start again without it")
+		}
+	}
+	streams, err := s.eventStreams(ctx, p, q.IID, q.Type == "merge_request")
+	if err != nil {
+		return model.ItemEvents{}, err
+	}
+
+	// A cut kind is known only from its oldest event read on; the others
+	// are shown from there too.
+	var since *time.Time
+	complete := true
+	for _, st := range streams {
+		if !st.cut {
+			continue
+		}
+		complete = false
+		if len(st.events) == 0 {
+			continue
+		}
+		oldest := st.events[0].CreatedAt
+		for _, e := range st.events {
+			if e.CreatedAt.Before(oldest) {
+				oldest = e.CreatedAt
+			}
+		}
+		if since == nil || oldest.After(*since) {
+			since = &oldest
+		}
+	}
+	events := []model.ItemEvent{}
+	for _, st := range streams {
+		for _, e := range st.events {
+			if since == nil || !e.CreatedAt.Before(*since) {
+				events = append(events, e)
+			}
+		}
+	}
+	slices.SortStableFunc(events, func(a, b model.ItemEvent) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Kind, b.Kind); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.ID, a.ID)
+	})
+
+	perPage := q.Max
+	if perPage <= 0 {
+		perPage = gapi.DefaultPerPage
+	}
+	start = min(start, len(events))
+	next := min(len(events), start+perPage)
+	out := model.ItemEvents{Project: ref, IID: q.IID, Type: q.Type, Events: events[start:next], Since: since,
+		Listing: model.Listing{Returned: next - start, Complete: complete && next >= len(events)}}
+	if complete {
+		total := len(events)
+		out.Listing.Total = &total
+	}
+	if next < len(events) {
+		tok := gapi.EncodeToken(q.binding(p.ID()), next)
+		out.Listing.NextPageToken = &tok
+	}
+	return out, nil
+}
+
+// eventStreams reads each kind of event at once.
+func (s *Service) eventStreams(ctx context.Context, p gapi.Project, iid int64, mr bool) ([]eventStream, error) {
+	reads := []func() (eventStream, error){
+		func() (eventStream, error) {
+			return readEvents(func(o gapi.ListOptions) ([]gitlab.LabelEvent, gapi.Page, error) {
+				if mr {
+					return s.client.ListMergeRequestLabelEvents(ctx, p, iid, o)
+				}
+				return s.client.ListIssueLabelEvents(ctx, p, iid, o)
+			}, eventLabel)
+		},
+		func() (eventStream, error) {
+			return readEvents(func(o gapi.ListOptions) ([]gitlab.StateEvent, gapi.Page, error) {
+				if mr {
+					return s.client.ListMergeRequestStateEvents(ctx, p, iid, o)
+				}
+				return s.client.ListIssueStateEvents(ctx, p, iid, o)
+			}, eventState)
+		},
+		func() (eventStream, error) {
+			return readEvents(func(o gapi.ListOptions) ([]gitlab.MilestoneEvent, gapi.Page, error) {
+				if mr {
+					return s.client.ListMergeRequestMilestoneEvents(ctx, p, iid, o)
+				}
+				return s.client.ListIssueMilestoneEvents(ctx, p, iid, o)
+			}, eventMilestone)
+		},
+	}
+	if !mr {
+		reads = append(reads, func() (eventStream, error) {
+			return readEvents(func(o gapi.ListOptions) ([]gitlab.WeightEvent, gapi.Page, error) {
+				return s.client.ListIssueWeightEvents(ctx, p, iid, o)
+			}, eventWeight)
+		})
+	}
+	streams := make([]eventStream, len(reads))
+	errs := make([]error, len(reads))
+	var wg sync.WaitGroup
+	for i, read := range reads {
+		wg.Go(func() { streams[i], errs[i] = read() })
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return streams, nil
+}
+
+// readEvents reads one kind of event, which GitLab lists oldest first:
+// every page up to maxEventPages, or else the first page and then the
+// newest, from the page count GitLab gives.
+func readEvents[T any](read func(gapi.ListOptions) ([]T, gapi.Page, error), event func(T) model.ItemEvent) (eventStream, error) {
+	page := func(n int) ([]T, gapi.Page, error) { return read(gapi.ListOptions{PerPage: gapi.MaxPerPage, Page: n}) }
+	rows, first, err := page(1)
+	if err != nil {
+		return eventStream{}, err
+	}
+	var st eventStream
+	if !first.Complete() {
+		if first.Pages < 1 {
+			return eventStream{}, gapi.Errf(gapi.ClassUnexpected,
+				"GitLab did not say how many pages of events there are, which it stops saying past 10,000; the timeline cannot be read newest first")
+		}
+		from := max(2, first.Pages-maxEventPages+2)
+		if st.cut = from > 2; st.cut {
+			rows = nil
+		}
+		for n := from; n <= first.Pages; n++ {
+			more, _, err := page(n)
+			if err != nil {
+				return eventStream{}, err
+			}
+			rows = append(rows, more...)
+		}
+	}
+	for _, r := range rows {
+		st.events = append(st.events, event(r))
+	}
+	return st, nil
+}
+
+func eventUser(u *gitlab.UserBasic) *model.User {
+	if u == nil {
+		return nil
+	}
+	m := user(*u)
+	return &m
+}
+
+func eventLabel(e gitlab.LabelEvent) model.ItemEvent {
+	out := model.ItemEvent{Kind: "label", ID: e.ID, CreatedAt: e.CreatedAt, User: eventUser(e.User), Action: e.Action,
+		LabelDeleted: e.Label == nil}
+	if e.Label != nil {
+		name := e.Label.Name
+		out.Label = &name
+	}
+	return out
+}
+
+func eventState(e gitlab.StateEvent) model.ItemEvent {
+	state := e.State
+	return model.ItemEvent{Kind: "state", ID: e.ID, CreatedAt: e.CreatedAt, User: eventUser(e.User), State: &state,
+		SourceCommit: e.SourceCommit, SourceMergeRequestID: e.SourceMergeRequestID}
+}
+
+func eventMilestone(e gitlab.MilestoneEvent) model.ItemEvent {
+	out := model.ItemEvent{Kind: "milestone", ID: e.ID, CreatedAt: e.CreatedAt, User: eventUser(e.User), Action: e.Action}
+	if m := e.Milestone; m != nil {
+		title, _ := render.Line(m.Title, render.TitleChars)
+		out.Milestone = &model.EventMilestone{ID: m.ID, UntrustedTitle: title}
+	}
+	return out
+}
+
+func eventWeight(e gitlab.WeightEvent) model.ItemEvent {
+	return model.ItemEvent{Kind: "weight", ID: e.ID, CreatedAt: e.CreatedAt, User: eventUser(e.User), Weight: e.Weight}
 }
 
 // ------------------------------------------------------------ helpers

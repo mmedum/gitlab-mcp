@@ -88,6 +88,7 @@ type Server struct {
 	nextIssueID     int64
 	nextMRID        int64
 	nextNoteID      int64
+	nextEventID     int64
 	nextDraftID     int64
 	nextCommit      int64
 

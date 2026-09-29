@@ -380,7 +380,7 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, fifty-two tools, stays under the 64-tool point where one
+default surface, fifty-three tools, stays under the 64-tool point where one
 client starts regrouping tools. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
@@ -854,6 +854,23 @@ issues included, and lists closing merge requests from the issue's own
 project only, so no list claims to be complete (§18 row 97).
 `list_discussions` renders threads newest-first
 under the budget, with position and resolved state for diff threads.
+`list_item_events` merges GitLab's resource events into one history,
+newest first: labels added and removed, state changes with the commit
+or merge request behind them, the milestone set or removed, and an
+issue's weight. GitLab lists each kind oldest first, by offset, so each
+is read whole, up to ten pages of a hundred; past that, the first page
+and the newest nine are read, and the history starts at the oldest
+event read of that kind, older events of every kind left out and the
+result saying so. A kind whose page count GitLab no longer gives, past
+10,000, cannot be read newest first and the call fails `[unexpected]`.
+`max` and `page_token` page through the merged history; the token is
+the server's own, and each page reads the events again. GitLab drops
+label events whose label the account cannot read after cutting the
+page, and milestone events whose milestone is deleted or unreadable, so
+the history is GitLab's and says so; a deleted label's event is kept
+and shown as one. Label names are shown as names, milestone titles
+inside the boundary. Iteration events (Premium) are not read (§18 row
+99).
 `link_issues` and `unlink_issues` relate two issues, both projects held
 to the write allow-list since a link shows on both. `move_issue` (Ship)
 takes the issue's `updated_at`, holds both projects to the allow-list,
@@ -1026,9 +1043,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Eighty-five tools. With the default toolsets: fifty-two by default,
-thirty-five in read-only mode, sixty-four with Ship and Destructive
-both enabled. Every toolset and flag on registers all eighty-five.
+Eighty-six tools. With the default toolsets: fifty-three by default,
+thirty-six in read-only mode, sixty-five with Ship and Destructive
+both enabled. Every toolset and flag on registers all eighty-six.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
@@ -1047,6 +1064,7 @@ Destructive kinds, as a signal and not a control.
 | `create_issue` | Write | default | `POST /projects/:id/issues` |
 | `update_issue` | Write | default | `PUT /projects/:id/issues/:iid` |
 | `list_discussions` | Read | default | `GET …/issues|merge_requests/:iid/discussions` |
+| `list_item_events` | Read | default | `GET …/issues|merge_requests/:iid/resource_label_events`, `/resource_state_events`, `/resource_milestone_events`; an issue's `/resource_weight_events` |
 | `add_comment` | Write | default | `POST …/notes`, `…/discussions`, `…/discussions/:id/notes` |
 | `update_comment` | Write | default | `PUT …/notes/:id` (own notes) |
 | `resolve_discussion` | Write | default | `PUT …/issues|merge_requests/:iid/discussions/:id` |
@@ -2294,3 +2312,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 96 | A required choice naming the outcome confirms better than an empty form | Codex `codex-rs/codex-mcp/src/elicitation.rs` L415-458 and L552-571, `main` at c248f6d4, and VS Code `mcpElicitationService.ts` L111-119 and L237-297, read 2026-09-29; the maintainer's check in Claude Code 2.1.284, protocol 2025-11-25, 2026-09-29, against a throwaway probe with three forms of one delete question | **Declined, for now.** For: Codex accepts a form with no properties by itself under approval policy `never` with full access, and a VS Code chat question the person skips resolves as `accept` with no content; a required choice survives both. Against: in Claude Code the choice list took the maintainer 60 seconds, against 8 for the empty form, and they found it confusing. The empty form stays, and both client behaviors are recorded as limits (§4.12) |
 | 97 | GitLab's link lists are complete and shaped as the OpenAPI file publishes them | `lib/api/issues.rb` L551-594, `lib/api/merge_requests.rb` L978-1030, `lib/api/commits.rb` L713-749, `app/services/issues/referenced_merge_requests_service.rb`, `app/models/merge_request.rb` `visible_closing_issues_for` and `related_issues`, and `lib/api/entities/issue_basic.rb`, `issuable_entity.rb` and `external_issue.rb` at v19.4.1-ee | **Refuted (tier 1).** Every list drops what the user cannot read without saying so; `closed_by` and a commit's merge requests are the project's own only; `closes_issues` also drops issues in projects that do not close issues automatically. `closes_issues` and `related_issues` mix IssueBasic rows, which carry no `references`, with an external tracker's `{title, id}`, whose `id` is a string. The file publishes `closes_issues` as MRNote, `related_issues` with no schema, and `related_merge_requests` as MergeRequestBasic though it answers the full entity. The three tools decode a few fields, keep `id` raw and show it only when it is shaped like a tracker's id, read an issue's reference from its `web_url` as `resolve_url` does, and say in each field and once in the text that the list is GitLab's, not all there is |
 | 98 | GitLab's test report is paged and shaped as the OpenAPI file publishes it, and its summary is as current | `lib/api/ci/pipelines.rb` L292-334, `app/models/ci/pipeline.rb` `accessible_test_reports`, `app/models/ci/build.rb` `test_report_readable_by?` and `max_test_cases_per_report`, `app/serializers/test_report_entity.rb`, `test_suite_entity.rb`, `test_case_entity.rb` and `test_report_summary_entity.rb`, `lib/gitlab/ci/parsers/test/junit.rb`, `lib/gitlab/ci/reports/test_suite.rb` and `test_case.rb`, and `app/services/ci/build_report_result_service.rb` at v19.4.1-ee | **Refuted (tier 1).** `test_report` answers every case of every suite in one body, with no paging, parsed from the latest jobs' artifacts when asked and cached up to two minutes; jobs still running add nothing, and jobs whose artifacts the user may not read are dropped without a word. gitlab.com caps a file at 500,000 cases. Times are floats, not the integers the file publishes. JUnit's failure text is in `system_output`, and `stack_trace` is always null: `lib/gitlab/ci/parsers.rb` lists JUnit as the only test parser, and it never sets one. A suite is named by the job's group name, so parallel jobs merge and their cases are deduplicated together. `test_report_summary` is written by a worker after each job, so it lags; its `test_suites` is an array the file publishes as an object, and it carries no cases. Child pipelines in the project are taken in, so a finished pipeline's report still grows while a child runs. `get_test_report` reads the full report, says when it may be partial and that it may be two minutes old, does not read `stack_trace`, and falls back to the summary only when the report is over 32 MiB, saying so when the summary is still empty |
+| 99 | GitLab's resource event lists are ordered, complete, and shaped as the OpenAPI file publishes them | `lib/api/resource_label_events.rb`, `resource_state_events.rb`, `resource_milestone_events.rb` and `helpers/resource_events_helpers.rb`, `ee/lib/api/resource_weight_events.rb` and `resource_iteration_events.rb`, `lib/api/entities/resource_*_event.rb` and `ee/lib/api/entities/resource_weight_event.rb`, `lib/gitlab/pagination/offset_pagination.rb` `add_default_order`, `app/models/resource_label_event.rb` `visible_to_user?`, `app/policies/resource_label_event_policy.rb`, `app/finders/resource_milestone_event_finder.rb` and `resource_state_event_finder.rb`, and `app/services/resource_events/change_milestone_service.rb` and `change_state_service.rb` at v19.4.1-ee | **Refuted (tier 1).** Each list pages by offset in id order, oldest first. Label events are filtered after the page is cut, so a page can be short and `X-Total` counts events the account cannot see; a deleted label's event is kept with `label: null`. Milestone events are filtered before paging to milestones the account can read, which also drops those of a deleted milestone; a removal names the milestone removed. A state event's `source_merge_request_id` is a global id, and `source_commit` is set when a commit closed the item. Weight is an issue's only, and the route checks no license, so on Free it is empty rather than refused (inferred: weights are a paid feature, and nothing else writes them); iteration events are Premium and not read. `list_item_events` reads each list whole or its first and newest pages, says the history is GitLab's, and names a deleted label as one |

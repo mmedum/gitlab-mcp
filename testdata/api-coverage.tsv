@@ -246,7 +246,11 @@ POST /projects/{id}/issues/{issue_iid}/reset_time_estimate	deferred	1	issue time
 POST /projects/{id}/issues/{issue_iid}/time_estimate	deferred	1	issue time tracking (§17a)
 GET /projects/{id}/issues/{issue_iid}/time_stats	deferred	1	issue time tracking (§17a)
 * /projects/{id}/issues/{subscribable_id}/*	deferred	2	subscribing to an issue's notifications (§17a)
-* /projects/{id}/issues/{eventable_id}/*	deferred	10	resource events of an issue: label, milestone, state and weight history (§17a)
+GET /projects/{id}/issues/{eventable_id}/resource_label_events	used	1	Client.ListIssueLabelEvents: list_item_events, an issue's label changes
+GET /projects/{id}/issues/{eventable_id}/resource_state_events	used	1	Client.ListIssueStateEvents: list_item_events, an issue's state changes
+GET /projects/{id}/issues/{eventable_id}/resource_milestone_events	used	1	Client.ListIssueMilestoneEvents: list_item_events, an issue's milestone changes
+GET /projects/{id}/issues/{eventable_id}/resource_weight_events	used	1	Client.ListIssueWeightEvents: list_item_events, an issue's weight changes, none on Free
+* /projects/{id}/issues/{eventable_id}/*	deferred	6	one resource event by id, which the lists carry, and iteration events, Premium; list_item_events reads the rest
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Client.GetIssueDiscussion: add_comment settles a lost reply by reading its thread
 PUT /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}	used	1	Client.ResolveIssueDiscussion: resolve_discussion on an issue
 GET /projects/{id}/issues/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one issue thread's comments; list_discussions carries them
@@ -295,7 +299,10 @@ GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id
 PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	deferred	1	editing a draft; delete and add again (§17a)
 PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}/publish	deferred	1	publishing one draft; submit_review publishes them together
 * /projects/{id}/merge_requests/{subscribable_id}/*	deferred	2	subscribing to a merge request's notifications (§17a)
-* /projects/{id}/merge_requests/{eventable_id}/*	deferred	6	resource events of a merge request: label, milestone and state history (§17a)
+GET /projects/{id}/merge_requests/{eventable_id}/resource_label_events	used	1	Client.ListMergeRequestLabelEvents: list_item_events, a merge request's label changes
+GET /projects/{id}/merge_requests/{eventable_id}/resource_state_events	used	1	Client.ListMergeRequestStateEvents: list_item_events, a merge request's state changes
+GET /projects/{id}/merge_requests/{eventable_id}/resource_milestone_events	used	1	Client.ListMergeRequestMilestoneEvents: list_item_events, a merge request's milestone changes
+* /projects/{id}/merge_requests/{eventable_id}/*	deferred	3	one resource event by id; list_item_events reads the lists that carry it
 GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	used	1	Client.GetMergeRequestDiscussion: resolve_discussion reads the thread's state before changing it
 GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes	deferred	1	one thread's comments; list_discussions carries them
 GET /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}/notes/{note_id}	deferred	1	one comment; list_discussions carries it

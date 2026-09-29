@@ -374,6 +374,7 @@ func (s *Server) createIssue(w http.ResponseWriter, r *http.Request, p *project,
 	}
 	s.nextIssueID++
 	p.issues = append(p.issues, iss)
+	s.recordChanges(p, issueTarget(iss).key(), itemState{state: "opened"}, issueState(iss), user)
 	s.runCommands(p, issueTarget(iss), cmds, user)
 	writeJSON(w, http.StatusCreated, iss)
 }
@@ -438,6 +439,7 @@ func (s *Server) updateIssue(w http.ResponseWriter, r *http.Request, p *project,
 	if !ok {
 		return
 	}
+	s.recordChanges(p, issueTarget(iss).key(), issueState(iss), issueState(&draft), user)
 	*iss = draft
 	s.runCommands(p, issueTarget(iss), cmds, user)
 	iss.UpdatedAt = old
@@ -499,6 +501,7 @@ func (s *Server) createMR(w http.ResponseWriter, r *http.Request, p *project, us
 	p.mrs = append(p.mrs, mr)
 	p.approvals[iid] = &gitlab.Approvals{UserCanApprove: true, ApprovedBy: []gitlab.Approver{}}
 	s.refreshMR(p, mr)
+	s.recordChanges(p, mrTarget(mr).key(), itemState{state: "opened"}, mrState(mr), user)
 	s.runCommands(p, mrTarget(mr), cmds, user)
 	writeJSON(w, http.StatusCreated, mr)
 }
@@ -575,6 +578,7 @@ func (s *Server) updateMR(w http.ResponseWriter, r *http.Request, p *project, mr
 	if !ok {
 		return
 	}
+	s.recordChanges(p, mrTarget(mr).key(), mrState(mr), mrState(&draft), user)
 	retarget := draft.TargetBranch != mr.TargetBranch
 	*mr = draft
 	if retarget {

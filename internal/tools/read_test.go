@@ -26,7 +26,7 @@ func TestGetMe(t *testing.T) {
 		"instance.edition":          "Community",
 		"instance.known":            true,
 		"token.kind":                "oauth",
-		"registered.tools":          float64(52),
+		"registered.tools":          float64(53),
 		"registered.read_only":      false,
 		"write_namespaces.confined": false,
 	} {
@@ -361,6 +361,171 @@ func TestListDiscussionsPages(t *testing.T) {
 	}
 }
 
+// Alpha's first issue carries a seeded history (gitlabtest.fillItemEvents):
+// a label that was deleted since, one from a project alice cannot read,
+// a milestone deleted since, a weight set and removed, and a close by a
+// merge request, then a reopen.
+func TestListItemEvents(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, out := h.ok("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1})
+	var got []string
+	for _, e := range get(out, "events").([]any) {
+		got = append(got, fmt.Sprintf("%v %v", get(e, "kind"), get(e, "action")))
+	}
+	want := []string{"label remove", "weight ", "state ", "state ", "weight ", "milestone add", "label add", "label add"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("events = %v, want newest first %v", got, want)
+	}
+	if get(out, "listing", "complete") != true || get(out, "listing", "total") != float64(8) || get(out, "since") != nil {
+		t.Errorf("listing = %v, since = %v", get(out, "listing"), get(out, "since"))
+	}
+	// The deleted label is kept and said to be deleted; the label alice
+	// cannot read and the deleted milestone are not there.
+	if get(out, "events", 0, "label") != nil || get(out, "events", 0, "label_deleted") != true ||
+		!strings.Contains(text, "@bob removed a deleted label") || strings.Contains(text, gitlabtest.SecretLabel) {
+		t.Errorf("deleted label: %v\n%s", get(out, "events", 0), text)
+	}
+	if get(out, "events", 7, "label") != "bug" || !strings.Contains(text, "@bob added the label bug") {
+		t.Errorf("label: %v", get(out, "events", 7))
+	}
+	if get(out, "events", 1, "weight") != nil || get(out, "events", 4, "weight") != float64(3) ||
+		!strings.Contains(text, "@carol removed the weight") || !strings.Contains(text, "@carol set the weight to 3") {
+		t.Errorf("weight: %v %v", get(out, "events", 1), get(out, "events", 4))
+	}
+	if get(out, "events", 3, "state") != "closed" || get(out, "events", 3, "source_merge_request_id") != float64(40001) ||
+		get(out, "events", 2, "state") != "reopened" || !strings.Contains(text, "@bob reopened it") ||
+		!strings.Contains(text, "@alice closed it, by the merge request with global id 40001 (not its !number)") {
+		t.Errorf("state: %v %v", get(out, "events", 2), get(out, "events", 3))
+	}
+	// A milestone title is someone else's text, inside the boundary.
+	if get(out, "events", 5, "milestone", "untrusted_title") != "Sprint 2" ||
+		!regexp.MustCompile(`@alice set the milestone <<<[0-9a-f]{16}>>>Sprint 2<<</[0-9a-f]{16}>>> \(id 90001\)`).MatchString(text) ||
+		!strings.Contains(text, "was written by GitLab users") {
+		t.Errorf("milestone: %v\n%s", get(out, "events", 5), text)
+	}
+	if !strings.Contains(text, "shows only what GitLab returns") {
+		t.Errorf("the text does not say the history is GitLab's:\n%s", text)
+	}
+
+	// A merge request has no weight, and its weight list is not asked for.
+	_, mr := h.ok("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "merge_request", "iid": 1})
+	if get(mr, "events", 0, "kind") != "milestone" || get(mr, "events", 1, "label") != "feature" || len(get(mr, "events").([]any)) != 2 {
+		t.Errorf("merge request events = %v", get(mr, "events"))
+	}
+	for _, r := range h.gl.Requests() {
+		if strings.Contains(r.EscapedPath, "weight") && strings.Contains(r.EscapedPath, "merge_requests") {
+			t.Errorf("a merge request's weight was asked for: %s", r.EscapedPath)
+		}
+	}
+	h.fails("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 999}, "not_found")
+}
+
+// A write through the tools is in the history it makes.
+func TestListItemEventsAfterAnUpdate(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.ok("update_issue", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 2, "updated_at": issueWitness(h, 2),
+		"add_labels": []string{"docs"}, "remove_labels": []string{"feature"}, "state": "close", "milestone": "Sprint 2"})
+	_, out := h.ok("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 2})
+	var got []string
+	for _, e := range get(out, "events").([]any) {
+		got = append(got, fmt.Sprintf("%v %v %v %v", get(e, "kind"), get(e, "action"), get(e, "label"), get(e, "state")))
+	}
+	want := "label remove feature <nil>,label add docs <nil>,milestone add <nil> <nil>,state  <nil> closed"
+	if strings.Join(got, ",") != want || get(out, "events", 0, "user", "username") != "alice" {
+		t.Errorf("events = %v, want %s", got, want)
+	}
+}
+
+func TestListItemEventsPages(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	args := map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1, "max": 3}
+	var ids []string
+	for range 4 {
+		text, out := h.ok("list_item_events", args)
+		for _, e := range get(out, "events").([]any) {
+			ids = append(ids, fmt.Sprintf("%v/%v", get(e, "kind"), get(e, "id")))
+		}
+		tok, ok := get(out, "listing", "next_page_token").(string)
+		if !ok {
+			if get(out, "listing", "complete") != true {
+				t.Fatalf("no token on an incomplete listing: %v", get(out, "listing"))
+			}
+			break
+		}
+		if !strings.Contains(text, "more: pass page_token=") {
+			t.Errorf("the text does not say how to continue:\n%s", text)
+		}
+		args["page_token"] = tok
+	}
+	if len(ids) != 8 || ids[0] != "label/110010" || ids[7] != "label/110001" {
+		t.Errorf("paged = %v, want the 8 events once each, newest first", ids)
+	}
+	// A token is bound to its item.
+	_, out := h.ok("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1, "max": 1})
+	h.fails("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "merge_request", "iid": 1,
+		"page_token": get(out, "listing", "next_page_token")}, "invalid")
+}
+
+// Past ten pages of one kind, the first page and the newest nine are
+// read, and the history starts at the oldest of those.
+func TestListItemEventsPastTheReadLimit(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	// Four seeded label events and 1,500 more: 16 pages, of which 1 and
+	// 8 to 16 are read, and 804 events from the 701st on are shown.
+	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, false, 1, 1500)
+	// A close now is newer than the cut, so it is shown, first.
+	h.ok("update_issue", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "updated_at": issueWitness(h, 1),
+		"state": "close"})
+	args := map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1, "max": 100}
+	text, out := h.ok("list_item_events", args)
+	since, _ := get(out, "since").(string)
+	if since == "" || get(out, "listing", "total") != nil || get(out, "listing", "complete") != false ||
+		!strings.Contains(text, "the history starts at "+since+", and older events are not shown") {
+		t.Fatalf("since = %v, listing = %v\n%s", since, get(out, "listing"), text)
+	}
+	if get(out, "events", 0, "state") != "closed" {
+		t.Errorf("first event = %v, want the close", get(out, "events", 0))
+	}
+	n := 0
+	for {
+		for _, e := range get(out, "events").([]any) {
+			if get(e, "created_at").(string) < since {
+				t.Fatalf("an event from before the cut is shown: %v", e)
+			}
+			n++
+		}
+		tok, ok := get(out, "listing", "next_page_token").(string)
+		if !ok {
+			break
+		}
+		args["page_token"] = tok
+		_, out = h.ok("list_item_events", args)
+	}
+	if n != 805 || get(out, "listing", "complete") != false {
+		t.Errorf("read %d events, want 804 label events and the close; last listing %v", n, get(out, "listing"))
+	}
+	pages := map[string]bool{}
+	for _, r := range h.gl.Requests() {
+		if strings.HasSuffix(r.EscapedPath, "/issues/1/resource_label_events") {
+			pages[r.RawQuery] = true
+		}
+	}
+	if pages["page=7&per_page=100"] || !pages["page=8&per_page=100"] || !pages["page=16&per_page=100"] {
+		t.Errorf("label pages read: %v", pages)
+	}
+}
+
+// Without a page count, which GitLab stops giving past 10,000, the
+// newest events cannot be found, and the call says so.
+func TestListItemEventsWithoutAPageCount(t *testing.T) {
+	h := newHarness(t, harnessOptions{gl: gitlabtest.Options{TotalLimit: 100}})
+	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, false, 1, 150)
+	text := h.fails("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1}, "unexpected")
+	if !strings.Contains(text, "cannot be read newest first") {
+		t.Errorf("error = %s", text)
+	}
+}
+
 func TestGetMergeRequest(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	_, out := h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
@@ -441,11 +606,11 @@ func TestSurfaceCounts(t *testing.T) {
 		cfg  config.Config
 		want int
 	}{
-		{"default", config.Config{}, 52},
-		{"read-only", config.Config{ReadOnly: true}, 35},
-		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 64},
-		{"every toolset, read-only", config.Config{ReadOnly: true, Toolsets: config.Toolsets}, 44},
-		{"full", FullSurface(config.Config{}), 85},
+		{"default", config.Config{}, 53},
+		{"read-only", config.Config{ReadOnly: true}, 36},
+		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 65},
+		{"every toolset, read-only", config.Config{ReadOnly: true, Toolsets: config.Toolsets}, 45},
+		{"full", FullSurface(config.Config{}), 86},
 	}
 	for _, c := range cases {
 		if got := len(Surface(c.cfg, nil)); got != c.want {

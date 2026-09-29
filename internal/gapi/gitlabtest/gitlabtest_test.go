@@ -511,3 +511,45 @@ func linkIDs(rows []map[string]any) []any {
 	}
 	return out
 }
+
+// The event lists answer as GitLab's do: a label event whose label the
+// user cannot read is dropped after the page is cut, so the page is
+// short and X-Total counts it; a deleted label's event is kept with
+// label null; a deleted milestone's event is gone before paging; and a
+// merge request has no weight list.
+func TestItemEvents(t *testing.T) {
+	s := New(t, Options{})
+	get := func(path, token string) ([]map[string]any, *http.Response) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", s.URL+"/api/v4/projects/2001/"+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out []map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out, resp
+	}
+	alice, bob := s.Token(), s.TokenFor("bob", "api")
+	page2, resp := get("issues/1/resource_label_events?per_page=2&page=2", alice)
+	if len(page2) != 1 || resp.Header.Get("X-Total") != "4" || page2[0]["label"] != nil || page2[0]["action"] != "remove" {
+		t.Errorf("page 2 for alice = %v, X-Total %s", page2, resp.Header.Get("X-Total"))
+	}
+	if page2, _ = get("issues/1/resource_label_events?per_page=2&page=2", bob); len(page2) != 2 ||
+		page2[0]["label"].(map[string]any)["name"] != SecretLabel {
+		t.Errorf("page 2 for bob = %v", page2)
+	}
+	milestones, resp := get("issues/1/resource_milestone_events", alice)
+	if len(milestones) != 1 || resp.Header.Get("X-Total") != "1" || milestones[0]["resource_type"] != "Issue" {
+		t.Errorf("milestone events = %v", milestones)
+	}
+	if weights, _ := get("issues/1/resource_weight_events", alice); len(weights) != 2 || weights[0]["issue_id"] != float64(30001) ||
+		weights[0]["weight"] != float64(3) || weights[1]["weight"] != nil {
+		t.Errorf("weight events = %v", weights)
+	}
+	if _, resp := get("merge_requests/1/resource_weight_events", alice); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("a merge request's weight events: %d", resp.StatusCode)
+	}
+}

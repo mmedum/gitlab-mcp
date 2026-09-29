@@ -336,6 +336,63 @@ func (c *Client) ListMergeRequestRelatedIssues(ctx context.Context, p Project, i
 	return out, page, err
 }
 
+// ListIssueLabelEvents lists an issue's label events, oldest first.
+func (c *Client) ListIssueLabelEvents(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.LabelEvent, Page, error) {
+	var out []gitlab.LabelEvent
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}/resource_label_events",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_issue_label_events"}, opts, &out)
+	return out, page, err
+}
+
+// ListIssueStateEvents lists an issue's state events, oldest first.
+func (c *Client) ListIssueStateEvents(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.StateEvent, Page, error) {
+	var out []gitlab.StateEvent
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}/resource_state_events",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_issue_state_events"}, opts, &out)
+	return out, page, err
+}
+
+// ListIssueMilestoneEvents lists an issue's milestone events, oldest first.
+func (c *Client) ListIssueMilestoneEvents(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.MilestoneEvent, Page, error) {
+	var out []gitlab.MilestoneEvent
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}/resource_milestone_events",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_issue_milestone_events"}, opts, &out)
+	return out, page, err
+}
+
+// ListMergeRequestLabelEvents lists a merge request's label events, oldest first.
+func (c *Client) ListMergeRequestLabelEvents(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.LabelEvent, Page, error) {
+	var out []gitlab.LabelEvent
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/resource_label_events",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_merge_request_label_events"}, opts, &out)
+	return out, page, err
+}
+
+// ListMergeRequestStateEvents lists a merge request's state events, oldest first.
+func (c *Client) ListMergeRequestStateEvents(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.StateEvent, Page, error) {
+	var out []gitlab.StateEvent
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/resource_state_events",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_merge_request_state_events"}, opts, &out)
+	return out, page, err
+}
+
+// ListMergeRequestMilestoneEvents lists a merge request's milestone events, oldest first.
+func (c *Client) ListMergeRequestMilestoneEvents(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.MilestoneEvent, Page, error) {
+	var out []gitlab.MilestoneEvent
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/resource_milestone_events",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_merge_request_milestone_events"}, opts, &out)
+	return out, page, err
+}
+
+// ListIssueWeightEvents lists an issue's weight events, oldest first.
+// Weight is a paid feature: on a Free namespace the list is empty.
+func (c *Client) ListIssueWeightEvents(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.WeightEvent, Page, error) {
+	var out []gitlab.WeightEvent
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}/resource_weight_events",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_issue_weight_events"}, opts, &out)
+	return out, page, err
+}
+
 // GetFile reads a file at a ref. An empty ref reads HEAD, the default
 // branch. The path is escaped once, slashes included, as GitLab expects.
 func (c *Client) GetFile(ctx context.Context, p Project, path, ref string) (*gitlab.File, error) {
