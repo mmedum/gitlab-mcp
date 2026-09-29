@@ -3,10 +3,10 @@ package tools
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/model"
-	"github.com/mmedum/gitlab-mcp/internal/render"
-	"github.com/mmedum/gitlab-mcp/internal/service"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
+	"github.com/mmedum/gitlab-mcp/v2/internal/service"
 )
 
 // The write tools of phase 2 (docs/architecture.md §7, §8). Every body
@@ -72,7 +72,7 @@ type updateIssueIn struct {
 
 func updateIssue() definition {
 	return tool[updateIssueIn, model.IssueWrite]{
-		sp: spec{Name: "update_issue", Kind: Write, Guarded: []string{"description"}, Enums: map[string][]string{"state": {"close", "reopen"}},
+		sp: spec{Name: "update_issue", Asks: "before it makes a confidential issue public", Kind: Write, Guarded: []string{"description"}, Enums: map[string][]string{"state": {"close", "reopen"}},
 			Description: "Change an issue. Only the fields given change; labels and assignees are added and removed, never " +
 				"replaced by a list. updated_at from your latest read is required, and the call is refused [stale] if the issue " +
 				"changed since. The result reports the labels before and after, the fields that changed as GitLab read them back, " +

@@ -10,11 +10,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
-	"github.com/mmedum/gitlab-mcp/internal/service"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v2/internal/service"
 )
 
 // harness is a client session against the tools registered over an
@@ -35,11 +35,26 @@ type harnessOptions struct {
 	defs     []definition // nil: every definition
 	// token signs in as someone other than alice.
 	token func(*gitlabtest.Server) string
+	// person, when set, is a client that declares form elicitation and
+	// answers the server's questions (§4.12); protocol is the version it
+	// connects with, the SDK's newest when empty, and client adjusts it
+	// further.
+	person   *answerer
+	protocol string
+	client   func(*mcp.ClientOptions)
+	// middleware is added to the server after AskFailures.
+	middleware []mcp.Middleware
+	// over is an in-memory GitLab another harness already made, to serve
+	// the same state under another configuration.
+	over *gitlabtest.Server
 }
 
 func newHarness(t *testing.T, o harnessOptions) *harness {
 	t.Helper()
-	gl := gitlabtest.New(t, o.gl)
+	gl := o.over
+	if gl == nil {
+		gl = gitlabtest.New(t, o.gl)
+	}
 	inst, err := instance.Parse(gl.URL)
 	if err != nil {
 		t.Fatalf("instance: %v", err)
@@ -69,13 +84,22 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	deps := Deps{Service: svc, Config: cfg, Granted: o.granted, Logger: o.logger}
 	reg := register(s, deps, defs)
 	RegisterResources(s, deps)
+	s.AddReceivingMiddleware(append([]mcp.Middleware{AskFailures()}, o.middleware...)...)
 	ct, st := mcp.NewInMemoryTransports()
 	ss, err := s.Connect(t.Context(), st, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}
 	t.Cleanup(func() { _ = ss.Close() })
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil).Connect(t.Context(), ct, nil)
+	co := &mcp.ClientOptions{}
+	if o.person != nil {
+		co.ElicitationHandler = o.person.handle
+	}
+	if o.client != nil {
+		o.client(co)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, co).Connect(t.Context(), ct,
+		&mcp.ClientSessionOptions{ProtocolVersion: o.protocol})
 	if err != nil {
 		t.Fatalf("connect client: %v", err)
 	}
@@ -91,18 +115,13 @@ func (h *harness) call(name string, args map[string]any) (string, map[string]any
 	if err != nil {
 		h.t.Fatalf("call %s: %v", name, err)
 	}
-	var text strings.Builder
-	for _, c := range res.Content {
-		if tc, ok := c.(*mcp.TextContent); ok {
-			text.WriteString(tc.Text)
-		}
-	}
+
 	var structured map[string]any
 	if res.StructuredContent != nil {
 		raw, _ := json.Marshal(res.StructuredContent)
 		_ = json.Unmarshal(raw, &structured)
 	}
-	return text.String(), structured, res.IsError
+	return textOf(res), structured, res.IsError
 }
 
 // ok calls a tool that must succeed.
@@ -144,4 +163,15 @@ func get(v any, path ...any) any {
 		}
 	}
 	return v
+}
+
+// textOf is a result's text content, joined.
+func textOf(res *mcp.CallToolResult) string {
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String()
 }

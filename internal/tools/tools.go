@@ -7,8 +7,8 @@ package tools
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/service"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/service"
 )
 
 // definitions is every tool this server has, in the order §8 lists
@@ -58,6 +58,9 @@ func Register(s *mcp.Server, d Deps) []service.Registered {
 }
 
 func register(s *mcp.Server, d Deps, defs []definition) []service.Registered {
+	if d.asking == nil {
+		d.asking = newAsking(d.logger())
+	}
 	defs = allowed(defs, d.Config, d.Granted)
 	for _, def := range defs {
 		def.add(s, d)

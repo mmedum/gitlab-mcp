@@ -16,13 +16,13 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/model"
-	"github.com/mmedum/gitlab-mcp/internal/quickaction"
-	"github.com/mmedum/gitlab-mcp/internal/render"
-	"github.com/mmedum/gitlab-mcp/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/internal/service"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/quickaction"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
+	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v2/internal/service"
 )
 
 // Kind is what a tool does (docs/architecture.md §4.3). It is one field
@@ -95,6 +95,11 @@ type spec struct {
 	Bucket gapi.Bucket
 	// Enums closes a string input's values.
 	Enums map[string][]string
+	// Asks, when set, says when the tool asks the person before it
+	// writes (§4.12), as the end of a sentence: "before it merges". The
+	// service asks at its write; a tool without it that reaches one is
+	// refused. Every Destructive tool asks.
+	Asks string
 	// Guarded are the inputs, by JSON name, that carry Markdown GitLab
 	// runs quick actions from. register routes each through
 	// internal/quickaction before the handler sees it and declares them
@@ -114,6 +119,10 @@ type Deps struct {
 	// never gets a write tool, whatever the flags say (§9.4).
 	Granted []string
 	Logger  *slog.Logger
+
+	// asking signs and redeems the questions this process asks; register
+	// sets it once for every tool.
+	asking *asking
 }
 
 func (d Deps) logger() *slog.Logger {
@@ -180,9 +189,17 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 	if err != nil {
 		panic("tools: " + t.sp.Name + ": output schema: " + err.Error())
 	}
+	if t.sp.Kind == Destructive && t.sp.Asks == "" {
+		panic("tools: " + t.sp.Name + " is Destructive and does not ask the person")
+	}
+	description := t.sp.Description
+	if t.sp.Asks != "" {
+		description += " When the client can ask, the server also asks the person " + t.sp.Asks + "; a call they do not " +
+			"confirm is [blocked], changes nothing, and is not to be made again unless they ask."
+	}
 	mt := &mcp.Tool{
 		Name:         t.sp.Name,
-		Description:  t.sp.Description,
+		Description:  description,
 		Annotations:  t.sp.Kind.annotations(t.sp.Idempotent),
 		InputSchema:  in,
 		OutputSchema: out,
@@ -281,7 +298,37 @@ func (c *caller[In, Out]) handle(ctx context.Context, req *mcp.CallToolRequest) 
 		return errorResult(err), nil
 	}
 
+	var p *person
+	switch {
+	case c.t.sp.Asks != "":
+		if p, err = c.d.asking.personFor(req, c.t.sp.Name, in, c.d.Config.RequirePrompt); err != nil {
+			outcome = classOf(err)
+			return errorResult(err), nil
+		}
+		ctx = service.WithAsker(ctx, p)
+		if p.answer != nil {
+			// The person accepted: from here the write may happen whether
+			// or not this round reaches its question again, so a failure
+			// to reply is no longer "nothing was written".
+			setStage(ctx, stageWriting)
+		}
+	case req != nil && req.Params != nil && (req.Params.RequestState != "" || len(req.Params.InputResponses) > 0):
+		err := gapi.Errf(gapi.ClassBlocked, "%s asks the person nothing, and the call came with an answer; nothing was done. "+
+			"Call it again without one", c.t.sp.Name)
+		outcome = classOf(err)
+		return errorResult(err), nil
+	}
+
 	out, err := c.t.run(ctx, c.d.Service, in)
+	if p != nil && p.asked != nil {
+		// The service stopped before its write; the question goes out.
+		setStage(ctx, stageWaiting)
+		outcome = "asked"
+		return p.inputRequest(), nil
+	}
+	if err == nil && stageOf(ctx) == stageWriting {
+		setStage(ctx, stageWritten)
+	}
 	if err != nil {
 		outcome = classOf(err)
 		return errorResult(err), nil

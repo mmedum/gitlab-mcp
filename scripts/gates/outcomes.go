@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
 )
 
 // The outcomes gate holds the rule that a result states what happened,

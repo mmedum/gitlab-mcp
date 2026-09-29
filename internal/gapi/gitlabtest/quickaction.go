@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // Quick actions run from a note, a description or a published draft sent

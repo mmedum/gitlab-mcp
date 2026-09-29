@@ -139,12 +139,12 @@ delete_comment.note_id	3
 delete_comment.project	3
 delete_comment.type	3
 delete_comment.updated_at	3
-delete_label.*	2
-delete_label.confirm	2
+delete_label.*	3
+delete_label.confirm	3
 delete_label.dry_run	1
-delete_label.label_id	2
-delete_label.project	2
-delete_label.version	2
+delete_label.label_id	3
+delete_label.project	3
+delete_label.version	3
 delete_milestone.*	2
 delete_milestone.confirm	2
 delete_milestone.dry_run	1

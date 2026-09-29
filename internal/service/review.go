@@ -9,10 +9,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/internal/model"
-	"github.com/mmedum/gitlab-mcp/internal/render"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
 )
 
 // maxMRDiffPages bounds the file diffs read for one merge request: ten

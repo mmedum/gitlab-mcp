@@ -1,4 +1,4 @@
-module github.com/mmedum/gitlab-mcp
+module github.com/mmedum/gitlab-mcp/v2
 
 go 1.27.1
 

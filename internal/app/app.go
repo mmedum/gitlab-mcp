@@ -22,15 +22,15 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/auth"
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/credentials"
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/instance"
-	"github.com/mmedum/gitlab-mcp/internal/redact"
-	"github.com/mmedum/gitlab-mcp/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/internal/server"
-	"github.com/mmedum/gitlab-mcp/internal/userconfig"
+	"github.com/mmedum/gitlab-mcp/v2/internal/auth"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/credentials"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v2/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v2/internal/server"
+	"github.com/mmedum/gitlab-mcp/v2/internal/userconfig"
 )
 
 // Options are the process-level inputs to Resolve and Assemble.
@@ -237,6 +237,7 @@ func (s Settings) LogValue() slog.Value {
 		slog.Bool("read_only", s.Config.ReadOnly),
 		slog.Bool("ship", s.Config.EnableShip),
 		slog.Bool("destructive", s.Config.EnableDestructive),
+		slog.Bool("require_prompt", s.Config.RequirePrompt),
 		slog.String("toolsets", strings.Join(s.Config.Toolsets, ",")),
 		slog.Int("write_namespaces", len(s.Config.WriteNamespaces)),
 	)

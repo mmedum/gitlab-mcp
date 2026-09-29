@@ -12,7 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
 )
 
 // tokens matches a boundary token, which is drawn per call and so

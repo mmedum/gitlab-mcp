@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
 )
 
 // The release gate holds goreleaser's config against the release

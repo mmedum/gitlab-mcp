@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
 )
 
 // The phase 6 renderers (§17.13).

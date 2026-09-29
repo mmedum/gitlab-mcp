@@ -7,10 +7,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/internal/model"
-	"github.com/mmedum/gitlab-mcp/internal/render"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
 )
 
 // The wiki toolset (§7.8): a project's wiki pages. GitLab's wiki API
@@ -213,6 +213,9 @@ func (s *Service) DeleteWikiPage(ctx context.Context, raw, slug, witness string)
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the wiki page", nil)
 		return out, nil
+	}
+	if err := ask(ctx, render.AskDeleteWikiPage(t.ref.Project.Path, pg.Title, pg.Slug)); err != nil {
+		return model.WikiDelete{}, err
 	}
 	err = s.client.DeleteWikiPage(ctx, t.p, slug)
 	_, readErr := s.client.GetWikiPage(ctx, t.p, slug)

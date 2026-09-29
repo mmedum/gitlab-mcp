@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
 )
 
 // mcpbTestDescription is the server's description in the fixture root.

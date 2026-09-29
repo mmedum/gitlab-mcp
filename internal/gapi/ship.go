@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // The Ship and Destructive calls of phase 3 (docs/architecture.md §4.3):

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
 )
 
 // The readable half of each result. It carries the same facts as the

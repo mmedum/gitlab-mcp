@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/redact"
 )
 
 func sampleScratch() scratch {

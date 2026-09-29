@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // The phase-1 CI reads: pipelines, jobs, a job's log and the CI lint.

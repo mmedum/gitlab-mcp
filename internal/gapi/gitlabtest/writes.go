@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // The write half of the instance: issues, merge requests, comments,

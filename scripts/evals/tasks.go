@@ -20,7 +20,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/internal/quickaction"
+	"github.com/mmedum/gitlab-mcp/v2/internal/quickaction"
 )
 
 // Call is one tool call the model made, by the tool's bare name.

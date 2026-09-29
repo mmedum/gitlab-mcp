@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
 )
 
 // The coverage gate holds a statement floor per package, not on the

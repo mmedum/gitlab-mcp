@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/mmedum/gitlab-mcp/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
 )
 
 func TestClassesAreTheClosedThirteen(t *testing.T) {

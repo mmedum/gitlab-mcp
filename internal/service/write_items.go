@@ -7,10 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
 )
 
 // Creating and updating issues and merge requests (§7.2, §4.6). Bodies
@@ -184,6 +185,11 @@ func (s *Service) UpdateIssue(ctx context.Context, in IssueUpdate) (model.IssueW
 		out.WouldSend = preview("PUT", "update an issue", fieldsOf(body))
 		out.LabelsBefore = nonNil(before.Labels)
 		return out, nil
+	}
+	if in.Confidential != nil && !*in.Confidential && before.Confidential {
+		if err := ask(ctx, render.AskPublishIssue(t.ref.Project.Path, in.IID, before.Title)); err != nil {
+			return model.IssueWrite{}, err
+		}
 	}
 	after := before
 	if len(fieldsOf(body)) > 0 {

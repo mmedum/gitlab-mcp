@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // serveAPI authenticates, then routes a request under /api/v4.

@@ -24,9 +24,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/instance"
-	"github.com/mmedum/gitlab-mcp/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/internal/userconfig"
+	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v2/internal/userconfig"
 )
 
 // EnvPrefix is prepended to every environment variable name. Not
@@ -70,6 +70,7 @@ const (
 	EnvReadOnly                  = EnvPrefix + "READ_ONLY"
 	EnvEnableShip                = EnvPrefix + "ENABLE_SHIP"
 	EnvEnableDestructive         = EnvPrefix + "ENABLE_DESTRUCTIVE"
+	EnvRequirePrompt             = EnvPrefix + "REQUIRE_PROMPT"
 	EnvToolsets                  = EnvPrefix + "TOOLSETS"
 	EnvWriteNamespaces           = EnvPrefix + "WRITE_NAMESPACES"
 	EnvLogLevel                  = EnvPrefix + "LOG_LEVEL"
@@ -100,6 +101,8 @@ var Vars = []Var{
 		Doc: "register merging, approving, running CI and creating releases"},
 	{Name: EnvEnableDestructive, Flag: "enable-destructive", Default: "false", Switch: true,
 		Doc: "register deletions, each of which also needs confirm: true"},
+	{Name: EnvRequirePrompt, Flag: "require-prompt", Default: "false", Switch: true,
+		Doc: "refuse the writes that ask the person when the client cannot ask them"},
 	{Name: EnvToolsets, Flag: "toolsets",
 		Doc: "comma-separated optional toolsets: " + strings.Join(Toolsets, ", ") + ", or all"},
 	{Name: EnvWriteNamespaces, Flag: "write-namespaces",
@@ -197,6 +200,9 @@ type Config struct {
 	// EnableDestructive registers the Destructive kind. It changes no
 	// scope either.
 	EnableDestructive bool
+	// RequirePrompt refuses the writes that ask the person when the
+	// client cannot ask (§4.12).
+	RequirePrompt bool
 	// Toolsets are the optional toolsets turned on, sorted, with "all"
 	// expanded.
 	Toolsets []string
@@ -328,6 +334,8 @@ func (s *Settings) Build() (Config, error) {
 	c.EnableShip, err = parseBool(EnvEnableShip, s.get(EnvEnableShip))
 	add(err)
 	c.EnableDestructive, err = parseBool(EnvEnableDestructive, s.get(EnvEnableDestructive))
+	add(err)
+	c.RequirePrompt, err = parseBool(EnvRequirePrompt, s.get(EnvRequirePrompt))
 	add(err)
 	// Read-only with an enable flag has no coherent meaning, and guessing
 	// which was meant would drop either a guard or a tool.

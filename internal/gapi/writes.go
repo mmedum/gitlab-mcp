@@ -3,8 +3,8 @@ package gapi
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/internal/diffpos"
-	"github.com/mmedum/gitlab-mcp/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v2/internal/diffpos"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // The writes of phase 2: issues, comments, reviews, merge requests,

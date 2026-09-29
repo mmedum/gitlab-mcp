@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
 )
 
 // mcpbPackDist lays out a goreleaser dist tree with a stand-in for every

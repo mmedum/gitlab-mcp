@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
 )
 
 // serverJSONRoot is a repository root with the good manifest and the

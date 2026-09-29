@@ -133,7 +133,7 @@ Download an archive for your platform from the
 [releases](https://github.com/mmedum/gitlab-mcp/releases) page, or:
 
 ```bash
-go install github.com/mmedum/gitlab-mcp/cmd/gitlab-mcp@latest
+go install github.com/mmedum/gitlab-mcp/v2/cmd/gitlab-mcp@latest
 ```
 
 Claude Desktop users can open the `.mcpb` bundle from the same release.
@@ -210,6 +210,11 @@ scope cannot separate any of it:
 | default | Read and Write: issues, comments, reviews, branches, merge requests |
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds merging, approving, running CI and releases |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds deletion, and each call must pass `confirm: true` |
+
+When your MCP client supports elicitation, the server also asks you
+before it merges, approves, runs a manual job or a pipeline on a
+protected ref, publishes a release or a tag, makes a confidential issue
+public, or deletes anything. Only your accept writes.
 
 - **No quick actions.** GitLab runs `/merge`, `/close` and the rest from
   a description or comment. Every body this server sends is checked, and

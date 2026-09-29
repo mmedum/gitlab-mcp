@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
 )
 
 // The pins gate holds every third-party tool to one exact version, the

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/redact"
 )
 
 // The pure half of the live driver: the run's name, the plan of calls,
@@ -89,6 +89,9 @@ type step struct {
 	// name just before the step goes out. A write needs what only a read
 	// can give it: a witness, a thread id, a draft id.
 	save map[string]string
+	// declines answers the step's question to the person with decline
+	// rather than accept; the step expects the refusal that follows.
+	declines bool
 }
 
 // plan is every tool, every option at least once, against the scratch
@@ -634,6 +637,8 @@ func phase6(s scratch) []step {
 			"clear_priority": true}, save: map[string]string{"label_v3": "label.version"}},
 		{tool: "delete_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v3}}", "confirm": true,
 			"dry_run": true}},
+		{tool: "delete_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v3}}", "confirm": true},
+			declines: true, expectError: true, why: "the person declines the question"},
 		{tool: "delete_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v3}}", "confirm": true}},
 		{tool: "create_milestone", args: map[string]any{"project": p, "title": "Live made " + s.Name, "dry_run": true}},
 		{tool: "create_milestone", args: map[string]any{"project": p, "title": "Live made " + s.Name, "description": "A milestone the live run made",

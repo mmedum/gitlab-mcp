@@ -36,7 +36,7 @@ import (
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
-	"github.com/mmedum/gitlab-mcp/internal/fileperm"
+	"github.com/mmedum/gitlab-mcp/v2/internal/fileperm"
 )
 
 // ServiceName is the keyring service identifier.

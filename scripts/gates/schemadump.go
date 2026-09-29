@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/mcpstdio"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/mcpstdio"
 )
 
 // The tool surface as `gitlab-mcp --dump-schemas` writes it: every tool

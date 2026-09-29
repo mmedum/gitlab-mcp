@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/config"
-	"github.com/mmedum/gitlab-mcp/internal/tools"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/mcpstdio"
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
+	"github.com/mmedum/gitlab-mcp/v2/internal/tools"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/mcpstdio"
 )
 
 // The smoke gate drives the shipped binary over stdio, the way a client

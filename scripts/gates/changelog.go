@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gitx"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gitx"
 )
 
 // The CHANGELOG gates: a pull request that changes what ships adds an

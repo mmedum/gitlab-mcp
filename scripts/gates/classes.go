@@ -13,7 +13,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
 )
 
 // The classes gate holds the closed error vocabulary (docs/architecture.md

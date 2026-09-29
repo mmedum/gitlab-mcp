@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/mmedum/gitlab-mcp/internal/fileperm"
+	"github.com/mmedum/gitlab-mcp/v2/internal/fileperm"
 )
 
 // TestRestrictToOwnerSetsAProtectedACL reads the access list back rather

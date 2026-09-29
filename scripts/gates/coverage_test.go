@@ -20,7 +20,7 @@ func coverProfile(pkgs map[string]int) string {
 			if i*100 < pct*60 {
 				hits = 1
 			}
-			fmt.Fprintf(&b, "github.com/mmedum/gitlab-mcp/%s/f.go:%d.1,%d.2 1 %d\n", pkg, i+1, i+1, hits)
+			fmt.Fprintf(&b, "github.com/mmedum/gitlab-mcp/v2/%s/f.go:%d.1,%d.2 1 %d\n", pkg, i+1, i+1, hits)
 		}
 	}
 	return b.String()
@@ -59,8 +59,8 @@ func TestCoverScore(t *testing.T) {
 
 	// A block loaded by two test binaries counts once, covered by either.
 	dup := "mode: atomic\n" +
-		"github.com/mmedum/gitlab-mcp/internal/x/f.go:1.1,1.2 4 0\n" +
-		"github.com/mmedum/gitlab-mcp/internal/x/f.go:1.1,1.2 4 1\n"
+		"github.com/mmedum/gitlab-mcp/v2/internal/x/f.go:1.1,1.2 4 0\n" +
+		"github.com/mmedum/gitlab-mcp/v2/internal/x/f.go:1.1,1.2 4 1\n"
 	blocks, err = coverRead(strings.NewReader(dup))
 	if err != nil {
 		t.Fatal(err)

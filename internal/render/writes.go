@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/model"
 )
 
 // The readable half of the writes. Every one opens with what happened

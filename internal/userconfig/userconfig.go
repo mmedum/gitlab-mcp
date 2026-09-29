@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/internal/fileperm"
+	"github.com/mmedum/gitlab-mcp/v2/internal/fileperm"
 )
 
 // AppDir is the directory name under the user's config directory.
