@@ -185,6 +185,9 @@ func (s *Service) CreateRelease(ctx context.Context, in ReleaseCreate) (model.Re
 			Links: linkRows(links), Write: model.Write{
 				DryRun: true, Target: t.ref, WouldSend: preview("POST", "create a release", fieldsOf(body))}}, nil
 	}
+	if err := ask(ctx, render.AskCreateRelease(t.ref.Project.Path, in.TagName, in.Name, in.Ref, exists, len(links))); err != nil {
+		return model.ReleaseWrite{}, err
+	}
 	r, err := s.client.CreateRelease(ctx, t.p, body)
 	if err != nil {
 		return model.ReleaseWrite{}, settle(err, "release", func() (string, error) {

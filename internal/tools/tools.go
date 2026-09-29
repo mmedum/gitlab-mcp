@@ -58,6 +58,9 @@ func Register(s *mcp.Server, d Deps) []service.Registered {
 }
 
 func register(s *mcp.Server, d Deps, defs []definition) []service.Registered {
+	if d.asking == nil {
+		d.asking = newAsking(d.logger())
+	}
 	defs = allowed(defs, d.Config, d.Granted)
 	for _, def := range defs {
 		def.add(s, d)

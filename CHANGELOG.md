@@ -15,6 +15,11 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- **Breaking:** Before a merge, an approval, `play_job`, `create_release`, `create_tag`, a `run_pipeline` on the default branch or a protected ref, an `update_issue` that makes a confidential issue public, and every delete, the server asks you through the MCP client (form elicitation) when the client supports it; only an accept writes, so a client that declares elicitation and answers with nobody there can no longer make these writes.
+- `GITLAB_MCP_REQUIRE_PROMPT` (`--require-prompt`) refuses those writes as `[blocked]` when the client cannot ask you.
+
 ### Fixed
 
 - A server no longer refreshes the sign-in before it serves when a login recorded its scopes, so a host that kills it during startup no longer signs the profile out.

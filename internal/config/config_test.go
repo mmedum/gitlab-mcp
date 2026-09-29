@@ -295,6 +295,7 @@ func TestVarsList(t *testing.T) {
 		"GITLAB_MCP_READ_ONLY":                     {"read-only", "false"},
 		"GITLAB_MCP_ENABLE_SHIP":                   {"enable-ship", "false"},
 		"GITLAB_MCP_ENABLE_DESTRUCTIVE":            {"enable-destructive", "false"},
+		"GITLAB_MCP_REQUIRE_PROMPT":                {"require-prompt", "false"},
 		"GITLAB_MCP_TOOLSETS":                      {"toolsets", ""},
 		"GITLAB_MCP_WRITE_NAMESPACES":              {"write-namespaces", ""},
 		"GITLAB_MCP_LOG_LEVEL":                     {"log-level", "info"},

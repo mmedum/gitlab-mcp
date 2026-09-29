@@ -57,6 +57,7 @@ func New(opts Options) *mcp.Server {
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: Name, Version: opts.Version}, so)
 	s.AddReceivingMiddleware(logMethods(logger))
+	s.AddReceivingMiddleware(tools.AskFailures())
 	svc := service.New(service.Options{Client: opts.Client, Config: opts.Config, Granted: opts.Granted})
 	deps := tools.Deps{Service: svc, Config: opts.Config, Granted: opts.Granted, Logger: logger}
 	tools.Register(s, deps)

@@ -12,6 +12,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/internal/render"
 )
 
 // The Ship kind (§4.3): merging, approving, and running CI. The tools
@@ -67,6 +68,10 @@ func (s *Service) MergeMergeRequest(ctx context.Context, in MergeRequestMerge) (
 		}
 		out.DryRun, out.WouldSend = true, preview("PUT", verb, fieldsOf(body))
 		return out, nil
+	}
+	if err := ask(ctx, render.AskMerge(t.ref.Project.Path, in.IID, mr.Title, mr.SourceBranch, mr.TargetBranch, sha, in.AutoMerge,
+		in.Squash, in.RemoveSourceBranch)); err != nil {
+		return model.MergeWrite{}, err
 	}
 	res, err := s.client.MergeMergeRequest(ctx, t.p, in.IID, body)
 	if err != nil {
@@ -185,6 +190,9 @@ func (s *Service) ApproveMergeRequest(ctx context.Context, raw string, iid int64
 		out := approvalWrite(t, iid, sha, before, "dry_run")
 		out.DryRun, out.WouldSend = true, preview("POST", "approve the merge request", []string{"sha"})
 		return out, nil
+	}
+	if err := ask(ctx, render.AskApprove(t.ref.Project.Path, iid, mr.Title, sha)); err != nil {
+		return model.ApprovalWrite{}, err
 	}
 	res, err := s.client.ApproveMergeRequest(ctx, t.p, iid, sha)
 	if err != nil {
@@ -327,6 +335,9 @@ func (s *Service) RunPipeline(ctx context.Context, in PipelineRun) (model.Pipeli
 		return model.PipelineWrite{Outcome: "dry_run", Ref: in.Ref, Variables: keys, Inputs: inputs, Write: model.Write{DryRun: true,
 			Target: t.ref, WouldSend: preview("POST", "run a pipeline", fieldsOf(body))}}, nil
 	}
+	if err := s.askRun(ctx, t, in.Ref, keys, inputs); err != nil {
+		return model.PipelineWrite{}, err
+	}
 	start := time.Now()
 	pl, err := s.client.CreatePipeline(ctx, t.p, body)
 	if err != nil {
@@ -337,6 +348,56 @@ func (s *Service) RunPipeline(ctx context.Context, in PipelineRun) (model.Pipeli
 	out := pipelineWrite(t, pl, "", "created")
 	out.Variables, out.Inputs = keys, inputs
 	return out, nil
+}
+
+// askRun asks before a pipeline runs on the default branch or a
+// protected branch or tag, whose jobs see protected variables and may
+// deploy (§4.12). GitLab's own flags on the ref decide. A fully
+// qualified ref, refs/heads/ or refs/tags/, is read as the branch or tag
+// it names, as GitLab reads it; otherwise a branch comes before a tag of
+// the same name, as a pipeline takes it. A ref that is neither is asked
+// about too, since whether it is protected cannot be told. The ref is
+// read only when a question could go out.
+func (s *Service) askRun(ctx context.Context, t target, ref string, variables, inputs []string) error {
+	if !asks(ctx) {
+		return nil
+	}
+	kind, err := s.refKind(ctx, t, ref)
+	if err != nil || kind == 0 {
+		return err
+	}
+	return ask(ctx, render.AskRunPipeline(t.ref.Project.Path, ref, kind, variables, inputs))
+}
+
+// refKind is why a pipeline on ref asks, or 0 when it does not.
+func (s *Service) refKind(ctx context.Context, t target, ref string) (render.RefKind, error) {
+	name, onlyTag := strings.CutPrefix(ref, "refs/tags/")
+	name, onlyBranch := strings.CutPrefix(name, "refs/heads/")
+	if !onlyTag {
+		b, err := s.client.GetBranch(ctx, t.p, name)
+		switch {
+		case err == nil && b.Default:
+			return render.DefaultBranch, nil
+		case err == nil && b.Protected:
+			return render.ProtectedBranch, nil
+		case err == nil:
+			return 0, nil
+		case !gapi.IsClass(err, gapi.ClassNotFound):
+			return 0, err
+		}
+	}
+	if !onlyBranch {
+		tag, err := s.client.GetTag(ctx, t.p, name)
+		switch {
+		case err == nil && tag.Protected:
+			return render.ProtectedTag, nil
+		case err == nil:
+			return 0, nil
+		case !gapi.IsClass(err, gapi.ClassNotFound):
+			return 0, err
+		}
+	}
+	return render.UnknownRef, nil
 }
 
 // findPipeline settles a lost run_pipeline: a pipeline on the ref that
@@ -550,6 +611,15 @@ func (s *Service) PlayJob(ctx context.Context, raw string, id int64, vars []JobV
 		out.DryRun, out.WouldSend = true, preview("POST", "run the manual job", names(field{"job_variables_attributes", len(body) > 0},
 			field{"job_inputs", len(inputs) > 0}))
 		return out, nil
+	}
+	if job.Status != "manual" && job.Status != "scheduled" {
+		// Refused before the person is asked: the question would describe
+		// a run GitLab will not start.
+		return model.JobWrite{}, gapi.Errf(gapi.ClassConflict, "the job is %s, and only a manual or scheduled job is played; "+
+			"retry_job runs a finished one again", job.Status)
+	}
+	if err := ask(ctx, render.AskPlayJob(t.ref.Project.Path, id, job.Name, job.Stage, job.Pipeline.ID, keys, inputNames)); err != nil {
+		return model.JobWrite{}, err
 	}
 	res, err := s.client.PlayJob(ctx, t.p, id, body, inputs)
 	var e *gapi.Error

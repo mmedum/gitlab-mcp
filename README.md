@@ -210,6 +210,11 @@ scope cannot separate any of it:
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds merging, approving, running CI and releases |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds deletion, and each call must pass `confirm: true` |
 
+When your MCP client supports elicitation, the server also asks you
+before it merges, approves, runs a manual job or a pipeline on a
+protected ref, publishes a release or a tag, makes a confidential issue
+public, or deletes anything. Only your accept writes.
+
 - **No quick actions.** GitLab runs `/merge`, `/close` and the rest from
   a description or comment. Every body this server sends is checked, and
   a quick-action line is refused, or escaped when you ask.

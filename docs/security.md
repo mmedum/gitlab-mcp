@@ -96,6 +96,21 @@ Every tool has one kind, and the kind decides whether it is registered:
 A review that would approve counts as Ship, and so does making a
 confidential issue public: without the flag the call is `[blocked]`.
 
+**The person confirms what ships or deletes.** A registered tool can
+still be called by a model a comment has persuaded, and `confirm: true`
+is an argument the model writes. So when the client supports MCP
+elicitation, the server asks you itself before a merge, an approval, a
+manual job, a release, a new tag, a pipeline on a protected ref,
+publishing a confidential issue and every delete. Text from GitLab in
+the question stands in backticks or code style, on one line, with no
+link drawn. Only an accept writes. The answer is bound to the call it
+was asked for, spent once, and void after 5 minutes. An accept is still
+not proof that you read the question: a client may answer by itself, as
+Codex does for a question with no fields when it runs with no approvals
+and full access, and VS Code when you skip the question. A client that
+cannot ask gets no question; `GITLAB_MCP_REQUIRE_PROMPT=true` refuses
+those writes there.
+
 **The default token can merge, approve and run pipelines.** GitLab's
 `api` scope covers every write, and it has no narrower scope that
 allows commenting but not merging. `read_api` is the only narrower

@@ -36,9 +36,17 @@ type fakeOut struct {
 
 var fixedTime = time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
 
+// fakeAsks is what every Destructive tool must say about asking.
+func fakeAsks(k Kind) string {
+	if k == Destructive {
+		return "before it deletes"
+	}
+	return ""
+}
+
 func fake(name string, k Kind, toolset string) definition {
 	return tool[fakeIn, fakeOut]{
-		sp: spec{Name: name, Kind: k, Toolset: toolset, Description: "A fake."},
+		sp: spec{Name: name, Kind: k, Toolset: toolset, Description: "A fake.", Asks: fakeAsks(k)},
 		run: func(ctx context.Context, _ *service.Service, in fakeIn) (fakeOut, error) {
 			switch in.Fail {
 			case "hinted":

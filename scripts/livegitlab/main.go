@@ -27,13 +27,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mmedum/gitlab-mcp/internal/app"
@@ -167,22 +170,29 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 		serverEnv = append(serverEnv, config.EnvProfile+"="+o.profile)
 	}
 	rec := newRecorder()
+	// One scripted person answers for both servers, so a tool that asks
+	// only on some calls is judged over the whole run.
+	person := &scriptedPerson{p: p}
 	// The default surface first, then a second server with Ship,
 	// Destructive and every toolset on, its writes confined to the
 	// maintainer's group: the first run also shows the flags' tools
 	// are not there without them.
-	unexpected, _, err := session(o.binary, serverEnv, rec, plan(s), s, p)
+	unexpected, _, err := session(o.binary, serverEnv, rec, person, plan(s), s, p)
 	if err != nil {
 		return err
 	}
 	p.Say("\n=== with Ship, Destructive and every toolset ===")
 	flagged := append(slices.Clone(serverEnv), config.EnvEnableShip+"=true", config.EnvEnableDestructive+"=true",
 		config.EnvToolsets+"="+config.ToolsetAll, config.EnvWriteNamespaces+"="+o.namespace)
-	more, surface, err := session(o.binary, flagged, rec, planShip(s), s, p)
+	more, surface, err := session(o.binary, flagged, rec, person, planShip(s), s, p)
 	if err != nil {
 		return err
 	}
 	unexpected += more
+	for _, tool := range person.unasked() {
+		unexpected++
+		p.Sayf("!! %s says it asks the person, and put no question in this run", tool)
+	}
 	if missing := rec.missing(surface); len(missing) > 0 {
 		p.Sayf("\nnot sent this run (%d): %s", len(missing), strings.Join(missing, ", "))
 	}
@@ -200,19 +210,20 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 
 // session starts a server with env, drives steps through it, and
 // returns how many behaved unexpectedly and the surface it registered.
-func session(binary string, env []string, rec *recorder, steps []step, s scratch, p *redact.Printer) (int, map[string][]string, error) {
+func session(binary string, env []string, rec *recorder, person *scriptedPerson, steps []step, s scratch, p *redact.Printer) (int, map[string][]string, error) {
 	sess, err := mcpstdio.Start(binary, mcpstdio.Config{Env: env})
 	if err != nil {
 		return 0, nil, err
 	}
 	defer func() { _ = sess.Close() }()
 	sess.OnCall(rec.Sent)
+	sess.OnElicit(person.answer)
 	init, err := sess.Initialize("", "livegitlab")
 	if err != nil {
 		return 0, nil, err
 	}
 	p.Sayf("protocol %v; %d tools registered", init["protocolVersion"], len(sess.Options()))
-	unexpected, err := drive(sess, steps, s, p)
+	unexpected, err := drive(sess, person, steps, s, p)
 	if err != nil {
 		return unexpected, nil, err
 	}
@@ -224,7 +235,7 @@ func session(binary string, env []string, rec *recorder, steps []step, s scratch
 
 // drive sends every step, refusing one that would read outside the
 // scratch project before it goes out.
-func drive(sess *mcpstdio.Session, steps []step, s scratch, p *redact.Printer) (int, error) {
+func drive(sess *mcpstdio.Session, person *scriptedPerson, steps []step, s scratch, p *redact.Printer) (int, error) {
 	unexpected := 0
 	saved := map[string]any{}
 	for _, st := range steps {
@@ -248,9 +259,19 @@ func drive(sess *mcpstdio.Session, steps []step, s scratch, p *redact.Printer) (
 			if st.anyOutcome {
 				p.Sayf("(either outcome is a finding: %s)", st.why)
 			}
+			person.step(st.tool, st.declines)
 			res, err := sess.CallTool(st.tool, args)
 			if err != nil {
 				return unexpected, err
+			}
+			asks := strings.Contains(sess.Description(st.tool), asksThePerson)
+			want, exact := expectedQuestions(st, args, res.IsError, outcomeOf(res.Structured), asks)
+			if got := person.questions(); got > want || exact && got != want {
+				unexpected++
+				p.Sayf("!! the server put %d question(s) to the person, not %s%d", got, map[bool]string{true: "", false: "at most "}[exact], want)
+			}
+			if asks && args["dry_run"] != true && !st.declines {
+				person.called(st.tool)
 			}
 			// Ids the call made are masked before anything is printed.
 			learnIDs(p.Redactor(), res.Structured)
@@ -270,6 +291,106 @@ func drive(sess *mcpstdio.Session, steps []step, s scratch, p *redact.Printer) (
 		}
 	}
 	return unexpected, nil
+}
+
+// scriptedPerson answers the questions the server puts to the person,
+// for the maintainer running the driver (docs/architecture.md §4.12):
+// accept, unless the step declines. It prints each question. It is
+// answered on the session's reader goroutine, so its state is locked.
+type scriptedPerson struct {
+	p *redact.Printer
+
+	mu       sync.Mutex
+	declines bool
+	asked    int
+	// byTool counts the questions each tool put over the run, and wrote
+	// is every tool that asks and was called for real.
+	byTool map[string]int
+	wrote  map[string]bool
+	tool   string
+}
+
+// step readies the person for one step's call.
+func (sp *scriptedPerson) step(tool string, declines bool) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	sp.tool, sp.declines, sp.asked = tool, declines, 0
+}
+
+// called records a call for real of a tool that asks.
+func (sp *scriptedPerson) called(tool string) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.wrote == nil {
+		sp.wrote = map[string]bool{}
+	}
+	sp.wrote[tool] = true
+}
+
+// unasked is every tool that asks, was called for real, and put no
+// question over the run.
+func (sp *scriptedPerson) unasked() []string {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	var out []string
+	for _, tool := range slices.Sorted(maps.Keys(sp.wrote)) {
+		if sp.byTool[tool] == 0 {
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
+func (sp *scriptedPerson) questions() int {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	return sp.asked
+}
+
+func (sp *scriptedPerson) answer(message string) string {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	sp.asked++
+	if sp.byTool == nil {
+		sp.byTool = map[string]int{}
+	}
+	sp.byTool[sp.tool]++
+	sp.p.Say("--- question put to the person ---\n" + strings.TrimRight(message, "\n"))
+	if sp.declines {
+		sp.p.Say("--- answered: decline ---")
+		return "decline"
+	}
+	sp.p.Say("--- answered: accept ---")
+	return "accept"
+}
+
+// asksThePerson is what a published description says of a tool that
+// asks (internal/tools/register.go), so the driver learns which tools ask
+// from the surface rather than from a list typed here.
+const asksThePerson = "the server also asks the person"
+
+// expectedQuestions is how many questions a step may put: exactly one
+// on a step that declines, none on a dry run or a call that found
+// nothing to change, and at most one otherwise for a tool that asks. It
+// returns the bound and whether it is exact; a tool that does not ask
+// puts none.
+func expectedQuestions(st step, args map[string]any, refused bool, outcome string, asks bool) (int, bool) {
+	switch {
+	case st.declines:
+		return 1, true
+	case !asks, args["dry_run"] == true, !refused && outcome == "unchanged":
+		return 0, true
+	}
+	return 1, false
+}
+
+// outcomeOf is a write result's outcome, or "".
+func outcomeOf(structured json.RawMessage) string {
+	var out struct {
+		Outcome string `json:"outcome"`
+	}
+	_ = json.Unmarshal(structured, &out)
+	return out.Outcome
 }
 
 func copyWith(m map[string]any, k string, v any) map[string]any {

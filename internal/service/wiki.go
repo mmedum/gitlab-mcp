@@ -214,6 +214,9 @@ func (s *Service) DeleteWikiPage(ctx context.Context, raw, slug, witness string)
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the wiki page", nil)
 		return out, nil
 	}
+	if err := ask(ctx, render.AskDeleteWikiPage(t.ref.Project.Path, pg.Title, pg.Slug)); err != nil {
+		return model.WikiDelete{}, err
+	}
 	err = s.client.DeleteWikiPage(ctx, t.p, slug)
 	_, readErr := s.client.GetWikiPage(ctx, t.p, slug)
 	if out.Notes, err = deleted(err, readErr, "page"); err != nil {

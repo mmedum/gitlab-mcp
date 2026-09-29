@@ -395,6 +395,9 @@ func (s *Service) DeleteLabel(ctx context.Context, raw string, id int64, version
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the label", nil)
 		return out, nil
 	}
+	if err := ask(ctx, render.AskDeleteLabel(t.ref.Project.Path, l.Name, l.OpenIssuesCount)); err != nil {
+		return model.LabelWrite{}, err
+	}
 	err = s.client.DeleteLabel(ctx, t.p, id)
 	_, readErr := s.client.GetLabel(ctx, t.p, id)
 	if out.Notes, err = deleted(err, readErr, "label"); err != nil {
@@ -589,6 +592,9 @@ func (s *Service) DeleteMilestone(ctx context.Context, raw string, id int64, upd
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the milestone", nil)
 		return out, nil
+	}
+	if err := ask(ctx, render.AskDeleteMilestone(t.ref.Project.Path, m.Title)); err != nil {
+		return model.MilestoneWrite{}, err
 	}
 	err = s.client.DeleteMilestone(ctx, t.p, id)
 	_, readErr := s.client.GetMilestone(ctx, t.p, id)
@@ -935,6 +941,9 @@ func (s *Service) CreateTag(ctx context.Context, raw, name, ref, message string)
 		out.WouldSend = preview("POST", "create a tag", names(field{"tag_name", true}, field{"ref", true}, field{"message", message != ""}))
 		return out, nil
 	}
+	if err := ask(ctx, render.AskCreateTag(t.ref.Project.Path, name, ref)); err != nil {
+		return model.TagWrite{}, err
+	}
 	tag, err := s.client.CreateTag(ctx, t.p, name, ref, message)
 	if err != nil {
 		return model.TagWrite{}, settle(err, "tag", func() (string, error) {
@@ -980,6 +989,9 @@ func (s *Service) DeleteTag(ctx context.Context, raw, name, sha string) (model.T
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the tag", nil)
 		return out, nil
+	}
+	if err := ask(ctx, render.AskDeleteTag(t.ref.Project.Path, name, tag.Commit.ID, tag.Release != nil)); err != nil {
+		return model.TagWrite{}, err
 	}
 	err = s.client.DeleteTag(ctx, t.p, name)
 	_, readErr := s.client.GetTag(ctx, t.p, name)

@@ -237,6 +237,7 @@ func (s Settings) LogValue() slog.Value {
 		slog.Bool("read_only", s.Config.ReadOnly),
 		slog.Bool("ship", s.Config.EnableShip),
 		slog.Bool("destructive", s.Config.EnableDestructive),
+		slog.Bool("require_prompt", s.Config.RequirePrompt),
 		slog.String("toolsets", strings.Join(s.Config.Toolsets, ",")),
 		slog.Int("write_namespaces", len(s.Config.WriteNamespaces)),
 	)

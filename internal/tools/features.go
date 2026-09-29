@@ -136,7 +136,7 @@ type deleteLabelIn struct {
 
 func deleteLabel() definition {
 	return tool[deleteLabelIn, model.LabelWrite]{
-		sp: spec{Name: "delete_label", Kind: Destructive, Toolset: "planning", Idempotent: true,
+		sp: spec{Name: "delete_label", Asks: "before it deletes", Kind: Destructive, Toolset: "planning", Idempotent: true,
 			Description: "Delete a project label, which takes it off every issue and merge request. A group's label is refused " +
 				"[blocked]. version from list_labels is required." + destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteLabelIn) (model.LabelWrite, error) {
@@ -207,7 +207,7 @@ type deleteMilestoneIn struct {
 
 func deleteMilestone() definition {
 	return tool[deleteMilestoneIn, model.MilestoneWrite]{
-		sp: spec{Name: "delete_milestone", Kind: Destructive, Toolset: "planning", Idempotent: true,
+		sp: spec{Name: "delete_milestone", Asks: "before it deletes", Kind: Destructive, Toolset: "planning", Idempotent: true,
 			Description: "Delete a project milestone, which takes it off every issue and merge request. updated_at from " +
 				"list_milestones is required." + destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteMilestoneIn) (model.MilestoneWrite, error) {
@@ -358,7 +358,7 @@ type createTagIn struct {
 
 func createTag() definition {
 	return tool[createTagIn, model.TagWrite]{
-		sp: spec{Name: "create_tag", Kind: Write, Toolset: "releases",
+		sp: spec{Name: "create_tag", Asks: "before it creates the tag", Kind: Write, Toolset: "releases",
 			Description: "Create a tag at a ref. It starts the project's tag pipelines. A name a protected-tag rule covers is " +
 				"refused [blocked], and a tag that exists [conflict]. Never repeated after a lost answer." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in createTagIn) (model.TagWrite, error) {
@@ -378,7 +378,7 @@ type deleteTagIn struct {
 
 func deleteTag() definition {
 	return tool[deleteTagIn, model.TagWrite]{
-		sp: spec{Name: "delete_tag", Kind: Destructive, Toolset: "releases", Idempotent: true,
+		sp: spec{Name: "delete_tag", Asks: "before it deletes", Kind: Destructive, Toolset: "releases", Idempotent: true,
 			Description: "Delete a tag. A protected tag is refused [blocked]. sha, the commit you read it at, is required." +
 				destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteTagIn) (model.TagWrite, error) {

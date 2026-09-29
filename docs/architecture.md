@@ -1,7 +1,8 @@
 # Architecture — gitlab-mcp
 
 **Status: 1.1.0, 2026-09-27: phases 0 to 6, and clearing label and milestone fields.
-Owed: nothing; §17.10 stands and §17.11 waits.** This document holds the platform facts, the design bets, a
+Phase 7, the person confirming what ships or deletes (§4.12), is built
+on a topic branch, unreleased; §17.10 stands and §17.11 waits.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
@@ -531,6 +532,100 @@ moved, the discussion a comment joined, the pipeline started and its
 status. A write that changed nothing says so — "already closed" —
 rather than reporting success.
 
+### 4.12 A write that ships or deletes is confirmed by the person
+
+Registration decides what the server can do (§4.3), and `confirm:
+true` is an argument the model writes, which a persuaded model writes
+too. So when the client can ask, the server asks the person itself,
+through MCP form elicitation, before thirteen writes: `merge_merge_request`,
+`approve_merge_request`, `play_job`, `create_release`, `create_tag`,
+`run_pipeline` on the default branch or a protected branch or tag,
+`update_issue` when it makes a confidential issue public, and the six
+deletes of the Destructive kind. The set is the core the maintainer
+chose on 2026-09-29 (§14): the writes that ship, publish or destroy.
+Retrying, cancelling, rebasing, moving and commenting do not ask, since
+questions asked often are answered without reading (§18 row 93).
+
+1. **A second gate, not a replacement.** Registration, `confirm` and
+   every guard stay and are checked first. A call a guard refuses asks
+   nothing. The question comes after every read, just before the write,
+   so it shows what the write would do.
+2. **Accepting is the confirmation.** The form has no fields: an empty
+   object schema. Anything but `accept` — decline, cancel, an error, an
+   answer that came back after its question expired — is `[blocked]`,
+   and nothing is sent. A call that comes back with anything but an
+   accept is refused before it reads anything, so a write whose question
+   depends on what GitLab holds is not made on a round that would no
+   longer ask. The refusal says the call was "not confirmed by
+   the person" and names the client's answer; it never says the person
+   declined, since a client can answer without showing anyone anything.
+   Two clients accept an empty form without a person choosing to: Codex
+   under approval policy `never` with full access, and VS Code when the
+   person skips the question. A required choice naming the outcome would
+   stop both, and was declined after the maintainer's check found it
+   slower and less clear than Accept (§18 row 95).
+3. **No question possible.** A client that declares no form elicitation
+   gets no question, and the flags and `confirm` are the guard, as
+   before. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses those writes as
+   `[blocked]` instead.
+4. **A dry run never asks.** Nor does a pipeline on a ref no rule
+   protects, or an issue update that keeps it confidential. `run_pipeline`
+   reads the ref and asks when GitLab marks it the default branch or
+   protected. A `refs/heads/` or `refs/tags/` ref is read as the branch
+   or tag it names, as GitLab reads it, and a ref that is neither is
+   asked about, since its protection cannot be told. It reads only when a
+   question could go out, so a client that cannot ask pays no extra
+   read.
+5. **What the question says.** The tool, the target and the
+   consequence, in the server's words: a merge by its merge request,
+   title, branches, head and whether it squashes or removes the source
+   branch; a job by its name, stage and pipeline and the keys of the
+   variables it is given, never their values; a delete by what it
+   removes and what goes with it. Text from GitLab or from the call
+   stands in a code span, between backticks, on one line: hidden and
+   control characters removed; backticks, grave and acute marks, and
+   quote marks made a plain single quote; a URL scheme, `mailto:`,
+   `www.` and a bare domain followed by a path broken so no client draws
+   a link; cut at 120 characters, a comment at 300 with the count of the
+   rest. A client that draws the question as Markdown shows a code span
+   literally, and a blank line between lines keeps them apart (§18 row
+   94). A closing line says text in backticks or code style is not the
+   server's.
+6. **One handler on every protocol.** The handler returns the question
+   as an input request, the multi-round-trip pattern of 2026-07-28.
+   Before that revision the SDK asks with `elicitation/create` and calls
+   the handler again within the same request (§18 row 93). A client
+   failure there is a JSON-RPC error inside the SDK, and middleware turns
+   it into `[blocked]`.
+7. **The answer is bound to its question.** `requestState` is signed
+   with HMAC-SHA256 under a key drawn per process. It carries the tool,
+   a hash of the arguments, witnesses included, a hash of what the
+   question binds, a nonce and an expiry. A retry is refused when its
+   state is forged, for another call, expired or already used, and
+   answers on a call with no state are refused. The retry reads again;
+   if what it binds differs from what was answered, it is refused, and
+   the next call asks again. A question binds its text, and the whole
+   head sha, branches or comment where the text shows less; a label's open-issue
+   count is shown and not bound, and its name is bound instead.
+8. **The expiry applies where the state travels.** From 2026-07-28 the
+   client carries `requestState` between the rounds, and it expires 5
+   minutes out. Before, it never leaves the process: the request itself
+   waits for the person.
+9. **A create goes at most once (§4.5).** The first round stops before
+   the write. Only the verified retry writes, and its state is spent
+   before the handler runs, so a replay is refused.
+10. **A failure after the answer is never "nothing was written".** Once
+    an answer has confirmed the write, a call that then fails without a
+    result is `[ambiguous_outcome]`: verdict `written` when the handler
+    returned from its write, `unknown` otherwise. A failure while the
+    question is still out is `[blocked]`.
+11. **Held in one place.** A tool asks when its spec says when it asks,
+    and `register` refuses at start a Destructive tool that does not.
+    The service asks at its write, and a write reached with no way to ask
+    is refused. The description of each asking tool says so, and a test
+    derives the asking tools from the definitions and holds each:
+    declined, nothing sent; accepted, the write.
+
 ## 5. Module layout
 
 As `CLAUDE.md` "Where things go"; the staleness gate holds that list
@@ -648,6 +743,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `tools` | one `register` deciding annotations, kind, toolset and scope gating (no version gating: §4.9), `_meta`, the dry-run context and the rendering; `FullSurface(cfg)` for the schema dump; `dry_run` found by reflection; an explicit output schema with `date-time` for times; `Content` set so the SDK does not duplicate the JSON; an `unexpected` class for anything unclassified |
 | tool errors **(09-25)** | a `hinted{hint, err}` type with `Unwrap`, checked before the API-error branch, so a tool's guidance survives an upstream failure while the class still comes from the wrapped error; `refuse(protecting, unlock)` always naming what it protects and the exact argument to pass; enums named sorted in validation errors |
 | `gapi` | write and repeatability derived from the HTTP method, POST failing closed, declared exceptions only; a POST retried only on 429; `Retry-After` honored as a minimum; full-jitter backoff; the rate model of §11; **`CheckRedirect` returning `http.ErrUseLastResponse`**, a moved project's GET redirect resolved by re-reading the new path only when it is same-origin under the API root, with the request's query kept when the `Location` carries none; `Link: rel="next"` accepted only same-origin under the API root; every path segment escaped exactly once from typed parts, `..` refused; a headers deadline then a stall guard per read; a body cap; non-JSON bodies reported by status, content type and a prefix; transport errors stripped of path, query and host names; a create canceled after it may have been written `[ambiguous_outcome]`; a 401 `invalid_token` dropping the token and repeating a repeatable call once; **a context under which the client refuses every write**; a closed `Class` type with `Retryable()`; a `User-Agent`; unknown-field drift reported by path; a per-call counter |
+| `ask` (2026-09-29) | a form with no fields, accepting it the confirmation; `requestState` signed, single-use and bound to the tool, the arguments and the question; every quoted value a code span with backticks, grave and acute marks and quote marks folded, links broken, cut to one line, and a blank line between lines, because VS Code draws the message as Markdown; a failure after the answer `[ambiguous_outcome]` (§4.12, §18 rows 93–95) |
 | logging test | every registered tool driven with canary values at debug; asserts the logs are non-empty and contain no canary |
 
 ## 6. Addressing
@@ -1300,6 +1396,7 @@ gated. It covers gitlab.com, the only instance.
 | REST v4 only, no escape hatch | this design | §4.10, §8a |
 | Unregistered, not registered-and-refusing, for gated tools | this design | §17b |
 | Release pipeline in phase 0 | this design | §12 |
+| The person asked before a merge, an approval, a manual job, a release, a tag, a pipeline on a protected ref, publishing a confidential issue and every delete; the empty form; `GITLAB_MCP_REQUIRE_PROMPT` | maintainer, 2026-09-29 | §4.12; a client that declares elicitation and answers with nobody there cannot make these writes, which is why the release is a major one |
 
 ## 15. What must be verified live
 
@@ -1608,6 +1705,30 @@ the third was clean. The security review found a fork's rebase and a members-onl
 issue's move unguarded; the code review, blame windows and settles;
 each is fixed. Owed: nothing.*
 
+**Phase 7 — the person confirms what ships or deletes.** Asked for by
+the maintainer on 2026-09-29, after the same was built in a sibling:
+the server asks the person, through MCP form elicitation, before the
+thirteen writes of §4.12, with the set the maintainer chose. The
+question is quoted in code spans and the form has no fields, as the
+maintainer's check in Claude Code found clearest (§18 rows 93–95).
+
+*Built 2026-09-29. `run_pipeline` reads its ref only when a question
+could go out; `update_issue` asks only when it makes a
+confidential issue public. A test derives the asking tools from the
+definitions, with a floor of thirteen, and holds each on three
+protocols: declined, nothing sent; accepted, the write. The live driver
+is now a client that declares elicitation and answers for the
+maintainer: accept, but for one delete it declines. It learns which
+tools ask from their published descriptions, and fails a call that
+puts more questions than it may and a tool that asks and put none over
+the run. Three live runs on gitlab.com drove every tool and option but
+the two page tokens already waived, and their transcripts were read:
+the first found the driver expecting a question on a merge that had
+nothing left to merge, the second its count of a tool that asks only
+sometimes kept per server; the third was clean, with seventeen
+questions, each quoting only the run's own text, and the declined
+delete writing nothing. Reviews in §16a. Owed: nothing.*
+
 ### 16a. Found by review, and fixed
 
 Each phase's `/code-review high` and `/security-review` findings are
@@ -1842,6 +1963,30 @@ the release chain (`audit/security-reviews/v1.0.0.md`). It found:
 3. The status line, §16 and `CHANGELOG.md` say what was built and what
    is owed.
 4. Commit on the topic branch; say it is ready for review; stop.
+
+**Phase 7.** `/simplify`: `quoted()` built on `Line`, `askSHA` on
+`shortSHA`, the tests' text and argument copies shared; skipped: running
+the two rule reads at once, which `run_pipeline` no longer makes. The
+altitude review found a decline honored only when the round reached its
+question again; `run_pipeline`'s question depended on GitLab's rules,
+so a ref unprotected between the rounds would have run. Fixed: anything
+but an accept is refused before the service runs, and `run_pipeline`
+reads GitLab's own flags on the ref. `/security-review`: one finding at
+confidence 8, fixed (`audit/security-reviews/phase-7.md`).
+`/code-review high`: ten, nine fixed and one declined:
+
+| Found | Fixed |
+|---|---|
+| A confirmed round that wrote without reaching its question left the stage waiting, so a lost reply read "nothing was written" | Phase 7 commit; an accepted answer marks the call as writing before the service runs |
+| `\b` is ASCII-only, so a link after `_` or in a non-Latin script was not broken | Phase 7 commit; each shape is anchored on a character that is not a letter or digit, with cases |
+| `play_job` asked about a job GitLab would not play | Phase 7 commit; a job neither manual nor scheduled is `[conflict]` before anyone is asked |
+| The driver's scripted person was shared with the reader goroutine unlocked | Phase 7 commit; a mutex |
+| A decline branch in `Ask` could no longer run | Phase 7 commit; removed |
+| `AskFailures` built its messages by hand | Phase 7 commit; through `errorResult` |
+| Two rule helpers were left with one caller each | Phase 7 commit; inlined again |
+| The driver's list of asking tools was typed out | Phase 7 commit; the driver reads it from the published descriptions and fails a tool that asks and put no question |
+| `status` and the startup log did not show `GITLAB_MCP_REQUIRE_PROMPT` | Phase 7 commit; both do |
+| The answer's expiry read the protocol the client asked for | Declined: the SDK decides how the question travels from the same field (`mcp/server.go` at v1.8.0), so the expiry matches it |
 
 ## 17. Open decisions
 
@@ -2096,3 +2241,6 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 90 | A token's `expires_in` is its lifetime, added to `created_at` | Doorkeeper 5.9.0 `Expirable#expires_in_seconds` and `AccessTokenMixin#as_json`, the version v19.4.1-ee locks; `app/controllers/oauth/token_info_controller.rb`; the 1.0 live run | **Refuted (tier 1, live).** `/oauth/token/info` answers the seconds left when it answers. `get_me` added them to `created_at` and reported a token read 1 h 41 min after issue as expired an hour before; it now adds them to the time of the read, and the next run reported 11:53:38Z, the expiry the first run's numbers imply |
 | 91 | A cancel's answer shows whether anything was canceled | `lib/api/ci/pipelines.rb`, `Ci::CancelPipelineService`, `CommitStatus` and `Ci::HasStatus` at v19.4.1-ee; the 1.0 live run | **Refuted (tier 1, live).** GitLab cancels the jobs inside the request, then answers `pipeline.reset`; each job's transition queues `PipelineProcessWorker`, which recomputes the pipeline's status after. A pipeline canceled seconds after it started answered `running`, and `cancel_pipeline` said nothing could be canceled, while its two deployments were listed canceled later in the run; the next run's cancel answered `canceling`, so gitlab.com answers either way, and a third, with the fix, answered `running` and reported `canceled`. `CANCELABLE_STATUSES`, which the job scope shares, includes `manual`. It now reports `canceled` when the status read first was cancelable, the source is not `external` and the answer is not finished, and says the status catches up |
 | 92 | A label's priority and a milestone's description and dates cannot be cleared through the API | `lib/api/helpers/label_helpers.rb`, `app/services/labels/update_service.rb`, `lib/api/milestone_responses.rb` and `app/services/milestones/update_service.rb` at v19.4.1-ee; the post-1.0 live run | **Refuted (tier 1, live).** A present `priority` of `null` unprioritizes the label, and `at_least_one_of` counts keys, so it may be the only field sent; an empty description or date is assigned as given. `update_label` sends `null` for `clear_priority`, and both tools send `""` for the other `clear_*` inputs. The live run read each field back cleared |
+| 93 | A server can ask the person to confirm a write through MCP form elicitation, on every protocol this server serves | The `ElicitRequestFormParams` type in the specification's `schema.ts` for 2025-06-18, 2025-11-25 and 2026-07-28, the 2026-07-28 multi-round-trip pattern, and the MCP Go SDK v1.8.0's `mcp/server.go` and `mcp/shared.go`, read 2026-09-28; this repository's tests on all three protocols | **Confirmed (tier 1).** A tool result may carry `inputRequests` and a signed `requestState`; before 2026-07-28 the SDK sends `elicitation/create` itself and calls the handler again in the same request. `requestedSchema` is an open map with no minimum, so `properties: {}` is valid. The answer comes from the client, and the 2026-07-28 revision lets it answer "from the user or other sources", so an accept is never proof a person read anything (§4.12) |
+| 94 | A client draws an elicitation question as plain text | VS Code `src/vs/workbench/contrib/mcp/browser/mcpElicitationService.ts` L100 and L173, and `src/vs/base/common/htmlContent.ts` L52-62, `main` at 251bcf5f, read 2026-09-29 | **Refuted.** VS Code builds a form question as `new MarkdownString(elicitation.message)`, untrusted: command links are off, but emphasis, link text, code spans and HTML-like text draw, and single line breaks join into one paragraph. Each quoted value is a code span, which CommonMark draws literally, with backticks and their lookalikes folded, and a blank line separates the lines. Backslash escaping was rejected: where a client draws plain text, the backslashes show inside names and branches, the data the person checks |
+| 95 | A required choice naming the outcome confirms better than an empty form | Codex `codex-rs/codex-mcp/src/elicitation.rs` L415-458 and L552-571, `main` at c248f6d4, and VS Code `mcpElicitationService.ts` L111-119 and L237-297, read 2026-09-29; the maintainer's check in Claude Code 2.1.284, protocol 2025-11-25, 2026-09-29, against a throwaway probe with three forms of one delete question | **Declined, for now.** For: Codex accepts a form with no properties by itself under approval policy `never` with full access, and a VS Code chat question the person skips resolves as `accept` with no content; a required choice survives both. Against: in Claude Code the choice list took the maintainer 60 seconds, against 8 for the empty form, and they found it confusing. The empty form stays, and both client behaviors are recorded as limits (§4.12) |

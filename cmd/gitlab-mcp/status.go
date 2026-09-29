@@ -74,6 +74,7 @@ type statusSettings struct {
 	ReadOnly          bool     `json:"read_only"`
 	EnableShip        bool     `json:"enable_ship"`
 	EnableDestructive bool     `json:"enable_destructive"`
+	RequirePrompt     bool     `json:"require_prompt"`
 	Toolsets          []string `json:"toolsets"`
 	WriteNamespaces   int      `json:"write_namespaces"`
 	HTTPTimeout       string   `json:"http_timeout"`
@@ -158,7 +159,7 @@ func newStatusReport(ctx context.Context, cfg config.Config, s *app.Settings, pr
 			Missing:  []string{},
 		},
 		Settings: statusSettings{
-			ReadOnly: cfg.ReadOnly, EnableShip: cfg.EnableShip, EnableDestructive: cfg.EnableDestructive,
+			ReadOnly: cfg.ReadOnly, EnableShip: cfg.EnableShip, EnableDestructive: cfg.EnableDestructive, RequirePrompt: cfg.RequirePrompt,
 			Toolsets: orEmpty(cfg.Toolsets), WriteNamespaces: len(cfg.WriteNamespaces),
 			HTTPTimeout: cfg.HTTPTimeout.String(),
 			LogLevel:    string(cfg.LogLevel), LogFormat: string(cfg.LogFormat),
@@ -240,6 +241,7 @@ func (r statusReport) writeText(w io.Writer, m *redact.Masker) {
 	p("read-only:      %t\n", r.Settings.ReadOnly)
 	p("ship:           %t\n", r.Settings.EnableShip)
 	p("destructive:    %t\n", r.Settings.EnableDestructive)
+	p("require prompt: %t\n", r.Settings.RequirePrompt)
 	p("toolsets:       %s\n", orNone(strings.Join(r.Settings.Toolsets, ", ")))
 	if r.Settings.WriteNamespaces > 0 {
 		p("writes:         confined to %d namespace(s)\n", r.Settings.WriteNamespaces)

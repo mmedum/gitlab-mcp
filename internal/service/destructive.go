@@ -7,6 +7,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/internal/gitlab"
 	"github.com/mmedum/gitlab-mcp/internal/model"
+	"github.com/mmedum/gitlab-mcp/internal/render"
 )
 
 // The Destructive kind (§4.3): what GitLab cannot restore. The tools
@@ -65,6 +66,9 @@ func (s *Service) DeleteBranch(ctx context.Context, in BranchDeletion) (model.Br
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the branch", nil)
 		return out, nil
+	}
+	if err := ask(ctx, render.AskDeleteBranch(t.ref.Project.Path, in.Branch, b.Commit.ID, b.Merged)); err != nil {
+		return model.BranchDelete{}, err
 	}
 	err = s.client.DeleteBranch(ctx, t.p, in.Branch)
 	_, readErr := s.client.GetBranch(ctx, t.p, in.Branch)
@@ -159,6 +163,9 @@ func (s *Service) DeleteComment(ctx context.Context, in CommentDeletion) (model.
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the comment", nil)
 		return out, nil
+	}
+	if err := ask(ctx, render.AskDeleteComment(t.ref.Project.Path, in.Type, in.IID, note.Author.Username, note.Body)); err != nil {
+		return model.CommentDelete{}, err
 	}
 	// GitLab refuses the delete with 412 when the comment changed after
 	// the time read.
