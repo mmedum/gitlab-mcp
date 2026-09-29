@@ -634,9 +634,9 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 
 | Component | Must carry |
 |---|---|
-| `cmd` | `run(args, stdin, stdout, stderr, env)` so the serve path is testable; `help`/`-h` exit 0; **every argument checked for a help token before dispatch**, so `login --help` never reads `--help` as a value and `logout --help` never deletes anything; an unknown command prints usage to stderr and exits non-zero; errors printed through a redactor; disconnect matched by JSON-RPC code; the token warmed off the startup path; version from ldflags with a `debug.ReadBuildInfo` fallback, `canonical()` keeping the leading `v` |
+| `cmd` | `run(args, stdin, stdout, stderr, env)` so the serve path is testable; `help`/`-h` exit 0; **every argument checked for a help token before dispatch**, so `login --help` never reads `--help` as a value and `logout --help` never deletes anything; an unknown command prints usage to stderr and exits non-zero; errors printed through a redactor; disconnect matched by JSON-RPC code; no refresh before serving; version from ldflags with a `debug.ReadBuildInfo` fallback, `canonical()` keeping the leading `v` |
 | `login`/`logout`/`status`/`doctor` | the siblings' commands, flags and output unchanged (§10); `--client-id`, and no instance flag (§4.9); the scopes printed before the browser opens and a grant narrower than asked warned about; `--no-browser` printing the URL and the exact `ssh -L` line; `status [--no-probe] --json` with a `schema_version`, running the same config load the server runs; `doctor` walking instance → TLS → version and edition → application → granted scopes → one `/user`, naming what is missing, with stable `{kind n}` placeholders and a redacted-count footer; `logout` revoking the token through `/oauth/revoke` and naming other profiles on the same application; the keyring replaced package-wide in tests by `TestMain`, with a decoy test proving it |
-| `auth` | loopback on `127.0.0.1:0` with the registered redirect `http://127.0.0.1/callback`; PKCE S256 with a 64-character verifier; `state` checked, a callback without it refused on its own while the login keeps waiting; `ReadHeaderTimeout` on the callback; a bounded HTTP client on the exchange and every refresh; the rotated pair persisted before it is used; **refresh under a cross-process file lock, the keyring re-read after `invalid_grant` before declaring re-login**; `expires_in` honored, never assumed; an access token refused as `invalid_token` dropped and the store re-read; transport errors stripped of their URL and of host names; a typed `ErrReauthorize` never retried; granted scopes stored; no `resource` parameter sent (§18 row 7) |
+| `auth` | loopback on `127.0.0.1:0` with the registered redirect `http://127.0.0.1/callback`; PKCE S256 with a 64-character verifier; `state` checked, a callback without it refused on its own while the login keeps waiting; `ReadHeaderTimeout` on the callback; a bounded HTTP client on the exchange and every refresh; the rotated pair persisted before it is used; **refresh under a cross-process file lock, the keyring re-read after `invalid_grant` before declaring re-login**; a store unreadable under the lock refused rather than the held refresh token spent; no refresh before the server serves while a login recorded the scopes; a refresh in progress waited for before exit; `expires_in` honored, never assumed; an access token refused as `invalid_token` dropped and the store re-read; transport errors stripped of their URL and of host names; a typed `ErrReauthorize` never retried; granted scopes stored; no `resource` parameter sent (§18 row 7) |
 | `scopes` | one source of truth per mode: `read_api` read-only, `api` otherwise; the per-tool requirement; `Satisfied` and `Missing`; the generator for `docs/setup.md` |
 | `credentials` | resolution **env → keyring → file**, documented as that order; per profile, keyring service `gitlab-mcp` and account the profile name, as the siblings do (the profile records the instance); `GITLAB_MCP_REFRESH_TOKEN` as the env source, and a pair rotated from it stamped with the env value's hash so the next start uses the stored pair rather than the revoked env token; a keyring save deletes a stale plaintext file; a keyring that refuses a save has its older entry deleted, and while both stores hold a pair the one saved last wins; `Delete` clears every store and joins errors; a silent keyring told apart from a missing login; a warning on every use of the plaintext file; temp file, rename, then ACL; a partial env set is an error |
 | `fileperm` | 0600 on Unix; a protected DACL on Windows restricting the file to the current user |
@@ -1173,7 +1173,17 @@ What GitLab changes underneath, none of which the person sees:
   the siblings do.
 - **Startup reads before it serves.** Registration depends on the
   granted scopes, so startup reads token info once, bounded by the
-  smaller of 15 s and the HTTP timeout. It reads neither `/metadata` nor
+  smaller of 15 s and the HTTP timeout, when the access token is still
+  fresh. Startup does not refresh: a host kills servers before the
+  handshake, and one killed between GitLab rotating the pair and the
+  keyring storing it leaves the profile signed out. With the access
+  token due, the scopes of the last login stand and the first tool call
+  refreshes. A start with no scopes recorded refreshes to read them, and
+  so does one given `GITLAB_MCP_REFRESH_TOKEN`, whose grant the login's
+  scopes do not describe. A server that is
+  stopped waits for a refresh in progress to be stored before it exits.
+  A kill during a refresh still loses the pair; nothing on this side
+  can make GitLab's rotation and the keyring's save one step. It reads neither `/metadata` nor
   `/user`: nothing is gated by version (§4.9). Every failure there is logged and the
   server starts anyway, so errors surface per call; the one fatal
   outcome is a token whose scopes cannot serve the configured mode.

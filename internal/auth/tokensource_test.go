@@ -288,6 +288,123 @@ func TestARotatedPairThatCannotBeStoredIsWarnedAboutAndStillUsed(t *testing.T) {
 	}
 }
 
+func TestCachedNeverRefreshes(t *testing.T) {
+	f := newFixture(t, 300*time.Second)
+	first := f.signedIn(t)
+	store := fileStore(f.dir)
+	ts := f.source(store)
+
+	got, err := ts.Cached()
+	if err != nil || got != first.AccessToken {
+		t.Fatalf("fresh: %q, %v; want the stored token", got, err)
+	}
+	f.clock.Advance(time.Hour)
+	got, err = ts.Cached()
+	if err != nil || got != "" {
+		t.Fatalf("expired: %q, %v; want none and no error", got, err)
+	}
+	if f.srv.Refreshes() != 0 {
+		t.Errorf("%d refreshes, want none", f.srv.Refreshes())
+	}
+	if stored(t, store).RefreshToken != first.RefreshToken {
+		t.Error("the stored refresh token was spent")
+	}
+}
+
+// unreadableUnderLock answers the load and then fails, as a keyring that
+// locks between the two reads does.
+type unreadableUnderLock struct {
+	tok   *oauth2.Token
+	reads int
+}
+
+func (s *unreadableUnderLock) Resolve() (*oauth2.Token, credentials.Source, error) {
+	s.reads++
+	if s.reads > 1 {
+		return nil, "", credentials.ErrKeyringSilent
+	}
+	return s.tok, credentials.SourceKeyring, nil
+}
+
+func (*unreadableUnderLock) Save(*oauth2.Token) (credentials.Source, error) {
+	return credentials.SourceKeyring, nil
+}
+
+func TestAStoreUnreadableUnderTheLockSpendsNothing(t *testing.T) {
+	// Another process may have spent the refresh token held here; with
+	// the store unreadable, this one cannot know, so it does not send it.
+	f := newFixture(t, 300*time.Second)
+	tok := signIn(t, f.app, "api").Token
+	f.clock.Advance(time.Hour)
+	ts := f.source(&unreadableUnderLock{tok: tok})
+	_, err := ts.Token(context.Background())
+	// Unavailable, not a lost login: the pair held here is still good.
+	if c, _ := gapi.ClassOf(err); c != gapi.ClassUnavailable || !errors.Is(err, credentials.ErrKeyringSilent) {
+		t.Errorf("err = %v", err)
+	}
+	if f.srv.Refreshes() != 0 {
+		t.Errorf("%d refreshes, want none", f.srv.Refreshes())
+	}
+}
+
+// blockingSave holds Save until released, so a refresh can be caught
+// between GitLab rotating the pair and the store keeping it.
+type blockingSave struct {
+	tok     *oauth2.Token
+	entered chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	saved   *oauth2.Token
+}
+
+func (b *blockingSave) Resolve() (*oauth2.Token, credentials.Source, error) {
+	return b.tok, credentials.SourceKeyring, nil
+}
+
+func (b *blockingSave) Save(tok *oauth2.Token) (credentials.Source, error) {
+	close(b.entered)
+	<-b.release
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.saved = tok
+	return credentials.SourceKeyring, nil
+}
+
+func TestCloseWaitsForARefreshAndRefusesTheNext(t *testing.T) {
+	f := newFixture(t, 300*time.Second)
+	tok := signIn(t, f.app, "api").Token
+	f.clock.Advance(time.Hour)
+	store := &blockingSave{tok: tok, entered: make(chan struct{}), release: make(chan struct{})}
+	ts := f.source(store)
+
+	go func() { _, _ = ts.Token(context.Background()) }()
+	<-store.entered
+	closed := make(chan struct{})
+	go func() { ts.Close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while the rotated pair was unsaved")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(store.release)
+	<-closed
+	store.mu.Lock()
+	saved := store.saved
+	store.mu.Unlock()
+	if saved == nil || saved.RefreshToken == tok.RefreshToken {
+		t.Fatalf("saved %v, want the rotated pair", saved)
+	}
+
+	// Due again after Close: refused, and nothing is spent.
+	f.clock.Advance(time.Hour)
+	if _, err := ts.Token(context.Background()); err == nil {
+		t.Error("a refresh ran after Close")
+	}
+	if f.srv.Refreshes() != 1 {
+		t.Errorf("%d refreshes, want 1", f.srv.Refreshes())
+	}
+}
+
 func TestNoStoredTokenIsAnAuthError(t *testing.T) {
 	f := newFixture(t, 0)
 	ts := f.source(fileStore(f.dir))

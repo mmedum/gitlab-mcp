@@ -70,6 +70,8 @@ type TokenSource struct {
 	rejected string
 	spent    string
 	spentErr error
+	// closed refuses any refresh after Close.
+	closed bool
 }
 
 var _ gapi.TokenSource = (*TokenSource)(nil)
@@ -117,23 +119,60 @@ func (s *TokenSource) fresh(tok *oauth2.Token) bool {
 func (s *TokenSource) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cur == nil {
-		tok, err := s.load()
-		if err != nil {
-			return "", err
-		}
-		if s.spentErr != nil && tok.RefreshToken == s.spent {
-			return "", s.spentErr
-		}
-		s.cur = tok
+	if err := s.ensure(); err != nil {
+		return "", err
 	}
 	if s.fresh(s.cur) {
 		return s.cur.AccessToken, nil
+	}
+	if s.closed {
+		return "", gapi.Errf(gapi.ClassUnavailable, "the server is shutting down")
 	}
 	if err := s.refresh(ctx); err != nil {
 		return "", err
 	}
 	return s.cur.AccessToken, nil
+}
+
+// Cached returns the access token when it can be used without a
+// refresh, and "" when a refresh is due. It never refreshes.
+func (s *TokenSource) Cached() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensure(); err != nil {
+		return "", err
+	}
+	if s.fresh(s.cur) {
+		return s.cur.AccessToken, nil
+	}
+	return "", nil
+}
+
+// Close waits for a refresh in progress and refuses any later one. A
+// process that exits between GitLab rotating the pair and the store
+// saving it leaves every process on the profile signed out, so the
+// server closes its source before it exits.
+func (s *TokenSource) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+}
+
+// ensure loads the stored pair into s.cur if none is held. The caller
+// holds s.mu.
+func (s *TokenSource) ensure() error {
+	if s.cur != nil {
+		return nil
+	}
+	tok, err := s.load()
+	if err != nil {
+		return err
+	}
+	if s.spentErr != nil && tok.RefreshToken == s.spent {
+		return s.spentErr
+	}
+	s.cur = tok
+	return nil
 }
 
 // Invalidate drops an access token GitLab refused with 401. The next
@@ -177,8 +216,16 @@ func (s *TokenSource) refresh(ctx context.Context) error {
 	defer release()
 
 	// Another process may have refreshed while this one waited, and the
-	// refresh token held here is then already spent.
-	if stored, _, err := s.store.Resolve(); err == nil && stored.RefreshToken != s.cur.RefreshToken {
+	// refresh token held here is then already spent. A store that cannot
+	// be read cannot say, and could not keep the new pair either, so
+	// nothing is spent until it can. The next call loads it afresh.
+	stored, _, err := s.store.Resolve()
+	if err != nil {
+		s.cur = nil
+		return gapi.Wrap(gapi.ClassUnavailable, err, "the stored sign-in could not be read before refreshing it; "+
+			"try again: %s", redact.Text(err.Error()))
+	}
+	if stored.RefreshToken != s.cur.RefreshToken {
 		s.cur = stored
 		if s.fresh(stored) {
 			return nil

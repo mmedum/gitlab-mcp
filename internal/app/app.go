@@ -115,6 +115,9 @@ type Settings struct {
 
 	app    *auth.Application
 	tokens gapi.TokenSource
+	// envToken is set when GITLAB_MCP_REFRESH_TOKEN names the sign-in,
+	// whose scopes no login recorded.
+	envToken bool
 }
 
 // Resolve settles the configuration against the profile. It reads the
@@ -165,6 +168,7 @@ func Resolve(cfg config.Config, o Options) (*Settings, error) {
 		s.CredentialsErr = fmt.Errorf("no OAuth application id: set %s or run `gitlab-mcp login --client-id <application id>`",
 			config.EnvClientID)
 	}
+	s.envToken = o.env(credentials.EnvVar) != ""
 	s.tokens = s.tokenSource(warn)
 	return s, nil
 }
@@ -300,14 +304,20 @@ const startupBudget = 15 * time.Second
 // and left for the calls to report, so an instance that is down at start
 // still gets a server.
 //
-// The token is warmed first, so a refresh that is due happens here
-// rather than on the first tool call.
+// Probe refreshes only when no login recorded the scopes: a host may
+// kill the server before the MCP handshake, and a refresh cut short
+// there spends the profile's refresh token. With the access token due,
+// the scopes of the last login stand until the first call.
 func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version string) Startup {
 	var st Startup
-	if s.Profile != nil {
+	if s.Profile != nil && !s.envToken {
 		st.Granted = s.Profile.User.Scopes
 	}
 	if s.CredentialsErr != nil {
+		return st
+	}
+	ts, ok := s.tokens.(*auth.TokenSource)
+	if !ok {
 		return st
 	}
 	budget := min(s.Config.HTTPTimeout, startupBudget)
@@ -316,14 +326,29 @@ func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version strin
 	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	c, err := s.ClientWith(gapi.Options{Logger: logger, Version: version, HeaderTimeout: budget, MaxAttempts: 1})
-	if err != nil {
-		logger.Warn("startup read skipped", "reason", redact.Text(err.Error()))
-		return st
+	tok, err := ts.Cached()
+	if err == nil && tok == "" && len(st.Granted) == 0 {
+		// Nothing recorded these scopes: no login, or a token from
+		// GITLAB_MCP_REFRESH_TOKEN, whose grant the login's scopes do not
+		// describe. A read_api token never gets a write tool (§3), so
+		// only a live read can decide.
+		tok, err = ts.Token(ctx)
 	}
-	if _, err := s.tokens.Token(ctx); err != nil {
+	if err != nil {
 		logger.Warn("the sign-in could not be used; tools answer [auth] until `gitlab-mcp login` succeeds",
 			"reason", redact.Text(err.Error()))
+		return st
+	}
+	if tok == "" {
+		logger.Info("the access token is due for a refresh; using the scopes of the last login until the first call")
+		return st
+	}
+	c, err := s.ClientWith(gapi.Options{
+		Logger: logger, Version: version, HeaderTimeout: budget, MaxAttempts: 1,
+		Tokens: probeToken{access: tok, src: ts},
+	})
+	if err != nil {
+		logger.Warn("startup read skipped", "reason", redact.Text(err.Error()))
 		return st
 	}
 	if info, err := c.TokenInfo(ctx); err != nil {
@@ -333,6 +358,17 @@ func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version strin
 	}
 	return st
 }
+
+// probeToken hands the startup read one access token and never
+// refreshes it. A refusal is passed to the source it came from, so the
+// first call refreshes rather than sending it again.
+type probeToken struct {
+	access string
+	src    gapi.TokenSource
+}
+
+func (p probeToken) Token(context.Context) (string, error) { return p.access, nil }
+func (p probeToken) Invalidate(rejected string)            { p.src.Invalidate(rejected) }
 
 // CheckScopes refuses a configuration the sign-in cannot serve: a
 // read_api token with the write tools on, above all (§9.4). An unknown
@@ -396,6 +432,15 @@ func Assemble(ctx context.Context, cfg config.Config, o Options) (*Runtime, erro
 		Logger: logger, Version: o.Version,
 	})
 	return &Runtime{Settings: s, Client: client, Startup: st, Server: srv}, nil
+}
+
+// Close waits for a sign-in refresh in progress and refuses any later
+// one, so the process does not exit holding the only copy of a rotated
+// pair. The server calls it before it exits.
+func (r *Runtime) Close() {
+	if ts, ok := r.Settings.tokens.(*auth.TokenSource); ok {
+		ts.Close()
+	}
 }
 
 // Serve runs one MCP session over the given streams. An ordinary

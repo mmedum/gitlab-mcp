@@ -276,6 +276,7 @@ func serve(args []string, stdin io.Reader, stdout, stderr io.Writer, env func(st
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
+	defer rt.Close()
 	logger.Info("serving", "version", version.String(), "settings", rt.Settings)
 	if err := rt.Serve(ctx, stdin, stdout); err != nil {
 		if errors.Is(err, context.Canceled) {
