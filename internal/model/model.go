@@ -257,12 +257,39 @@ type Issue struct {
 	// allowed, with hidden text removed.
 	UntrustedDescription string `json:"untrusted_description"`
 	DescriptionBudget    Budget `json:"description_budget"`
+	// RelatedMergeRequests and ClosingMergeRequests are null when GitLab
+	// refused the read.
+	RelatedMergeRequests *LinkedItems `json:"related_merge_requests" jsonschema:"Merge requests that mention the issue or that it mentions, the first 20. GitLab leaves out any the account cannot read. Null when they could not be read"`
+	ClosingMergeRequests *LinkedItems `json:"closing_merge_requests" jsonschema:"Merge requests that close the issue when merged, the first 20. GitLab lists only those in the issue's own project and leaves out any the account cannot read. Null when they could not be read"`
 }
 
 // Tasks counts a description's checkboxes.
 type Tasks struct {
 	Count     int `json:"count"`
 	Completed int `json:"completed"`
+}
+
+// LinkedItems is the first page of the issues or merge requests an
+// item is linked to, exactly as GitLab returned it.
+type LinkedItems struct {
+	Items []LinkedItem `json:"items"`
+	More  bool         `json:"more" jsonschema:"True when GitLab has more than are shown"`
+	// Total is GitLab's count, null when GitLab did not say.
+	Total *int `json:"total" jsonschema:"GitLab's count, or null when it did not say"`
+}
+
+// LinkedItem is one linked issue or merge request.
+type LinkedItem struct {
+	Reference string `json:"reference" jsonschema:"GitLab's full reference, group/project#12 or group/project!12; empty for an external tracker's issue"`
+	IID       int64  `json:"iid"`
+	ProjectID int64  `json:"project_id"`
+	State     string `json:"state"`
+	WebURL    string `json:"web_url"`
+	// ExternalID is set for an issue in an external tracker, which
+	// GitLab names by that id alone.
+	ExternalID *string `json:"external_id" jsonschema:"The id of an issue in an external tracker, such as PROJ-123; null for a GitLab item"`
+	// UntrustedTitle is shortened to one line.
+	UntrustedTitle string `json:"untrusted_title"`
 }
 
 // ------------------------------------------------------------ merge requests
@@ -299,6 +326,10 @@ type MergeRequest struct {
 	UntrustedTitle       string            `json:"untrusted_title"`
 	UntrustedDescription string            `json:"untrusted_description"`
 	DescriptionBudget    Budget            `json:"description_budget"`
+	// ClosesIssues and RelatedIssues are null when GitLab refused the
+	// read.
+	ClosesIssues  *LinkedItems `json:"closes_issues" jsonschema:"Issues GitLab closes when this merges, the first 20. GitLab leaves out confidential or unreadable issues and those in projects that do not close issues automatically. Null when they could not be read"`
+	RelatedIssues *LinkedItems `json:"related_issues" jsonschema:"Issues the title, description, comments or commits mention, the first 20. GitLab leaves out confidential or unreadable issues. Null when they could not be read"`
 }
 
 // DiffRefs are the three SHAs a diff position is computed against.
@@ -479,6 +510,8 @@ type Commit struct {
 	// HiddenRemoved counts the hidden characters made visible in the
 	// diffs shown; the message's are in MessageBudget.
 	HiddenRemoved int `json:"hidden_chars_removed"`
+	// MergeRequests is null when GitLab refused the read.
+	MergeRequests *LinkedItems `json:"merge_requests" jsonschema:"Merge requests in this project that contain the commit, the first 20. GitLab leaves out any the account cannot read. Null when they could not be read"`
 }
 
 // FileChange names a changed file.

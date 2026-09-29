@@ -60,6 +60,9 @@ type Options struct {
 	// MoveDropsQuery makes the redirect for a moved project carry the
 	// new path without the request's query string.
 	MoveDropsQuery bool
+	// ExternalTracker gives ProjectAlpha an external issue tracker whose
+	// issues are named like EXT-7.
+	ExternalTracker bool
 }
 
 // Server is the in-memory instance. URL is its base, and the instance to

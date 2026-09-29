@@ -253,6 +253,24 @@ func (c *Client) ListIssueDiscussions(ctx context.Context, p Project, iid int64,
 	return out, page, err
 }
 
+// ListIssueRelatedMergeRequests lists the merge requests GitLab relates
+// to an issue: those it mentions and those that mention it.
+func (c *Client) ListIssueRelatedMergeRequests(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.LinkedMergeRequest, Page, error) {
+	var out []gitlab.LinkedMergeRequest
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}/related_merge_requests",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_issue_related_merge_requests"}, opts, &out)
+	return out, page, err
+}
+
+// ListIssueClosedBy lists the merge requests in the issue's project that
+// close it when merged.
+func (c *Client) ListIssueClosedBy(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.LinkedMergeRequest, Page, error) {
+	var out []gitlab.LinkedMergeRequest
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/issues/{}/closed_by",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_issue_closed_by"}, opts, &out)
+	return out, page, err
+}
+
 // SearchMergeRequests lists merge requests in a project, a group, or
 // across the instance.
 func (c *Client) SearchMergeRequests(ctx context.Context, q ItemQuery, opts ListOptions) ([]gitlab.MergeRequest, Page, error) {
@@ -297,6 +315,24 @@ func (c *Client) ListMergeRequestDiscussions(ctx context.Context, p Project, iid
 	var out []gitlab.Discussion
 	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/discussions",
 		Args: []string{p.segment(), idArg(iid)}, Name: "list_discussions"}, opts, &out)
+	return out, page, err
+}
+
+// ListMergeRequestClosesIssues lists the issues a merge request closes
+// when merged.
+func (c *Client) ListMergeRequestClosesIssues(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.LinkedIssue, Page, error) {
+	var out []gitlab.LinkedIssue
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/closes_issues",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_merge_request_closes_issues"}, opts, &out)
+	return out, page, err
+}
+
+// ListMergeRequestRelatedIssues lists the issues a merge request's title,
+// description, comments and commits mention.
+func (c *Client) ListMergeRequestRelatedIssues(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.LinkedIssue, Page, error) {
+	var out []gitlab.LinkedIssue
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/related_issues",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_merge_request_related_issues"}, opts, &out)
 	return out, page, err
 }
 
@@ -379,6 +415,15 @@ func (c *Client) GetCommitDiff(ctx context.Context, p Project, sha string, opts 
 	var out []gitlab.Diff
 	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/repository/commits/{}/diff",
 		Args: []string{p.segment(), sha}, Name: "get_commit_diff"}, opts, &out)
+	return out, page, err
+}
+
+// ListCommitMergeRequests lists the merge requests in the project that
+// contain a commit.
+func (c *Client) ListCommitMergeRequests(ctx context.Context, p Project, sha string, opts ListOptions) ([]gitlab.LinkedMergeRequest, Page, error) {
+	var out []gitlab.LinkedMergeRequest
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/repository/commits/{}/merge_requests",
+		Args: []string{p.segment(), sha}, Name: "list_commit_merge_requests"}, opts, &out)
 	return out, page, err
 }
 

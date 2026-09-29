@@ -360,6 +360,10 @@ func Issue(is model.Issue, bd Boundary) string {
 	o := Origin{Kind: "issue_description", Project: is.Project.Path, Item: "#" + strconv.FormatInt(is.IID, 10), Author: is.Author.Username}
 	b.WriteString(bd.Block(o, is.UntrustedDescription) + "\n")
 	b.WriteString(budgetLine("Description", is.DescriptionBudget))
+	b.WriteString("\nLinked merge requests are as GitLab returned them: it leaves out any you cannot read, " +
+		"and lists closing ones from this project only.")
+	b.WriteString("\n" + linkedItems("Related merge requests", is.RelatedMergeRequests, bd))
+	b.WriteString("\n" + linkedItems("Merge requests that close it when merged", is.ClosingMergeRequests, bd))
 	return b.String()
 }
 
@@ -415,6 +419,38 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	o := Origin{Kind: "merge_request_description", Project: mr.Project.Path, Item: mrItem(mr.IID), Author: mr.Author.Username}
 	b.WriteString(bd.Block(o, mr.UntrustedDescription) + "\n")
 	b.WriteString(budgetLine("Description", mr.DescriptionBudget))
+	b.WriteString("\nLinked issues are as GitLab returned them: it leaves out confidential issues and any you cannot read.")
+	b.WriteString("\n" + linkedItems("Issues it closes when merged", mr.ClosesIssues, bd))
+	b.WriteString("\n" + linkedItems("Related issues", mr.RelatedIssues, bd))
+	return b.String()
+}
+
+// linkedItems renders one list of linked items under heading. Each title
+// was written by someone else and is shown inside the boundary.
+func linkedItems(heading string, l *model.LinkedItems, bd Boundary) string {
+	if l == nil {
+		return heading + ": could not be read."
+	}
+	if len(l.Items) == 0 {
+		return heading + ": none."
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s: %d shown", heading, len(l.Items))
+	switch {
+	case l.More && l.Total != nil:
+		fmt.Fprintf(&b, " of %d; the rest are not shown", *l.Total)
+	case l.More:
+		b.WriteString("; GitLab has more, not shown")
+	}
+	b.WriteString(".")
+	for _, it := range l.Items {
+		if it.ExternalID != nil {
+			fmt.Fprintf(&b, "\n- external issue %s; title %s", Ident(*it.ExternalID), bd.Inline(it.UntrustedTitle))
+			continue
+		}
+		fmt.Fprintf(&b, "\n- %s (project id %d, iid %d): %s, %s; title %s", Ident(it.Reference), it.ProjectID, it.IID,
+			Ident(it.State), Ident(it.WebURL), bd.Inline(it.UntrustedTitle))
+	}
 	return b.String()
 }
 
@@ -577,6 +613,8 @@ func Commit(c model.Commit, bd Boundary) string {
 	writeDiffs(&b, model.Diffs{Files: c.Files, NotShown: c.NotShown, FilesComplete: c.FilesComplete,
 		NextFileOffset: c.NextFileOffset, DiffBudget: c.DiffBudget, HiddenRemoved: c.HiddenRemoved},
 		c.Project.Path, "@"+c.ShortID, "The commit changes more files than were read.", bd)
+	b.WriteString("\n\nLinked merge requests are as GitLab returned them: it leaves out any you cannot read.")
+	b.WriteString("\n" + linkedItems("Merge requests in this project that contain it", c.MergeRequests, bd))
 	return b.String()
 }
 

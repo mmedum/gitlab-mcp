@@ -69,6 +69,7 @@ var byName = map[string]reflect.Type{
 	"Bridge": reflect.TypeFor[Bridge](), "ReleaseLink": reflect.TypeFor[ReleaseLink](),
 	"IssueLink": reflect.TypeFor[IssueLink](), "IssueBasic": reflect.TypeFor[IssueBasic](),
 	"RelatedIssue": reflect.TypeFor[RelatedIssue](), "ProtectedTag": reflect.TypeFor[ProtectedTag](),
+	"LinkedMergeRequest": reflect.TypeFor[LinkedMergeRequest](), "LinkedIssue": reflect.TypeFor[LinkedIssue](),
 	"BlameRange": reflect.TypeFor[BlameRange](), "BlameCommit": reflect.TypeFor[BlameCommit](),
 	"ArtifactEntry": reflect.TypeFor[ArtifactEntry](), "RebaseState": reflect.TypeFor[RebaseState](), "MergeRequestRebase": reflect.TypeFor[MergeRequestRebase](), "DownstreamPipeline": reflect.TypeFor[DownstreamPipeline](), "Lint": reflect.TypeFor[Lint](),
 	"LintJob": reflect.TypeFor[LintJob](), "Label": reflect.TypeFor[Label](),
@@ -127,6 +128,20 @@ func TestDecodeMergeRequest(t *testing.T) {
 	}
 	if mr.DiffRefs == nil || mr.DiffRefs.StartSHA != "c" || mr.HeadPipeline == nil || mr.HeadPipeline.Status != "success" {
 		t.Errorf("nested fields: %+v %+v", mr.DiffRefs, mr.HeadPipeline)
+	}
+}
+
+// closes_issues and related_issues mix GitLab's issues with an external
+// tracker's, whose id is a string; both decode.
+func TestDecodeLinkedIssues(t *testing.T) {
+	body := `[{"id":30001,"iid":1,"project_id":2001,"title":"Crash","state":"opened"},
+		{"title":"External Issue EXT-7","id":"EXT-7"}]`
+	var rows []LinkedIssue
+	if err := json.Unmarshal([]byte(body), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].IID != 1 || rows[0].ExternalID() != "" || rows[1].ExternalID() != "EXT-7" {
+		t.Errorf("decoded %+v", rows)
 	}
 }
 

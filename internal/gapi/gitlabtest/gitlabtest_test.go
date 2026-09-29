@@ -406,3 +406,61 @@ func TestGeneratedDataIsSynthetic(t *testing.T) {
 		t.Errorf("a member cannot read a private project: %d", resp.StatusCode)
 	}
 }
+
+// The link lists answer GitLab's shapes: issue rows without references,
+// an external tracker's issue as {title, id}, and nothing about an issue
+// the user may not read.
+func TestLinks(t *testing.T) {
+	s := New(t, Options{ExternalTracker: true})
+	rows := func(path, token string) []map[string]any {
+		t.Helper()
+		req, _ := http.NewRequest("GET", s.URL+"/api/v4/projects/2001/"+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out []map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("%s: %d, %v", path, resp.StatusCode, err)
+		}
+		return out
+	}
+	iids := func(rows []map[string]any) []any {
+		var out []any
+		for _, r := range rows {
+			if r["iid"] != nil {
+				out = append(out, r["iid"])
+			} else {
+				out = append(out, r["id"])
+			}
+		}
+		return out
+	}
+	alice, carol := s.Token(), s.TokenFor("carol", "api")
+	closes := rows("merge_requests/1/closes_issues", alice)
+	if got := iids(closes); len(got) != 2 || got[0] != float64(1) || got[1] != float64(7) || closes[0]["references"] != nil {
+		t.Errorf("closes_issues = %v", closes)
+	}
+	related := rows("merge_requests/1/related_issues", carol)
+	if got := iids(related); len(got) != 3 || got[0] != float64(1) || got[1] != float64(2) || got[2] != "EXT-7" ||
+		related[2]["title"] != "External Issue EXT-7" {
+		t.Errorf("related_issues for carol = %v", related)
+	}
+	if got := iids(rows("issues/1/closed_by", alice)); len(got) != 1 || got[0] != float64(1) {
+		t.Errorf("closed_by = %v", got)
+	}
+	if got := iids(rows("issues/1/related_merge_requests", alice)); len(got) != 1 || got[0] != float64(1) {
+		t.Errorf("related_merge_requests = %v", got)
+	}
+	resp, _ := do(t, "GET", s.URL+"/api/v4/projects/2001/issues/7", carol, nil, "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("carol reads the confidential issue: %d", resp.StatusCode)
+	}
+	for _, r := range rows("issues?per_page=100", carol) {
+		if r["iid"] == float64(7) {
+			t.Error("carol lists the confidential issue")
+		}
+	}
+}

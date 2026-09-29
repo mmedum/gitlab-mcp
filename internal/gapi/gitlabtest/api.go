@@ -140,7 +140,7 @@ func (s *Server) serveProject(w http.ResponseWriter, r *http.Request, p *project
 
 func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, user, iid string, rest []string) {
 	iss := findIssue(p, iid)
-	if iss == nil {
+	if iss == nil || !readable(p, iss, user) {
 		message(w, http.StatusNotFound, "404 Issue Not Found")
 		return
 	}
@@ -148,6 +148,10 @@ func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, 
 	switch {
 	case get && len(rest) == 0:
 		writeJSON(w, http.StatusOK, iss)
+	case get && match(rest, "related_merge_requests"):
+		writePage(s, w, r, relatedMRs(p, iss))
+	case get && match(rest, "closed_by"):
+		writePage(s, w, r, closedBy(p, iss))
 	case get && match(rest, "discussions"):
 		s.listDiscussions(w, r, p.discussions["issue:"+iid])
 	case get && match(rest, "discussions", "*"):
@@ -176,6 +180,10 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 		writeJSON(w, http.StatusOK, mr)
 	case get && match(rest, "approvals"):
 		s.approvals(w, p, mr, user)
+	case get && match(rest, "closes_issues"):
+		writePage(s, w, r, s.linkedIssues(p, mr, user, true))
+	case get && match(rest, "related_issues"):
+		writePage(s, w, r, s.linkedIssues(p, mr, user, false))
 	case get && match(rest, "notes", "*"):
 		s.getNote(w, p, mrTarget(mr), rest[1])
 	case get && match(rest, "discussions"):
@@ -224,6 +232,10 @@ func (s *Server) serveRepository(w http.ResponseWriter, r *http.Request, p *proj
 		message(w, http.StatusNotFound, "404 Tag Not Found")
 	case match(seg, "tags"):
 		s.listTags(w, r, p)
+	case match(seg, "commits", "*", "merge_requests"):
+		if rows, ok := commitMRs(w, r, p, seg[1]); ok {
+			writePage(s, w, r, rows)
+		}
 	case match(seg, "commits", "*", "diff"):
 		c := findCommit(p, seg[1])
 		if c == nil {
@@ -579,9 +591,9 @@ func (s *Server) listIssues(w http.ResponseWriter, r *http.Request, user string,
 	var rows []*gitlab.Issue
 	for _, p := range projects {
 		for _, i := range p.issues {
-			if keep(q, itemFilter{state: i.State, title: i.Title, description: i.Description, author: i.Author.Username,
-				labels: i.Labels, assignees: usernames(i.Assignees), created: i.CreatedAt, updated: i.UpdatedAt},
-				user, defaultScope) {
+			if readable(p, i, user) && keep(q, itemFilter{state: i.State, title: i.Title, description: i.Description,
+				author: i.Author.Username, labels: i.Labels, assignees: usernames(i.Assignees), created: i.CreatedAt,
+				updated: i.UpdatedAt}, user, defaultScope) {
 				rows = append(rows, i)
 			}
 		}

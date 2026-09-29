@@ -623,6 +623,42 @@ type RelatedIssue struct {
 	LinkType    string `json:"link_type"`
 }
 
+// LinkedMergeRequest is one row of the merge request lists that link:
+// GET /projects/:id/issues/:iid/related_merge_requests and …/closed_by,
+// and GET /projects/:id/repository/commits/:sha/merge_requests.
+type LinkedMergeRequest struct {
+	IID        int64      `json:"iid"`
+	ProjectID  int64      `json:"project_id"`
+	Title      string     `json:"title"`
+	State      string     `json:"state"`
+	WebURL     string     `json:"web_url"`
+	References References `json:"references"`
+}
+
+// LinkedIssue is one row of GET /projects/:id/merge_requests/:iid/
+// closes_issues and …/related_issues. A row is an issue, or an issue in
+// an external tracker: {title, id} with a string id such as "PROJ-123".
+// The issue rows carry no references.
+type LinkedIssue struct {
+	// ID is a number for an issue and a string for an external one.
+	ID        json.RawMessage `json:"id"`
+	IID       int64           `json:"iid"`
+	ProjectID int64           `json:"project_id"`
+	Title     string          `json:"title"`
+	State     string          `json:"state"`
+	WebURL    string          `json:"web_url"`
+}
+
+// ExternalID is an external tracker's id for the issue, "" for a GitLab
+// issue.
+func (l LinkedIssue) ExternalID() string {
+	var id string
+	if json.Unmarshal(l.ID, &id) != nil {
+		return ""
+	}
+	return id
+}
+
 // ProtectedTag is one row of GET /projects/:id/protected_tags. Name may
 // be a wildcard.
 type ProtectedTag struct {

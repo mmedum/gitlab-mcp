@@ -236,6 +236,10 @@ func TestCommitMessageBudget(t *testing.T) {
 	message := strings.Repeat("A line of the message.\n", 500) // 11,500 characters
 	body, _ := json.Marshal(gitlab.Commit{ID: sha, ShortID: sha[:8], Message: message})
 	inject := func() {
+		// The merge requests' fault goes first: the commit's path is a
+		// prefix of it.
+		gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/merge_requests",
+			alphaID, sha), Status: http.StatusOK, Body: "[]"})
 		gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s", alphaID, sha),
 			Status: http.StatusOK, Body: string(body)})
 	}
@@ -274,9 +278,12 @@ func TestCommitCountsHiddenTextOnce(t *testing.T) {
 	sha := c[0].ID
 	commit, _ := json.Marshal(gitlab.Commit{ID: sha, ShortID: sha[:8], Message: "Fix\u202e it\n"})
 	diffs, _ := json.Marshal([]gitlab.Diff{{OldPath: "a", NewPath: "a", Diff: "+x\u200b\u2066\n"}})
-	// The diff fault goes first: the commit's path is a prefix of it.
+	// The diff and merge request faults go first: the commit's path is a
+	// prefix of both.
 	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/diff", alphaID, sha),
 		Status: http.StatusOK, Body: string(diffs)})
+	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s/merge_requests",
+		alphaID, sha), Status: http.StatusOK, Body: "[]"})
 	gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/commits/%s", alphaID, sha),
 		Status: http.StatusOK, Body: string(commit)})
 	out, err := s.GetCommit(t.Context(), "2001", sha, 0, 0, 0)
@@ -408,6 +415,24 @@ func TestWithDraftIsGitLabsRule(t *testing.T) {
 	} {
 		if got := withDraft(c.title, c.draft); got != c.want {
 			t.Errorf("withDraft(%q, %v) = %q, want %q", c.title, c.draft, got, c.want)
+		}
+	}
+}
+
+// An issue row in closes_issues and related_issues has no references;
+// the full one is spelled from its web URL, or left empty.
+func TestIssueReference(t *testing.T) {
+	cases := map[string]string{
+		"https://gitlab.example.com/example-group/sub/beta/-/issues/12":      "example-group/sub/beta#12",
+		"https://gitlab.example.com/example-group/alpha/-/work_items/12":     "example-group/alpha#12",
+		"https://gitlab.example.com/example-group/alpha/-/issues/13":         "",
+		"https://gitlab.example.com/groups/example-group/-/work_items/12":    "",
+		"https://gitlab.example.com/example-group/alpha/-/merge_requests/12": "",
+		"": "",
+	}
+	for raw, want := range cases {
+		if got := issueReference(raw, 12); got != want {
+			t.Errorf("issueReference(%q) = %q, want %q", raw, got, want)
 		}
 	}
 }

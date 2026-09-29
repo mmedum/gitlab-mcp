@@ -18,3 +18,7 @@ Diffs are budgeted at 40000 characters. Not shown:
 - modified big.bin (GitLab did not return a diff: too large)
 - modified b.go (over the budget)
 Continue with file_offset=2.
+
+Linked merge requests are as GitLab returned them: it leaves out any you cannot read.
+Merge requests in this project that contain it: 1 shown; GitLab has more, not shown.
+- example-group/alpha!3 (project id 2001, iid 3): opened, https://gitlab.example.com/example-group/alpha/-/merge_requests/3; title <<<0123456789abcdef>>>Add login<<</0123456789abcdef>>>

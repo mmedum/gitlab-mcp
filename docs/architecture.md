@@ -842,7 +842,15 @@ boundary, state, labels, assignees, milestone, dates, links, and a
 discussion summary (count, unresolved count, last activity). A merge
 request adds source and target branches, `diff_refs`, head `sha`,
 `detailed_merge_status`, draft state, the head pipeline's status and
-the approval state. `list_discussions` renders threads newest-first
+the approval state. `get_issue` also lists the merge requests related
+to the issue and those that close it when merged; `get_merge_request`
+the issues it closes and those it mentions, an external tracker's by
+its id. Each list is GitLab's first page of 20, read at once with the
+rest and best effort, as the approval state is, and says when GitLab
+has more. GitLab leaves out what the account cannot read, confidential
+issues included, and lists closing merge requests from the issue's own
+project only, so no list claims to be complete (§18 row 97).
+`list_discussions` renders threads newest-first
 under the budget, with position and resolved state for diff threads.
 `link_issues` and `unlink_issues` relate two issues, both projects held
 to the write allow-list since a link shows on both. `move_issue` (Ship)
@@ -905,7 +913,8 @@ the `releases` toolset, `create_tag` refuses a name a protected-tag rule
 covers and `delete_tag` a protected tag, and takes the tag's commit as
 its witness. `list_tree`
 pages with keyset. `list_branches`, `list_tags`, `list_commits`,
-`get_commit` (with a budgeted diff) and `compare_refs`.
+`get_commit` (with a budgeted diff and the first 20 merge requests in
+the project that contain it) and `compare_refs`.
 
 `create_branch` from a ref. `create_commit` takes a branch, an optional
 `start_branch`, a message and actions (`create`, `update`, `delete`,
@@ -1008,7 +1017,7 @@ Destructive kinds, as a signal and not a control.
 | `list_members` | Read | default | `GET /projects/:id/members/all` |
 | `find_users` | Read | default | `GET /users?search=` |
 | `search_issues` | Read | default | `GET /issues`, `/projects/:id/issues`, `/groups/:id/issues` |
-| `get_issue` | Read | default | `GET /projects/:id/issues/:iid` |
+| `get_issue` | Read | default | `GET /projects/:id/issues/:iid`, `/related_merge_requests`, `/closed_by` |
 | `create_issue` | Write | default | `POST /projects/:id/issues` |
 | `update_issue` | Write | default | `PUT /projects/:id/issues/:iid` |
 | `list_discussions` | Read | default | `GET …/issues|merge_requests/:iid/discussions` |
@@ -1018,7 +1027,7 @@ Destructive kinds, as a signal and not a control.
 | `link_issues` | Write | default | `GET`/`POST …/issues/:iid/links` |
 | `unlink_issues` | Write | default | `DELETE …/issues/:iid/links/:id` |
 | `search_merge_requests` | Read | default | `GET /merge_requests`, `/projects/:id/merge_requests` |
-| `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals` |
+| `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals`, `/closes_issues`, `/related_issues` |
 | `list_mr_files` | Read | default | `GET …/merge_requests/:iid/diffs` |
 | `get_mr_diff` | Read | default | `GET …/merge_requests/:iid/diffs` |
 | `list_mr_commits` | Read | default | `GET …/merge_requests/:iid/commits` |
@@ -1032,7 +1041,7 @@ Destructive kinds, as a signal and not a control.
 | `list_tree` | Read | default | `GET …/repository/tree` |
 | `list_branches` | Read | default | `GET …/repository/branches` |
 | `list_commits` | Read | default | `GET …/repository/commits` |
-| `get_commit` | Read | default | `GET …/repository/commits/:sha`, `/diff` |
+| `get_commit` | Read | default | `GET …/repository/commits/:sha`, `/diff`, `/merge_requests` |
 | `compare_refs` | Read | default | `GET …/repository/compare` |
 | `list_tags` | Read | default | `GET …/repository/tags` |
 | `create_branch` | Write | default | `POST …/repository/branches` |
@@ -2256,3 +2265,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 94 | A server can ask the person to confirm a write through MCP form elicitation, on every protocol this server serves | The `ElicitRequestFormParams` type in the specification's `schema.ts` for 2025-06-18, 2025-11-25 and 2026-07-28, the 2026-07-28 multi-round-trip pattern, and the MCP Go SDK v1.8.0's `mcp/server.go` and `mcp/shared.go`, read 2026-09-28; this repository's tests on all three protocols | **Confirmed (tier 1).** A tool result may carry `inputRequests` and a signed `requestState`; before 2026-07-28 the SDK sends `elicitation/create` itself and calls the handler again in the same request. `requestedSchema` is an open map with no minimum, so `properties: {}` is valid. The answer comes from the client, and the 2026-07-28 revision lets it answer "from the user or other sources", so an accept is never proof a person read anything (§4.12) |
 | 95 | A client draws an elicitation question as plain text | VS Code `src/vs/workbench/contrib/mcp/browser/mcpElicitationService.ts` L100 and L173, and `src/vs/base/common/htmlContent.ts` L52-62, `main` at 251bcf5f, read 2026-09-29 | **Refuted.** VS Code builds a form question as `new MarkdownString(elicitation.message)`, untrusted: command links are off, but emphasis, link text, code spans and HTML-like text draw, and single line breaks join into one paragraph. Each quoted value is a code span, which CommonMark draws literally, with backticks and their lookalikes folded, and a blank line separates the lines. Backslash escaping was rejected: where a client draws plain text, the backslashes show inside names and branches, the data the person checks |
 | 96 | A required choice naming the outcome confirms better than an empty form | Codex `codex-rs/codex-mcp/src/elicitation.rs` L415-458 and L552-571, `main` at c248f6d4, and VS Code `mcpElicitationService.ts` L111-119 and L237-297, read 2026-09-29; the maintainer's check in Claude Code 2.1.284, protocol 2025-11-25, 2026-09-29, against a throwaway probe with three forms of one delete question | **Declined, for now.** For: Codex accepts a form with no properties by itself under approval policy `never` with full access, and a VS Code chat question the person skips resolves as `accept` with no content; a required choice survives both. Against: in Claude Code the choice list took the maintainer 60 seconds, against 8 for the empty form, and they found it confusing. The empty form stays, and both client behaviors are recorded as limits (§4.12) |
+| 97 | GitLab's link lists are complete and shaped as the OpenAPI file publishes them | `lib/api/issues.rb` L551-594, `lib/api/merge_requests.rb` L978-1030, `lib/api/commits.rb` L713-749, `app/services/issues/referenced_merge_requests_service.rb`, `app/models/merge_request.rb` `visible_closing_issues_for` and `related_issues`, and `lib/api/entities/issue_basic.rb`, `issuable_entity.rb` and `external_issue.rb` at v19.4.1-ee | **Refuted (tier 1).** Every list drops what the user cannot read without saying so; `closed_by` and a commit's merge requests are the project's own only; `closes_issues` also drops issues in projects that do not close issues automatically. `closes_issues` and `related_issues` mix IssueBasic rows, which carry no `references`, with an external tracker's `{title, id}`, whose `id` is a string. The file publishes `closes_issues` as MRNote, `related_issues` with no schema, and `related_merge_requests` as MergeRequestBasic though it answers the full entity. The three tools decode a few fields, keep `id` raw, spell an issue's reference from its `web_url`, and say in each field and once in the text that the list is GitLab's, not all there is |

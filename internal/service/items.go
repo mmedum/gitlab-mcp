@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,27 +30,42 @@ func (s *Service) description(text string, offset int) (string, model.Budget, er
 	return cut(clean, removed, offset, render.DescriptionBudget, "the description", "offset")
 }
 
-// GetIssue reads an issue with a summary of its threads (§7.2). The two
-// reads are independent and run at once.
+// GetIssue reads an issue with a summary of its threads and the merge
+// requests linked to it (§7.2). The reads are independent and run at
+// once. The link reads are best effort, as the summary is.
 func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset int) (model.Issue, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
 		return model.Issue{}, err
 	}
 	var (
-		wg         sync.WaitGroup
-		is         *gitlab.Issue
-		summary    model.DiscussionSummary
-		summaryErr error
+		wg                     sync.WaitGroup
+		is                     *gitlab.Issue
+		summary                model.DiscussionSummary
+		summaryErr             error
+		related, closing       *model.LinkedItems
+		relatedErr, closingErr error
 	)
 	wg.Go(func() { is, err = s.client.GetIssue(ctx, p, iid) })
 	wg.Go(func() { summary, summaryErr = s.summary(ctx, p, iid, false) })
+	wg.Go(func() {
+		related, relatedErr = linked(func(opts gapi.ListOptions) ([]gitlab.LinkedMergeRequest, gapi.Page, error) {
+			return s.client.ListIssueRelatedMergeRequests(ctx, p, iid, opts)
+		}, linkedMergeRequest)
+	})
+	wg.Go(func() {
+		closing, closingErr = linked(func(opts gapi.ListOptions) ([]gitlab.LinkedMergeRequest, gapi.Page, error) {
+			return s.client.ListIssueClosedBy(ctx, p, iid, opts)
+		}, linkedMergeRequest)
+	})
 	wg.Wait()
 	if err != nil {
 		return model.Issue{}, err
 	}
-	if summaryErr != nil {
-		return model.Issue{}, summaryErr
+	for _, err := range []error{summaryErr, relatedErr, closingErr} {
+		if err != nil {
+			return model.Issue{}, err
+		}
 	}
 	desc, budget, err := s.description(is.Description, offset)
 	if err != nil {
@@ -60,6 +77,7 @@ func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset in
 		Confidential: is.Confidential, Author: user(is.Author), Assignees: users(is.Assignees), Labels: nonNil(is.Labels),
 		Milestone: milestone(is.Milestone), CreatedAt: is.CreatedAt, UpdatedAt: is.UpdatedAt, ClosedAt: is.ClosedAt,
 		UntrustedTitle: title, UntrustedDescription: desc, DescriptionBudget: budget, Discussions: summary,
+		RelatedMergeRequests: related, ClosingMergeRequests: closing,
 	}
 	if is.ClosedBy != nil {
 		u := user(*is.ClosedBy)
@@ -75,26 +93,39 @@ func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset in
 	return out, nil
 }
 
-// GetMergeRequest reads a merge request with its approval state and a
-// summary of its threads (§7.2). The three reads are independent and run
-// at once. The approval read is best effort: an instance that refuses it
-// still has a merge request to show.
+// GetMergeRequest reads a merge request with its approval state, a
+// summary of its threads and the issues linked to it (§7.2). The reads
+// are independent and run at once. The approval and link reads are best
+// effort: an instance that refuses them still has a merge request to
+// show.
 func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, offset int) (model.MergeRequest, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
 		return model.MergeRequest{}, err
 	}
 	var (
-		wg           sync.WaitGroup
-		mr           *gitlab.MergeRequest
-		approvals    *gitlab.Approvals
-		approvalsErr error
-		summary      model.DiscussionSummary
-		summaryErr   error
+		wg                    sync.WaitGroup
+		mr                    *gitlab.MergeRequest
+		approvals             *gitlab.Approvals
+		approvalsErr          error
+		summary               model.DiscussionSummary
+		summaryErr            error
+		closes, related       *model.LinkedItems
+		closesErr, relatedErr error
 	)
 	wg.Go(func() { mr, err = s.client.GetMergeRequest(ctx, p, iid) })
 	wg.Go(func() { approvals, approvalsErr = s.client.GetMergeRequestApprovals(ctx, p, iid) })
 	wg.Go(func() { summary, summaryErr = s.summary(ctx, p, iid, true) })
+	wg.Go(func() {
+		closes, closesErr = linked(func(opts gapi.ListOptions) ([]gitlab.LinkedIssue, gapi.Page, error) {
+			return s.client.ListMergeRequestClosesIssues(ctx, p, iid, opts)
+		}, linkedIssue)
+	})
+	wg.Go(func() {
+		related, relatedErr = linked(func(opts gapi.ListOptions) ([]gitlab.LinkedIssue, gapi.Page, error) {
+			return s.client.ListMergeRequestRelatedIssues(ctx, p, iid, opts)
+		}, linkedIssue)
+	})
 	wg.Wait()
 	if err != nil {
 		return model.MergeRequest{}, err
@@ -102,8 +133,10 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 	if approvalsErr != nil && !soft(approvalsErr) {
 		return model.MergeRequest{}, approvalsErr
 	}
-	if summaryErr != nil {
-		return model.MergeRequest{}, summaryErr
+	for _, err := range []error{summaryErr, closesErr, relatedErr} {
+		if err != nil {
+			return model.MergeRequest{}, err
+		}
 	}
 	desc, budget, err := s.description(mr.Description, offset)
 	if err != nil {
@@ -117,7 +150,7 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 		SourceProjectID: mr.SourceProjectID, SHA: mr.SHA, DetailedMergeStatus: mr.DetailedMergeStatus,
 		HasConflicts: mr.HasConflicts, ChangesCount: mr.ChangesCount, CreatedAt: mr.CreatedAt, UpdatedAt: mr.UpdatedAt,
 		MergedAt: mr.MergedAt, ClosedAt: mr.ClosedAt, UntrustedTitle: title, UntrustedDescription: desc,
-		DescriptionBudget: budget, Discussions: summary,
+		DescriptionBudget: budget, Discussions: summary, ClosesIssues: closes, RelatedIssues: related,
 	}
 	if mr.MergeUser != nil {
 		u := user(*mr.MergeUser)
@@ -137,6 +170,66 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 		}
 	}
 	return out, nil
+}
+
+// linkedPage is how many linked items a read shows: one page, GitLab's
+// default size.
+const linkedPage = gapi.DefaultPerPage
+
+// linked reads the first page of a list of linked items. It is best
+// effort: a soft failure leaves the list null rather than failing the
+// read it is part of.
+func linked[T any](read func(gapi.ListOptions) ([]T, gapi.Page, error), item func(T) model.LinkedItem) (*model.LinkedItems, error) {
+	rows, page, err := read(gapi.ListOptions{PerPage: linkedPage})
+	if err != nil {
+		if soft(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := &model.LinkedItems{Items: make([]model.LinkedItem, 0, len(rows)), More: !page.Complete()}
+	if page.TotalKnown() {
+		total := page.Total
+		out.Total = &total
+	}
+	for _, r := range rows {
+		out.Items = append(out.Items, item(r))
+	}
+	return out, nil
+}
+
+func linkedMergeRequest(mr gitlab.LinkedMergeRequest) model.LinkedItem {
+	title, _ := render.Line(mr.Title, render.TitleChars)
+	return model.LinkedItem{Reference: mr.References.Full, IID: mr.IID, ProjectID: mr.ProjectID, State: mr.State,
+		WebURL: mr.WebURL, UntrustedTitle: title}
+}
+
+// linkedIssue is an issue, or an external tracker's issue, which has
+// only its id and a title.
+func linkedIssue(is gitlab.LinkedIssue) model.LinkedItem {
+	title, _ := render.Line(is.Title, render.TitleChars)
+	if id := is.ExternalID(); id != "" {
+		return model.LinkedItem{ExternalID: &id, UntrustedTitle: title}
+	}
+	return model.LinkedItem{Reference: issueReference(is.WebURL, is.IID), IID: is.IID, ProjectID: is.ProjectID,
+		State: is.State, WebURL: is.WebURL, UntrustedTitle: title}
+}
+
+// issueReference spells an issue's full reference, group/project#12,
+// from its web URL: GitLab's issue rows in these lists carry no
+// references. It is "" for a URL not shaped …/group/project/-/issues/12
+// or …/-/work_items/12.
+func issueReference(webURL string, iid int64) string {
+	u, err := url.Parse(webURL)
+	if err != nil {
+		return ""
+	}
+	project, rest, ok := strings.Cut(strings.Trim(u.Path, "/"), "/-/")
+	n := strconv.FormatInt(iid, 10)
+	if !ok || project == "" || strings.HasPrefix(project, "groups/") || (rest != "issues/"+n && rest != "work_items/"+n) {
+		return ""
+	}
+	return project + "#" + n
 }
 
 // discussions reads every thread of an issue or merge request, up to

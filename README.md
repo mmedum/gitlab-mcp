@@ -43,7 +43,7 @@ contract: tools keep their names and output fields.
 | `list_members` | Who has access to a project, and with which role |
 | `find_users` | Accounts by exact username or by name |
 | `search_issues` | Find issues across gitlab.com, a group or a project |
-| `get_issue` | One issue, its description marked as untrusted content |
+| `get_issue` | One issue, its description marked as untrusted content, and its linked merge requests |
 | `create_issue` | Create an issue; labels, assignees and milestone checked first |
 | `update_issue` | Change an issue's fields, refused if it changed since you read it |
 | `list_discussions` | The comment threads on an issue or a merge request |
@@ -53,7 +53,7 @@ contract: tools keep their names and output fields.
 | `link_issues` | Link two issues, in one project or two |
 | `unlink_issues` | Remove the link between two issues |
 | `search_merge_requests` | Find merge requests across gitlab.com or a project |
-| `get_merge_request` | One merge request with its approvals |
+| `get_merge_request` | One merge request with its approvals and linked issues |
 | `list_mr_files` | The files a merge request changes, with line counts and GitLab's markers |
 | `get_mr_diff` | A merge request's diffs, file by file, bounded |
 | `list_mr_commits` | A merge request's commits |
@@ -67,7 +67,7 @@ contract: tools keep their names and output fields.
 | `list_tree` | A directory listing at a ref |
 | `list_branches` | A project's branches |
 | `list_commits` | Commits on a ref or a path |
-| `get_commit` | One commit and its diff, bounded |
+| `get_commit` | One commit and its diff, bounded, and the merge requests that contain it |
 | `compare_refs` | The commits and diffs between two refs, bounded |
 | `list_tags` | A project's tags |
 | `create_branch` | Create a branch from a ref |
