@@ -18,6 +18,7 @@ import (
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
+	"github.com/mmedum/gitlab-mcp/internal/auth"
 	"github.com/mmedum/gitlab-mcp/internal/config"
 	"github.com/mmedum/gitlab-mcp/internal/credentials"
 	"github.com/mmedum/gitlab-mcp/internal/gapi"
@@ -75,7 +76,7 @@ func load(t *testing.T, e env) config.Config {
 }
 
 // signIn stores a profile and a token pair for it as login would.
-func signIn(t *testing.T, cfg config.Config, k memKeyring, instanceURL, access string, granted ...string) {
+func signIn(t *testing.T, cfg config.Config, k memKeyring, instanceURL, access string, granted ...string) *credentials.Store {
 	t.Helper()
 	uc := userconfig.Config{Instance: instanceURL, ClientID: gitlabtest.ClientID, Username: "alice",
 		TokenStore: string(credentials.SourceKeyring), Scopes: granted}
@@ -87,6 +88,7 @@ func signIn(t *testing.T, cfg config.Config, k memKeyring, instanceURL, access s
 		Expiry: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
+	return st
 }
 
 // TestATokenStaysWithTheInstanceThatIssuedIt holds the one credential
@@ -249,6 +251,104 @@ func TestProbeReadsTheScopes(t *testing.T) {
 	// Read live, not from the stored login.
 	if strings.Join(st.Granted, " ") != "api" {
 		t.Errorf("granted %v, want [api]", st.Granted)
+	}
+}
+
+// TestProbeNeverRefreshes holds #7: a host kills servers before the
+// handshake, and one killed mid-refresh leaves the profile signed out.
+// With the access token expired, the probe asks GitLab for nothing and
+// keeps the scopes of the last login.
+func TestProbeNeverRefreshes(t *testing.T) {
+	srv := gitlabtest.New(t, gitlabtest.Options{})
+	e, k := setup(t, srv.URL)
+	cfg := load(t, e)
+	st := signIn(t, cfg, k, srv.URL, srv.TokenFor("bob", "api"), "read_api")
+	if _, err := st.Save(&oauth2.Token{AccessToken: "test-access-expired", RefreshToken: "test-refresh-unused",
+		Expiry: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Resolve(cfg, Options{Env: e.get, Keyring: k})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s.Probe(context.Background(), slog.New(slog.DiscardHandler), "test")
+	if reqs := srv.Requests(); len(reqs) != 0 {
+		t.Errorf("the probe sent %d requests, the first to %s", len(reqs), reqs[0].EscapedPath)
+	}
+	if strings.Join(got.Granted, " ") != "read_api" {
+		t.Errorf("granted %v, want the last login's [read_api]", got.Granted)
+	}
+	if tok, _, err := st.Resolve(); err != nil || tok.AccessToken != "test-access-expired" {
+		t.Errorf("stored pair changed: %v, %v", tok, err)
+	}
+}
+
+// With no scopes recorded by a login, only a live read can keep a
+// read_api token from the write tools, so that one start refreshes.
+func TestProbeRefreshesWhenNoLoginRecordedTheScopes(t *testing.T) {
+	srv := gitlabtest.New(t, gitlabtest.Options{})
+	e, k := setup(t, srv.URL)
+	cfg := load(t, e)
+	st := signIn(t, cfg, k, srv.URL, srv.TokenFor("bob", "api"))
+	if _, err := st.Save(&oauth2.Token{AccessToken: "test-access-expired", RefreshToken: "test-refresh-unused",
+		Expiry: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Resolve(cfg, Options{Env: e.get, Keyring: k})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Probe(context.Background(), slog.New(slog.DiscardHandler), "test")
+	sent := false
+	for _, r := range srv.Requests() {
+		sent = sent || r.EscapedPath == "/oauth/token"
+	}
+	if !sent {
+		t.Error("the probe did not try to refresh")
+	}
+}
+
+// The scopes a login recorded do not describe a token from the
+// environment, so they are not used to register tools for it.
+func TestProbeIgnoresTheLoginsScopesForAnEnvironmentToken(t *testing.T) {
+	srv := gitlabtest.New(t, gitlabtest.Options{})
+	e, k := setup(t, srv.URL)
+	cfg := load(t, e)
+	signIn(t, cfg, k, srv.URL, srv.TokenFor("bob", "api"), "api")
+	e[credentials.EnvVar] = "test-refresh-from-env"
+	s, err := Resolve(cfg, Options{Env: e.get, Keyring: k})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s.Probe(context.Background(), slog.New(slog.DiscardHandler), "test")
+	if len(got.Granted) != 0 {
+		t.Errorf("granted %v, want none: the login's scopes are not the environment token's", got.Granted)
+	}
+	sent := false
+	for _, r := range srv.Requests() {
+		sent = sent || r.EscapedPath == "/oauth/token"
+	}
+	if !sent {
+		t.Error("the probe did not try to read the environment token's scopes")
+	}
+}
+
+// A token GitLab refuses at startup is dropped from the source, so the
+// first call refreshes rather than sending it again.
+func TestProbePassesARefusalToTheSource(t *testing.T) {
+	srv := gitlabtest.New(t, gitlabtest.Options{})
+	e, k := setup(t, srv.URL)
+	cfg := load(t, e)
+	access := srv.TokenFor("bob", "api")
+	signIn(t, cfg, k, srv.URL, access, "api")
+	srv.Revoke(access)
+	s, err := Resolve(cfg, Options{Env: e.get, Keyring: k})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Probe(context.Background(), slog.New(slog.DiscardHandler), "test")
+	if tok, err := s.tokens.(*auth.TokenSource).Cached(); err != nil || tok != "" {
+		t.Errorf("after a refusal the source holds %q, %v; want none", tok, err)
 	}
 }
 

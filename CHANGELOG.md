@@ -15,6 +15,12 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Fixed
+
+- A server no longer refreshes the sign-in before it serves when a login recorded its scopes, so a host that kills it during startup no longer signs the profile out.
+- A server that is stopped waits for a sign-in refresh in progress to be stored before it exits.
+- A refresh no longer spends the refresh token when the stored sign-in cannot be read again under the lock.
+
 ## [1.1.0] - 2026-09-27
 
 ### Added
