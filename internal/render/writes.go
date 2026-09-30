@@ -224,6 +224,7 @@ func TimeWrite(w model.TimeWrite, _ Boundary) string {
 		b.WriteString("\nGitLab reported the estimate and the time spent as they were.")
 	}
 	witnessLine(&b, w.UpdatedAt, "track_time or an update")
+	fmt.Fprintf(&b, "\ntotal_time_spent is %d; pass it to the next track_time that adds or resets spent time.", w.TotalTimeSpent)
 	return b.String()
 }
 

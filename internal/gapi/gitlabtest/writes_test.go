@@ -922,7 +922,7 @@ func TestTimeTracking(t *testing.T) {
 	issue := "/projects/2001/issues/3/"
 	resp, body := send(t, s, "GET", issue+"time_stats", tok, nil)
 	wantStatus(t, "time_stats", resp, body, 200)
-	if body["time_estimate"] != float64(12600) || body["human_time_estimate"] != "3h 30m" || body["human_total_time_spent"] != "1d 2h" {
+	if body["time_estimate"] != float64(12600) || body["human_time_estimate"] != "3h 30m" || body["human_total_time_spent"] != "10h" {
 		t.Errorf("seeded stats = %v", body)
 	}
 	updated := func() time.Time {
@@ -934,7 +934,7 @@ func TestTimeTracking(t *testing.T) {
 	before := updated()
 	resp, body = send(t, s, "POST", issue+"time_estimate", tok, obj{"duration": "1w 2d 3h"})
 	wantStatus(t, "time_estimate", resp, body, 200)
-	if body["time_estimate"] != float64(144000+57600+10800) || body["human_time_estimate"] != "1w 2d 3h" || !updated().After(before) {
+	if body["time_estimate"] != float64(144000+57600+10800) || body["human_time_estimate"] != "59h" || !updated().After(before) {
 		t.Errorf("time_estimate = %v", body)
 	}
 	// The same estimate again moves nothing.
@@ -958,7 +958,8 @@ func TestTimeTracking(t *testing.T) {
 	before = updated()
 	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "1h 30m"})
 	wantStatus(t, "add_spent_time", resp, body, 201)
-	if body["total_time_spent"] != float64(36000+5400) || !updated().After(before) {
+	// Added time leaves updated_at where it was, as gitlab.com does.
+	if body["total_time_spent"] != float64(36000+5400) || !updated().Equal(before) {
 		t.Errorf("add_spent_time = %v", body)
 	}
 	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "-2d"})
@@ -994,7 +995,7 @@ func TestTimeTracking(t *testing.T) {
 	wantError(t, "dave", resp, body, 403, "message", "403 Forbidden")
 	resp, body = send(t, s, "POST", "/projects/2001/merge_requests/1/add_spent_time", tok, obj{"duration": "1mo"})
 	wantStatus(t, "merge request", resp, body, 201)
-	if body["human_total_time_spent"] != "1mo" {
+	if body["human_total_time_spent"] != "160h" {
 		t.Errorf("merge request = %v", body)
 	}
 }
@@ -1023,8 +1024,9 @@ func TestTimeTrackingDurations(t *testing.T) {
 			t.Errorf("parse %q = %d %v, want %d %v", c.in, got, ok, c.want, c.ok)
 		}
 	}
-	for secs, want := range map[int64]string{60: "1m", 5400: "1h 30m", 28800: "1d", 144000 + 28800: "1w 1d", 576000: "1mo",
-		576000*2 + 3600 + 1: "2mo 1h 1s", -1800: "-30m"} {
+	// gitlab.com writes hours at most, below a year.
+	for secs, want := range map[int64]string{60: "1m", 5400: "1h 30m", 28800: "8h", 144000 + 28800: "48h", 576000: "160h",
+		576000*2 + 3600 + 1: "321h 1s", -1800: "-30m", 31557600 + 28800: "1y 1d"} {
 		if got := humanDuration(secs); got == nil || *got != want {
 			t.Errorf("human %d = %v, want %s", secs, got, want)
 		}

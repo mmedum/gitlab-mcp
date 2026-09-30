@@ -195,7 +195,7 @@ type Issue struct {
 
 // TimeStats is an issue's or a merge request's time tracking, and the
 // answer of each time tracking write (Entities::IssuableTimeStats). The
-// counts are seconds. The human forms are GitLab's short ones, "1w 2d",
+// counts are seconds. The human forms are GitLab's short ones, "10h 30m",
 // and null at zero.
 type TimeStats struct {
 	TimeEstimate        int64   `json:"time_estimate"`

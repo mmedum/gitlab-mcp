@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -98,6 +99,10 @@ type TimeTracking struct {
 	ResetEstimate bool
 	AddSpent      string
 	ResetSpent    bool
+	// TotalTimeSpent is the spent-time witness, the total in seconds the
+	// caller read. GitLab does not move updated_at when time is added
+	// (§18 row 101), so only the total catches a repeat.
+	TotalTimeSpent *int64
 }
 
 // timeStep is one time tracking request.
@@ -141,6 +146,11 @@ func (in TimeTracking) steps() ([]timeStep, error) {
 	}
 	if in.AddSpent != "" && in.ResetSpent {
 		return nil, gapi.Errf(gapi.ClassInvalid, "pass add_spent or reset_spent, not both; to start over, reset first and add in a second call")
+	}
+	if (in.AddSpent != "" || in.ResetSpent) && in.TotalTimeSpent == nil {
+		return nil, gapi.Errf(gapi.ClassInvalid, "add_spent and reset_spent need total_time_spent, the seconds spent as your latest read "+
+			"gave them in time_stats: GitLab does not move updated_at when time is added, so the total is what catches a change made "+
+			"since, or this call made twice")
 	}
 	var steps []timeStep
 	switch {
@@ -259,6 +269,20 @@ func (s *Service) readTimed(ctx context.Context, p gapi.Project, mr bool, iid in
 	return timed{stats: is.TimeStats, updatedAt: is.UpdatedAt, webURL: is.WebURL}, nil
 }
 
+// checkSpentWitness refuses spent time sent against a total that moved
+// since the caller read it (§4.6). updated_at cannot: GitLab leaves it
+// where it was when time is added.
+func checkSpentWitness(witness *int64, steps []timeStep, current gitlab.TimeStats, what string) error {
+	spends := slices.ContainsFunc(steps, func(st timeStep) bool { return st.op == "add_spent_time" || st.op == "reset_spent_time" })
+	if !spends || witness == nil || *witness == current.TotalTimeSpent {
+		return nil
+	}
+	return gapi.Errf(gapi.ClassStale, "the time spent on the %s changed since it was read: total_time_spent is now %d (%s), not %d. "+
+		"GitLab does not move updated_at when time is added, so this may be this same call landing before. Read it again, "+
+		"check the time still needs adding, and pass the new total_time_spent", what, current.TotalTimeSpent,
+		human(current.HumanTotalTimeSpent), *witness)
+}
+
 // timeWrites are the client's time tracking writes for one kind of item.
 type timeWrites struct {
 	setEstimate, addSpent     func(context.Context, gapi.Project, int64, string) (*gitlab.TimeStats, error)
@@ -319,11 +343,15 @@ func (s *Service) TrackTime(ctx context.Context, in TimeTracking) (model.TimeWri
 	}
 	steps, notes, refusal := needed(steps, before.stats)
 	out := model.TimeWrite{Outcome: "unchanged", Write: model.Write{Target: t.ref, Notes: notes}, Type: in.Type, IID: in.IID,
-		WebURL: before.webURL, Before: timeStats(before.stats), Sent: []string{}, Changed: []string{}, UpdatedAt: &before.updatedAt}
+		WebURL: before.webURL, Before: timeStats(before.stats), Sent: []string{}, Changed: []string{}, UpdatedAt: &before.updatedAt,
+		TotalTimeSpent: before.stats.TotalTimeSpent}
 	// Values that already hold change nothing, so a call repeated after
 	// it landed reads as unchanged rather than stale, as an edit does.
 	if refusal != nil || len(steps) > 0 {
 		if err := checkWitness(witness, before.updatedAt, item.what); err != nil {
+			return model.TimeWrite{}, err
+		}
+		if err := checkSpentWitness(in.TotalTimeSpent, steps, before.stats, item.what); err != nil {
 			return model.TimeWrite{}, err
 		}
 	}
@@ -359,7 +387,7 @@ func (s *Service) TrackTime(ctx context.Context, in TimeTracking) (model.TimeWri
 		afterStats, out.UpdatedAt = after.stats, &after.updatedAt
 	}
 	stats := timeStats(afterStats)
-	out.After = &stats
+	out.After, out.TotalTimeSpent = &stats, afterStats.TotalTimeSpent
 	out.Changed = names(field{"time_estimate", afterStats.TimeEstimate != before.stats.TimeEstimate},
 		field{"total_time_spent", afterStats.TotalTimeSpent != before.stats.TotalTimeSpent})
 	if len(out.Changed) > 0 {
@@ -433,12 +461,13 @@ func (s *Service) timeFailed(ctx context.Context, item timeItem, sent []string, 
 		case readErr != nil && lost:
 			b.WriteString(" Reading to find out failed too, so it is unknown: " + settledUnknown + ".")
 		case readErr != nil:
-			fmt.Fprintf(&b, " Read the %s again for its new updated_at before calling again.", item.what)
+			fmt.Fprintf(&b, " Read the %s again for its new updated_at and total_time_spent before calling again.", item.what)
 		default:
 			if lost || maybe {
 				b.WriteString(" " + settleTime(st, before, now.stats) + ".")
 			}
-			fmt.Fprintf(&b, " updated_at is now %s; pass it to the next call.", now.updatedAt.UTC().Format(time.RFC3339Nano))
+			fmt.Fprintf(&b, " updated_at is now %s and total_time_spent %d; pass them to the next call.",
+				now.updatedAt.UTC().Format(time.RFC3339Nano), now.stats.TotalTimeSpent)
 		}
 	}
 	return gapi.Wrap(e.Class, err, "%s", b.String())

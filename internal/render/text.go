@@ -372,8 +372,8 @@ func Issue(is model.Issue, bd Boundary) string {
 	return b.String()
 }
 
-// timeLine is an item's time tracking. GitLab's human form counts 8
-// hours a day and 5 days a week.
+// timeLine is an item's time tracking in GitLab's human form, which
+// gitlab.com writes in hours and minutes.
 func timeLine(t model.TimeStats) string {
 	return fmt.Sprintf("estimate %s, spent %s", orNone(Ident(t.HumanTimeEstimate)), orNone(Ident(t.HumanTotalTimeSpent)))
 }

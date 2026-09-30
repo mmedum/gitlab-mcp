@@ -15,10 +15,9 @@ import (
 // time_tracking_endpoints.rb serves it at v19.4.1-ee: each write needs
 // admin_issue (Planner and up) or admin_merge_request (Developer and up)
 // and answers 403 without it; setting and resetting answer 200, adding
-// spent time 201. Changing the estimate touches the item when the value
-// moves; every spent-time write adds a timelog, whose belongs_to touches
-// the item, so updated_at moves (app/models/timelog.rb). GitLab's system
-// notes for these changes are not modeled.
+// spent time 201. A changed estimate and a reset move updated_at; added
+// spent time does not, as the live run saw on gitlab.com (§18 row 101).
+// GitLab's system notes for these changes are not modeled.
 
 const (
 	plannerAccess   = 15
@@ -69,7 +68,7 @@ func (s *Server) serveTime(w http.ResponseWriter, r *http.Request, p *project, t
 		humanize(ts)
 		writeJSON(w, http.StatusOK, ts)
 	case "add_spent_time":
-		s.addSpent(w, b, ts, updated)
+		s.addSpent(w, b, ts)
 	default:
 		ts.TotalTimeSpent = 0
 		bump(updated, s.opts.Now().UTC())
@@ -98,7 +97,7 @@ func (s *Server) setEstimate(w http.ResponseWriter, b body, ts *gitlab.TimeStats
 	writeJSON(w, http.StatusOK, ts)
 }
 
-func (s *Server) addSpent(w http.ResponseWriter, b body, ts *gitlab.TimeStats, updated *time.Time) {
+func (s *Server) addSpent(w http.ResponseWriter, b body, ts *gitlab.TimeStats) {
 	if !b.require(w, "duration") {
 		return
 	}
@@ -118,7 +117,6 @@ func (s *Server) addSpent(w http.ResponseWriter, b body, ts *gitlab.TimeStats, u
 		return
 	}
 	ts.TotalTimeSpent += n
-	bump(updated, s.opts.Now().UTC())
 	humanize(ts)
 	writeJSON(w, http.StatusCreated, ts)
 }
@@ -216,7 +214,8 @@ func parseTimeTracking(raw string, keepZero bool) (int64, bool) {
 }
 
 // humanize sets the human forms, ChronicDuration.output in :short with
-// weeks, as gitlab.com formats them: null at zero.
+// weeks and limit_to_hours, as gitlab.com formats them (a 1d 2h estimate
+// reads back 10h, seen live): null at zero.
 func humanize(ts *gitlab.TimeStats) {
 	ts.HumanTimeEstimate = humanDuration(ts.TimeEstimate)
 	ts.HumanTotalTimeSpent = humanDuration(ts.TotalTimeSpent)
@@ -231,7 +230,7 @@ func humanDuration(seconds int64) *string {
 		neg := "-" + *h
 		return &neg
 	}
-	var years, months, weeks, days, hours, minutes int64
+	var years, months, days, hours, minutes int64
 	switch {
 	case seconds >= ttYear && seconds%ttYear < seconds%ttMonth:
 		years, seconds = seconds/ttYear, seconds%ttYear
@@ -242,15 +241,12 @@ func humanDuration(seconds int64) *string {
 	case seconds >= 60:
 		minutes, seconds = seconds/60, seconds%60
 		hours, minutes = minutes/60, minutes%60
-		days, hours = hours/8, hours%8
-		weeks, days = days/5, days%5
-		months, weeks = weeks/4, weeks%4
 	}
 	var parts []string
 	for _, u := range []struct {
 		n    int64
 		unit string
-	}{{years, "y"}, {months, "mo"}, {weeks, "w"}, {days, "d"}, {hours, "h"}, {minutes, "m"}, {seconds, "s"}} {
+	}{{years, "y"}, {months, "mo"}, {days, "d"}, {hours, "h"}, {minutes, "m"}, {seconds, "s"}} {
 		if u.n != 0 {
 			parts = append(parts, strconv.FormatInt(u.n, 10)+u.unit)
 		}

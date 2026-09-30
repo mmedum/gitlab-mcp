@@ -4,3 +4,4 @@ Sent: time_estimate 2h, then add_spent_time 30m.
 Before: estimate 1h, spent (none).
 After, as read back: estimate 2h, spent 30m.
 updated_at is 2026-01-06T11:00:00Z; pass it to track_time or an update for the next change.
+total_time_spent is 1800; pass it to the next track_time that adds or resets spent time.

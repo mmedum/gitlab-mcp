@@ -269,7 +269,7 @@ type Issue struct {
 type TimeStats struct {
 	TimeEstimate        int64  `json:"time_estimate" jsonschema:"The estimate in seconds; 0 when none"`
 	TotalTimeSpent      int64  `json:"total_time_spent" jsonschema:"The time spent in seconds, summed over every entry"`
-	HumanTimeEstimate   string `json:"human_time_estimate" jsonschema:"The estimate as GitLab writes it, such as 1w 2d 3h, where 1w is 5d and 1d is 8h; empty when none"`
+	HumanTimeEstimate   string `json:"human_time_estimate" jsonschema:"The estimate as GitLab writes it, such as 10h 30m: gitlab.com writes hours and minutes, not days; empty when none"`
 	HumanTotalTimeSpent string `json:"human_total_time_spent" jsonschema:"The time spent as GitLab writes it; empty when none"`
 }
 
@@ -1238,6 +1238,8 @@ type TimeWrite struct {
 	Sent      []string   `json:"sent" jsonschema:"The time tracking requests sent, in order, such as add_spent_time 30m; empty when none was needed"`
 	Changed   []string   `json:"changed" jsonschema:"time_estimate and total_time_spent when they differ after the write, as read back"`
 	UpdatedAt *time.Time `json:"updated_at" jsonschema:"As read after the write, or before it when nothing was sent; pass it as updated_at to the next track_time or update"`
+	// TotalTimeSpent is the spent-time witness for the next call.
+	TotalTimeSpent int64 `json:"total_time_spent" jsonschema:"The seconds spent now, as GitLab reported them; pass it as total_time_spent to the next track_time that adds or resets spent time"`
 }
 
 // DiscussionWrite is resolve_discussion's result.
