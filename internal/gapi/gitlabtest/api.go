@@ -311,6 +311,19 @@ func (s *Server) groupProjects(user string, g *group, subgroups bool) []*project
 	return out
 }
 
+// SetGroupPrivate makes a group private.
+func (s *Server) SetGroupPrivate(path string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, g := range s.groups {
+		if g.path == path {
+			g.private = true
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) isAncestor(ancestor, id int64) bool {
 	for _, g := range s.groups {
 		if g.id == id && g.parentID != 0 {
@@ -386,6 +399,13 @@ func issuesAccess(p *project) string {
 	}
 	return "enabled"
 }
+
+// Role access levels, as GitLab numbers them.
+const (
+	plannerAccess   = 15
+	reporterAccess  = 20
+	developerAccess = 30
+)
 
 // SetMemberLevel gives a user an access level in a project, 20 for
 // Reporter or 30 for Developer; 0 removes the user. It reports whether

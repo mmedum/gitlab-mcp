@@ -17,15 +17,8 @@ import (
 // Subscribing sets a state and may repeat; adding a to-do is a create,
 // never repeated, and a lost answer is settled by reading (§4.5). Both
 // are held to the write allow-list by the item's project, as
-// mark_todos_done is (§4.7). register has already held type to its enum.
-
-// checkIID refuses an iid GitLab could not name.
-func checkIID(iid int64) error {
-	if iid <= 0 {
-		return gapi.Errf(gapi.ClassInvalid, "iid is the item's number in its project, a positive number")
-	}
-	return nil
-}
+// mark_todos_done is (§4.7). register has already held type to its enum
+// and iid to at least 1.
 
 // mrSubscribers is who GitLab lets subscribe to a merge request: its
 // finder asks for update_merge_request (lib/api/subscriptions.rb L19).
@@ -36,9 +29,6 @@ const mrSubscribers = "subscribing to a merge request, or unsubscribing, needs t
 // request's notifications, or unsubscribes it. The author, the assignees
 // and anyone who commented are subscribed until they unsubscribe.
 func (s *Service) Subscribe(ctx context.Context, raw, typ string, iid int64, subscribe bool) (model.SubscriptionWrite, error) {
-	if err := checkIID(iid); err != nil {
-		return model.SubscriptionWrite{}, err
-	}
 	t, err := s.writeTarget(ctx, raw)
 	if err != nil {
 		return model.SubscriptionWrite{}, err
@@ -135,9 +125,6 @@ func (s *Service) readSubscription(ctx context.Context, p gapi.Project, mr bool,
 // merge request. GitLab adds none while a pending one the account added
 // is there; other pending items, and done ones, do not stop it.
 func (s *Service) AddTodo(ctx context.Context, raw, typ string, iid int64) (model.TodoWrite, error) {
-	if err := checkIID(iid); err != nil {
-		return model.TodoWrite{}, err
-	}
 	t, err := s.writeTarget(ctx, raw)
 	if err != nil {
 		return model.TodoWrite{}, err

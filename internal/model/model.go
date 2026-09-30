@@ -955,8 +955,11 @@ type Boards struct {
 	Boards  []Board    `json:"boards"`
 	// BudgetChars bounds a page with max: a page ends early when the
 	// next board's lists would pass it.
-	BudgetChars int     `json:"budget_chars" jsonschema:"About how many characters of boards and lists one page holds; a page ends early rather than pass it"`
-	Listing     Listing `json:"listing"`
+	BudgetChars int `json:"budget_chars" jsonschema:"About how many characters of boards and lists one page holds; a page ends early rather than pass it"`
+	// BoardsNotRead is set when the project has more boards than one
+	// call reads, so those past them are in no page.
+	BoardsNotRead bool    `json:"boards_not_read" jsonschema:"True when the project has more than 1000 boards: a call reads the first 1000 by id, and the rest are in no page, so the last page has no next_page_token and is not complete"`
+	Listing       Listing `json:"listing"`
 }
 
 // Board is one issue board. GitLab never returns its Open and Closed

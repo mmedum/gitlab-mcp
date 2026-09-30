@@ -179,7 +179,7 @@ type updateSnippetIn struct {
 	Description *string               `json:"description,omitempty" jsonschema:"A new description, in Markdown, replacing the old; an empty string clears it. The result counts what it removed"`
 	Content     *string               `json:"content,omitempty" jsonschema:"The new content of a one-file snippet's file, replacing the old. A snippet of several files is changed through files; not with files"`
 	Files       []snippetFileChangeIn `json:"files,omitempty" jsonschema:"Changes to the snippet's files, applied in order: create a file, update one's content, delete one, or move one to a new path. Not with content"`
-	UpdatedAt   string                `json:"updated_at" jsonschema:"Required: the snippet's updated_at as get_snippet or list_snippets returned it. The call is refused [stale] if the snippet changed since. A [stale] refusal is NOT a retry signal: read the snippet again and redo the change on what it holds"`
+	UpdatedAt   string                `json:"updated_at" jsonschema:"Required: the snippet's updated_at as get_snippet or list_snippets returned it, or as update_snippet returned it after a change of title or description only. The call is refused [stale] if the snippet changed since. A [stale] refusal is NOT a retry signal: read the snippet again and redo the change on what it holds"`
 	DryRun      bool                  `json:"dry_run,omitempty" jsonschema:"Check the change and return what would be sent without writing anything"`
 }
 

@@ -64,9 +64,6 @@ func mentioned(text, user string) bool {
 	return false
 }
 
-// reporterAccess is the Reporter role's access level.
-const reporterAccess = 20
-
 // mrReadable is whether user may read the project's merge requests.
 func (s *Server) mrReadable(p *project, user string) bool {
 	return !p.mrPrivate || s.accessLevel(p, user) >= reporterAccess
@@ -193,16 +190,16 @@ func (s *Server) Subscribed(projectPath, kind string, iid int64, user string) bo
 	return false
 }
 
-// SetMergeRequestsAccess makes a project's merge requests readable only
-// by members with the Reporter role or higher, or by everyone again.
-func (s *Server) SetMergeRequestsAccess(projectPath string, private bool) bool {
+// SetMergeRequestsAccess sets who reads a project's merge requests:
+// enabled, or private for members with the Reporter role or higher.
+func (s *Server) SetMergeRequestsAccess(projectPath, level string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.projectByPath(projectPath)
-	if p == nil {
+	if p == nil || level != "enabled" && level != "private" {
 		return false
 	}
-	p.mrPrivate = private
+	p.mrPrivate = level == "private"
 	return true
 }
 

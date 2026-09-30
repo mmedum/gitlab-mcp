@@ -670,6 +670,21 @@ func TestServerErrorsRetriedForGetNeverForCreate(t *testing.T) {
 	}
 }
 
+// Once is for a PUT or DELETE the method would repeat; on a POST or
+// beside Repeatable it contradicts itself and is refused unsent.
+func TestOnceContradictionsAreRefused(t *testing.T) {
+	f := newFixture(t, gitlabtest.Options{})
+	for name, call := range map[string]Call{
+		"POST":       {Method: "POST", Path: "projects/{}", Args: []string{"2001"}, Once: "x", Name: "w"},
+		"Repeatable": {Method: "PUT", Path: "projects/{}", Args: []string{"2001"}, Once: "x", Repeatable: "y", Name: "w"},
+	} {
+		wantClass(t, f.client.Do(context.Background(), call, nil), ClassUnexpected)
+		if n := len(f.srv.Requests()); n != 0 {
+			t.Errorf("%s: requests = %d, want 0", name, n)
+		}
+	}
+}
+
 func TestDryRunRefusesEveryWrite(t *testing.T) {
 	f := newFixture(t, gitlabtest.Options{})
 	ctx := WithDryRun(context.Background())

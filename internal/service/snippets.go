@@ -418,7 +418,7 @@ func (s *Service) settleSnippetUpdate(ctx context.Context, err error, t target, 
 	}
 	if readErr != nil {
 		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the snippet change, and reading it to find out "+
-			"failed too, so it is unknown: read it before doing anything, and do not repeat the call")
+			"failed too, so it is unknown: %s", settledUnknown)
 	}
 	files := snippetFiles(*now)
 	shown := make([]string, len(files))
@@ -429,14 +429,16 @@ func (s *Service) settleSnippetUpdate(ctx context.Context, err error, t target, 
 	switch {
 	case slices.Equal(files, planned) && !slices.Equal(files, snippetFiles(*before)):
 		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the snippet change, but a read shows it most "+
-			"likely landed: %s. Do not repeat the call", shows)
+			"likely landed: %s. %s", shows, settledLanded)
 	case slices.Equal(files, snippetFiles(*before)) && now.UpdatedAt.Equal(before.UpdatedAt):
+		// Not settledNotLanded: this PUT was never sent twice, and it may
+		// still land, so calling again is not yet known to be safe.
 		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the snippet change, and a read shows the "+
 			"snippet as it was: %s. It most likely did not land; read it again before calling again, in case the request is "+
 			"still on its way", shows)
 	}
 	return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the snippet change, and a read shows neither "+
-		"the snippet as it was nor as asked: %s. Whether this landed is unknown: read it before doing anything", shows)
+		"the snippet as it was nor as asked: %s. Whether this landed is unknown: %s", shows, settledUnknown)
 }
 
 // checkSnippetEdit refuses an update_snippet call that says nothing to

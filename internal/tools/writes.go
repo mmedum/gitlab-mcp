@@ -360,7 +360,7 @@ func trackTime() definition {
 			Description: "Set or reset the time estimate of an issue or a merge request, and add or reset its time spent: " +
 				"estimate or reset_estimate, add_spent or reset_spent, at least one. updated_at from your latest read is " +
 				"required, and the call is refused [stale] if the item changed since; adding or resetting spent time also needs " +
-				"total_time_spent from that read, since GitLab does not move updated_at when spent time is added or reset. Adding time is never repeated after a " +
+				"total_time_spent from that read, since GitLab does not move updated_at when spent time is added or reset. Adding or resetting spent time is never repeated after a " +
 				"lost answer; the result then says what a read of the total shows. The result gives the time stats before " +
 				"and after, as read back, and says so when nothing changed. GitLab records each change as a note on the item." +
 				visibleNote},
@@ -443,7 +443,7 @@ type markTodosDoneIn struct {
 
 func markTodosDone() definition {
 	return tool[markTodosDoneIn, model.TodosDone]{
-		sp: spec{Name: "mark_todos_done", Kind: Write, Idempotent: true,
+		sp: spec{Name: "mark_todos_done", Kind: Write, Idempotent: true, OwnOnly: true,
 			Description: "Mark your own to-do items done, by id, at most 100 at a time. Each id gets its own outcome: done, or " +
 				"not_found for one that is not yours or does not exist, or blocked for one whose project GITLAB_MCP_WRITE_NAMESPACES " +
 				"leaves out."},

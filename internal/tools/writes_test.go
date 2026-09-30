@@ -684,11 +684,12 @@ func TestACommentClearsYourTodo(t *testing.T) {
 	}
 }
 
-// Subscribing and adding a to-do are writes only the account sees.
-func TestSubscribeAndAddTodoAreNotOpenWorld(t *testing.T) {
+// Subscribing, adding a to-do and marking to-dos done are writes only the
+// account sees.
+func TestOwnOnlyWritesAreNotOpenWorld(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	tools := listed(t, h)
-	for name, idempotent := range map[string]bool{"subscribe": true, "add_todo": false} {
+	for name, idempotent := range map[string]bool{"subscribe": true, "add_todo": false, "mark_todos_done": true} {
 		a := tools[name].Annotations
 		if a.OpenWorldHint == nil || *a.OpenWorldHint || a.IdempotentHint != idempotent {
 			t.Errorf("%s annotations = %+v", name, a)
@@ -778,7 +779,7 @@ func TestSubscribingToAMergeRequestNeedsTheRightsToUpdateIt(t *testing.T) {
 	// A merge request dave may not read refuses both writes with 403, as
 	// find_merge_request_with_access does.
 	h.gl.SetMemberLevel(alpha, "dave", 0)
-	h.gl.SetMergeRequestsAccess(alpha, true)
+	h.gl.SetMergeRequestsAccess(alpha, "private")
 	h.fails("add_todo", map[string]any{"project": alpha, "type": "merge_request", "iid": 1}, "forbidden")
 	h.fails("subscribe", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "unsubscribe": true}, "forbidden")
 }

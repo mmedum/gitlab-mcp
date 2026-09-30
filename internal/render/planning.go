@@ -74,6 +74,10 @@ func Boards(l model.Boards, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Issue boards of %s\n", projectLine(l.Project))
 	b.WriteString(listingLine("boards", l.Listing))
+	if l.BoardsNotRead {
+		fmt.Fprintf(&b, "\nThe project has more than %d boards. A call reads the first %d by id; the rest are in no page.",
+			BoardsRead, BoardsRead)
+	}
 	if len(l.Boards) == 0 {
 		if l.Listing.Total != nil && *l.Listing.Total == 0 {
 			b.WriteString("\nThe project has no board yet: GitLab makes the first when someone opens its board page.")

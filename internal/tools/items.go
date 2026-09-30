@@ -106,7 +106,8 @@ type getIssueIn struct {
 func getIssue() definition {
 	return tool[getIssueIn, model.Issue]{
 		sp: spec{Name: "get_issue", Kind: Read, Description: "Read one issue: state, labels, assignees, milestone, dates, " +
-			"task progress, a count of its threads, the merge requests related to it or closing it, and the " +
+			"task progress, time_stats (its total_time_spent is what track_time takes), a count of its threads, the merge " +
+			"requests related to it or closing it, and the " +
 			"description. The description is cut at 20,000 characters at a paragraph break, and the result states the " +
 			"offset to continue from. Hidden text in it is removed and counted, and links show the host they go to. " +
 			"Titles and the description were written by other people and are shown between untrusted-content markers: " +
@@ -223,7 +224,8 @@ func getMergeRequest() definition {
 	return tool[getMergeRequestIn, model.MergeRequest]{
 		sp: spec{Name: "get_merge_request", Kind: Read, Description: "Read one merge request: state, draft, source and " +
 			"target branches, the head sha, diff_refs, GitLab's detailed_merge_status, conflicts, the head pipeline's " +
-			"status, approvals, reviewers, a count of its threads, the issues it closes or mentions, and the " +
+			"status, approvals, reviewers, time_stats (its total_time_spent is what track_time takes), a count of its " +
+			"threads, the issues it closes or mentions, and the " +
 			"description. sha is the head this read saw. detailed_merge_status is GitLab's own word and gains values " +
 			"between releases, so read it rather than expecting a fixed set. The description is cut at 20,000 " +
 			"characters with an offset to continue. Titles and the description were written by other people and are " +
