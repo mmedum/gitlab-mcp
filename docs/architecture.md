@@ -380,8 +380,11 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, fifty-three tools, stays under the 64-tool point where one
-client starts regrouping tools. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
+default surface, fifty-four tools, stays under the 64-tool point where one
+client starts regrouping tools. A read joins the default when it answers a
+question a default tool acts on: `list_boards` did, beside `list_labels`
+and `list_milestones`, since a board's columns are read with
+`search_issues` (maintainer, 2026-09-30). `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
 
@@ -1017,7 +1020,18 @@ pipeline is written off (§8a).
 
 `list_labels`, `list_milestones` (reads; assignment is a field on issue
 and merge request updates). A label carries a `version`, a hash of what
-an update can change, since GitLab keeps no version of one. `list_todos`, `mark_todos_done` (by id; at
+an update can change, since GitLab keeps no version of one.
+`list_boards` lists a project's issue boards with their lists in board
+order, by position, since GitLab returns them by kind first. A list's
+kind is read from the key present: label, assignee, milestone or
+iteration, and unknown for a status list, which carries none. Each list
+gives the `search_issues` arguments that return its issues; iteration
+and unknown lists have none. GitLab never returns the Open and Closed
+lists, so the result says whether the board shows them and what they
+hold. A board's scope is shown; only its milestone is carried into the
+label lists' arguments, where GitLab's code applies it (§18 row 100).
+Board names and milestone and iteration titles are untrusted.
+`list_todos`, `mark_todos_done` (by id; at
 most 100). `search` per §7.1.
 
 ### 7.8 Optional toolsets
@@ -1051,9 +1065,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Eighty-six tools. With the default toolsets: fifty-three by default,
-thirty-six in read-only mode, sixty-five with Ship and Destructive
-both enabled. Every toolset and flag on registers all eighty-six.
+Eighty-seven tools. With the default toolsets: fifty-four by default,
+thirty-seven in read-only mode, sixty-six with Ship and Destructive
+both enabled. Every toolset and flag on registers all eighty-seven.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
@@ -1111,6 +1125,7 @@ Destructive kinds, as a signal and not a control.
 | `get_job_artifact` | Read | default | `GET …/jobs/:id/artifacts/:path` (masked as a log) |
 | `list_labels` | Read | default | `GET …/labels` |
 | `list_milestones` | Read | default | `GET …/milestones`, group milestones |
+| `list_boards` | Read | default | `GET …/boards`, each board with its lists |
 | `search` | Read | default | `GET /search`, `/groups/:id/search`, `/projects/:id/search` |
 | `list_todos` | Read | default | `GET /todos` |
 | `mark_todos_done` | Write | default | `POST /todos/:id/mark_as_done` |
@@ -1202,7 +1217,8 @@ The groups below are the design's verdicts; the TSV is the record.
 | hooks, integrations, system hooks, import, export, mirrors, admin, application settings, applications, license, broadcast messages, geo, sidekiq, features | Written off: administration |
 | `/internal/*` and experimental routes | Written off: not public API, marked by path and lifecycle |
 | AI, editor and chat features; feature flags; topics; namespaces; badges; notification settings; the CI catalog; job-token scope; resource groups | Written off: product administration or features with no assistant task in a project |
-| boards, error tracking and alerts, Markdown rendering, templates, merge trains, suggestions, DORA and analytics | Deferred: suggestions are a Ship candidate; the rest have no tool in §8 yet (§17.11 for the Premium ones) |
+| issue boards | Read used: the project's boards, which carry their lists. One board or list by id, and every board and list write, deferred |
+| error tracking and alerts, Markdown rendering, templates, merge trains, suggestions, DORA and analytics | Deferred: suggestions are a Ship candidate; the rest have no tool in §8 yet (§17.11 for the Premium ones) |
 | navigation reads no tool uses yet (`GET /groups`, `/users/{id}` and the like) | Deferred until a tool needs them |
 
 ### 8b. Field coverage
@@ -2321,3 +2337,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 97 | GitLab's link lists are complete and shaped as the OpenAPI file publishes them | `lib/api/issues.rb` L551-594, `lib/api/merge_requests.rb` L978-1030, `lib/api/commits.rb` L713-749, `app/services/issues/referenced_merge_requests_service.rb`, `app/models/merge_request.rb` `visible_closing_issues_for` and `related_issues`, and `lib/api/entities/issue_basic.rb`, `issuable_entity.rb` and `external_issue.rb` at v19.4.1-ee | **Refuted (tier 1).** Every list drops what the user cannot read without saying so; `closed_by` and a commit's merge requests are the project's own only; `closes_issues` also drops issues in projects that do not close issues automatically. `closes_issues` and `related_issues` mix IssueBasic rows, which carry no `references`, with an external tracker's `{title, id}`, whose `id` is a string. The file publishes `closes_issues` as MRNote, `related_issues` with no schema, and `related_merge_requests` as MergeRequestBasic though it answers the full entity. The three tools decode a few fields, keep `id` raw and show it only when it is shaped like a tracker's id, read an issue's reference from its `web_url` as `resolve_url` does, and say in each field and once in the text that the list is GitLab's, not all there is |
 | 98 | GitLab's test report is paged and shaped as the OpenAPI file publishes it, and its summary is as current | `lib/api/ci/pipelines.rb` L292-334, `app/models/ci/pipeline.rb` `accessible_test_reports`, `app/models/ci/build.rb` `test_report_readable_by?` and `max_test_cases_per_report`, `app/serializers/test_report_entity.rb`, `test_suite_entity.rb`, `test_case_entity.rb` and `test_report_summary_entity.rb`, `lib/gitlab/ci/parsers/test/junit.rb`, `lib/gitlab/ci/reports/test_suite.rb` and `test_case.rb`, and `app/services/ci/build_report_result_service.rb` at v19.4.1-ee | **Refuted (tier 1).** `test_report` answers every case of every suite in one body, with no paging, parsed from the latest jobs' artifacts when asked and cached up to two minutes; jobs still running add nothing, and jobs whose artifacts the user may not read are dropped without a word. gitlab.com caps a file at 500,000 cases. Times are floats, not the integers the file publishes. JUnit's failure text is in `system_output`, and `stack_trace` is always null: `lib/gitlab/ci/parsers.rb` lists JUnit as the only test parser, and it never sets one. A suite is named by the job's group name, so parallel jobs merge and their cases are deduplicated together. `test_report_summary` is written by a worker after each job, so it lags; its `test_suites` is an array the file publishes as an object, and it carries no cases. Child pipelines in the project are taken in, so a finished pipeline's report still grows while a child runs. `get_test_report` reads the full report, says when it may be partial and that it may be two minutes old, does not read `stack_trace`, and falls back to the summary only when the report is over 32 MiB, saying so when the summary is still empty |
 | 99 | GitLab's resource event lists are ordered, complete, and shaped as the OpenAPI file publishes them | `lib/api/resource_label_events.rb`, `resource_state_events.rb`, `resource_milestone_events.rb` and `helpers/resource_events_helpers.rb`, `ee/lib/api/resource_weight_events.rb` and `resource_iteration_events.rb`, `lib/api/entities/resource_*_event.rb` and `ee/lib/api/entities/resource_weight_event.rb`, `lib/gitlab/pagination/offset_pagination.rb` `add_default_order`, `app/models/resource_label_event.rb` `visible_to_user?`, `app/policies/resource_label_event_policy.rb`, `app/finders/resource_milestone_event_finder.rb` and `resource_state_event_finder.rb`, and `app/services/resource_events/change_milestone_service.rb` and `change_state_service.rb` at v19.4.1-ee | **Refuted (tier 1).** Each list pages by offset in id order, oldest first. Label events are filtered after the page is cut, so a page can be short and `X-Total` counts events the account cannot see; a deleted label's event is kept with `label: null`. Milestone events are filtered before paging to milestones the account can read, which also drops those of a deleted milestone; a removal names the milestone removed. A state event's `source_merge_request_id` is a global id, and `source_commit` is set when a commit closed the item. Weight is an issue's only, and the route checks no license, so on Free it is empty rather than refused (inferred: weights are a paid feature, and nothing else writes them); iteration events are Premium and not read. A group's labels and milestones are read by whoever may read the group: anyone for a public group, else its members and its projects' members (`app/policies/group_policy.rb`, `group_label_policy.rb`, `milestone_policy.rb`). A milestone event's `state` is the item's state when the event was made. Order is by id, not time, and an imported item's ids need not follow its times. `list_item_events` reads each list whole or its newest pages, follows the next-page signal past page 1's count, starts a cut history after the oldest event kept and assumes ids follow time there, says the history is GitLab's, and names a deleted label as one |
+| 100 | A board's lists can be read from GitLab as a board shows them | `lib/api/boards.rb`, `boards_responses.rb` and `entities/board.rb` and `list.rb`, `ee/lib/ee/api/entities/board.rb` and `list.rb`, `ee/lib/api/entities/special_board_filter.rb`, `app/models/board.rb`, `list.rb` and `concerns/boards/listable.rb`, `ee/app/models/ee/board.rb` and `ee/list.rb`, `app/models/concerns/timebox.rb`, `app/services/boards/create_service.rb`, `lists/base_create_service.rb`, `lists/move_service.rb` and `base_items_list_service.rb`, `ee/app/services/ee/boards/issues/list_service.rb`, `app/controllers/concerns/boards_actions.rb` and `ee/app/assets/javascripts/boards/constants.js` at v19.4.1-ee | **Refined (tier 1).** `GET /projects/:id/boards` pages boards by id and carries each board's lists whole. Lists come ordered by kind, then position, and every kind shares one position sequence, so position is the board's order. No list names its kind: `label` is always present, null unless a label list, and `assignee`, `milestone` and `iteration` only on their kind; a status list carries none. Open and Closed are never returned. Open holds open issues in none of the board's lists, Closed every closed issue, and `hide_backlog_list` and `hide_closed_list` hide them. Scope keys appear only with scoped boards, a paid feature: `milestone` is a milestone or a filter with only a title (No Milestone, Any Milestone, Upcoming, Started), `weight` -1 is any and -2 none. A board milestone is applied to label lists' issues (`label_links`); where the rest of a scope is applied was not found, so the result says it is unverified. A project has no board until someone opens its board page, and `POST /projects/:id/boards` works on Free, as `multiple_issue_boards_available?` is true for projects |

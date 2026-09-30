@@ -469,3 +469,36 @@ func TestCommitMergeRequestsReadByID(t *testing.T) {
 		t.Errorf("merge requests read at %v, want %s", paths, want)
 	}
 }
+
+// A board without the paid scope keys, or with them all empty, has no
+// scope; GitLab's None filter is named as search_issues takes it; a
+// status list is of unknown kind.
+func TestBoardRow(t *testing.T) {
+	for _, c := range []struct{ body, scope string }{
+		{`{"id":1,"name":"Free","lists":[]}`, "<nil>"},
+		{`{"id":1,"name":"Paid","milestone":null,"assignee":null,"labels":[],"weight":-1,"lists":[]}`, "<nil>"},
+		{`{"id":1,"name":"None","milestone":{"title":"No Milestone"},"lists":[]}`, "None"},
+		{`{"id":1,"name":"Named","milestone":{"id":5,"title":"Upcoming"},"lists":[]}`, "Upcoming"},
+	} {
+		var b gitlab.Board
+		if err := json.Unmarshal([]byte(c.body), &b); err != nil {
+			t.Fatal(err)
+		}
+		row := boardRow(b)
+		got := "<nil>"
+		if row.Scope != nil {
+			got = *row.Scope.UntrustedMilestone
+		}
+		if got != c.scope {
+			t.Errorf("%s: scope milestone %s, want %s", c.body, got, c.scope)
+		}
+	}
+	var b gitlab.Board
+	_ = json.Unmarshal([]byte(`{"id":1,"name":"x","milestone":{"title":"Started"},
+		"lists":[{"id":2,"label":null,"position":1},{"id":3,"label":{"id":4,"name":"bug"},"position":0}]}`), &b)
+	row := boardRow(b)
+	if row.Lists[0].Kind != "label" || row.Lists[1].Kind != "unknown" || row.Lists[1].SearchIssues != nil ||
+		row.Lists[0].SearchIssues.UntrustedMilestone != nil {
+		t.Errorf("lists = %+v", row.Lists)
+	}
+}

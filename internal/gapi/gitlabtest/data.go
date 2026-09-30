@@ -110,6 +110,7 @@ type project struct {
 	labels     []gitlab.Label
 	milestones []gitlab.ProjectMilestone
 	levels     map[string]int
+	boards     []board
 
 	// The optional toolsets: wiki pages, releases, environments,
 	// deployments and events. Snippets are the server's, since a
@@ -302,6 +303,7 @@ func (s *Server) fillAlpha(p *project) {
 	}
 	s.fillCI(p)
 	s.fillPlanning(p)
+	s.fillBoards(p)
 	s.fillToolsets(p)
 }
 

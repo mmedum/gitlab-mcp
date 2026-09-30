@@ -71,6 +71,15 @@ func (c *Client) ListMilestones(ctx context.Context, q MilestoneQuery, opts List
 	return out, page, err
 }
 
+// ListBoards lists a project's issue boards, each with its lists, which
+// GitLab includes whole.
+func (c *Client) ListBoards(ctx context.Context, p Project, opts ListOptions) ([]gitlab.Board, Page, error) {
+	var out []gitlab.Board
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/boards", Args: []string{p.segment()}, Name: "list_boards"},
+		opts, &out)
+	return out, page, err
+}
+
 // ListProjectMembers lists everyone with access to a project, those who
 // have it through a group included. query matches names and usernames.
 func (c *Client) ListProjectMembers(ctx context.Context, p Project, query string, opts ListOptions) ([]gitlab.Member, Page, error) {

@@ -20,6 +20,7 @@ lifted verbatim.
 - `get_issue` lists the merge requests related to the issue and those that close it, `get_merge_request` the issues it closes and mentions, and `get_commit` the merge requests that contain the commit: the first 20 of each, as GitLab returns them.
 - `get_test_report` reads a pipeline's test report: the counts, each suite's, and the failed and errored cases with their output, secrets masked, 40,000 characters at a time.
 - `list_item_events` reads an issue's or a merge request's change history, newest first: labels added and removed, state changes with the commit or merge request behind them, the milestone and an issue's weight.
+- `list_boards` lists a project's issue boards and their lists in board order, with the `search_issues` arguments that read each list, and describes the Open and Closed lists GitLab does not return.
 
 ## [2.0.0] - 2026-09-29
 

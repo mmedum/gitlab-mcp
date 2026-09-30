@@ -1,7 +1,10 @@
 package service
 
 import (
+	"cmp"
 	"context"
+	"math"
+	"slices"
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
@@ -77,6 +80,117 @@ func (s *Service) ListMilestones(ctx context.Context, q MilestoneSearch) (model.
 		out.Milestones = append(out.Milestones, row)
 	}
 	return out, nil
+}
+
+// specialMilestones are GitLab's milestone filters a board scope can
+// name instead of a milestone, by their title, as search_issues takes
+// them.
+var specialMilestones = map[string]string{"No Milestone": "None", "Any Milestone": "Any", "Upcoming": "Upcoming",
+	"Started": "Started"}
+
+// ListBoards lists a project's issue boards with their lists in board
+// order, and for each list the search_issues arguments that return its
+// issues (§7.7).
+func (s *Service) ListBoards(ctx context.Context, raw string, opts gapi.ListOptions) (model.Boards, error) {
+	p, ref, err := s.project(ctx, raw)
+	if err != nil {
+		return model.Boards{}, err
+	}
+	rows, page, err := s.client.ListBoards(ctx, p, opts)
+	if err != nil {
+		return model.Boards{}, err
+	}
+	out := model.Boards{Project: ref, Boards: make([]model.Board, 0, len(rows)), Listing: listing(len(rows), page)}
+	for _, b := range rows {
+		out.Boards = append(out.Boards, boardRow(b))
+	}
+	return out, nil
+}
+
+func boardRow(b gitlab.Board) model.Board {
+	name, _ := render.Line(b.Name, render.TitleChars)
+	out := model.Board{ID: b.ID, UntrustedName: name, OpenList: !b.HideBacklogList, ClosedList: !b.HideClosedList,
+		Scope: boardScope(b), Lists: make([]model.BoardList, 0, len(b.Lists))}
+	// A label list on a board scoped to a milestone holds only the
+	// issues in it (§18 row 100).
+	var milestone *string
+	if b.Milestone != nil && b.Milestone.ID > 0 {
+		milestone = out.Scope.UntrustedMilestone
+	}
+	// GitLab orders lists by kind, then position. Every kind shares the
+	// positions, so position is the board's order.
+	position := func(l gitlab.BoardList) int {
+		if l.Position == nil {
+			return math.MaxInt
+		}
+		return *l.Position
+	}
+	lists := slices.Clone(b.Lists)
+	slices.SortStableFunc(lists, func(x, y gitlab.BoardList) int { return cmp.Compare(position(x), position(y)) })
+	for _, l := range lists {
+		out.Lists = append(out.Lists, boardList(l, milestone))
+	}
+	return out
+}
+
+// boardScope reads a board's own filter; nil when it has none.
+func boardScope(b gitlab.Board) *model.BoardScope {
+	sc := model.BoardScope{Labels: []string{}}
+	scoped := false
+	if m := b.Milestone; m != nil {
+		title, special := specialMilestones[m.Title]
+		if m.ID > 0 || !special {
+			title, _ = render.Line(m.Title, render.TitleChars)
+		}
+		sc.UntrustedMilestone, scoped = &title, true
+	}
+	if b.Assignee != nil {
+		sc.Assignee, scoped = &b.Assignee.Username, true
+	}
+	for _, l := range b.Labels {
+		sc.Labels, scoped = append(sc.Labels, l.Name), true
+	}
+	if w := b.Weight; w != nil && *w != -1 {
+		scoped = true
+		if *w == -2 {
+			sc.NoWeight = true
+		} else {
+			sc.Weight = w
+		}
+	}
+	if !scoped {
+		return nil
+	}
+	return &sc
+}
+
+// boardList reads one list: its kind from the key present, and the
+// search_issues arguments that return its issues.
+func boardList(l gitlab.BoardList, scopeMilestone *string) model.BoardList {
+	out := model.BoardList{ID: l.ID, Position: l.Position, Kind: "unknown"}
+	search := &model.ListSearch{State: "opened", Labels: []string{}}
+	timebox := func(t *gitlab.BoardTimebox) *model.BoardTimebox {
+		title, _ := render.Line(t.Title, render.TitleChars)
+		return &model.BoardTimebox{ID: t.ID, UntrustedTitle: title}
+	}
+	switch {
+	case l.Label != nil:
+		out.Kind, out.Label = "label", &l.Label.Name
+		search.Labels, search.UntrustedMilestone = []string{l.Label.Name}, scopeMilestone
+	case l.Assignee != nil:
+		out.Kind, out.Assignee = "assignee", &l.Assignee.Username
+		search.Assignee = &l.Assignee.Username
+	case l.Milestone != nil:
+		out.Kind, out.Milestone = "milestone", timebox(l.Milestone)
+		search.UntrustedMilestone = &out.Milestone.UntrustedTitle
+	case l.Iteration != nil:
+		// search_issues has no iteration filter.
+		out.Kind, out.Iteration, search = "iteration", timebox(l.Iteration), nil
+	default:
+		search = nil
+	}
+	out.SearchIssues = search
+	return out
 }
 
 // roles names GitLab's access levels.

@@ -220,6 +220,8 @@ func phase1(s scratch) []step {
 		{tool: "list_milestones", args: map[string]any{"project": p, "include_ancestors": false, "max": 1}, paged: true},
 		{tool: "list_milestones", args: map[string]any{"project": p, "state": "active", "search": "live", "title": s.Milestone}},
 		{tool: "list_milestones", args: map[string]any{"group": s.Namespace, "search": s.Name}},
+		// Two seeded boards, the first with a list for each label.
+		{tool: "list_boards", args: map[string]any{"project": p, "max": 1}, paged: true},
 		{tool: "list_todos", args: map[string]any{"project": p, "max": 1}, paged: true},
 		{tool: "list_todos", args: map[string]any{"project": p, "state": "pending", "action": "marked", "type": "Issue"}},
 
@@ -792,7 +794,7 @@ func init() {
 	for _, tool := range []string{"get_project", "get_issue", "list_discussions", "get_merge_request", "list_mr_files",
 		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "get_test_report",
-		"lint_ci", "list_item_events", "list_todos", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
+		"lint_ci", "list_item_events", "list_boards", "list_todos", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "create_branch",
 		"create_commit",
 		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "retry_pipeline", "retry_job",

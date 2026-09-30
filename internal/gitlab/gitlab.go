@@ -779,6 +779,53 @@ type ProjectMilestone struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// Board is one row of GET /projects/:id/boards, its lists included.
+// The scope fields are absent unless the project has scoped boards, a
+// paid feature.
+type Board struct {
+	ID              int64       `json:"id"`
+	Name            string      `json:"name"`
+	HideBacklogList bool        `json:"hide_backlog_list"`
+	HideClosedList  bool        `json:"hide_closed_list"`
+	Lists           []BoardList `json:"lists"`
+	// Milestone is a milestone, or one of GitLab's filters Any, None,
+	// Upcoming and Started, which carry a title and no id.
+	Milestone *BoardTimebox `json:"milestone"`
+	Assignee  *BoardUser    `json:"assignee"`
+	Labels    []BoardLabel  `json:"labels"`
+	// Weight is -1 for any weight and -2 for none.
+	Weight *int `json:"weight"`
+}
+
+// BoardList is one list of a board. GitLab names no kind: the key
+// present says which it is. The Open and Closed lists are never here.
+type BoardList struct {
+	ID        int64         `json:"id"`
+	Position  *int          `json:"position"`
+	Label     *BoardLabel   `json:"label"`
+	Assignee  *BoardUser    `json:"assignee"`
+	Milestone *BoardTimebox `json:"milestone"`
+	Iteration *BoardTimebox `json:"iteration"`
+}
+
+// BoardLabel is a label a board or a list names.
+type BoardLabel struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// BoardUser is the user a board or a list names.
+type BoardUser struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+}
+
+// BoardTimebox is the milestone or iteration a board or a list names.
+type BoardTimebox struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+}
+
 // Member is one row of GET /projects/:id/members/all. The email an
 // administrator is shown is never declared.
 type Member struct {

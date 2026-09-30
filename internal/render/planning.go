@@ -69,6 +69,111 @@ func Milestones(m model.Milestones, bd Boundary) string {
 	return b.String()
 }
 
+// Boards renders list_boards.
+func Boards(l model.Boards, bd Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Issue boards of %s\n", projectLine(l.Project))
+	b.WriteString(listingLine("boards", l.Listing))
+	if len(l.Boards) == 0 {
+		if l.Listing.Complete {
+			b.WriteString("\nThe project has no board yet: GitLab makes the first when someone opens its board page.")
+		}
+		return b.String()
+	}
+	b.WriteString("\nLists are shown in board order, left to right, by their position; GitLab returns them by kind first. " +
+		"GitLab does not return the Open and Closed lists, so they are described here. Each list's search_issues " +
+		"arguments go with project.\n" + bd.Notice())
+	for _, x := range l.Boards {
+		fmt.Fprintf(&b, "\n\nBoard %d: %s", x.ID, bd.Inline(x.UntrustedName))
+		if x.Scope != nil {
+			b.WriteString("\nScope: " + boardScope(*x.Scope, bd) + ". A label list's arguments carry a scope's milestone, " +
+				"as GitLab applies it; where GitLab applies the rest of a scope is not verified, so add it to a search to " +
+				"match what the board shows.")
+		}
+		if x.OpenList {
+			b.WriteString("\n- Open: open issues in none of the lists below. search_issues cannot leave issues out: " +
+				"search state opened and drop those the lists below hold.")
+		} else {
+			b.WriteString("\n- Open: hidden on this board.")
+		}
+		for _, list := range x.Lists {
+			b.WriteString("\n- " + boardList(list, bd))
+		}
+		if x.ClosedList {
+			b.WriteString("\n- Closed: every closed issue; search_issues state closed.")
+		} else {
+			b.WriteString("\n- Closed: hidden on this board.")
+		}
+	}
+	return b.String()
+}
+
+func boardScope(s model.BoardScope, bd Boundary) string {
+	var parts []string
+	if s.UntrustedMilestone != nil {
+		parts = append(parts, "milestone "+bd.Inline(*s.UntrustedMilestone))
+	}
+	if s.Assignee != nil {
+		parts = append(parts, "assignee @"+Ident(*s.Assignee))
+	}
+	if len(s.Labels) > 0 {
+		parts = append(parts, "labels "+identList(s.Labels))
+	}
+	switch {
+	case s.NoWeight:
+		parts = append(parts, "no weight")
+	case s.Weight != nil:
+		parts = append(parts, fmt.Sprintf("weight %d", *s.Weight))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func identList(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = Ident(n)
+	}
+	return strings.Join(out, ", ")
+}
+
+func boardList(l model.BoardList, bd Boundary) string {
+	var s string
+	ids := []string{fmt.Sprintf("list id %d", l.ID)}
+	switch l.Kind {
+	case "label":
+		s = "label " + Ident(*l.Label)
+	case "assignee":
+		s = "assignee @" + Ident(*l.Assignee)
+	case "milestone":
+		s = "milestone " + bd.Inline(l.Milestone.UntrustedTitle)
+		ids = append(ids, fmt.Sprintf("milestone id %d", l.Milestone.ID))
+	case "iteration":
+		s = "iteration " + bd.Inline(l.Iteration.UntrustedTitle)
+		ids = append(ids, fmt.Sprintf("iteration id %d", l.Iteration.ID))
+	default:
+		s = "a list of unknown kind, perhaps a status list"
+	}
+	if l.Position != nil {
+		ids = append(ids, fmt.Sprintf("position %d", *l.Position))
+	}
+	s += " (" + strings.Join(ids, ", ") + "): "
+	q := l.SearchIssues
+	if q == nil {
+		return s + "search_issues has no filter for it."
+	}
+	args := []string{"state " + Ident(q.State)}
+	if len(q.Labels) > 0 {
+		args = append(args, "labels "+identList(q.Labels))
+	}
+	if q.Assignee != nil {
+		args = append(args, "assignee "+Ident(*q.Assignee))
+	}
+	if q.UntrustedMilestone != nil {
+		args = append(args, "milestone "+bd.Inline(*q.UntrustedMilestone))
+	}
+	return s + "search_issues " + strings.Join(args, ", ") + "."
+}
+
 // Members renders list_members.
 func Members(l model.Members, _ Boundary) string {
 	var b strings.Builder

@@ -11,8 +11,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
-// The planning half of the instance: labels, milestones, members, users,
-// to-do items and search.
+// The planning half of the instance: labels, milestones, boards, members,
+// users, to-do items and search.
 
 // Fixture ids tests address.
 const (
@@ -137,6 +137,8 @@ func (s *Server) servePlanning(w http.ResponseWriter, r *http.Request, p *projec
 			}
 		}
 		writePage(s, w, r, filterMilestones(rows, q.Get("state"), q.Get("search"), q.Get("title")))
+	case match(seg, "boards"):
+		writePage(s, w, r, s.listBoards(p))
 	case match(seg, "members", "all"):
 		writePage(s, w, r, s.members(p, q.Get("query")))
 	case match(seg, "search"):
