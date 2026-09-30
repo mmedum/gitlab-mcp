@@ -1387,7 +1387,7 @@ type MergeRequestPipelineWrite struct {
 	TargetBranch string `json:"target_branch"`
 	PipelineID   int64  `json:"pipeline_id"`
 	PipelineIID  int64  `json:"pipeline_iid" jsonschema:"The pipeline's number in its project, shown as #12"`
-	Kind         string `json:"kind" jsonschema:"merged_results (the source merged into the target, on refs/merge-requests/N/merge), detached (the source branch's head, on refs/merge-requests/N/head) or source_branch (on the branch itself, when the account may not push to it); empty for a dry run"`
+	Kind         string `json:"kind" jsonschema:"merged_results (the source merged into the target, on refs/merge-requests/N/merge) or detached (the source branch's head, on refs/merge-requests/N/head); empty for a dry run"`
 	Status       string `json:"status"`
 	Ref          string `json:"ref"`
 	SHA          string `json:"sha" jsonschema:"The commit the pipeline runs: for merged results, a merge commit GitLab made, not the source branch's head"`

@@ -385,6 +385,7 @@ func (s *Server) createCommit(w http.ResponseWriter, r *http.Request, p *project
 	for _, mr := range p.mrs {
 		if mr.State == "opened" && mr.SourceBranch == branch {
 			s.refreshMR(p, mr)
+			s.autoMRPipeline(p, mr, user)
 		}
 	}
 	writeJSON(w, http.StatusCreated, c)

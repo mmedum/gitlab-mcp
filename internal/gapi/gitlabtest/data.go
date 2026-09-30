@@ -100,10 +100,13 @@ type project struct {
 	// iid; mergePipelines is the project's merged results setting.
 	mrPipelines    map[int64]int64
 	mergePipelines bool
-	jobs           map[int64][]gitlab.Job
-	bridges        map[int64][]gitlab.Bridge
-	traces         map[int64]string
-	ciConfig       map[string]string
+	// autoMRPipelines starts a merge request pipeline when one opens and
+	// on each push to its source branch.
+	autoMRPipelines bool
+	jobs            map[int64][]gitlab.Job
+	bridges         map[int64][]gitlab.Bridge
+	traces          map[int64]string
+	ciConfig        map[string]string
 	// junit holds each job's JUnit report by job id, and suiteErrors the
 	// jobs whose report GitLab could not parse.
 	junit       map[int64][]gitlab.TestCase

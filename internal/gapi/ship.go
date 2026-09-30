@@ -94,17 +94,6 @@ func (c *Client) CreateMergeRequestPipeline(ctx context.Context, p Project, iid 
 	return &out, err
 }
 
-// ListMergeRequestPipelines lists a merge request's pipelines: its merge
-// request pipelines first, newest first, then branch pipelines for its
-// commits (Ci::PipelinesForMergeRequestFinder). It settles a lost
-// run_merge_request_pipeline.
-func (c *Client) ListMergeRequestPipelines(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.Pipeline, Page, error) {
-	var out []gitlab.Pipeline
-	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/pipelines", Args: []string{p.segment(), idArg(iid)},
-		Name: "list_merge_request_pipelines"}, opts, &out)
-	return out, page, err
-}
-
 // RetryPipeline retries a pipeline's failed and canceled jobs; with
 // none, GitLab changes nothing. Each retry creates jobs, so it is not
 // repeated.

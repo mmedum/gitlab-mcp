@@ -329,6 +329,9 @@ func (s *Server) listPipelines(w http.ResponseWriter, r *http.Request, p *projec
 		if v, err := time.Parse(time.RFC3339, q.Get("updated_before")); err == nil && pl.UpdatedAt.After(v) {
 			keep = false
 		}
+		if v, err := time.Parse(time.RFC3339, q.Get("created_after")); err == nil && pl.CreatedAt.Before(v) {
+			keep = false
+		}
 		if keep {
 			rows = append(rows, pl)
 		}

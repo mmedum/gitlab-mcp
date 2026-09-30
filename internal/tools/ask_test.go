@@ -551,6 +551,28 @@ func releaseMR(h *harness, target string) any {
 	return get(out, "iid")
 }
 
+// A push while the question is out is refused, not run: the person
+// approved the head the question named, and the answer is bound to it.
+func TestAMergeRequestPipelineIsRefusedWhenTheHeadMovesAfterTheQuestion(t *testing.T) {
+	for _, protocol := range protocols {
+		p := &answerer{answer: accepts}
+		h := askingHarness(t, protocol, p, harnessOptions{})
+		iid := releaseMR(h, "main")
+		p.then(func() (*mcp.ElicitResult, error) {
+			h.gl.PushTo(alpha, "release/1.0")
+			return &mcp.ElicitResult{Action: "accept"}, nil
+		})
+		h.gl.ResetRequests()
+		if text := h.fails("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": iid}, "blocked"); !strings.Contains(text,
+			"changed after the person was asked") {
+			t.Errorf("%s: %s", protocol, text)
+		}
+		if n := writesSent(h); n != 0 {
+			t.Errorf("%s: %d writes sent", protocol, n)
+		}
+	}
+}
+
 // run_pipeline asks on a protected branch or tag as on the default
 // branch, naming which, however the ref is spelled, and on a ref it
 // cannot resolve; not on a ref nothing protects.

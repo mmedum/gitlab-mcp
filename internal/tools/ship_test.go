@@ -375,6 +375,68 @@ func TestRunMergeRequestPipelineWhoseAnswerWasLostIsNotRepeated(t *testing.T) {
 	}
 }
 
+// GitLab starts merge request pipelines under the account's own name
+// when it pushes to the source branch or opens a merge request. One
+// started before the call is not taken for the lost create.
+func TestRunMergeRequestPipelineSettleIgnoresPipelinesFromBefore(t *testing.T) {
+	for _, c := range []struct {
+		applied bool
+		says    string
+	}{
+		{true, "a read shows it was created: pipeline"},
+		{false, "a read shows it was not created"},
+	} {
+		h := newHarness(t, harnessOptions{cfg: ship})
+		h.gl.SetAutoMRPipelines(alpha, true)
+		h.ok("create_commit", map[string]any{"project": alpha, "branch": "feature/login", "message": "Push to the source",
+			"actions": []map[string]any{{"action": "create", "file_path": "pushed.txt", "content": "x\n"}}})
+		if _, out := h.ok("list_pipelines", map[string]any{"project": alpha, "ref": "refs/merge-requests/1/head"}); len(get(out, "pipelines").([]any)) == 0 {
+			t.Fatalf("the push started no merge request pipeline: %v", out)
+		}
+		h.gl.ResetRequests()
+		id := h.gl.ProjectID(alpha)
+		h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/merge_requests/1/pipelines", id), Status: 502,
+			AfterApply: c.applied, Body: `{"message":"502 Bad Gateway"}`})
+		text := h.fails("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": 1}, "ambiguous_outcome")
+		if !strings.Contains(text, c.says) {
+			t.Errorf("applied %v: %s", c.applied, text)
+		}
+		if n := mrPipelinePosts(h); n != 1 {
+			t.Errorf("applied %v: the create was sent %d times", c.applied, n)
+		}
+	}
+}
+
+// A settle whose read fails leaves the outcome unknown, never safe to
+// repeat.
+func TestRunMergeRequestPipelineSettleThatCannotReadIsUnknown(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	id := h.gl.ProjectID(alpha)
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/merge_requests/1/pipelines", id), Status: 502,
+		AfterApply: true, Body: `{"message":"502 Bad Gateway"}`})
+	h.gl.Inject(gitlabtest.Fault{Method: "GET", Path: fmt.Sprintf("/projects/%d/pipelines", id), Query: "source=merge_request_event",
+		Status: 403, Times: 10, Body: `{"message":"403 Forbidden"}`})
+	text := h.fails("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": 1}, "ambiguous_outcome")
+	if !strings.Contains(text, "it is unknown") || strings.Contains(text, "safe") {
+		t.Errorf("settled: %s", text)
+	}
+}
+
+// A detached pipeline at another head than the one read says so.
+func TestRunMergeRequestPipelineNamesAMovedHead(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	id := h.gl.ProjectID(alpha)
+	other := strings.Repeat("f", 40)
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/merge_requests/1/pipelines", id), Status: 200,
+		Body: fmt.Sprintf(`{"id":99001,"iid":9,"project_id":%d,"sha":%q,"ref":"refs/merge-requests/1/head","status":"created",`+
+			`"source":"merge_request_event","web_url":"https://gitlab.example.com/p/-/pipelines/99001"}`, id, other)})
+	text, out := h.ok("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": 1})
+	if get(out, "sha") != other || !strings.Contains(fmt.Sprint(get(out, "notes")), "moved after it was read") ||
+		!strings.Contains(text, "moved after it was read") {
+		t.Errorf("moved head not named: %v\n%s", out, text)
+	}
+}
+
 func TestRetryAndCancelPipeline(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: ship})
 	failed := gitlabtest.PipelineFailed

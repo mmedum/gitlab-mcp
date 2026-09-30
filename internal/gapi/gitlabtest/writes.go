@@ -499,6 +499,7 @@ func (s *Server) createMR(w http.ResponseWriter, r *http.Request, p *project, us
 	p.mrs = append(p.mrs, mr)
 	p.approvals[iid] = &gitlab.Approvals{UserCanApprove: true, ApprovedBy: []gitlab.Approver{}}
 	s.refreshMR(p, mr)
+	s.autoMRPipeline(p, mr, user)
 	s.recordChanges(p, mrTarget(mr).key(), itemState{state: "opened"}, mrState(mr), user)
 	s.runCommands(p, mrTarget(mr), cmds, user)
 	writeJSON(w, http.StatusCreated, mr)

@@ -443,30 +443,42 @@ func (s *Service) RunMergeRequestPipeline(ctx context.Context, raw string, iid i
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("POST", "run a merge request pipeline", nil)
 		return out, nil
 	}
+	// The question binds the head read above, and a head that moved
+	// before the answer is refused by that (§4.12). The create cannot
+	// carry a head, so one that moves after it is named in the result.
 	if err := s.askMRRun(ctx, t, mr); err != nil {
+		return model.MergeRequestPipelineWrite{}, err
+	}
+	floor, err := s.newestPipeline(ctx, t.p)
+	if err != nil {
 		return model.MergeRequestPipelineWrite{}, err
 	}
 	start := time.Now()
 	pl, err := s.client.CreateMergeRequestPipeline(ctx, t.p, iid)
 	if err != nil {
 		return model.MergeRequestPipelineWrite{}, mrPipelineFailed(err, func() (string, error) {
-			return s.findMRPipeline(ctx, t, mr, start)
+			return s.findMRPipeline(ctx, t, mr, floor, start)
 		})
 	}
-	out.PipelineID, out.PipelineIID, out.Kind, out.Status = pl.ID, pl.IID, mrPipelineKind(pl.Ref, mr), pl.Status
+	out.PipelineID, out.PipelineIID, out.Kind, out.Status = pl.ID, pl.IID, mrPipelineKind(pl.Ref, mr.IID), pl.Status
 	out.Ref, out.SHA, out.Source, out.WebURL = pl.Ref, pl.SHA, pl.Source, pl.WebURL
+	if out.Kind == "detached" && pl.SHA != mr.SHA {
+		out.Notes = []string{fmt.Sprintf("The source branch moved after it was read: the pipeline runs %s, not the head %s that was "+
+			"read. Look at what was pushed", pl.SHA, mr.SHA)}
+	}
 	return out, nil
 }
 
-// mrPipelineKind names a merge request pipeline by its ref.
-func mrPipelineKind(ref string, mr *gitlab.MergeRequest) string {
+// mrPipelineKind names a merge request pipeline by its ref. A
+// same-project account that may not push to the source branch is
+// refused, not given a pipeline on the branch (§18 row 104), so these
+// two refs are the ones a create answers with.
+func mrPipelineKind(ref string, iid int64) string {
 	switch ref {
-	case fmt.Sprintf("refs/merge-requests/%d/merge", mr.IID):
+	case fmt.Sprintf("refs/merge-requests/%d/merge", iid):
 		return "merged_results"
-	case fmt.Sprintf("refs/merge-requests/%d/head", mr.IID):
+	case fmt.Sprintf("refs/merge-requests/%d/head", iid):
 		return "detached"
-	case mr.SourceBranch:
-		return "source_branch"
 	}
 	return ""
 }
@@ -497,42 +509,40 @@ func mrPipelineFailed(err error, find func() (string, error)) error {
 	return settle(err, "merge request pipeline", find)
 }
 
+// newestPipeline is the id of the project's newest pipeline, 0 for none.
+// A pipeline the create makes has a higher one, which tells it from the
+// pipelines GitLab started before, under this account's name too, for a
+// push or for opening the merge request.
+func (s *Service) newestPipeline(ctx context.Context, p gapi.Project) (int64, error) {
+	rows, _, err := s.client.ListPipelines(ctx, p, gapi.PipelineQuery{OrderBy: "id", Sort: "desc"}, gapi.ListOptions{PerPage: 1})
+	if err != nil || len(rows) == 0 {
+		return 0, err
+	}
+	return rows[0].ID, nil
+}
+
 // findMRPipeline settles a lost run_merge_request_pipeline: a merge
-// request pipeline on one of the merge request's refs, created since
-// shortly before the call, that this account started. The listing does
-// not name who started a pipeline, so each candidate is read.
-func (s *Service) findMRPipeline(ctx context.Context, t target, mr *gitlab.MergeRequest, start time.Time) (string, error) {
+// request pipeline this account started on one of the merge request's
+// refs, newer than the newest pipeline before the call. GitLab filters
+// the listing and orders it by id, newest first, so its first row
+// answers: any match is newer than it or no newer than the floor.
+func (s *Service) findMRPipeline(ctx context.Context, t target, mr *gitlab.MergeRequest, floor int64, start time.Time) (string, error) {
 	me, err := s.me(ctx)
 	if err != nil {
 		return "", err
 	}
-	rows, _, err := s.client.ListMergeRequestPipelines(ctx, t.p, mr.IID, gapi.ListOptions{PerPage: 20})
-	if err != nil {
-		return "", err
-	}
-	checked := 0
-	for _, r := range rows {
-		if r.Source != "merge_request_event" || r.ProjectID != t.project.ID || r.CreatedAt.Before(start.Add(-settleSkew)) ||
-			mrPipelineKind(r.Ref, mr) == "" {
-			continue
-		}
-		if checked++; checked > maxSettleReads {
-			break
-		}
-		pl, err := s.client.GetPipeline(ctx, t.p, r.ID)
+	for _, ref := range []string{fmt.Sprintf("refs/merge-requests/%d/head", mr.IID), fmt.Sprintf("refs/merge-requests/%d/merge", mr.IID)} {
+		rows, _, err := s.client.ListPipelines(ctx, t.p, gapi.PipelineQuery{Ref: ref, Source: "merge_request_event", Username: me.Username,
+			CreatedAfter: start.Add(-settleSkew), OrderBy: "id", Sort: "desc"}, gapi.ListOptions{PerPage: 1})
 		if err != nil {
 			return "", err
 		}
-		if pl.User != nil && pl.User.Username == me.Username {
-			return fmt.Sprintf("pipeline %d, %s, on %s", pl.ID, pl.Status, pl.Ref), nil
+		if len(rows) > 0 && rows[0].ID > floor {
+			return fmt.Sprintf("pipeline %d, %s, on %s", rows[0].ID, rows[0].Status, rows[0].Ref), nil
 		}
 	}
 	return "", nil
 }
-
-// maxSettleReads bounds the pipelines read to settle a lost merge
-// request pipeline.
-const maxSettleReads = 5
 
 // askMRRun asks before a merge request pipeline whose jobs may see
 // protected variables: GitLab gives them one only when its source and
@@ -548,29 +558,13 @@ func (s *Service) askMRRun(ctx context.Context, t target, mr *gitlab.MergeReques
 	}
 	var source, tgt render.RefKind
 	if err := parallel(
-		func() (err error) { source, err = s.branchKind(ctx, t, mr.SourceBranch); return err },
-		func() (err error) { tgt, err = s.branchKind(ctx, t, mr.TargetBranch); return err },
+		func() (err error) { source, err = s.refKind(ctx, t, "refs/heads/"+mr.SourceBranch); return err },
+		func() (err error) { tgt, err = s.refKind(ctx, t, "refs/heads/"+mr.TargetBranch); return err },
 	); err != nil || source == 0 || tgt == 0 {
 		return err
 	}
-	return ask(ctx, render.AskRunMergeRequestPipeline(t.ref.Project.Path, mr.IID, mr.Title, mr.SourceBranch, mr.TargetBranch, mr.SHA,
-		source, tgt))
-}
-
-// branchKind is why a branch counts as protected, or 0 when it does not.
-func (s *Service) branchKind(ctx context.Context, t target, name string) (render.RefKind, error) {
-	b, err := s.client.GetBranch(ctx, t.p, name)
-	switch {
-	case err == nil && b.Default:
-		return render.DefaultBranch, nil
-	case err == nil && b.Protected:
-		return render.ProtectedBranch, nil
-	case err == nil:
-		return 0, nil
-	case gapi.IsClass(err, gapi.ClassNotFound):
-		return render.UnknownRef, nil
-	}
-	return 0, err
+	return ask(ctx, render.AskRunMergeRequestPipeline(t.ref.Project.Path, mr.IID, mr.Title, mr.SourceBranch, mr.TargetBranch,
+		mr.SHA, source, tgt))
 }
 
 // RetryPipeline retries a pipeline's failed and canceled jobs.

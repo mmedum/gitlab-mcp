@@ -1205,3 +1205,30 @@ func TestSnippetCommitIsTouchedAfterTheAnswer(t *testing.T) {
 		t.Errorf("after content: %v, answered %v", body["updated_at"], answered)
 	}
 }
+
+// A merge request pipeline is merged results only where the project has
+// them on and the branches merge cleanly, and detached otherwise, a
+// deleted target branch included.
+func TestMergeRequestPipelineKind(t *testing.T) {
+	s := New(t, Options{})
+	tok := s.Token()
+	p := s.projectByPath(ProjectAlpha)
+	p.mergePipelines = true
+	path := "/projects/2001/merge_requests/1/pipelines"
+	for _, c := range []struct {
+		name string
+		set  func()
+		ref  string
+	}{
+		{"clean", func() {}, "refs/merge-requests/1/merge"},
+		{"conflicts", func() { findMR(p, "1").HasConflicts = true }, "refs/merge-requests/1/head"},
+		{"target gone", func() { findMR(p, "1").HasConflicts = false; delete(p.commits, "main") }, "refs/merge-requests/1/head"},
+	} {
+		c.set()
+		resp, body := send(t, s, "POST", path, tok, nil)
+		wantStatus(t, c.name, resp, body, 200)
+		if body["ref"] != c.ref || body["source"] != "merge_request_event" {
+			t.Errorf("%s: %v", c.name, body)
+		}
+	}
+}

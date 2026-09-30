@@ -564,7 +564,9 @@ func planShip(s scratch) []step {
 			"actions": []any{map[string]any{"action": "create", "file_path": "ship/mr-pipeline.txt", "content": "pipeline\n"}}}},
 		{tool: "create_merge_request", args: map[string]any{"project": p, "source_branch": mrBranch,
 			"title": "Merge request pipeline " + s.Name}, save: map[string]string{"mrpipe_mr": "iid"}},
-		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "dry_run": true}},
+		// GitLab prepares the merge request's diff in the background.
+		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "dry_run": true},
+			pause: 20 * time.Second},
 		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}},
 
 		// CI: a pipeline run and canceled, the failed one retried, a job

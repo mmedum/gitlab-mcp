@@ -97,7 +97,6 @@ func PipelineWrite(w model.PipelineWrite, _ Boundary) string {
 var mrPipelineKinds = map[string]string{
 	"merged_results": "a merged results pipeline: the source branch merged into the target",
 	"detached":       "a detached pipeline: the source branch's head",
-	"source_branch":  "a pipeline on the source branch itself",
 }
 
 // MergeRequestPipelineWrite renders run_merge_request_pipeline.
