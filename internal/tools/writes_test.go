@@ -637,16 +637,78 @@ func TestAddTodo(t *testing.T) {
 	h.fails("add_todo", map[string]any{"project": alpha, "type": "epic", "iid": 1}, "invalid")
 }
 
-// A lost answer is sent again: the second lands as GitLab's 304, and
-// the result names the to-do the first added.
-func TestALostTodoIsSentAgain(t *testing.T) {
+// A to-do is a create: a lost answer is never sent again, and a read of
+// the account's pending to-dos on the item settles it (§4.5).
+func TestALostTodoIsSettledNotSent(t *testing.T) {
+	todoPosts := func(h *harness) int {
+		n := 0
+		for _, r := range h.gl.Requests() {
+			if r.Method == http.MethodPost && strings.HasSuffix(r.EscapedPath, "/todo") {
+				n++
+			}
+		}
+		return n
+	}
 	h := newHarness(t, harnessOptions{})
 	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/2/todo", AfterApply: true,
 		Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
-	_, out := h.ok("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 2})
+	text := h.fails("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 2}, "ambiguous_outcome")
 	pending := h.gl.PendingTodos("alice")
-	if get(out, "outcome") != "unchanged" || get(out, "todo_id") != float64(pending[len(pending)-1]) || len(pending) != 3 {
-		t.Errorf("result %v, pending %v", out, pending)
+	if want := fmt.Sprintf("a read shows it was created: to-do item %d", pending[len(pending)-1]); !strings.Contains(text, want) ||
+		len(pending) != 3 || todoPosts(h) != 1 {
+		t.Errorf("landed: %s; pending %v, %d sent", text, pending, todoPosts(h))
+	}
+
+	h = newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/2/todo",
+		Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	text = h.fails("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 2}, "ambiguous_outcome")
+	if !strings.Contains(text, "a read shows it was not created") || len(h.gl.PendingTodos("alice")) != 2 || todoPosts(h) != 1 {
+		t.Errorf("not landed: %s", text)
+	}
+}
+
+// Commenting outside a thread marks your pending to-dos on the item
+// done, as GitLab does, so adding one afterwards makes a new one.
+func TestACommentClearsYourTodo(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, out := h.ok("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 2})
+	first := get(out, "todo_id").(float64)
+	h.ok("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 2, "body": "Looked at it."})
+	if h.gl.TodoState(int64(first)) != "done" {
+		t.Fatalf("the comment left the to-do %s", h.gl.TodoState(int64(first)))
+	}
+	if _, out = h.ok("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 2}); get(out, "outcome") != "created" ||
+		get(out, "todo_id") == first {
+		t.Errorf("after the comment: %v", out)
+	}
+}
+
+// Subscribing and adding a to-do are writes only the account sees.
+func TestSubscribeAndAddTodoAreNotOpenWorld(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	tools := listed(t, h)
+	for name, idempotent := range map[string]bool{"subscribe": true, "add_todo": false} {
+		a := tools[name].Annotations
+		if a.OpenWorldHint == nil || *a.OpenWorldHint || a.IdempotentHint != idempotent {
+			t.Errorf("%s annotations = %+v", name, a)
+		}
+	}
+	if a := tools["add_comment"].Annotations; a.OpenWorldHint == nil || !*a.OpenWorldHint {
+		t.Errorf("add_comment annotations = %+v", a)
+	}
+}
+
+// A subscribe whose answer was lost is sent again; the 304 the second
+// gets is the first one's work, reported as done.
+func TestALostSubscribeIsReportedAsDone(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.ok("subscribe", map[string]any{"project": alpha, "type": "issue", "iid": 1, "unsubscribe": true})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/1/subscribe", AfterApply: true,
+		Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	text, out := h.ok("subscribe", map[string]any{"project": alpha, "type": "issue", "iid": 1})
+	if get(out, "outcome") != "subscribed" || get(out, "subscribed") != true || !strings.Contains(text, "answer to the first attempt was lost") {
+		t.Errorf("result %v\n%s", out, text)
 	}
 }
 
@@ -662,7 +724,7 @@ func TestSubscribe(t *testing.T) {
 	}
 	text, out := h.ok("subscribe", issue)
 	if get(out, "outcome") != "unchanged" || get(out, "subscribed") != true || get(out, "web_url") == "" ||
-		!strings.Contains(text, "You already were subscribed") {
+		!strings.Contains(text, "GitLab reports you are subscribed; it made no change on this request") {
 		t.Errorf("a participant: %v\n%s", out, text)
 	}
 	text, out = h.ok("subscribe", with(map[string]any{"unsubscribe": true}))
@@ -697,8 +759,14 @@ func TestSubscribe(t *testing.T) {
 func TestSubscribingToAMergeRequestNeedsTheRightsToUpdateIt(t *testing.T) {
 	h := newHarness(t, harnessOptions{token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
 	text := h.fails("subscribe", map[string]any{"project": alpha, "type": "merge_request", "iid": 1}, "forbidden")
-	if !strings.Contains(text, "the Developer role or higher, or its author or an assignee") || h.gl.Subscribed(alpha, "mr", 1, "dave") {
+	if !strings.Contains(text, "403 Forbidden. It may be the role: subscribing to a merge request") ||
+		!strings.Contains(text, "the Developer role or higher, or its author or an assignee") || h.gl.Subscribed(alpha, "mr", 1, "dave") {
 		t.Errorf("forbidden: %s", text)
+	}
+	// Mentioned in a comment, dave takes part in the issue.
+	h.gl.Comment(alpha, "issue", 4, "bob", "@dave can you look?")
+	if _, out := h.ok("subscribe", map[string]any{"project": alpha, "type": "issue", "iid": 4}); get(out, "outcome") != "unchanged" {
+		t.Errorf("mentioned: %v", out)
 	}
 	if _, out := h.ok("subscribe", map[string]any{"project": alpha, "type": "issue", "iid": 1}); get(out, "outcome") != "subscribed" {
 		t.Errorf("issue: %v", out)
@@ -707,6 +775,12 @@ func TestSubscribingToAMergeRequestNeedsTheRightsToUpdateIt(t *testing.T) {
 	if _, out := h.ok("subscribe", map[string]any{"project": alpha, "type": "merge_request", "iid": 1}); get(out, "outcome") != "subscribed" {
 		t.Errorf("as a Developer: %v", out)
 	}
+	// A merge request dave may not read refuses both writes with 403, as
+	// find_merge_request_with_access does.
+	h.gl.SetMemberLevel(alpha, "dave", 0)
+	h.gl.SetMergeRequestsAccess(alpha, true)
+	h.fails("add_todo", map[string]any{"project": alpha, "type": "merge_request", "iid": 1}, "forbidden")
+	h.fails("subscribe", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "unsubscribe": true}, "forbidden")
 }
 
 // Subscribing and adding a to-do are held to the allow-list by the

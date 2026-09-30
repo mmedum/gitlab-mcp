@@ -403,6 +403,7 @@ func (s *Server) publishDrafts(w http.ResponseWriter, r *http.Request, p *projec
 	if summary, _ := b.str("note"); strings.TrimSpace(summary) != "" {
 		s.addNote(p, t, user, summary)
 	}
+	s.resolveTodos(p, t.key(), user)
 	if state, ok := b.str("reviewer_state"); ok && state != "" {
 		if s.reviewerStates == nil {
 			s.reviewerStates = map[string]string{}

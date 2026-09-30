@@ -176,6 +176,11 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 		message(w, http.StatusNotFound, "404 Merge Request Not Found")
 		return
 	}
+	if !s.mrReadable(p, user) {
+		// find_merge_request_with_access: it exists, and may not be read.
+		message(w, http.StatusForbidden, "403 Forbidden")
+		return
+	}
 	get := r.Method == http.MethodGet
 	switch {
 	case get && len(rest) == 0:

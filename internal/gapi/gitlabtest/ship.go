@@ -411,6 +411,9 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request, p *project, 
 	n.Body = kept
 	n.UpdatedAt = s.opts.Now().UTC()
 	bump(t.updatedAt, n.UpdatedAt)
+	if ds[di].IndividualNote {
+		s.resolveTodos(p, t.key(), user)
+	}
 	writeJSON(w, http.StatusOK, *n)
 }
 

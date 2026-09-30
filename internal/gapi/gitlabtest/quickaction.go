@@ -181,6 +181,7 @@ func (s *Server) storeNote(p *project, t target, user, body string) gitlab.Note 
 	note := s.newNote(t, user, body, nil, false, nil)
 	p.discussions[t.key()] = append(p.discussions[t.key()], gitlab.Discussion{ID: fakeSHA(t.key(), itoa(note.ID)),
 		IndividualNote: true, Notes: []gitlab.Note{note}})
+	s.resolveTodos(p, t.key(), user)
 	return note
 }
 

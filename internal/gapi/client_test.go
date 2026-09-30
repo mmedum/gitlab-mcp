@@ -1161,3 +1161,42 @@ func TestADryRunLetsAReadOnlyPostThrough(t *testing.T) {
 		t.Errorf("a create under a dry run: %v", err)
 	}
 }
+
+// A 304 answers only a call that says why; that call goes through
+// DoAnswered, which reports it, and Do refuses it before sending, so a
+// 304 is never an empty result nobody was told about.
+func TestNotModified(t *testing.T) {
+	call := func(notModified string) Call {
+		return Call{Method: "POST", Path: "projects/2001/issues/1/subscribe", NotModified: notModified, Name: "subscribe"}
+	}
+	for _, c := range []struct {
+		name  string
+		call  Call
+		viaDo bool
+		class Class // "" for success
+	}{
+		{"no reason, through Do", call(""), true, ClassUnexpected},
+		{"no reason, through DoAnswered", call(""), false, ClassUnexpected},
+		{"a reason, through Do", call("already subscribed"), true, ClassUnexpected},
+		{"a reason, through DoAnswered", call("already subscribed"), false, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t, gitlabtest.Options{})
+			f.srv.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/1/subscribe", Status: http.StatusNotModified})
+			var out struct{ Subscribed bool }
+			var a Answered
+			var err error
+			if c.viaDo {
+				err = f.client.Do(t.Context(), c.call, &out)
+			} else {
+				a, err = f.client.DoAnswered(t.Context(), c.call, &out)
+			}
+			switch {
+			case c.class != "" && !IsClass(err, c.class):
+				t.Errorf("err = %v, want [%s]", err, c.class)
+			case c.class == "" && (err != nil || !a.NotModified || a.Resent):
+				t.Errorf("answered %+v, err %v; want the 304 reported", a, err)
+			}
+		})
+	}
+}

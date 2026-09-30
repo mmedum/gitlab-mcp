@@ -463,10 +463,12 @@ type addTodoIn struct {
 
 func addTodo() definition {
 	return tool[addTodoIn, model.TodoWrite]{
-		sp: spec{Name: "add_todo", Kind: Write, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+		sp: spec{Name: "add_todo", Kind: Write, OwnOnly: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
 			Description: "Add a to-do item for yourself on an issue or a merge request. The result gives its id, which " +
 				"mark_todos_done takes. While a pending to-do you added is there, GitLab adds none and the result is unchanged, " +
-				"with that one's id; other pending items, such as a mention, do not count. Only you see your to-do list."},
+				"with that one's id; other pending items, such as a mention, do not count. GitLab marks your pending to-dos on " +
+				"the item done when you comment on it outside a thread, close or merge it, or submit a review of it. Never " +
+				"repeated after a lost answer: the result then says whether a read found the to-do. Only you see your to-do list."},
 		run: func(ctx context.Context, svc *service.Service, in addTodoIn) (model.TodoWrite, error) {
 			return svc.AddTodo(ctx, string(in.Project), in.Type, in.IID)
 		},
@@ -486,9 +488,10 @@ type subscribeIn struct {
 
 func subscribe() definition {
 	return tool[subscribeIn, model.SubscriptionWrite]{
-		sp: spec{Name: "subscribe", Kind: Write, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+		sp: spec{Name: "subscribe", Kind: Write, Idempotent: true, OwnOnly: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
 			Description: "Subscribe yourself to an issue's or a merge request's notifications, or unsubscribe with unsubscribe: " +
-				"true. You are already subscribed to what you created, are assigned to or commented on, until you unsubscribe. " +
+				"true. You are already subscribed, until you unsubscribe, to what you created, are assigned to or asked to review, " +
+				"commented on, reacted to, changed in a way GitLab notes, or are @-mentioned in. " +
 				"The result says whether you are subscribed, and says unchanged when you already were so. On a merge request " +
 				"GitLab allows it only to a Developer or higher, or its author or an assignee. Only you see your subscriptions."},
 		run: func(ctx context.Context, svc *service.Service, in subscribeIn) (model.SubscriptionWrite, error) {

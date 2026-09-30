@@ -1036,3 +1036,46 @@ func TestTimeTrackingDurations(t *testing.T) {
 		t.Error("human 0 is not null")
 	}
 }
+
+// Participants are subscribed until they unsubscribe, as GitLab's
+// participant declarations make them: a merge request's reviewers, a
+// system note's author, and whoever the description mentions.
+func TestParticipantsAreSubscribed(t *testing.T) {
+	s, _ := frozen(t)
+	dave := s.TokenFor("dave", "api")
+	subscribe := func(path string) int {
+		resp, _ := send(t, s, http.MethodPost, "/projects/2001/"+path+"/subscribe", dave, nil)
+		return resp.StatusCode
+	}
+	if got := subscribe("issues/1"); got != http.StatusCreated {
+		t.Fatalf("dave takes no part in issue 1, yet subscribing answered %d", got)
+	}
+	s.mu.Lock()
+	p := s.projectByPath(ProjectAlpha)
+	p.mrs[1].Reviewers = append(p.mrs[1].Reviewers, s.user("dave"))
+	p.issues[1].Description += "\n\ncc @dave."
+	key := "issue:4"
+	ds := p.discussions[key]
+	ds[len(ds)-1].Notes[0].Author = s.user("dave") // the system note
+	p.levels["dave"], p.members["dave"] = 30, true // to be let subscribe to a merge request
+	s.mu.Unlock()
+	for _, path := range []string{"merge_requests/2", "issues/2", "issues/4"} {
+		if got := subscribe(path); got != http.StatusNotModified {
+			t.Errorf("%s: %d, want 304", path, got)
+		}
+	}
+}
+
+// Closing an item marks the closer's pending to-dos on it done.
+func TestClosingClearsYourTodos(t *testing.T) {
+	s, _ := frozen(t)
+	alice := s.Token()
+	resp, body := send(t, s, http.MethodPost, "/projects/2001/issues/2/todo", alice, nil)
+	wantStatus(t, "todo", resp, body, http.StatusCreated)
+	id := int64(body["id"].(float64))
+	resp, body = send(t, s, http.MethodPut, "/projects/2001/issues/2", alice, obj{"state_event": "close"})
+	wantStatus(t, "close", resp, body, http.StatusOK)
+	if got := s.TodoState(id); got != "done" {
+		t.Errorf("to-do after the close: %q", got)
+	}
+}

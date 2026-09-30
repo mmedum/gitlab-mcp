@@ -107,6 +107,9 @@ func (s *Server) recordChanges(p *project, key string, before, after itemState, 
 			state = "reopened"
 		}
 		s.addEvent(p, key, itemEvent{kind: "state", user: user, at: now, state: state})
+		if state == "closed" || state == "merged" {
+			s.resolveTodos(p, key, user)
+		}
 	}
 }
 
