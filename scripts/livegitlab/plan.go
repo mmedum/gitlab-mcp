@@ -568,6 +568,12 @@ func planShip(s scratch) []step {
 		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "dry_run": true},
 			pause: 20 * time.Second},
 		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}},
+		// Both branches protected, so it asks; the person declines and
+		// nothing runs with the protected variables such a pipeline sees.
+		{tool: "create_merge_request", args: map[string]any{"project": p, "source_branch": s.Default, "target_branch": guardBranch(s),
+			"title": "Default into a protected branch " + s.Name}, save: map[string]string{"mrguard_mr": "iid"}},
+		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrguard_mr}}"}, pause: 20 * time.Second,
+			declines: true, expectError: true, why: "both branches are protected, and the person declines the question"},
 
 		// CI: a pipeline run and canceled, the failed one retried, a job
 		// retried, the manual one started.
