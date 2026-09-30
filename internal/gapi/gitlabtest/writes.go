@@ -221,7 +221,7 @@ func (s *Server) serveMRWrite(w http.ResponseWriter, r *http.Request, p *project
 	case del && match(rest, "draft_notes", "*"):
 		s.deleteDraft(w, p, mr, user, rest[1])
 	default:
-		return s.serveNoteEdit(w, r, p, t, user, rest)
+		return s.serveMRShip(w, r, p, mr, user, rest) || s.serveNoteEdit(w, r, p, t, user, rest)
 	}
 	return true
 }
