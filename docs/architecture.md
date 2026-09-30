@@ -380,7 +380,7 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, fifty-four tools, stays under the 64-tool point where one
+default surface, fifty-five tools, stays under the 64-tool point where one
 client starts regrouping tools. A read joins the default when it answers a
 question a default tool acts on: `list_boards` did, beside `list_labels`
 and `list_milestones`, since a board's columns are read with
@@ -418,6 +418,7 @@ time and the signed-in user:
 | commit | the branch head: moved, with this author and message |
 | pipeline | pipelines on the ref, source `api`, `created_after` |
 | release | the release by tag name |
+| spent time added or reset | the item's total spent: moved by exactly the amount, or at zero after a reset |
 
 Found means **created**, and the result carries it. Not found means
 **not created**, and the result says so without creating it. Anything
@@ -435,6 +436,10 @@ else stays **unknown**, and the result says not to repeat the call.
   `[stale]` if it moved, and sends only the fields given. The window
   between the re-read and the PUT is not closed, and the result does
   not claim it is (§17b).
+- **Time tracking:** no API guard either. `track_time` requires the
+  item's `updated_at`, re-reads and refuses `[stale]` as the updates
+  do, with the same window open. Every time tracking change moves
+  `updated_at`, so the result gives the new one (§18 row 101).
 - **Comment edits:** GitLab's note PUT ignores `If-Unmodified-Since`
   (§18 row 93), so `update_comment` re-reads and compares `updated_at`
   as the issue updates do, with the same window open. The same text
@@ -855,6 +860,9 @@ and says when GitLab has more. A read continued from an offset does not
 read the lists again and leaves them null without comment. GitLab leaves out what the account cannot read, confidential
 issues included, and lists closing merge requests from the issue's own
 project only, so no list claims to be complete (§18 row 97).
+Both carry the item's `time_stats`: the estimate and the time spent,
+in seconds and in GitLab's short form, which counts 8 hours a day and 5
+days a week and is empty at zero.
 `list_discussions` renders threads newest-first
 under the budget, with position and resolved state for diff threads.
 `list_item_events` merges GitLab's resource events into one history,
@@ -886,6 +894,22 @@ the boundary. Iteration events (Premium) are not read (§18 row 99).
 to the write allow-list since a link shows on both. `move_issue` (Ship)
 takes the issue's `updated_at`, holds both projects to the allow-list,
 and refuses a project more people can see than the one the issue is in.
+`track_time` sets or resets an issue's or a merge request's estimate
+and adds or resets its time spent, estimate first, one request each,
+after the `updated_at` witness. A value both set and reset in one call
+is refused, as is a call with neither. A duration is numbers with the units
+`mo`, `w`, `d`, `h` and `m`, or a bare number of hours; anything else
+is refused `[invalid]` before a read, because GitLab's parser drops
+words it does not know, so `5 foo` is five hours and a word alone as an
+estimate sets it to zero. A negative estimate, zero spent, and spent
+time that would go below zero or past four years are refused as GitLab
+would refuse them. A request that would change nothing, an estimate
+already at that value or a reset of zero, is left out and said. The
+estimate writes may repeat; adding or resetting spent time adds a
+timelog and is never repeated, and a lost answer is settled by reading
+the total (§4.5). A 403 names the role it takes: Planner for an issue,
+Developer for a merge request. The result gives the time stats before
+and after, as read back, and the new `updated_at` (§18 row 101).
 
 ### 7.3 Reviewing a merge request
 
@@ -1076,9 +1100,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Eighty-seven tools. With the default toolsets: fifty-four by default,
-thirty-seven in read-only mode, sixty-six with Ship and Destructive
-both enabled. Every toolset and flag on registers all eighty-seven.
+Eighty-eight tools. With the default toolsets: fifty-five by default,
+thirty-seven in read-only mode, sixty-seven with Ship and Destructive
+both enabled. Every toolset and flag on registers all eighty-eight.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
@@ -1110,6 +1134,7 @@ Destructive kinds, as a signal and not a control.
 | `list_mr_commits` | Read | default | `GET …/merge_requests/:iid/commits` |
 | `create_merge_request` | Write | default | `POST /projects/:id/merge_requests` |
 | `update_merge_request` | Write | default | `PUT …/merge_requests/:iid` |
+| `track_time` | Write | default | `POST …/issues|merge_requests/:iid/time_estimate`, `/reset_time_estimate`, `/add_spent_time`, `/reset_spent_time` |
 | `add_review_comment` | Write | default | `POST …/draft_notes` |
 | `list_review_comments` | Read | default | `GET …/draft_notes` |
 | `delete_review_comment` | Write | default | `DELETE …/draft_notes/:id` (own draft) |
@@ -1205,8 +1230,8 @@ The groups below are the design's verdicts; the TSV is the record.
 |---|---|
 | user, metadata, version | Used: `get_me`, login, `doctor`. `/version` written off as deprecated for `/metadata`. Personal access token `self` routes written off with the token path (§10) |
 | projects (read), groups (read), members (read), users (search) | Used for navigation. Project create, update, fork, transfer, archive, share, import and export written off: administration |
-| issues, issue notes and discussions | Used, starting and resolving threads, links and moves included (a move is Ship). Clone, subscribe, time tracking and award emoji deferred; delete written off (Owner-only, permanent) |
-| merge requests, notes, discussions | Used; rebase gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
+| issues, issue notes and discussions | Used, starting and resolving threads, links, moves (Ship) and time tracking included. Clone, subscribe and award emoji deferred; delete written off (Owner-only, permanent) |
+| merge requests, notes, discussions | Used, time tracking included; rebase gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
 | draft notes | Used: the review path |
 | approvals (merge-request level) | Used: approve, unapprove, state. Approval rules and project approval settings written off: governance configuration, Premium |
 | repository files, tree, commits, branches, tags, compare | Used, blame included. Cherry-pick and revert used as Write behind the protected-branch guard (§17.13); tag create gated under `releases`, tag delete Destructive. Raw archive deferred; commit statuses written off (a CI integration's surface); "delete merged branches" written off |
@@ -2349,3 +2374,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 98 | GitLab's test report is paged and shaped as the OpenAPI file publishes it, and its summary is as current | `lib/api/ci/pipelines.rb` L292-334, `app/models/ci/pipeline.rb` `accessible_test_reports`, `app/models/ci/build.rb` `test_report_readable_by?` and `max_test_cases_per_report`, `app/serializers/test_report_entity.rb`, `test_suite_entity.rb`, `test_case_entity.rb` and `test_report_summary_entity.rb`, `lib/gitlab/ci/parsers/test/junit.rb`, `lib/gitlab/ci/reports/test_suite.rb` and `test_case.rb`, and `app/services/ci/build_report_result_service.rb` at v19.4.1-ee | **Refuted (tier 1).** `test_report` answers every case of every suite in one body, with no paging, parsed from the latest jobs' artifacts when asked and cached up to two minutes; jobs still running add nothing, and jobs whose artifacts the user may not read are dropped without a word. gitlab.com caps a file at 500,000 cases. Times are floats, not the integers the file publishes. JUnit's failure text is in `system_output`, and `stack_trace` is always null: `lib/gitlab/ci/parsers.rb` lists JUnit as the only test parser, and it never sets one. A suite is named by the job's group name, so parallel jobs merge and their cases are deduplicated together. `test_report_summary` is written by a worker after each job, so it lags; its `test_suites` is an array the file publishes as an object, and it carries no cases. Child pipelines in the project are taken in, so a finished pipeline's report still grows while a child runs. `get_test_report` reads the full report, says when it may be partial and that it may be two minutes old, does not read `stack_trace`, and falls back to the summary only when the report is over 32 MiB, saying so when the summary is still empty |
 | 99 | GitLab's resource event lists are ordered, complete, and shaped as the OpenAPI file publishes them | `lib/api/resource_label_events.rb`, `resource_state_events.rb`, `resource_milestone_events.rb` and `helpers/resource_events_helpers.rb`, `ee/lib/api/resource_weight_events.rb` and `resource_iteration_events.rb`, `lib/api/entities/resource_*_event.rb` and `ee/lib/api/entities/resource_weight_event.rb`, `lib/gitlab/pagination/offset_pagination.rb` `add_default_order`, `app/models/resource_label_event.rb` `visible_to_user?`, `app/policies/resource_label_event_policy.rb`, `app/finders/resource_milestone_event_finder.rb` and `resource_state_event_finder.rb`, and `app/services/resource_events/change_milestone_service.rb` and `change_state_service.rb` at v19.4.1-ee | **Refuted (tier 1).** Each list pages by offset in id order, oldest first. Label events are filtered after the page is cut, so a page can be short and `X-Total` counts events the account cannot see; a deleted label's event is kept with `label: null`. Milestone events are filtered before paging to milestones the account can read, which also drops those of a deleted milestone; a removal names the milestone removed. A state event's `source_merge_request_id` is a global id, and `source_commit` is set when a commit closed the item. Weight is an issue's only, and the route checks no license, so on Free it is empty rather than refused (inferred: weights are a paid feature, and nothing else writes them); iteration events are Premium and not read. A group's labels and milestones are read by whoever may read the group: anyone for a public group, else its members and its projects' members (`app/policies/group_policy.rb`, `group_label_policy.rb`, `milestone_policy.rb`). A milestone event's `state` is the item's state when the event was made. Order is by id, not time, and an imported item's ids need not follow its times. `list_item_events` reads each list whole or its newest pages, follows the next-page signal past page 1's count, starts a cut history after the oldest event kept and assumes ids follow time there, says the history is GitLab's, and names a deleted label as one |
 | 100 | A board's lists can be read from GitLab as a board shows them | `lib/api/boards.rb`, `boards_responses.rb` and `entities/board.rb` and `list.rb`, `ee/lib/ee/api/entities/board.rb` and `list.rb`, `ee/lib/api/entities/special_board_filter.rb`, `app/models/board.rb`, `list.rb` and `concerns/boards/listable.rb`, `ee/app/models/ee/board.rb` and `ee/list.rb`, `app/models/concerns/timebox.rb`, `app/services/boards/create_service.rb`, `lists/base_create_service.rb`, `lists/move_service.rb` and `base_items_list_service.rb`, `ee/app/services/ee/boards/issues/list_service.rb`, `app/controllers/concerns/boards_actions.rb` and `ee/app/assets/javascripts/boards/constants.js`, `lib/api/entities/user_safe.rb`, `app/finders/issuable_finder/params.rb` and `lib/api/issues.rb` at v19.4.1-ee | **Refined (tier 1).** `GET /projects/:id/boards` pages boards by id and carries each board's lists whole. Lists come ordered by kind, then position, and every kind shares one position sequence, so position is the board's order. No list names its kind: `label` is always present, null unless a label list, and `assignee`, `milestone` and `iteration` only on their kind; a status list carries none. Open and Closed are never returned. Open holds open issues in none of the board's lists, Closed every closed issue, and `hide_backlog_list` and `hide_closed_list` hide them. Scope keys appear only with scoped boards, a paid feature: `milestone` is a milestone or a filter with only a title (No Milestone, Any Milestone, Upcoming, Started), `weight` -1 is any and -2 none. A board milestone is applied to label lists' issues (`label_links`), a filter in its place is not, and where the rest of a scope is applied was not found, so the result says it is unverified. `search_issues`' `milestone` is a title that reads `none` and `any` in any case, `No Milestone`, `Any Milestone`, `#upcoming` and `#started` as filters, and the issues route takes no milestone id (`app/finders/issuable_finder/params.rb`, `lib/api/issues.rb`), so a milestone so titled has no arguments. Lists carry `max_issue_count`, `max_issue_weight` and `limit_metric` with WIP limits, a paid feature; a list's assignee is `UserSafe`, `public_email` included. A project has no board until someone opens its board page, and `POST /projects/:id/boards` works on Free, as `multiple_issue_boards_available?` is true for projects |
+| 101 | GitLab's time tracking API answers as the OpenAPI file publishes it, refuses a bad duration, and leaves `updated_at` alone on spent time | `lib/api/time_tracking_endpoints.rb`, `lib/gitlab/time_tracking_formatter.rb`, `app/models/concerns/time_trackable.rb`, `app/models/timelog.rb`, `lib/api/entities/issuable_time_stats.rb`, `app/services/issuable_base_service.rb` `update`, `app/services/merge_requests/add_spent_time_service.rb` and `config/authz/roles/planner.yml`, `config/authz/roles/reporter.yml` and `config/authz/roles/developer.yml` at v19.4.1-ee, and `lib/gitlab_chronic_duration.rb` of the gitlab-chronic-duration gem | **Refuted (tier 1).** Setting and resetting the estimate and resetting spent time answer 200, not the 201 the file publishes; adding spent time answers 201. The parser is ChronicDuration with 8-hour days and 20-day months, a week a quarter month, a bare number as hours; it drops words it does not know, so `5 foo` is five hours, and an estimate keeps a zero, so a word alone sets the estimate to 0 rather than failing. A duration that parses to nothing adds a timelog with no time, refused 400 by its validation. Subtracting past zero is 400, and a total past four years too. Every timelog `belongs_to` its item with `touch: true`, so adding or resetting spent time moves `updated_at` on both kinds, the merge request's own service included; a changed estimate moves it through the update service. The human forms are null at zero. Writes need `admin_issue` (Planner and up) or `admin_merge_request` (Developer and up), 403 otherwise. `track_time` takes a strict subset of the syntax, checks the witness, and never repeats a spent-time write |

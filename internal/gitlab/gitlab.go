@@ -189,7 +189,19 @@ type Issue struct {
 	References     References      `json:"references"`
 	TaskCompletion *TaskCompletion `json:"task_completion_status"`
 	// MovedToID is the issue it was moved to, once moved.
-	MovedToID *int64 `json:"moved_to_id"`
+	MovedToID *int64    `json:"moved_to_id"`
+	TimeStats TimeStats `json:"time_stats"`
+}
+
+// TimeStats is an issue's or a merge request's time tracking, and the
+// answer of each time tracking write (Entities::IssuableTimeStats). The
+// counts are seconds. The human forms are GitLab's short ones, "1w 2d",
+// and null at zero.
+type TimeStats struct {
+	TimeEstimate        int64   `json:"time_estimate"`
+	TotalTimeSpent      int64   `json:"total_time_spent"`
+	HumanTimeEstimate   *string `json:"human_time_estimate"`
+	HumanTotalTimeSpent *string `json:"human_total_time_spent"`
 }
 
 // DiffRefs are the three SHAs a diff position is computed against.
@@ -254,7 +266,8 @@ type MergeRequest struct {
 	HeadPipeline            *PipelineBasic `json:"head_pipeline"`
 	// MergeWhenPipelineSucceeds is set while an auto-merge waits for the
 	// pipeline.
-	MergeWhenPipelineSucceeds bool `json:"merge_when_pipeline_succeeds"`
+	MergeWhenPipelineSucceeds bool      `json:"merge_when_pipeline_succeeds"`
+	TimeStats                 TimeStats `json:"time_stats"`
 }
 
 // Approvals is GET /projects/:id/merge_requests/:iid/approvals. The

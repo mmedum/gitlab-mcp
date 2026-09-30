@@ -353,6 +353,7 @@ func Issue(is model.Issue, bd Boundary) string {
 	if is.Tasks != nil && is.Tasks.Count > 0 {
 		fmt.Fprintf(&b, "Tasks: %d of %d done.\n", is.Tasks.Completed, is.Tasks.Count)
 	}
+	fmt.Fprintf(&b, "Time: %s.\n", timeLine(is.TimeStats))
 	b.WriteString(discussionLine(is.Discussions) + "\n")
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Title: %s\n", bd.Inline(is.UntrustedTitle))
@@ -369,6 +370,12 @@ func Issue(is model.Issue, bd Boundary) string {
 		b.WriteString("\n" + linkedItems("Merge requests that close it when merged", is.ClosingMergeRequests, bd))
 	}
 	return b.String()
+}
+
+// timeLine is an item's time tracking. GitLab's human form counts 8
+// hours a day and 5 days a week.
+func timeLine(t model.TimeStats) string {
+	return fmt.Sprintf("estimate %s, spent %s", orNone(Ident(t.HumanTimeEstimate)), orNone(Ident(t.HumanTotalTimeSpent)))
 }
 
 // MergeRequest renders get_merge_request.
@@ -416,6 +423,7 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 		fmt.Fprintf(&b, "; closed %s", when(*mr.ClosedAt))
 	}
 	b.WriteString(".\n")
+	fmt.Fprintf(&b, "Time: %s.\n", timeLine(mr.TimeStats))
 	b.WriteString(discussionLine(mr.Discussions) + "\n")
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Title: %s\n", bd.Inline(mr.UntrustedTitle))

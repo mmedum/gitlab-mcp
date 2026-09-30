@@ -1,0 +1,6 @@
+Tracked time on !4.
+Project: example-group/alpha (project id 2001), public: anyone can see what is written there.
+Sent: time_estimate 2h, then add_spent_time 30m.
+Before: estimate 1h, spent (none).
+After, as read back: estimate 2h, spent 30m.
+updated_at is 2026-01-06T11:00:00Z; pass it to track_time or an update for the next change.

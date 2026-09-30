@@ -46,7 +46,7 @@ var byName = map[string]reflect.Type{
 	"TokenInfoApplication": reflect.TypeFor[TokenInfoApplication](),
 	"Namespace":            reflect.TypeFor[Namespace](), "Project": reflect.TypeFor[Project](),
 	"Milestone": reflect.TypeFor[Milestone](), "References": reflect.TypeFor[References](),
-	"TaskCompletion": reflect.TypeFor[TaskCompletion](), "Issue": reflect.TypeFor[Issue](),
+	"TaskCompletion": reflect.TypeFor[TaskCompletion](), "Issue": reflect.TypeFor[Issue](), "TimeStats": reflect.TypeFor[TimeStats](),
 	"DiffRefs": reflect.TypeFor[DiffRefs](), "PipelineBasic": reflect.TypeFor[PipelineBasic](),
 	"MergeRequest": reflect.TypeFor[MergeRequest](), "Approvals": reflect.TypeFor[Approvals](),
 	"Approver": reflect.TypeFor[Approver](), "Discussion": reflect.TypeFor[Discussion](),

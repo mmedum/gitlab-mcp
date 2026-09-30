@@ -179,6 +179,7 @@ func (s *Server) serveProjectWrite(w http.ResponseWriter, r *http.Request, p *pr
 func (s *Server) serveIssueWrite(w http.ResponseWriter, r *http.Request, p *project, iss *gitlab.Issue, user string, rest []string) bool {
 	t := issueTarget(iss)
 	switch {
+	case s.serveTime(w, r, p, &iss.TimeStats, &iss.UpdatedAt, false, user, rest):
 	case r.Method == http.MethodPut && len(rest) == 0:
 		s.updateIssue(w, r, p, iss, user)
 	case r.Method == http.MethodPost && match(rest, "notes"):
@@ -200,6 +201,7 @@ func (s *Server) serveMRWrite(w http.ResponseWriter, r *http.Request, p *project
 	t := mrTarget(mr)
 	post, put, del := r.Method == http.MethodPost, r.Method == http.MethodPut, r.Method == http.MethodDelete
 	switch {
+	case s.serveTime(w, r, p, &mr.TimeStats, &mr.UpdatedAt, true, user, rest):
 	case put && len(rest) == 0:
 		s.updateMR(w, r, p, mr, user)
 	case post && match(rest, "notes"):

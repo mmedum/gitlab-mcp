@@ -261,6 +261,16 @@ type Issue struct {
 	// refused the read, and when offset continues the description.
 	RelatedMergeRequests *LinkedItems `json:"related_merge_requests" jsonschema:"Merge requests that mention the issue or that it mentions, the first 20. GitLab leaves out any the account cannot read. Null when they could not be read, and on a read with an offset, which does not read them again"`
 	ClosingMergeRequests *LinkedItems `json:"closing_merge_requests" jsonschema:"Merge requests that close the issue when merged, the first 20. GitLab lists only those in the issue's own project and leaves out any the account cannot read. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	TimeStats            TimeStats    `json:"time_stats"`
+}
+
+// TimeStats is an issue's or a merge request's time tracking, as GitLab
+// reports it.
+type TimeStats struct {
+	TimeEstimate        int64  `json:"time_estimate" jsonschema:"The estimate in seconds; 0 when none"`
+	TotalTimeSpent      int64  `json:"total_time_spent" jsonschema:"The time spent in seconds, summed over every entry"`
+	HumanTimeEstimate   string `json:"human_time_estimate" jsonschema:"The estimate as GitLab writes it, such as 1w 2d 3h, where 1w is 5d and 1d is 8h; empty when none"`
+	HumanTotalTimeSpent string `json:"human_total_time_spent" jsonschema:"The time spent as GitLab writes it; empty when none"`
 }
 
 // Tasks counts a description's checkboxes.
@@ -333,6 +343,7 @@ type MergeRequest struct {
 	// read, and when offset continues the description.
 	ClosesIssues  *LinkedItems `json:"closes_issues" jsonschema:"Issues GitLab closes when this merges, the first 20. GitLab leaves out confidential or unreadable issues and those in projects that do not close issues automatically. Null when they could not be read, and on a read with an offset, which does not read them again"`
 	RelatedIssues *LinkedItems `json:"related_issues" jsonschema:"Issues the title, description, comments or commits mention, the first 20. GitLab leaves out confidential or unreadable issues. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	TimeStats     TimeStats    `json:"time_stats"`
 }
 
 // DiffRefs are the three SHAs a diff position is computed against.
@@ -1211,6 +1222,22 @@ type LineSpan struct {
 	Side  string `json:"side" jsonschema:"new or old"`
 	Start int    `json:"start"`
 	End   int    `json:"end"`
+}
+
+// TimeWrite is track_time's result.
+type TimeWrite struct {
+	Outcome string `json:"outcome" jsonschema:"updated, unchanged or dry_run"`
+	Write
+	Type   string    `json:"type" jsonschema:"issue or merge_request"`
+	IID    int64     `json:"iid"`
+	WebURL string    `json:"web_url"`
+	Before TimeStats `json:"before" jsonschema:"The time stats read before the write"`
+	// After is nil on a dry run.
+	After *TimeStats `json:"after" jsonschema:"The time stats read back after the write; null on a dry run"`
+	// Sent lists the requests sent, in order.
+	Sent      []string   `json:"sent" jsonschema:"The time tracking requests sent, in order, such as add_spent_time 30m; empty when none was needed"`
+	Changed   []string   `json:"changed" jsonschema:"time_estimate and total_time_spent when they differ after the write, as read back"`
+	UpdatedAt *time.Time `json:"updated_at" jsonschema:"As read after the write, or before it when nothing was sent; pass it as updated_at to the next track_time or update"`
 }
 
 // DiscussionWrite is resolve_discussion's result.

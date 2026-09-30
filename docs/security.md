@@ -154,7 +154,8 @@ replace it with a `read_api` one.
   to it may not use `include:`, since GitLab fetches what an include
   names while linting.
 - **A create is never retried.** Notes, issues, merge requests, commits,
-  pipelines and releases are POSTs GitLab does not deduplicate. When the
+  pipelines, releases and spent time are POSTs GitLab does not
+  deduplicate. When the
   outcome is unclear the result is `[ambiguous_outcome]`, and the server
   has already read to settle it; it never creates again to find out.
 - **A write carries a witness.** An update names the version it read

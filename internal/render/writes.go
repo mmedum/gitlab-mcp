@@ -204,6 +204,29 @@ func DiscussionWrite(w model.DiscussionWrite, _ Boundary) string {
 	return b.String()
 }
 
+// TimeWrite renders track_time.
+func TimeWrite(w model.TimeWrite, _ Boundary) string {
+	var b strings.Builder
+	item := noteableItem(w.Type, w.IID)
+	head := "Tracked time on " + item + "."
+	if w.Outcome == "unchanged" {
+		head = "The time tracking of " + item + " was not changed."
+	}
+	writeHead(&b, head, w.Write)
+	if len(w.Sent) > 0 {
+		fmt.Fprintf(&b, "\nSent: %s.", strings.Join(w.Sent, ", then "))
+	}
+	fmt.Fprintf(&b, "\nBefore: %s.", timeLine(w.Before))
+	if w.After != nil {
+		fmt.Fprintf(&b, "\nAfter, as read back: %s.", timeLine(*w.After))
+	}
+	if w.Outcome == "unchanged" && len(w.Sent) > 0 {
+		b.WriteString("\nGitLab reported the estimate and the time spent as they were.")
+	}
+	witnessLine(&b, w.UpdatedAt, "track_time or an update")
+	return b.String()
+}
+
 // DraftDelete renders delete_review_comment.
 func DraftDelete(w model.DraftDelete, _ Boundary) string {
 	var b strings.Builder

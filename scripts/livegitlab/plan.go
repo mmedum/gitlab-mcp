@@ -418,6 +418,25 @@ func phase2(s scratch) []step {
 			"clear_milestone": true, "add_assignees": me, "add_reviewers": me}, save: map[string]string{"mr_at3": "updated_at"}},
 		{tool: "update_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}", "updated_at": "{{mr_at3}}", "state": "reopen"}},
 
+		// Time tracking, every option on the issue and the merge request,
+		// from the updated_at a read gives.
+		{tool: "get_issue", args: map[string]any{"project": p, "iid": "{{issue}}"}, save: map[string]string{"issue_tt": "updated_at"}},
+		{tool: "track_time", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "updated_at": "{{issue_tt}}",
+			"estimate": "1d 2h", "add_spent": "1h30m", "dry_run": true}},
+		{tool: "track_time", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "updated_at": "{{issue_tt}}",
+			"estimate": "1d 2h", "add_spent": "1h30m"}, save: map[string]string{"issue_tt2": "updated_at"}},
+		{tool: "track_time", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "updated_at": "{{issue_tt}}",
+			"add_spent": "1h"}, expectError: true, why: "a witness from before the last time tracking"},
+		{tool: "track_time", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "updated_at": "{{issue_tt2}}",
+			"add_spent": "-30m"}, save: map[string]string{"issue_tt3": "updated_at"}},
+		{tool: "track_time", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "updated_at": "{{issue_tt3}}",
+			"reset_estimate": true, "reset_spent": true}},
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}"}, save: map[string]string{"mr_tt": "updated_at"}},
+		{tool: "track_time", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mr}}", "updated_at": "{{mr_tt}}",
+			"estimate": "2h", "add_spent": "45m"}, save: map[string]string{"mr_tt2": "updated_at"}},
+		{tool: "track_time", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mr}}", "updated_at": "{{mr_tt2}}",
+			"reset_estimate": true, "reset_spent": true}},
+
 		// The history the writes above made: labels swapped, the milestone
 		// set and cleared, closed and reopened.
 		{tool: "list_item_events", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "max": 2}, paged: true},
@@ -795,7 +814,7 @@ func init() {
 		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "get_test_report",
 		"lint_ci", "list_item_events", "list_boards", "list_todos", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
-		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "create_branch",
+		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",
 		"create_commit",
 		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "retry_pipeline", "retry_job",
 		"play_job", "cancel_pipeline", "delete_branch", "delete_comment", "list_wiki_pages", "get_wiki_page", "save_wiki_page",
