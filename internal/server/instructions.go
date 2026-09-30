@@ -44,7 +44,7 @@ var toolPhrases = []phrase{
 	{lead: "Planning and people: ", tools: []string{"list_labels", "list_milestones", "list_boards", "list_members", "find_users",
 		"list_todos"}, tail: "; a board's columns are read with search_issues."},
 	{lead: "Change issues and merge requests with ", tools: []string{"create_issue", "update_issue", "create_merge_request",
-		"update_merge_request"}, tail: "; an update needs the updated_at of your latest read."},
+		"update_merge_request", "track_time"}, tail: "; an update or time tracking needs the updated_at of your latest read."},
 	{lead: "Comment with ", tools: []string{"add_comment", "update_comment", "resolve_discussion"},
 		tail: "; an edit keeps the comment in its thread and needs the updated_at of your read."},
 	{lead: "Relate issues with ", tools: []string{"link_issues", "unlink_issues"}, tail: "."},

@@ -21,6 +21,7 @@ lifted verbatim.
 - `get_test_report` reads a pipeline's test report: the counts, each suite's, and the failed and errored cases with their output, secrets masked, 40,000 characters at a time.
 - `list_item_events` reads an issue's or a merge request's change history, newest first: labels added and removed, state changes with the commit or merge request behind them, the milestone and an issue's weight.
 - `list_boards` lists a project's issue boards and their lists in board order, with the `search_issues` arguments that read each list, and describes the Open and Closed lists GitLab does not return.
+- `track_time` sets or resets an issue's or a merge request's time estimate and adds or resets its time spent, with the `updated_at` witness; `get_issue` and `get_merge_request` show the time stats.
 
 ## [2.0.0] - 2026-09-29
 

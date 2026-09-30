@@ -252,6 +252,14 @@ func (s *Service) milestoneID(ctx context.Context, p gapi.Project, title string)
 // for a clock that differs from GitLab's.
 const settleSkew = 2 * time.Minute
 
+// The three verdicts of a read that settles a lost write (§4.5), as
+// each result ends.
+const (
+	settledLanded    = "Do not repeat the call"
+	settledNotLanded = "Nothing was repeated; calling again is safe"
+	settledUnknown   = "read before doing anything, and do not repeat the call"
+)
+
 // settle turns a create's ambiguous failure into its verdict (§4.5).
 // find reads what the create would have made: a non-empty description
 // when found, "" when not, and an error when the read itself failed.
@@ -265,13 +273,13 @@ func settle(err error, what string, find func() (string, error)) error {
 	switch {
 	case readErr != nil:
 		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm whether the %s was created, and reading to find out failed too, "+
-			"so it is unknown: read before doing anything, and do not repeat the call", what)
+			"so it is unknown: %s", what, settledUnknown)
 	case found != "":
-		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the %s, but a read shows it was created: %s. "+
-			"Do not repeat the call", what, found)
+		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the %s, but a read shows it was created: %s. %s",
+			what, found, settledLanded)
 	}
-	return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the %s, and a read shows it was not created. "+
-		"Nothing was repeated; calling again is safe", what)
+	return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the %s, and a read shows it was not created. %s",
+		what, settledNotLanded)
 }
 
 // sameText compares a body sent with one read back. GitLab trims the

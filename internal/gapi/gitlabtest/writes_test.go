@@ -911,3 +911,128 @@ func TestReadsAnswer(t *testing.T) {
 		t.Errorf("revoked = %d", resp.StatusCode)
 	}
 }
+
+// Time tracking answers as lib/api/time_tracking_endpoints.rb does: 200
+// for the estimate and the resets, 201 for added time, 400 for what
+// GitLab cannot parse or refuses, 403 below the role that manages the
+// item, and updated_at moving with each change.
+func TestTimeTracking(t *testing.T) {
+	s, now := frozen(t)
+	tok := s.Token()
+	issue := "/projects/2001/issues/3/"
+	resp, body := send(t, s, "GET", issue+"time_stats", tok, nil)
+	wantStatus(t, "time_stats", resp, body, 200)
+	if body["time_estimate"] != float64(12600) || body["human_time_estimate"] != "3h 30m" || body["human_total_time_spent"] != "10h" {
+		t.Errorf("seeded stats = %v", body)
+	}
+	updated := func() time.Time {
+		_, is := send(t, s, "GET", "/projects/2001/issues/3", tok, nil)
+		at, _ := time.Parse(time.RFC3339Nano, is["updated_at"].(string))
+		return at
+	}
+	*now = now.Add(time.Hour)
+	before := updated()
+	resp, body = send(t, s, "POST", issue+"time_estimate", tok, obj{"duration": "1w 2d 3h"})
+	wantStatus(t, "time_estimate", resp, body, 200)
+	if body["time_estimate"] != float64(144000+57600+10800) || body["human_time_estimate"] != "59h" || !updated().After(before) {
+		t.Errorf("time_estimate = %v", body)
+	}
+	// The same estimate again moves nothing.
+	*now = now.Add(time.Hour)
+	before = updated()
+	send(t, s, "POST", issue+"time_estimate", tok, obj{"duration": "1w 2d 3h"})
+	if !updated().Equal(before) {
+		t.Error("an unchanged estimate moved updated_at")
+	}
+	resp, body = send(t, s, "POST", issue+"time_estimate", tok, obj{"duration": "-1h"})
+	wantError(t, "a negative estimate", resp, body, 400, "message", "must have a valid format")
+	// Words GitLab does not know are dropped, and an estimate keeps a
+	// zero, so a word alone resets it.
+	resp, body = send(t, s, "POST", issue+"time_estimate", tok, obj{"duration": "soon"})
+	wantStatus(t, "time_estimate soon", resp, body, 200)
+	if body["time_estimate"] != float64(0) || body["human_time_estimate"] != nil {
+		t.Errorf("a word as the estimate = %v, want 0 with a null human form", body)
+	}
+
+	*now = now.Add(time.Hour)
+	before = updated()
+	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "1h 30m"})
+	wantStatus(t, "add_spent_time", resp, body, 201)
+	// Added time leaves updated_at where it was, as gitlab.com does.
+	if body["total_time_spent"] != float64(36000+5400) || !updated().Equal(before) {
+		t.Errorf("add_spent_time = %v", body)
+	}
+	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "-2d"})
+	wantError(t, "subtracting too much", resp, body, 400, "message", "Time to subtract exceeds the total time spent")
+	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "5y"})
+	wantError(t, "past four years", resp, body, 400, "message", "Total time spent cannot exceed 4 years.")
+	resp, body = send(t, s, "POST", issue+"time_estimate", tok, obj{"duration": "99999999h"})
+	if body["time_estimate"] != float64(2147483647) {
+		t.Errorf("an estimate past the limit = %d %v, want it kept as the limit", resp.StatusCode, body)
+	}
+	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "0h"})
+	wantError(t, "a zero duration", resp, body, 400, "message", "can't be blank")
+	// GitLab's parser drops words it does not know.
+	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "1 hour and 30 foo"})
+	wantStatus(t, "add_spent_time words", resp, body, 201)
+	if body["total_time_spent"] != float64(36000+5400+31*3600) {
+		t.Errorf("words: %v, want 1 hour and 30 hours more", body)
+	}
+	*now = now.Add(time.Hour)
+	before = updated()
+	resp, body = send(t, s, "POST", issue+"reset_spent_time", tok, nil)
+	wantStatus(t, "reset_spent_time", resp, body, 200)
+	// A reset leaves updated_at where it was too.
+	if body["total_time_spent"] != float64(0) || body["human_total_time_spent"] != nil || !updated().Equal(before) {
+		t.Errorf("reset_spent_time = %v", body)
+	}
+	resp, body = send(t, s, "POST", issue+"reset_time_estimate", tok, nil)
+	wantStatus(t, "reset_time_estimate", resp, body, 200)
+
+	// dave does not belong to the project; he may read its issues, not
+	// track time on them. A merge request needs a developer.
+	dave := s.TokenFor("dave", "api")
+	resp, body = send(t, s, "POST", issue+"add_spent_time", dave, obj{"duration": "1h"})
+	wantError(t, "dave", resp, body, 403, "message", "403 Forbidden")
+	resp, body = send(t, s, "POST", "/projects/2001/merge_requests/1/add_spent_time", tok, obj{"duration": "1mo"})
+	wantStatus(t, "merge request", resp, body, 201)
+	if body["human_total_time_spent"] != "160h" {
+		t.Errorf("merge request = %v", body)
+	}
+}
+
+func TestTimeTrackingDurations(t *testing.T) {
+	for _, c := range []struct {
+		in       string
+		keepZero bool
+		want     int64
+		ok       bool
+	}{
+		{"3", false, 3 * 3600, true},
+		{"1h30m", false, 5400, true},
+		{"1mo 1w 1d 1h 1m 1s", false, 576000 + 144000 + 28800 + 3600 + 60 + 1, true},
+		{"1.5h", false, 5400, true},
+		{"-30m", false, -1800, true},
+		{"1:30", false, 90, true},
+		{"5 foo", false, 5 * 3600, true},
+		{"day", false, 28800, true},
+		{"0", false, 0, false},
+		{"0", true, 0, true},
+		{"soon", false, 0, false},
+	} {
+		got, ok := parseTimeTracking(c.in, c.keepZero)
+		if got != c.want || ok != c.ok {
+			t.Errorf("parse %q = %d %v, want %d %v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+	// gitlab.com writes hours at most, below a year.
+	for secs, want := range map[int64]string{60: "1m", 5400: "1h 30m", 28800: "8h", 144000 + 28800: "48h", 576000: "160h",
+		576000*2 + 3600 + 1: "321h 1s", -1800: "-30m", 31557600 + 28800: "1y 1d"} {
+		if got := humanDuration(secs); got == nil || *got != want {
+			t.Errorf("human %d = %v, want %s", secs, got, want)
+		}
+	}
+	if humanDuration(0) != nil {
+		t.Error("human 0 is not null")
+	}
+}

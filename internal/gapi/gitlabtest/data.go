@@ -250,6 +250,11 @@ func (s *Server) fillAlpha(p *project) {
 		if i == 5 {
 			iss.Confidential = true
 		}
+		// Issue 3 has time tracked: 3h 30m estimated, 1d 2h spent.
+		if i == 2 {
+			iss.TimeStats = gitlab.TimeStats{TimeEstimate: 12600, TotalTimeSpent: 36000}
+			humanize(&iss.TimeStats)
+		}
 		s.addDiscussions(p, "issue", iss.IID, iss.ID, "Issue", iss.CreatedAt, nil)
 	}
 
@@ -292,6 +297,9 @@ func (s *Server) fillAlpha(p *project) {
 			// The first links to issues: it closes #1 and the confidential
 			// #6, and mentions #2 and an external tracker's issue.
 			mr.Description += "\n\nCloses #1 and fixes #6. Relates to #2 and EXT-7."
+			// It is estimated at a week.
+			mr.TimeStats = gitlab.TimeStats{TimeEstimate: 144000}
+			humanize(&mr.TimeStats)
 		}
 		pos := &gitlab.Position{BaseSHA: base.ID, StartSHA: base.ID, HeadSHA: head.ID, PositionType: "text",
 			OldPath: "src/login.go", NewPath: "src/login.go", NewLine: intPtr(3)}

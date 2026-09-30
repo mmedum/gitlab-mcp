@@ -20,7 +20,7 @@ func definitions() []definition {
 		searchIssues(), getIssue(), createIssue(), updateIssue(), listDiscussions(), listItemEvents(), addComment(), updateComment(),
 		resolveDiscussion(), linkIssues(), unlinkIssues(),
 		searchMergeRequests(), getMergeRequest(), listMRFiles(), getMRDiff(), listMRCommits(),
-		createMergeRequest(), updateMergeRequest(), addReviewComment(), listReviewComments(), deleteReviewComment(), submitReview(),
+		createMergeRequest(), updateMergeRequest(), trackTime(), addReviewComment(), listReviewComments(), deleteReviewComment(), submitReview(),
 		getFile(), listTree(), listBranches(), listCommits(), getCommit(), compareRefs(), listTags(), createBranch(), createCommit(),
 		getBlame(), cherryPickCommit(), revertCommit(),
 		listPipelines(), getPipeline(), listJobs(), getJobLog(), getTestReport(), lintCI(), listJobArtifacts(), getJobArtifact(),

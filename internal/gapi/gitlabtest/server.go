@@ -199,6 +199,9 @@ type Fault struct {
 	// Pass serves the request as usual after Delay: a slow answer, not
 	// a wrong one.
 	Pass bool
+	// Skip lets that many matching requests through before the fault
+	// applies, to fail a later read of the same path.
+	Skip int
 }
 
 // Inject adds a fault.
@@ -237,6 +240,10 @@ func (s *Server) takeFault(method, apiPath, query string) *Fault {
 	defer s.mu.Unlock()
 	for i, f := range s.faults {
 		if (f.Method == "" || f.Method == method) && strings.HasPrefix(apiPath, f.Path) && strings.Contains(query+"&", f.Query) {
+			if f.Skip > 0 {
+				f.Skip--
+				return nil
+			}
 			f.Times--
 			if f.Times <= 0 {
 				s.faults = append(s.faults[:i], s.faults[i+1:]...)

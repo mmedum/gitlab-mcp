@@ -382,6 +382,25 @@ func issuesAccess(p *project) string {
 	return "enabled"
 }
 
+// SetMemberLevel gives a user an access level in a project, 20 for
+// Reporter or 30 for Developer; 0 removes the user. It reports whether
+// the project exists.
+func (s *Server) SetMemberLevel(projectPath, user string, level int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	if level == 0 {
+		delete(p.levels, user)
+		delete(p.members, user)
+		return true
+	}
+	p.levels[user], p.members[user] = level, true
+	return true
+}
+
 // SetIssuesAccess sets who sees a project's issues: enabled, private or
 // disabled.
 func (s *Server) SetIssuesAccess(projectPath, level string) bool {

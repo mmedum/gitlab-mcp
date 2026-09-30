@@ -27,7 +27,7 @@ func TestGetMe(t *testing.T) {
 		"instance.edition":          "Community",
 		"instance.known":            true,
 		"token.kind":                "oauth",
-		"registered.tools":          float64(54),
+		"registered.tools":          float64(55),
 		"registered.read_only":      false,
 		"write_namespaces.confined": false,
 	} {
@@ -737,11 +737,11 @@ func TestSurfaceCounts(t *testing.T) {
 		cfg  config.Config
 		want int
 	}{
-		{"default", config.Config{}, 54},
+		{"default", config.Config{}, 55},
 		{"read-only", config.Config{ReadOnly: true}, 37},
-		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 66},
+		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 67},
 		{"every toolset, read-only", config.Config{ReadOnly: true, Toolsets: config.Toolsets}, 46},
-		{"full", FullSurface(config.Config{}), 87},
+		{"full", FullSurface(config.Config{}), 88},
 	}
 	for _, c := range cases {
 		if got := len(Surface(c.cfg, nil)); got != c.want {

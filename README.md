@@ -60,6 +60,7 @@ contract: tools keep their names and output fields.
 | `list_mr_commits` | A merge request's commits |
 | `create_merge_request` | Open a merge request from a branch |
 | `update_merge_request` | Change a merge request's fields, refused if it changed since you read it |
+| `track_time` | Set or reset an issue's or a merge request's time estimate, and add or reset its time spent |
 | `add_review_comment` | A draft review comment, on the merge request or a diff line |
 | `list_review_comments` | Your unpublished review comments on a merge request |
 | `delete_review_comment` | Delete one of your drafts |

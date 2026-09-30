@@ -1,0 +1,6 @@
+Dry run: nothing was written. It would subtract 30m of spent time with POST, sending duration.
+Project: example-group/alpha (project id 2001), public: anyone can see what is written there.
+Note: There is no estimate, so resetting it is left out.
+Before: estimate (none), spent 1h.
+updated_at is 2026-01-06T11:00:00Z; pass it to track_time or an update for the next change.
+total_time_spent is 3600; pass it to the next track_time that adds or resets spent time.

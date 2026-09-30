@@ -339,6 +339,40 @@ func updateMergeRequest() definition {
 	}
 }
 
+// ------------------------------------------------------- time tracking
+
+type trackTimeIn struct {
+	Project        idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	Type           string   `json:"type" jsonschema:"issue or merge_request"`
+	IID            int64    `json:"iid" jsonschema:"The number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	UpdatedAt      string   `json:"updated_at" jsonschema:"The updated_at of your latest read of it, as get_issue or get_merge_request returned it. The write is refused [stale] if it changed since. A [stale] refusal is NOT a retry signal: read it again and decide whether the change still makes sense before passing the new value"`
+	Estimate       string   `json:"estimate,omitempty" jsonschema:"Set the estimate to this duration, such as 3h30m, 1w 2d or 1.5 (hours). Units mo, w, d, h and m; 1mo is 4w, 1w is 5d, 1d is 8h"`
+	ResetEstimate  bool     `json:"reset_estimate,omitempty" jsonschema:"Remove the estimate"`
+	AddSpent       string   `json:"add_spent,omitempty" jsonschema:"Add this duration to the time spent, in the same form as estimate; a leading minus, such as -30m, subtracts, down to zero at most"`
+	ResetSpent     bool     `json:"reset_spent,omitempty" jsonschema:"Set the time spent back to zero"`
+	TotalTimeSpent *int64   `json:"total_time_spent,omitempty" jsonschema:"Required with add_spent or reset_spent: the seconds spent as your latest read gave them, time_stats.total_time_spent of get_issue or get_merge_request or total_time_spent of track_time. GitLab does not move updated_at when spent time is added or reset, so this is the witness that catches the same change sent twice: the call is refused [stale] if the total moved. A [stale] refusal is NOT a retry signal: read it again and decide whether the time still needs adding"`
+	DryRun         bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
+}
+
+func trackTime() definition {
+	return tool[trackTimeIn, model.TimeWrite]{
+		sp: spec{Name: "track_time", Kind: Write, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+			Description: "Set or reset the time estimate of an issue or a merge request, and add or reset its time spent: " +
+				"estimate or reset_estimate, add_spent or reset_spent, at least one. updated_at from your latest read is " +
+				"required, and the call is refused [stale] if the item changed since; adding or resetting spent time also needs " +
+				"total_time_spent from that read, since GitLab does not move updated_at when spent time is added or reset. Adding time is never repeated after a " +
+				"lost answer; the result then says what a read of the total shows. The result gives the time stats before " +
+				"and after, as read back, and says so when nothing changed. GitLab records each change as a note on the item." +
+				visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in trackTimeIn) (model.TimeWrite, error) {
+			return svc.TrackTime(ctx, service.TimeTracking{Project: string(in.Project), Type: in.Type, IID: in.IID,
+				UpdatedAt: in.UpdatedAt, Estimate: in.Estimate, ResetEstimate: in.ResetEstimate, AddSpent: in.AddSpent,
+				ResetSpent: in.ResetSpent, TotalTimeSpent: in.TotalTimeSpent})
+		},
+		text: render.TimeWrite,
+	}
+}
+
 // ---------------------------------------------------------- repository
 
 type createBranchIn struct {
