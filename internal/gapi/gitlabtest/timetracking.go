@@ -21,8 +21,6 @@ import (
 // GitLab's system notes for these changes are not modeled.
 
 const (
-	plannerAccess   = 15
-	developerAccess = 30
 	// maxEstimate and maxTotalSpent are MAX_INT_VALUE and
 	// Timelog::MAX_TOTAL_TIME_SPENT.
 	maxEstimate   = math.MaxInt32

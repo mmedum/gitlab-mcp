@@ -85,8 +85,8 @@ func (s *Service) ListMilestones(ctx context.Context, q MilestoneSearch) (model.
 	return out, nil
 }
 
-// boardPages bounds how many pages of 100 boards list_boards reads.
-const boardPages = 10
+// boardPages bounds how many pages of boards list_boards reads.
+const boardPages = render.BoardsRead / gapi.MaxPerPage
 
 // boardListCap bounds the lists shown of one board.
 const boardListCap = 100
@@ -145,7 +145,7 @@ func (s *Service) ListBoards(ctx context.Context, raw string, opts gapi.ListOpti
 		limit = gapi.DefaultPerPage
 	}
 	limit = min(limit, gapi.MaxPerPage)
-	out := model.Boards{Project: ref, Boards: []model.Board{}, BudgetChars: render.BoardsBudget}
+	out := model.Boards{Project: ref, Boards: []model.Board{}, BudgetChars: render.BoardsBudget, BoardsNotRead: !complete}
 	used, next := 0, len(all)
 	for i, b := range all[from:] {
 		row := boardRow(b)

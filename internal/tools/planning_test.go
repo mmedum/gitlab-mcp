@@ -331,6 +331,26 @@ func TestListBoardsBudget(t *testing.T) {
 	}
 }
 
+// A project with more boards than one call reads says so: those past
+// them are in no page.
+func TestListBoardsPastTheReadCap(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.AddBoards(gitlabtest.ProjectAlpha, 1000)
+	text, out := h.ok("list_boards", map[string]any{"project": gitlabtest.ProjectAlpha})
+	if get(out, "boards_not_read") != true || get(out, "listing", "complete") != false ||
+		!strings.Contains(text, "more than 1000 boards") {
+		t.Errorf("%v\n%s", get(out, "listing"), text)
+	}
+	_, out = h.ok("list_boards", map[string]any{"project": gitlabtest.ProjectAlpha, "max": 1})
+	if get(out, "boards_not_read") != true {
+		t.Errorf("a page of one: %v", out)
+	}
+	_, out = h.ok("list_boards", map[string]any{"project": gitlabtest.ProjectBeta})
+	if get(out, "boards_not_read") != false {
+		t.Errorf("a project with no boards: %v", out)
+	}
+}
+
 // The Open list's description leaves out what GitLab's does: status lists
 // included.
 func TestListBoardsSchema(t *testing.T) {

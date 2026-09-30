@@ -155,19 +155,6 @@ func (s *Server) groupReadable(id int64, user string) bool {
 	return false
 }
 
-// SetGroupPrivate makes a group private.
-func (s *Server) SetGroupPrivate(path string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, g := range s.groups {
-		if g.path == path {
-			g.private = true
-			return true
-		}
-	}
-	return false
-}
-
 // eventLabel finds a label by id anywhere on the instance, and whether
 // user may read it; nil when it was deleted.
 func (s *Server) eventLabel(id int64, user string) (*gitlab.Label, bool) {
@@ -309,43 +296,37 @@ func (s *Server) fillItemEvents(alpha, secret *project) {
 	}
 }
 
-// AddLabelEvents adds n label events to an issue, or a merge request
-// when mr is set, an hour apart from the hour after its newest event,
-// adding and removing the label docs in turn.
-func (s *Server) AddLabelEvents(projectPath string, mr bool, iid int64, n int) bool {
-	return s.AddLabelEventsFor(projectPath, mr, iid, n, "docs")
+// AddLabelEvents adds n label events to an issue (kind "issue") or a
+// merge request (kind "mr"), an hour apart from the hour after its newest
+// event, adding and removing the label docs in turn.
+func (s *Server) AddLabelEvents(projectPath, kind string, iid int64, n int) bool {
+	return s.AddLabelEventsFor(projectPath, kind, iid, n, "docs")
 }
 
-// AddStateEvent adds a state event to an issue, or a merge request when
-// mr is set, at a given time.
-func (s *Server) AddStateEvent(projectPath string, mr bool, iid int64, state string, at time.Time) bool {
+// AddStateEvent adds a state event to an issue (kind "issue") or a merge
+// request (kind "mr") at a given time.
+func (s *Server) AddStateEvent(projectPath, kind string, iid int64, state string, at time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.projectByPath(projectPath)
-	if p == nil {
+	if p == nil || kind != "issue" && kind != "mr" {
 		return false
 	}
-	key := "issue:" + itoa(iid)
-	if mr {
-		key = "mr:" + itoa(iid)
-	}
+	key := kind + ":" + itoa(iid)
 	s.addEvent(p, key, itemEvent{kind: "state", user: "dave", at: at.UTC(), state: state})
 	return true
 }
 
 // AddLabelEventsFor is AddLabelEvents with a label named by the
 // instance's first label of that name, in any project.
-func (s *Server) AddLabelEventsFor(projectPath string, mr bool, iid int64, n int, label string) bool {
+func (s *Server) AddLabelEventsFor(projectPath, kind string, iid int64, n int, label string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.projectByPath(projectPath)
-	if p == nil {
+	if p == nil || kind != "issue" && kind != "mr" {
 		return false
 	}
-	key := "issue:" + itoa(iid)
-	if mr {
-		key = "mr:" + itoa(iid)
-	}
+	key := kind + ":" + itoa(iid)
 	id := s.labelID(p, label)
 	for _, q := range s.projects {
 		for _, l := range q.labels {

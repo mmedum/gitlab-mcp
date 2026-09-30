@@ -154,12 +154,12 @@ replace it with a `read_api` one.
   to it may not use `include:`, since GitLab fetches what an include
   names while linting.
 - **A create is never retried.** Notes, issues, merge requests, commits,
-  pipelines, releases and spent time are POSTs GitLab does not
+  pipelines, releases, spent time and to-dos are POSTs GitLab does not
   deduplicate. When the
   outcome is unclear the result is `[ambiguous_outcome]`, and the server
   has already read to settle it; it never creates again to find out.
 - **A write carries a witness.** An update names the version it read
-  (`last_commit_id`, `sha` or `updated_at`) and is refused as `[stale]`
+  (`last_commit_id`, `sha`, `updated_at` or `total_time_spent`) and is refused as `[stale]`
   if that moved. Omitted fields stay unchanged, and lists change by add
   and remove, never by replacement. Merging and approving carry the head
   `sha` you reviewed, and GitLab refuses them itself if a push came

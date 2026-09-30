@@ -414,6 +414,9 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 	if p.name == "" {
 		p.name = "this request"
 	}
+	if call.Once != "" && (call.Method == http.MethodPost || call.Repeatable != "") {
+		return nil, Errf(ClassUnexpected, "%s sets Once with a POST or with Repeatable, which contradict it", p.name)
+	}
 	path, err := fillPath(call.Path, call.Args)
 	if err != nil {
 		return nil, err

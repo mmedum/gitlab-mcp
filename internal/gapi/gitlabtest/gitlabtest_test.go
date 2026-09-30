@@ -575,7 +575,7 @@ func TestItemEventsGroupAccessAndState(t *testing.T) {
 		return out, resp
 	}
 	alice, dave := s.Token(), s.TokenFor("dave", "api")
-	s.AddLabelEventsFor(ProjectAlpha, false, 2, 1, GroupLabel)
+	s.AddLabelEventsFor(ProjectAlpha, "issue", 2, 1, GroupLabel)
 	if rows, _ := do("GET", "issues/2/resource_label_events", dave, ""); len(rows) != 1 {
 		t.Errorf("a public group's label: %v", rows)
 	}

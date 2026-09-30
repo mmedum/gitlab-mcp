@@ -20,11 +20,15 @@ lifted verbatim.
 - `get_issue` lists the merge requests related to the issue and those that close it, `get_merge_request` the issues it closes and mentions, and `get_commit` the merge requests that contain the commit: the first 20 of each, as GitLab returns them.
 - `get_test_report` reads a pipeline's test report: the counts, each suite's, and the failed and errored cases with their output, secrets masked, 40,000 characters at a time.
 - `list_item_events` reads an issue's or a merge request's change history, newest first: labels added and removed, state changes with the commit or merge request behind them, the milestone and an issue's weight.
-- `list_boards` lists a project's issue boards and their lists in board order, with the `search_issues` arguments that read each list, and describes the Open and Closed lists GitLab does not return.
-- `track_time` sets or resets an issue's or a merge request's time estimate and adds or resets its time spent, with the `updated_at` witness; `get_issue` and `get_merge_request` show the time stats.
+- `list_boards` lists a project's issue boards and their lists in board order, with the `search_issues` arguments that read each list, and describes the Open and Closed lists GitLab does not return; it reads the first 1,000 boards and says when there are more.
+- `track_time` sets or resets an issue's or a merge request's time estimate and adds or resets its time spent, with the `updated_at` witness, and `total_time_spent` when it adds or resets spent time; `get_issue` and `get_merge_request` show the time stats.
 - `add_todo` adds a to-do for yourself on an issue or a merge request and returns its id for `mark_todos_done`; while a pending to-do you added is there it adds none and names that one.
 - `subscribe` subscribes you to an issue's or a merge request's notifications, or unsubscribes you, and says when you already were so.
 - `update_snippet` changes one of your own private snippets, its title, description and files, with the `updated_at` witness and never its visibility; `delete_snippet` (Destructive) deletes one, GitLab refusing it if the snippet changed since your read.
+
+### Changed
+
+- `mark_todos_done` sets `openWorldHint` false, as `add_todo` and `subscribe` do: only you see its effect.
 
 ## [2.0.0] - 2026-09-29
 

@@ -29,6 +29,9 @@ const (
 	// BoardsBudget bounds one page of list_boards, by an estimate of
 	// each board's lists.
 	BoardsBudget = 30000
+	// BoardsRead is how many boards one list_boards call reads, the
+	// first by id.
+	BoardsRead = 1000
 	// TitleChars bounds a one-line title.
 	TitleChars = 200
 )

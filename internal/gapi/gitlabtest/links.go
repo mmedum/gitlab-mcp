@@ -33,10 +33,6 @@ var (
 	mrRef    = regexp.MustCompile(`(?:^|[^\w/])!(\d+)\b`)
 )
 
-// plannerLevel is the least access level that reads a confidential
-// issue.
-const plannerLevel = 15
-
 // readable is GitLab's rule for a confidential issue: its author, its
 // assignees and members at Planner and above, a group's members
 // included, read it.
@@ -44,12 +40,7 @@ func (s *Server) readable(p *project, iss *gitlab.Issue, user string) bool {
 	if !iss.Confidential || iss.Author.Username == user || has(usernames(iss.Assignees), user) {
 		return true
 	}
-	for _, m := range s.members(p, "") {
-		if m.Username == user {
-			return m.AccessLevel >= plannerLevel
-		}
-	}
-	return false
+	return s.accessLevel(p, user) >= plannerAccess
 }
 
 // issueMention is one issue a text names: a GitLab issue by iid, or an

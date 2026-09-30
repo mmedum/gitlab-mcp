@@ -36,7 +36,8 @@ type Call struct {
 	// Repeatable is the reason a POST may be sent twice without applying
 	// twice, such as "marking a todo done twice leaves it done". Empty
 	// means the method decides: GET, PUT and DELETE repeat, POST does
-	// not. A create is never declared repeatable (§4.5).
+	// not, and Once stops a PUT or DELETE repeating. A create is never
+	// declared repeatable (§4.5).
 	Repeatable string
 	// NotModified is the reason a 304 answers this call rather than
 	// failing it, such as "already subscribed". GitLab answers 304 with no
@@ -48,6 +49,7 @@ type Call struct {
 	// "a file created twice fails the second time": after a failure that
 	// may have followed the write it is not repeated, and is
 	// [ambiguous_outcome] as a create is. Empty means the method decides.
+	// A POST or a Repeatable call setting it is refused as [unexpected].
 	Once string
 	// ReadOnly is the reason a POST changes nothing, such as "linting
 	// creates nothing". Such a call may repeat and may run under a dry

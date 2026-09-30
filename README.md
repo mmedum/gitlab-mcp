@@ -14,7 +14,7 @@ Unofficial, and not affiliated with GitLab Inc. See `NOTICE`.
 
 ## What makes this one different
 
-- **A small surface, gated by registration.** About fifty tools rather
+- **A small surface, gated by registration.** About sixty tools rather
   than an API mirror, and a tool that is switched off is not registered,
   so it cannot be called at all.
 - **Nothing it writes runs a quick action.** `/merge` in a comment is
