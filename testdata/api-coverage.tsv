@@ -240,10 +240,10 @@ POST /projects/{id}/issues/{issue_iid}/links	used	1	Client.CreateIssueLink: link
 DELETE /projects/{id}/issues/{issue_iid}/links/{issue_link_id}	used	1	Client.DeleteIssueLink: unlink_issues
 * /projects/{id}/issues/{issue_iid}/links*	deferred	1	one link by id; the listing carries it (§17a)
 * /projects/{id}/issues/{issue_iid}/metric_images*	deferred	5	incident metric images: operations tooling, not in 1.0
-POST /projects/{id}/issues/{issue_iid}/add_spent_time	used	1	Client.AddSpentTime: track_time, never repeated; a lost answer is settled by reading the total (§4.5)
-POST /projects/{id}/issues/{issue_iid}/reset_spent_time	used	1	Client.ResetSpentTime: track_time, never repeated
-POST /projects/{id}/issues/{issue_iid}/reset_time_estimate	used	1	Client.ResetTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
-POST /projects/{id}/issues/{issue_iid}/time_estimate	used	1	Client.SetTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
+POST /projects/{id}/issues/{issue_iid}/add_spent_time	used	1	Client.AddIssueSpentTime: track_time, never repeated; a lost answer is settled by reading the total (§4.5)
+POST /projects/{id}/issues/{issue_iid}/reset_spent_time	used	1	Client.ResetIssueSpentTime: track_time, never repeated
+POST /projects/{id}/issues/{issue_iid}/reset_time_estimate	used	1	Client.ResetIssueTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
+POST /projects/{id}/issues/{issue_iid}/time_estimate	used	1	Client.SetIssueTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
 GET /projects/{id}/issues/{issue_iid}/time_stats	written-off	1	get_issue carries the same four fields as time_stats, and track_time reads them there with the updated_at it needs
 * /projects/{id}/issues/{subscribable_id}/*	deferred	2	subscribing to an issue's notifications (§17a)
 GET /projects/{id}/issues/{eventable_id}/resource_label_events	used	1	Client.ListIssueLabelEvents: list_item_events, an issue's label changes
@@ -290,10 +290,10 @@ GET /projects/{id}/merge_requests/{merge_request_iid}/blockees	deferred	1	merge 
 * /projects/{id}/merge_requests/{merge_request_iid}/status_check*	written-off	3	external status checks: a CI integration's surface, Ultimate (§8a)
 POST /projects/{id}/merge_requests/{merge_request_iid}/suggested_reviewers	written-off	1	experiment lifecycle: not a stable API (§8a)
 POST /projects/{id}/merge_requests/{merge_request_iid}/todo	deferred	1	creating a to-do for oneself (§17a)
-POST /projects/{id}/merge_requests/{merge_request_iid}/add_spent_time	used	1	Client.AddSpentTime: track_time, never repeated; a lost answer is settled by reading the total (§4.5)
-POST /projects/{id}/merge_requests/{merge_request_iid}/reset_spent_time	used	1	Client.ResetSpentTime: track_time, never repeated
-POST /projects/{id}/merge_requests/{merge_request_iid}/reset_time_estimate	used	1	Client.ResetTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
-POST /projects/{id}/merge_requests/{merge_request_iid}/time_estimate	used	1	Client.SetTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
+POST /projects/{id}/merge_requests/{merge_request_iid}/add_spent_time	used	1	Client.AddMergeRequestSpentTime: track_time, never repeated; a lost answer is settled by reading the total (§4.5)
+POST /projects/{id}/merge_requests/{merge_request_iid}/reset_spent_time	used	1	Client.ResetMergeRequestSpentTime: track_time, never repeated
+POST /projects/{id}/merge_requests/{merge_request_iid}/reset_time_estimate	used	1	Client.ResetMergeRequestTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
+POST /projects/{id}/merge_requests/{merge_request_iid}/time_estimate	used	1	Client.SetMergeRequestTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
 GET /projects/{id}/merge_requests/{merge_request_iid}/time_stats	written-off	1	get_merge_request carries the same four fields as time_stats, and track_time reads them there with the updated_at it needs
 GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	deferred	1	one draft; list_review_comments reads them all
 PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	deferred	1	editing a draft; delete and add again (§17a)

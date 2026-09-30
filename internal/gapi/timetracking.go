@@ -19,50 +19,56 @@ type durationBody struct {
 
 const estimateRepeats = "setting an estimate twice leaves the same estimate"
 
-// SetTimeEstimate sets an issue's or a merge request's estimate.
-func (c *Client) SetTimeEstimate(ctx context.Context, p Project, mr bool, iid int64, duration string) (*gitlab.TimeStats, error) {
-	call := Call{Method: "POST", Path: "projects/{}/issues/{}/time_estimate", Args: []string{p.segment(), idArg(iid)},
-		Body: durationBody{duration}, Repeatable: estimateRepeats, Name: "track_time"}
-	if mr {
-		call = Call{Method: "POST", Path: "projects/{}/merge_requests/{}/time_estimate", Args: []string{p.segment(), idArg(iid)},
-			Body: durationBody{duration}, Repeatable: estimateRepeats, Name: "track_time"}
-	}
-	return c.timeStats(ctx, call)
+// SetIssueTimeEstimate sets an issue's estimate.
+func (c *Client) SetIssueTimeEstimate(ctx context.Context, p Project, iid int64, duration string) (*gitlab.TimeStats, error) {
+	return c.timeStats(ctx, Call{Method: "POST", Path: "projects/{}/issues/{}/time_estimate", Args: []string{p.segment(), idArg(iid)},
+		Body: durationBody{duration}, Repeatable: estimateRepeats, Name: "track_time"})
 }
 
-// ResetTimeEstimate sets an issue's or a merge request's estimate to 0.
-func (c *Client) ResetTimeEstimate(ctx context.Context, p Project, mr bool, iid int64) (*gitlab.TimeStats, error) {
-	call := Call{Method: "POST", Path: "projects/{}/issues/{}/reset_time_estimate", Args: []string{p.segment(), idArg(iid)},
-		Repeatable: estimateRepeats, Name: "track_time"}
-	if mr {
-		call = Call{Method: "POST", Path: "projects/{}/merge_requests/{}/reset_time_estimate", Args: []string{p.segment(), idArg(iid)},
-			Repeatable: estimateRepeats, Name: "track_time"}
-	}
-	return c.timeStats(ctx, call)
+// SetMergeRequestTimeEstimate sets a merge request's estimate.
+func (c *Client) SetMergeRequestTimeEstimate(ctx context.Context, p Project, iid int64, duration string) (*gitlab.TimeStats, error) {
+	return c.timeStats(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/time_estimate", Args: []string{p.segment(), idArg(iid)},
+		Body: durationBody{duration}, Repeatable: estimateRepeats, Name: "track_time"})
 }
 
-// AddSpentTime adds a timelog of duration, which may be negative, to an
-// issue or a merge request.
-func (c *Client) AddSpentTime(ctx context.Context, p Project, mr bool, iid int64, duration string) (*gitlab.TimeStats, error) {
-	call := Call{Method: "POST", Path: "projects/{}/issues/{}/add_spent_time", Args: []string{p.segment(), idArg(iid)},
-		Body: durationBody{duration}, Name: "track_time"}
-	if mr {
-		call = Call{Method: "POST", Path: "projects/{}/merge_requests/{}/add_spent_time", Args: []string{p.segment(), idArg(iid)},
-			Body: durationBody{duration}, Name: "track_time"}
-	}
-	return c.timeStats(ctx, call)
+// ResetIssueTimeEstimate sets an issue's estimate to 0.
+func (c *Client) ResetIssueTimeEstimate(ctx context.Context, p Project, iid int64) (*gitlab.TimeStats, error) {
+	return c.timeStats(ctx, Call{Method: "POST", Path: "projects/{}/issues/{}/reset_time_estimate", Args: []string{p.segment(), idArg(iid)},
+		Repeatable: estimateRepeats, Name: "track_time"})
 }
 
-// ResetSpentTime adds a timelog that takes an issue's or a merge
-// request's total spent time back to 0.
-func (c *Client) ResetSpentTime(ctx context.Context, p Project, mr bool, iid int64) (*gitlab.TimeStats, error) {
-	call := Call{Method: "POST", Path: "projects/{}/issues/{}/reset_spent_time", Args: []string{p.segment(), idArg(iid)},
-		Name: "track_time"}
-	if mr {
-		call = Call{Method: "POST", Path: "projects/{}/merge_requests/{}/reset_spent_time", Args: []string{p.segment(), idArg(iid)},
-			Name: "track_time"}
-	}
-	return c.timeStats(ctx, call)
+// ResetMergeRequestTimeEstimate sets a merge request's estimate to 0.
+func (c *Client) ResetMergeRequestTimeEstimate(ctx context.Context, p Project, iid int64) (*gitlab.TimeStats, error) {
+	return c.timeStats(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/reset_time_estimate",
+		Args: []string{p.segment(), idArg(iid)}, Repeatable: estimateRepeats, Name: "track_time"})
+}
+
+// AddIssueSpentTime adds a timelog of duration, which may be negative,
+// to an issue.
+func (c *Client) AddIssueSpentTime(ctx context.Context, p Project, iid int64, duration string) (*gitlab.TimeStats, error) {
+	return c.timeStats(ctx, Call{Method: "POST", Path: "projects/{}/issues/{}/add_spent_time", Args: []string{p.segment(), idArg(iid)},
+		Body: durationBody{duration}, Name: "track_time"})
+}
+
+// AddMergeRequestSpentTime adds a timelog of duration, which may be
+// negative, to a merge request.
+func (c *Client) AddMergeRequestSpentTime(ctx context.Context, p Project, iid int64, duration string) (*gitlab.TimeStats, error) {
+	return c.timeStats(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/add_spent_time", Args: []string{p.segment(), idArg(iid)},
+		Body: durationBody{duration}, Name: "track_time"})
+}
+
+// ResetIssueSpentTime adds a timelog that takes an issue's total spent
+// time back to 0.
+func (c *Client) ResetIssueSpentTime(ctx context.Context, p Project, iid int64) (*gitlab.TimeStats, error) {
+	return c.timeStats(ctx, Call{Method: "POST", Path: "projects/{}/issues/{}/reset_spent_time", Args: []string{p.segment(), idArg(iid)},
+		Name: "track_time"})
+}
+
+// ResetMergeRequestSpentTime adds a timelog that takes a merge request's
+// total spent time back to 0.
+func (c *Client) ResetMergeRequestSpentTime(ctx context.Context, p Project, iid int64) (*gitlab.TimeStats, error) {
+	return c.timeStats(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/reset_spent_time", Args: []string{p.segment(), idArg(iid)},
+		Name: "track_time"})
 }
 
 func (c *Client) timeStats(ctx context.Context, call Call) (*gitlab.TimeStats, error) {

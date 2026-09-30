@@ -963,6 +963,12 @@ func TestTimeTracking(t *testing.T) {
 	}
 	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "-2d"})
 	wantError(t, "subtracting too much", resp, body, 400, "message", "Time to subtract exceeds the total time spent")
+	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "5y"})
+	wantError(t, "past four years", resp, body, 400, "message", "Total time spent cannot exceed 4 years.")
+	resp, body = send(t, s, "POST", issue+"time_estimate", tok, obj{"duration": "99999999h"})
+	if body["time_estimate"] != float64(2147483647) {
+		t.Errorf("an estimate past the limit = %d %v, want it kept as the limit", resp.StatusCode, body)
+	}
 	resp, body = send(t, s, "POST", issue+"add_spent_time", tok, obj{"duration": "0h"})
 	wantError(t, "a zero duration", resp, body, 400, "message", "can't be blank")
 	// GitLab's parser drops words it does not know.

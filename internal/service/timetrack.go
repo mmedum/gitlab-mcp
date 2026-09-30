@@ -39,14 +39,20 @@ var (
 	unitSeconds  = map[string]float64{"mo": secondsPerMonth, "w": secondsPerWeek, "d": secondsPerDay, "h": secondsPerHour, "m": secondsPerMinute}
 )
 
-// maxEstimate is the largest estimate GitLab stores; it clamps a larger
-// one silently (TimeTrackable#time_estimate=, Gitlab::Database
-// MAX_INT_VALUE).
+// maxEstimate is the largest estimate GitLab stores; it keeps a larger
+// one as this, without refusing (TimeTrackable#time_estimate= at
+// v19.4.1-ee, Gitlab::Database::MAX_INT_VALUE).
 const maxEstimate = math.MaxInt32
 
-// maxSpent is the most spent time GitLab lets an item total, four years
-// (Timelog::MAX_TOTAL_TIME_SPENT).
+// maxSpent is the most spent time GitLab lets an item total, four years:
+// a timelog taking the total past it is refused 400
+// (Timelog::MAX_TOTAL_TIME_SPENT and check_total_time_spent_is_within_range
+// in app/models/timelog.rb at v19.4.1-ee).
 const maxSpent = 126230400
+
+// maxParsed bounds a parsed duration so it fits an int64; anything near
+// it is past both limits above.
+const maxParsed = 1 << 62
 
 const durationHelp = "a duration such as 3h30m, 1w 2d or 1.5 (hours): numbers with the units mo, w, d, h or m, " +
 	"where 1mo is 4w, 1w is 5d and 1d is 8h"
@@ -75,10 +81,7 @@ func parseDuration(name, raw string) (int64, error) {
 			s = s[len(m[0]):]
 		}
 	}
-	if total > maxEstimate {
-		return 0, gapi.Errf(gapi.ClassInvalid, "%s %q is more than GitLab stores", name, raw)
-	}
-	seconds := int64(total)
+	seconds := int64(min(total, maxParsed))
 	if negative {
 		seconds = -seconds
 	}
@@ -102,6 +105,9 @@ type timeStep struct {
 	op       string // time_estimate, reset_time_estimate, add_spent_time or reset_spent_time
 	duration string
 	seconds  int64
+	// capped marks an estimate past what GitLab stores, which it keeps
+	// as maxEstimate.
+	capped bool
 }
 
 func (st timeStep) label() string {
@@ -146,7 +152,7 @@ func (in TimeTracking) steps() ([]timeStep, error) {
 		if n < 0 {
 			return nil, gapi.Errf(gapi.ClassInvalid, "estimate must not be negative; GitLab refuses one")
 		}
-		steps = append(steps, timeStep{op: "time_estimate", duration: in.Estimate, seconds: n})
+		steps = append(steps, timeStep{op: "time_estimate", duration: in.Estimate, seconds: min(n, maxEstimate), capped: n > maxEstimate})
 	case in.ResetEstimate:
 		steps = append(steps, timeStep{op: "reset_time_estimate"})
 	}
@@ -192,7 +198,8 @@ func needed(steps []timeStep, before gitlab.TimeStats) ([]timeStep, []string, er
 					"GitLab refuses that", human(before.HumanTotalTimeSpent))
 			}
 			if total > maxSpent {
-				return nil, nil, gapi.Errf(gapi.ClassInvalid, "add_spent would take the time spent past four years, which GitLab refuses")
+				return nil, nil, gapi.Errf(gapi.ClassInvalid, "add_spent would take the time spent past four years, %d seconds, "+
+					"which GitLab refuses", maxSpent)
 			}
 		case "reset_spent_time":
 			if before.TotalTimeSpent == 0 {
@@ -202,6 +209,9 @@ func needed(steps []timeStep, before gitlab.TimeStats) ([]timeStep, []string, er
 		if skip != "" {
 			notes = append(notes, skip)
 			continue
+		}
+		if st.capped {
+			notes = append(notes, fmt.Sprintf("GitLab keeps an estimate of at most %d seconds, so it stores that.", maxEstimate))
 		}
 		out = append(out, st)
 	}
@@ -249,6 +259,41 @@ func (s *Service) readTimed(ctx context.Context, p gapi.Project, mr bool, iid in
 	return timed{stats: is.TimeStats, updatedAt: is.UpdatedAt, webURL: is.WebURL}, nil
 }
 
+// timeWrites are the client's time tracking writes for one kind of item.
+type timeWrites struct {
+	setEstimate, addSpent     func(context.Context, gapi.Project, int64, string) (*gitlab.TimeStats, error)
+	resetEstimate, resetSpent func(context.Context, gapi.Project, int64) (*gitlab.TimeStats, error)
+}
+
+func (s *Service) timeWrites(mr bool) timeWrites {
+	if mr {
+		return timeWrites{setEstimate: s.client.SetMergeRequestTimeEstimate, addSpent: s.client.AddMergeRequestSpentTime,
+			resetEstimate: s.client.ResetMergeRequestTimeEstimate, resetSpent: s.client.ResetMergeRequestSpentTime}
+	}
+	return timeWrites{setEstimate: s.client.SetIssueTimeEstimate, addSpent: s.client.AddIssueSpentTime,
+		resetEstimate: s.client.ResetIssueTimeEstimate, resetSpent: s.client.ResetIssueSpentTime}
+}
+
+func (w timeWrites) send(ctx context.Context, p gapi.Project, iid int64, st timeStep) (*gitlab.TimeStats, error) {
+	switch st.op {
+	case "time_estimate":
+		return w.setEstimate(ctx, p, iid, st.duration)
+	case "reset_time_estimate":
+		return w.resetEstimate(ctx, p, iid)
+	case "add_spent_time":
+		return w.addSpent(ctx, p, iid, st.duration)
+	}
+	return w.resetSpent(ctx, p, iid)
+}
+
+// timeItem is the item track_time works on.
+type timeItem struct {
+	p    gapi.Project
+	mr   bool
+	iid  int64
+	what string // issue or merge request
+}
+
 // TrackTime sets or resets an estimate and adds or resets spent time,
 // after checking the witness, and reads the result back.
 func (s *Service) TrackTime(ctx context.Context, in TimeTracking) (model.TimeWrite, error) {
@@ -264,23 +309,27 @@ func (s *Service) TrackTime(ctx context.Context, in TimeTracking) (model.TimeWri
 	if err != nil {
 		return model.TimeWrite{}, err
 	}
-	mr, what := in.Type == "merge_request", "issue"
-	if mr {
-		what = "merge request"
+	item := timeItem{p: t.p, mr: in.Type == "merge_request", iid: in.IID, what: "issue"}
+	if item.mr {
+		item.what = "merge request"
 	}
-	before, err := s.readTimed(ctx, t.p, mr, in.IID)
+	before, err := s.readTimed(ctx, item.p, item.mr, item.iid)
 	if err != nil {
 		return model.TimeWrite{}, err
 	}
-	if err := checkWitness(witness, before.updatedAt, what); err != nil {
-		return model.TimeWrite{}, err
-	}
-	steps, notes, err := needed(steps, before.stats)
-	if err != nil {
-		return model.TimeWrite{}, err
-	}
+	steps, notes, refusal := needed(steps, before.stats)
 	out := model.TimeWrite{Outcome: "unchanged", Write: model.Write{Target: t.ref, Notes: notes}, Type: in.Type, IID: in.IID,
 		WebURL: before.webURL, Before: timeStats(before.stats), Sent: []string{}, Changed: []string{}, UpdatedAt: &before.updatedAt}
+	// Values that already hold change nothing, so a call repeated after
+	// it landed reads as unchanged rather than stale, as an edit does.
+	if refusal != nil || len(steps) > 0 {
+		if err := checkWitness(witness, before.updatedAt, item.what); err != nil {
+			return model.TimeWrite{}, err
+		}
+	}
+	if refusal != nil {
+		return model.TimeWrite{}, refusal
+	}
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun = "dry_run", true
 		if len(steps) > 0 {
@@ -291,32 +340,28 @@ func (s *Service) TrackTime(ctx context.Context, in TimeTracking) (model.TimeWri
 	if len(steps) == 0 {
 		return out, nil
 	}
-	for _, st := range steps {
-		switch st.op {
-		case "time_estimate":
-			_, err = s.client.SetTimeEstimate(ctx, t.p, mr, in.IID, st.duration)
-		case "reset_time_estimate":
-			_, err = s.client.ResetTimeEstimate(ctx, t.p, mr, in.IID)
-		case "add_spent_time":
-			_, err = s.client.AddSpentTime(ctx, t.p, mr, in.IID, st.duration)
-		default:
-			_, err = s.client.ResetSpentTime(ctx, t.p, mr, in.IID)
-		}
-		if err != nil {
-			return model.TimeWrite{}, s.timeFailed(ctx, t.p, mr, in.IID, what, out.Sent, st, before.stats, err)
+	writes := s.timeWrites(item.mr)
+	var last *gitlab.TimeStats
+	for i, st := range steps {
+		if last, err = writes.send(ctx, item.p, item.iid, st); err != nil {
+			return model.TimeWrite{}, s.timeFailed(ctx, item, out.Sent, st, steps[i+1:], before.stats, err)
 		}
 		out.Sent = append(out.Sent, st.label())
 	}
-	after, err := s.readTimed(ctx, t.p, mr, in.IID)
-	if err != nil {
-		c, _ := gapi.ClassOf(err)
-		return model.TimeWrite{}, gapi.Wrap(c, err, "GitLab took %s, but reading the %s back failed: read it before changing it again",
-			strings.Join(out.Sent, ", then "), what)
+	afterStats := *last
+	if after, err := s.readTimed(ctx, item.p, item.mr, item.iid); err != nil {
+		// GitLab confirmed every write, and its last answer carries the
+		// item's time stats; only updated_at is unknown.
+		out.UpdatedAt = nil
+		out.Notes = append(out.Notes, "Reading it back failed, so after is GitLab's answer to the last request and updated_at "+
+			"is unknown: read it again before the next change. Nothing needs to be sent again.")
+	} else {
+		afterStats, out.UpdatedAt = after.stats, &after.updatedAt
 	}
-	stats := timeStats(after.stats)
-	out.After, out.UpdatedAt = &stats, &after.updatedAt
-	out.Changed = names(field{"time_estimate", after.stats.TimeEstimate != before.stats.TimeEstimate},
-		field{"total_time_spent", after.stats.TotalTimeSpent != before.stats.TotalTimeSpent})
+	stats := timeStats(afterStats)
+	out.After = &stats
+	out.Changed = names(field{"time_estimate", afterStats.TimeEstimate != before.stats.TimeEstimate},
+		field{"total_time_spent", afterStats.TotalTimeSpent != before.stats.TotalTimeSpent})
 	if len(out.Changed) > 0 {
 		out.Outcome = "updated"
 	}
@@ -335,50 +380,95 @@ func timePreview(steps []timeStep) *model.Preview {
 	return preview("POST", strings.Join(parts, ", then "), fields)
 }
 
-// timeFailed says what a failed step means: which earlier steps landed,
-// what a refusal needs, and for a lost answer what a read shows. Nothing
-// is sent again (§4.5).
-func (s *Service) timeFailed(ctx context.Context, p gapi.Project, mr bool, iid int64, what string, sent []string, st timeStep,
+func labels(steps []timeStep) string {
+	out := make([]string, len(steps))
+	for i, st := range steps {
+		out[i] = st.label()
+	}
+	return strings.Join(out, ", then ")
+}
+
+// timeFailed says what a failed step means: which earlier steps landed
+// and which later ones were not sent, what a refusal needs, whether the
+// step itself may have landed, and, when anything may have, the
+// updated_at a read now shows, so a next call is not refused [stale]
+// for this one's own change. Nothing is sent again (§4.5).
+func (s *Service) timeFailed(ctx context.Context, item timeItem, sent []string, st timeStep, rest []timeStep,
 	before gitlab.TimeStats, err error,
 ) error {
 	e := gapi.AsError(err)
-	landed := ""
+	estimate := st.op == "time_estimate" || st.op == "reset_time_estimate"
+	lost := e.Class == gapi.ClassAmbiguousOutcome
+	// A repeatable estimate that GitLab never answered was retried and
+	// may still have landed on any of its tries.
+	maybe := estimate && e.Class == gapi.ClassUnavailable
+	var b strings.Builder
 	if len(sent) > 0 {
-		landed = fmt.Sprintf("GitLab took %s first. ", strings.Join(sent, ", then "))
+		fmt.Fprintf(&b, "GitLab took %s first. ", strings.Join(sent, ", then "))
 	}
-	switch e.Class {
-	case gapi.ClassForbidden:
-		return gapi.Wrap(e.Class, err, "%sGitLab refused %s: tracking time needs the rights to manage the %s, the Planner role or "+
-			"higher for an issue and Developer or higher for a merge request. GitLab said: %s", landed, st.op, what, e.Message)
-	case gapi.ClassAmbiguousOutcome:
-		now, readErr := s.readTimed(ctx, p, mr, iid)
-		if readErr != nil {
-			return gapi.Wrap(e.Class, err, "%sGitLab did not confirm %s, and reading to find out failed too, so it is unknown: "+
-				"read the %s before doing anything, and do not repeat the call", landed, st.label(), what)
+	switch {
+	case e.Class == gapi.ClassForbidden:
+		role := "the Planner role or higher"
+		if item.mr {
+			role = "the Developer role or higher"
 		}
-		return gapi.Wrap(e.Class, err, "%sGitLab did not confirm %s, and it was not repeated. %s", landed, st.label(),
-			settleTime(st, before, now.stats))
-	}
-	if landed == "" {
+		fmt.Fprintf(&b, "GitLab refused %s: tracking time needs the rights to manage the %s, %s. GitLab said: %s",
+			st.op, item.what, role, e.Message)
+	case lost:
+		fmt.Fprintf(&b, "GitLab did not confirm %s.", st.label())
+	case maybe:
+		fmt.Fprintf(&b, "%s failed and may have landed all the same: %s. Sending it again is safe, since the estimate lands "+
+			"the same way twice.", st.label(), e.Message)
+	case len(sent) == 0 && len(rest) == 0:
 		return err
+	default:
+		fmt.Fprintf(&b, "%s failed: %s", st.op, e.Message)
 	}
-	return gapi.Wrap(e.Class, err, "%sThen %s failed: %s", landed, st.op, e.Message)
+	if len(rest) > 0 {
+		fmt.Fprintf(&b, " Not sent: %s.", labels(rest))
+	}
+	if len(sent) > 0 || lost || maybe {
+		now, readErr := s.readTimed(ctx, item.p, item.mr, item.iid)
+		switch {
+		case readErr != nil && lost:
+			b.WriteString(" Reading to find out failed too, so it is unknown: " + settledUnknown + ".")
+		case readErr != nil:
+			fmt.Fprintf(&b, " Read the %s again for its new updated_at before calling again.", item.what)
+		default:
+			if lost || maybe {
+				b.WriteString(" " + settleTime(st, before, now.stats) + ".")
+			}
+			fmt.Fprintf(&b, " updated_at is now %s; pass it to the next call.", now.updatedAt.UTC().Format(time.RFC3339Nano))
+		}
+	}
+	return gapi.Wrap(e.Class, err, "%s", b.String())
 }
 
-// settleTime reads a lost spent-time write from the total it left. A
-// total that moved by exactly the amount most likely took it; one that
-// did not move most likely did not, though a slow request may still land.
+// settleTime reads a lost time tracking write from the stats it left
+// (§4.5). Spent time settles by the total: moved by exactly the amount,
+// or to zero for a reset, it landed; not moved, it did not. The estimate
+// settles by its value, and setting it again is safe either way.
 func settleTime(st timeStep, before, now gitlab.TimeStats) string {
-	switch {
-	case st.op == "reset_spent_time" && now.TotalTimeSpent == 0:
-		return "A read shows no time spent now, so it is reset either way. Do not repeat the call"
-	case st.op == "add_spent_time" && now.TotalTimeSpent == before.TotalTimeSpent+st.seconds:
-		return fmt.Sprintf("A read shows the time spent went from %s to %s, so it most likely landed. Do not repeat the call",
-			human(before.HumanTotalTimeSpent), human(now.HumanTotalTimeSpent))
-	case now.TotalTimeSpent == before.TotalTimeSpent:
-		return fmt.Sprintf("A read shows the time spent still at %s, so it most likely did not land. Read it again before "+
-			"calling again, in case the request is still on its way", human(now.HumanTotalTimeSpent))
+	was, is := human(before.HumanTotalTimeSpent), human(now.HumanTotalTimeSpent)
+	switch st.op {
+	case "time_estimate", "reset_time_estimate":
+		want := st.seconds
+		if now.TimeEstimate == want {
+			return fmt.Sprintf("A read shows the estimate at %s, as asked", human(now.HumanTimeEstimate))
+		}
+		return fmt.Sprintf("A read shows the estimate at %s, so it did not land; setting it again is safe", human(now.HumanTimeEstimate))
+	case "add_spent_time":
+		if now.TotalTimeSpent == before.TotalTimeSpent+st.seconds {
+			return fmt.Sprintf("A read shows the time spent went from %s to %s, so it landed. %s", was, is, settledLanded)
+		}
+	default:
+		if now.TotalTimeSpent == 0 {
+			return fmt.Sprintf("A read shows no time spent, so it is reset either way. %s", settledLanded)
+		}
 	}
-	return fmt.Sprintf("A read shows %s spent, which is neither the total before nor the total asked for, so someone else "+
-		"changed it too and whether this landed is unknown: read the time stats before doing anything", human(now.HumanTotalTimeSpent))
+	if now.TotalTimeSpent == before.TotalTimeSpent {
+		return fmt.Sprintf("A read shows the time spent still at %s, so it did not land. %s", is, settledNotLanded)
+	}
+	return fmt.Sprintf("A read shows %s spent, which is neither the total before nor the one asked for, so it is unknown: %s",
+		is, settledUnknown)
 }

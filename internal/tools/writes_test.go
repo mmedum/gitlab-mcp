@@ -1031,7 +1031,6 @@ func TestTrackTimeRefusesBeforeSending(t *testing.T) {
 		{map[string]any{"add_spent": "-2d"}, "below zero: 1d 2h is spent so far"},
 		{map[string]any{"add_spent": "5y"}, "is not a duration"},
 		{map[string]any{"add_spent": "900mo"}, "past four years"},
-		{map[string]any{"estimate": "99999999h"}, "more than GitLab stores"},
 	} {
 		args := map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": w}
 		maps.Copy(args, c.args)
@@ -1050,8 +1049,104 @@ func TestTrackTimeNeedsTheRightsToManageTheItem(t *testing.T) {
 	h := newHarness(t, harnessOptions{token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
 	text := h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
 		"add_spent": "1h"}, "forbidden")
-	if !strings.Contains(text, "the Planner role or higher for an issue") {
+	if !strings.Contains(text, "manage the issue, the Planner role or higher") {
 		t.Errorf("forbidden: %s", text)
+	}
+}
+
+// A Reporter tracks time on an issue but not on a merge request, which
+// takes a Developer, and the refusal names that role.
+func TestTrackTimeOnAMergeRequestNeedsADeveloper(t *testing.T) {
+	h := newHarness(t, harnessOptions{token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
+	h.gl.SetMemberLevel(alpha, "dave", 20)
+	h.ok("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3), "add_spent": "1h"})
+	text := h.fails("track_time", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "updated_at": mrWitness(h, 1),
+		"add_spent": "1h"}, "forbidden")
+	if !strings.Contains(text, "manage the merge request, the Developer role or higher") {
+		t.Errorf("forbidden: %s", text)
+	}
+}
+
+// GitLab keeps an estimate past its integer limit as the limit rather
+// than refusing it, and so does the result.
+func TestTrackTimeCapsAnEstimateAsGitLabDoes(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, out := h.ok("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
+		"estimate": "99999999h"})
+	if get(out, "after", "time_estimate") != float64(2147483647) || !strings.Contains(text, "at most 2147483647 seconds") {
+		t.Errorf("capped: %v\n%s", out, text)
+	}
+	// Asked again, it already holds.
+	if _, out = h.ok("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": get(out, "updated_at"),
+		"estimate": "99999999h"}); get(out, "outcome") != "unchanged" {
+		t.Errorf("again: %v", out)
+	}
+}
+
+// Values that already hold are checked before the witness, so a call
+// repeated after it landed reads as unchanged rather than stale.
+func TestARepeatedTrackTimeIsUnchangedNotStale(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	w := issueWitness(h, 3)
+	args := map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": w, "estimate": "2h"}
+	h.ok("track_time", args)
+	sent := writesSent(h)
+	if _, out := h.ok("track_time", args); get(out, "outcome") != "unchanged" || writesSent(h) != sent {
+		t.Errorf("repeated: %v", out)
+	}
+	args["add_spent"] = "1h"
+	h.fails("track_time", args, "stale")
+}
+
+// A failure after an earlier step landed says so, names the updated_at
+// that change left, and a failure before a later step names what was not
+// sent.
+func TestTrackTimeSaysWhatLandedAndWhatWasNotSent(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/3/add_spent_time", Status: http.StatusBadRequest,
+		Body: `{"message":{"base":["refused"]}}`})
+	text := h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
+		"estimate": "4h", "add_spent": "1h"}, "invalid")
+	now := issueWitness(h, 3)
+	if !strings.HasPrefix(text, "[invalid] GitLab took time_estimate 4h first. add_spent_time failed:") ||
+		!strings.Contains(text, "updated_at is now "+now+";") {
+		t.Errorf("second step: %s (updated_at %s)", text, now)
+	}
+	// The new updated_at is the witness for the rest.
+	h.ok("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": now, "add_spent": "1h"})
+
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/3/time_estimate", Status: http.StatusBadRequest,
+		Body: `{"message":"400 Bad request"}`})
+	adds := timePosts(h, "add_spent_time")
+	text = h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
+		"estimate": "5h", "add_spent": "1h"}, "invalid")
+	if !strings.Contains(text, "Not sent: add_spent_time 1h.") || timePosts(h, "add_spent_time") != adds {
+		t.Errorf("first step: %s", text)
+	}
+
+	// An estimate GitLab never confirmed may have landed on any try.
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/3/time_estimate", Status: http.StatusServiceUnavailable,
+		Body: `{"message":"503"}`, AfterApply: true, Times: 20})
+	text = h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
+		"estimate": "6h", "add_spent": "1h"}, "unavailable")
+	if !strings.Contains(text, "may have landed all the same") || !strings.Contains(text, "estimate at 6h, as asked") ||
+		!strings.Contains(text, "Not sent: add_spent_time 1h.") || !strings.Contains(text, "updated_at is now "+issueWitness(h, 3)) {
+		t.Errorf("estimate unconfirmed: %s", text)
+	}
+}
+
+// Every write confirmed but the read-back failed: the result stands on
+// GitLab's last answer, with updated_at unknown, rather than an error
+// that invites sending it again.
+func TestTrackTimeWhenTheReadBackFails(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	w := issueWitness(h, 3)
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: "/projects/2001/issues/3", Skip: 1, Status: http.StatusNotFound,
+		Body: `{"message":"404 Issue Not Found"}`})
+	text, out := h.ok("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": w, "add_spent": "1h"})
+	if get(out, "outcome") != "updated" || get(out, "after", "total_time_spent") != float64(36000+3600) || get(out, "updated_at") != nil ||
+		!strings.Contains(text, "Reading it back failed") {
+		t.Errorf("read-back failed: %v\n%s", out, text)
 	}
 }
 
@@ -1066,13 +1161,13 @@ func TestALostSpentTimeIsSettledByReading(t *testing.T) {
 	h.gl.Inject(landed)
 	text := h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
 		"add_spent": "1h"}, "ambiguous_outcome")
-	if !strings.Contains(text, "went from 1d 2h to 1d 3h, so it most likely landed. Do not repeat") {
+	if !strings.Contains(text, "went from 1d 2h to 1d 3h, so it landed. Do not repeat") || !strings.Contains(text, "updated_at is now "+issueWitness(h, 3)) {
 		t.Errorf("landed: %s", text)
 	}
 	h.gl.Inject(lost)
 	text = h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
 		"add_spent": "1h"}, "ambiguous_outcome")
-	if !strings.Contains(text, "still at 1d 3h, so it most likely did not land") {
+	if !strings.Contains(text, "still at 1d 3h, so it did not land. Nothing was repeated") {
 		t.Errorf("not landed: %s", text)
 	}
 	if n := timePosts(h, "add_spent_time"); n != 2 {
@@ -1084,5 +1179,33 @@ func TestALostSpentTimeIsSettledByReading(t *testing.T) {
 		"estimate": "4h", "add_spent": "1h"}, "ambiguous_outcome")
 	if !strings.HasPrefix(text, "[ambiguous_outcome] GitLab took time_estimate 4h first.") {
 		t.Errorf("after the estimate: %s", text)
+	}
+
+	// A reset is settled by a total of zero.
+	resets := "/projects/2001/issues/3/reset_spent_time"
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: resets, Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	text = h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
+		"reset_spent": true}, "ambiguous_outcome")
+	if !strings.Contains(text, "still at 1d 3h, so it did not land") {
+		t.Errorf("reset not landed: %s", text)
+	}
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: resets, AfterApply: true, Status: http.StatusBadGateway,
+		Body: `{"message":"502 Bad Gateway"}`})
+	text = h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
+		"reset_spent": true}, "ambiguous_outcome")
+	if !strings.Contains(text, "no time spent, so it is reset either way. Do not repeat") {
+		t.Errorf("reset landed: %s", text)
+	}
+	if n := timePosts(h, "reset_spent_time"); n != 2 {
+		t.Errorf("%d reset_spent_time requests for two calls", n)
+	}
+
+	// A merge request settles the same way.
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/merge_requests/1/add_spent_time", AfterApply: true,
+		Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	text = h.fails("track_time", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "updated_at": mrWitness(h, 1),
+		"add_spent": "30m"}, "ambiguous_outcome")
+	if !strings.Contains(text, "went from none to 30m, so it landed") || !strings.Contains(text, "updated_at is now "+mrWitness(h, 1)) {
+		t.Errorf("merge request: %s", text)
 	}
 }
