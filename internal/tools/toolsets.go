@@ -192,7 +192,9 @@ func updateSnippet() definition {
 				"and is how a snippet of several files is changed. Another person's snippet is refused [blocked], even where " +
 				"GitLab would allow it. updated_at from your read is required: GitLab keeps no version a write could check, " +
 				"so the server reads the snippet first and refuses [stale] if it changed. Visibility is not an input and " +
-				"stays as it is. The result gives the new updated_at." + visibleNote},
+				"stays as it is. The result gives the new updated_at after a change of title or description alone; after a " +
+				"change to content or files GitLab moves updated_at again shortly after it answers, so read the snippet with " +
+				"get_snippet for the next witness." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in updateSnippetIn) (model.SnippetUpdate, error) {
 			files := make([]service.SnippetFileChange, 0, len(in.Files))
 			for _, f := range in.Files {
@@ -208,7 +210,7 @@ func updateSnippet() definition {
 type deleteSnippetIn struct {
 	Project   idOrPath `json:"project,omitempty" jsonschema:"The project the snippet is in; omit for a personal snippet, which GITLAB_MCP_WRITE_NAMESPACES refuses when it is set"`
 	SnippetID int64    `json:"snippet_id" jsonschema:"The snippet's id, as list_snippets gives it"`
-	UpdatedAt string   `json:"updated_at" jsonschema:"The snippet's updated_at as get_snippet or list_snippets returned it. GitLab refuses the delete [stale] if it changed since. A [stale] refusal is NOT a retry signal: read the snippet again before deciding"`
+	UpdatedAt string   `json:"updated_at" jsonschema:"The snippet's updated_at as get_snippet or list_snippets returned it; after a change to its files, read it again, as GitLab moves it shortly after. GitLab refuses the delete [stale] if it changed since. A [stale] refusal is NOT a retry signal: read the snippet again before deciding"`
 	Confirm   bool     `json:"confirm,omitempty" jsonschema:"Must be true: a deleted snippet cannot be restored"`
 	DryRun    bool     `json:"dry_run,omitempty" jsonschema:"Check the snippet and return what would be sent without deleting it"`
 }

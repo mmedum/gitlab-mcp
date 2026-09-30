@@ -34,6 +34,26 @@ type snippet struct {
 	// holds: its first file at create, then what each update copies
 	// there. Its updated_at moves only with the row.
 	row [2]string
+	// pushed is a commit to the snippet's repository whose post-receive
+	// job has not run: GitLab touches the snippet when it does, after the
+	// write answered (Repositories::PostReceiveWorker
+	// #process_snippet_changes). Here it runs as the next request that
+	// reaches the snippet arrives.
+	pushed bool
+}
+
+// postReceive runs a snippet's pending post-receive job: it moves
+// updated_at past the write's.
+func (s *Server) postReceive(sn *snippet) {
+	if !sn.pushed {
+		return
+	}
+	sn.pushed = false
+	at := s.opts.Now().UTC().Truncate(time.Microsecond)
+	if !at.After(sn.UpdatedAt) {
+		at = sn.UpdatedAt.Add(time.Millisecond)
+	}
+	sn.UpdatedAt = at
 }
 
 // event is an event and the action it filters by, which differs from
@@ -182,6 +202,7 @@ func (s *Server) serveContentRead(w http.ResponseWriter, r *http.Request, p *pro
 		var rows []map[string]any
 		for _, sn := range s.snippets {
 			if sn.ProjectID != nil && *sn.ProjectID == p.ID {
+				s.postReceive(sn)
 				rows = append(rows, s.snippetJSON(sn))
 			}
 		}
@@ -247,6 +268,7 @@ func (s *Server) serveToolsetTop(w http.ResponseWriter, r *http.Request, user st
 		var rows []map[string]any
 		for _, sn := range s.snippets {
 			if sn.Author.Username == user && !sn.CreatedAt.Before(after) {
+				s.postReceive(sn)
 				rows = append(rows, s.snippetJSON(sn))
 			}
 		}
@@ -367,6 +389,7 @@ func shownTime(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.
 // serveSnippet serves one snippet, its first file raw, or one file raw
 // at a ref, which is HEAD or the snippet repository's main.
 func (s *Server) serveSnippet(w http.ResponseWriter, sn *snippet, rest []string) {
+	s.postReceive(sn)
 	raw := func(content string) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -435,7 +458,7 @@ func (s *Server) createSnippet(w http.ResponseWriter, r *http.Request, p *projec
 	for _, f := range files {
 		sn.files = append(sn.files, [2]string{f.FilePath, f.Content})
 	}
-	sn.row = sn.files[0]
+	sn.row, sn.pushed = sn.files[0], true
 	s.snippets = append(s.snippets, sn)
 	writeJSON(w, http.StatusCreated, s.snippetJSON(sn))
 }
@@ -463,6 +486,7 @@ func (s *Server) writeSnippet(w http.ResponseWriter, r *http.Request, p *project
 		message(w, http.StatusNotFound, "404 Snippet Not Found")
 		return
 	}
+	s.postReceive(sn)
 	author := sn.Author.Username == user
 	if r.Method == http.MethodDelete {
 		if p != nil && p.levels[user] < 40 && (!author || p.levels[user] < 20) {
@@ -567,6 +591,8 @@ func (s *Server) updateSnippet(w http.ResponseWriter, r *http.Request, sn *snipp
 		next.UpdatedAt = s.opts.Now().UTC().Truncate(time.Microsecond)
 	}
 	sn.Snippet, sn.files, sn.row = next, files, row
+	// Content, a file name or file actions are a commit (committable_attributes?).
+	sn.pushed = sn.pushed || b.has("content") || b.has("file_name") || len(actions) > 0
 	writeJSON(w, http.StatusOK, s.snippetJSON(sn))
 }
 
@@ -870,7 +896,7 @@ func (s *Server) TouchSnippet(id int64, at time.Time) bool {
 	defer s.mu.Unlock()
 	for _, sn := range s.snippets {
 		if sn.ID == id {
-			sn.UpdatedAt = at.UTC()
+			sn.UpdatedAt, sn.pushed = at.UTC(), false
 			return true
 		}
 	}

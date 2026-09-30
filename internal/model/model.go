@@ -1514,7 +1514,7 @@ type SnippetUpdate struct {
 	Visibility string     `json:"visibility"`
 	Files      []string   `json:"files" jsonschema:"The snippet's files after the write"`
 	Changed    []string   `json:"changed" jsonschema:"Of title, description, files and content, those the write changed: title and description as GitLab reported them; files and content when GitLab accepted a change to them, since its answer shows no content"`
-	UpdatedAt  *time.Time `json:"updated_at" jsonschema:"Pass as updated_at to the next update_snippet or delete_snippet; null for a dry run. GitLab moves it only when the title, description or first changed file moves, so a change to another file may leave it as it was, and the notes say so"`
+	UpdatedAt  *time.Time `json:"updated_at" jsonschema:"Pass as updated_at to the next update_snippet or delete_snippet; null for a dry run, and null after a change to content or files, which GitLab follows shortly with another move of updated_at: read the snippet with get_snippet for the witness then"`
 	// DescriptionRemoved is set when the description was replaced.
 	DescriptionRemoved *Removed `json:"description_removed" jsonschema:"What replacing the description took out; null when it was not replaced"`
 	WebURL             string   `json:"web_url"`

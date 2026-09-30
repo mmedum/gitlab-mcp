@@ -382,16 +382,18 @@ func (s *Service) UpdateSnippet(ctx context.Context, in SnippetEdit) (model.Snip
 	if in.Description != nil {
 		out.DescriptionRemoved = removedFrom(snippetDescription(before), snippetDescription(after))
 	}
-	moved := !after.UpdatedAt.Equal(before.UpdatedAt)
 	switch {
-	case len(out.Changed) == 0 && !moved:
+	case len(out.Changed) == 0 && after.UpdatedAt.Equal(before.UpdatedAt):
 		out.Outcome, out.Notes = "unchanged", []string{"GitLab kept the snippet as it was: it already read so."}
-	case committed && !moved:
-		// Snippets::UpdateService copies only the first file action into
-		// the snippet's row, so a change to another file leaves the row,
-		// and updated_at, as they were (§18 row 103).
-		out.Notes = append(out.Notes, "GitLab changed the files without moving updated_at, so a later read's updated_at "+
-			"does not show this change.")
+	case committed:
+		// A change to the files is a commit to the snippet's repository,
+		// and GitLab's post-receive job touches the snippet once it runs,
+		// after the answer (§18 row 103). The answer's updated_at is about
+		// to go stale, so it is not handed on as a witness.
+		out.UpdatedAt = nil
+		out.Notes = append(out.Notes, "GitLab moves updated_at again once it has processed the change to the files, "+
+			"shortly after it answers, so no updated_at is given here: read the snippet with get_snippet for the updated_at "+
+			"of the next change or delete.")
 	}
 	if in.Title != nil && after.Title != *in.Title || !slices.Equal(out.Files, planned) {
 		out.Notes = append(out.Notes, "GitLab stored the snippet otherwise than was sent; get_snippet shows what it holds.")

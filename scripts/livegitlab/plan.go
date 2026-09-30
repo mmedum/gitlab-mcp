@@ -612,7 +612,11 @@ func planShip(s scratch) []step {
 		{tool: "create_snippet", args: map[string]any{"project": p, "title": "Live snippet two " + w,
 			"files": []any{map[string]any{"path": "c.txt", "content": "c\n"}}}, save: map[string]string{"snippet2": "id"}},
 		{tool: "list_snippets", args: map[string]any{"project": p, "max": 1}, paged: true},
-		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}"}, save: map[string]string{"snippet_at": "updated_at"}},
+		// A commit to a snippet is followed by GitLab's post-receive job,
+		// which moves updated_at after the write answered (§18 row 103):
+		// the witness is read once it has run.
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}"}, pause: 5 * time.Second,
+			save: map[string]string{"snippet_at": "updated_at"}},
 		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "file": "b.sh", "offset": 0}},
 
 		// The two-file snippet changed through files, from the updated_at a
@@ -626,16 +630,26 @@ func planShip(s scratch) []step {
 			"title": "Live snippet renamed " + w, "description": "Changed.\n/close stays text.\n", "files": []any{
 				map[string]any{"action": "update", "path": "a.md", "content": "# A, changed\n"},
 				map[string]any{"action": "create", "path": "d.md", "content": "# D\n"},
-				map[string]any{"action": "move", "previous_path": "b.sh", "path": "run.sh", "content": "echo moved\n"}}},
+				map[string]any{"action": "move", "previous_path": "b.sh", "path": "run.sh", "content": "echo moved\n"}}}},
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}"}, pause: 5 * time.Second,
 			save: map[string]string{"snippet_at2": "updated_at"}},
 		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at}}",
 			"title": "Stale"}, expectError: true, why: "a witness from before the change"},
 		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at2}}",
 			"files": []any{map[string]any{"action": "delete", "path": "d.md"}}}},
-		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "file": "run.sh"}},
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "file": "run.sh"}, pause: 5 * time.Second,
+			save: map[string]string{"snippet_at3": "updated_at"}},
+		// A title alone commits nothing, so the updated_at its answer gives
+		// is the next witness.
+		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at3}}",
+			"title": "Live snippet titled " + w}, save: map[string]string{"snippet_at4": "updated_at"}},
+		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at4}}",
+			"title": "Live snippet titled again " + w}, pause: 3 * time.Second},
 		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}"}, save: map[string]string{"snippet2_at": "updated_at"}},
 		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}", "updated_at": "{{snippet2_at}}",
-			"content": "c, changed\n"}, save: map[string]string{"snippet2_at2": "updated_at"}},
+			"content": "c, changed\n"}},
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}"}, pause: 5 * time.Second,
+			save: map[string]string{"snippet2_at2": "updated_at"}},
 		{tool: "delete_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}", "updated_at": "{{snippet2_at}}",
 			"confirm": true}, expectError: true, why: "a witness from before the change"},
 		{tool: "delete_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}", "updated_at": "{{snippet2_at2}}"},

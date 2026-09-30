@@ -1181,3 +1181,27 @@ func TestSnippetUpdatedAtMovesWithTheRow(t *testing.T) {
 		t.Errorf("updated_at %v, want %v", got, *now)
 	}
 }
+
+// A commit to a snippet's repository is followed by its post-receive
+// job, which touches the snippet after the write answered: the next
+// request sees updated_at past the answer's. A title alone commits
+// nothing.
+func TestSnippetCommitIsTouchedAfterTheAnswer(t *testing.T) {
+	s, now := frozen(t)
+	personal := "/snippets/" + itoa(SnippetPersonal)
+	resp, body := send(t, s, "PUT", personal, s.Token(), obj{"title": "Renamed"})
+	wantStatus(t, "a title", resp, body, 200)
+	answered := body["updated_at"]
+	if _, body = send(t, s, "GET", personal, s.Token(), nil); body["updated_at"] != answered {
+		t.Errorf("after a title: %v, answered %v", body["updated_at"], answered)
+	}
+	*now = now.Add(time.Second)
+	resp, body = send(t, s, "PUT", personal, s.Token(), obj{"content": "changed\n"})
+	wantStatus(t, "content", resp, body, 200)
+	answered = body["updated_at"]
+	*now = now.Add(700 * time.Millisecond)
+	_, body = send(t, s, "GET", personal, s.Token(), nil)
+	if body["updated_at"] == answered || body["updated_at"] != "2026-09-26T12:00:01.700Z" {
+		t.Errorf("after content: %v, answered %v", body["updated_at"], answered)
+	}
+}

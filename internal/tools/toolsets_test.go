@@ -228,7 +228,7 @@ func TestUpdateOneFileSnippet(t *testing.T) {
 
 	text, out := h.ok("update_snippet", args(map[string]any{"title": "Mine, renamed", "description": "one", "content": "new\n"}))
 	if get(out, "outcome") != "updated" || get(out, "visibility") != "private" || fmt.Sprint(get(out, "changed")) != "[title description content]" ||
-		get(out, "description_removed", "lines") != float64(1) || get(out, "updated_at") == at || !strings.Contains(text, "A personal snippet.") {
+		get(out, "description_removed", "lines") != float64(1) || !strings.Contains(text, "A personal snippet.") {
 		t.Errorf("update = %v\n%s", out, text)
 	}
 	if files := h.gl.SnippetFiles(int64(id)); len(files) != 1 || files[0] != [2]string{"a.txt", "new\n"} {
@@ -236,8 +236,21 @@ func TestUpdateOneFileSnippet(t *testing.T) {
 	}
 	// The witness moved with the write.
 	h.fails("update_snippet", args(map[string]any{"title": "again"}), "stale")
-	at = get(out, "updated_at").(string)
-	_, same := h.ok("update_snippet", args(map[string]any{"title": "Mine, renamed"}))
+
+	// A change to the content is a commit, and GitLab moves updated_at
+	// again once it has processed it: no witness is handed on, and a
+	// read gives the one that holds.
+	if get(out, "updated_at") != nil || !strings.Contains(text, "read the snippet with get_snippet") {
+		t.Errorf("a witness about to go stale was handed on: %v\n%s", out, text)
+	}
+	at = snippetAt(h, "", id)
+	// A title alone is no commit: its answer's updated_at holds.
+	_, renamed := h.ok("update_snippet", args(map[string]any{"title": "Mine, renamed again"}))
+	at, _ = get(renamed, "updated_at").(string)
+	if at == "" || at != snippetAt(h, "", id) {
+		t.Fatalf("title change = %v", renamed)
+	}
+	_, same := h.ok("update_snippet", args(map[string]any{"title": "Mine, renamed again"}))
 	if get(same, "outcome") != "unchanged" || get(same, "updated_at") != at {
 		t.Errorf("same title = %v", same)
 	}
@@ -651,24 +664,27 @@ func TestUpdateSnippetRefusesBlankContent(t *testing.T) {
 	}
 }
 
-// A change to a file other than the first leaves GitLab's updated_at
-// where it was: the result still says the files changed, and that
-// updated_at does not show it.
-func TestUpdateSnippetFilesWithoutUpdatedAtMoving(t *testing.T) {
-	h := newHarness(t, harnessOptions{cfg: withToolsets(config.Config{}, "snippets")})
+// A change to a file other than the first leaves the updated_at GitLab
+// answers where it was; the commit's post-receive job moves it after.
+// The result hands on no witness, and a read gives the moved one.
+func TestUpdateSnippetFilesMoveUpdatedAtAfterTheAnswer(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(destructive, "snippets")})
 	_, made := h.ok("create_snippet", map[string]any{"project": alpha, "title": "Two",
 		"files": []map[string]any{{"path": "a.md", "content": "# A\n"}, {"path": "b.sh", "content": "echo b\n"}}})
 	id := get(made, "id").(float64)
 	at := snippetAt(h, alpha, id)
 	text, out := h.ok("update_snippet", map[string]any{"project": alpha, "snippet_id": id, "updated_at": at, "files": []map[string]any{
 		{"action": "update", "path": "a.md", "content": "# A\n"}, {"action": "update", "path": "b.sh", "content": "echo z\n"}}})
-	if get(out, "outcome") != "updated" || fmt.Sprint(get(out, "changed")) != "[files]" || get(out, "updated_at") != at ||
-		!strings.Contains(text, "without moving updated_at") {
+	if get(out, "outcome") != "updated" || fmt.Sprint(get(out, "changed")) != "[files]" || get(out, "updated_at") != nil ||
+		!strings.Contains(text, "read the snippet with get_snippet") {
 		t.Errorf("update = %v\n%s", out, text)
 	}
 	if got := h.gl.SnippetFiles(int64(id)); got[1][1] != "echo z\n" {
 		t.Errorf("GitLab holds %q", got)
 	}
+	// The old witness is stale now, and the one a read gives deletes.
+	h.fails("delete_snippet", map[string]any{"project": alpha, "snippet_id": id, "updated_at": at, "confirm": true}, "stale")
+	h.ok("delete_snippet", map[string]any{"project": alpha, "snippet_id": id, "updated_at": snippetAt(h, alpha, id), "confirm": true})
 }
 
 // A change that creates, deletes or moves a file is sent once: a lost
