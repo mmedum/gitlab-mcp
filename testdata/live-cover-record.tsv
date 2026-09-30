@@ -230,6 +230,10 @@ get_snippet.file	1
 get_snippet.offset	1
 get_snippet.project	2
 get_snippet.snippet_id	2
+get_test_report.*	3
+get_test_report.offset	2
+get_test_report.pipeline_id	3
+get_test_report.project	3
 get_wiki_page.*	1
 get_wiki_page.offset	1
 get_wiki_page.project	1
