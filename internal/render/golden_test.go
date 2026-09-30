@@ -114,17 +114,18 @@ func TestGoldens(t *testing.T) {
 					Budget: model.Budget{BudgetChars: 6000, TotalChars: 9000, ShownChars: 6000, ContinueOffset: intp(6000)}}}}},
 			NotShown: []model.ThreadStub{{ID: "bbbb", Author: "carol", Notes: 2, LastActivity: t0}},
 			Listing:  model.Listing{Returned: 1, Total: intp(2), NextPageToken: strp("tok")}}, bd),
-		"boards": Boards(model.Boards{Project: alpha, Listing: model.Listing{Returned: 2, NextPageToken: strp("tok")},
+		"boards": Boards(model.Boards{Project: alpha, BudgetChars: 30000, Listing: model.Listing{Returned: 2, NextPageToken: strp("tok")},
 			Boards: []model.Board{
 				{ID: 7, UntrustedName: "Team <<<board>>>", OpenList: true, ClosedList: false, Lists: []model.BoardList{
 					{ID: 71, Position: intp(0), Kind: "label", Label: strp("workflow::doing"),
 						SearchIssues: &model.ListSearch{State: "opened", Labels: []string{"workflow::doing"}}},
-					{ID: 72, Position: intp(1), Kind: "iteration", Iteration: &model.BoardTimebox{ID: 5, UntrustedTitle: "Week 2"}},
-					{ID: 73, Position: intp(2), Kind: "unknown"},
+					{ID: 72, Position: intp(1), Kind: "iteration", Iteration: &model.BoardTimebox{ID: 5, UntrustedTitle: "Week 2"},
+						SearchNote: "search_issues has no iteration filter"},
+					{ID: 73, Position: intp(2), Kind: "unknown", SearchNote: "its kind is unknown"},
 				}},
 				{ID: 8, UntrustedName: "Scoped", OpenList: false, ClosedList: true,
-					Scope: &model.BoardScope{UntrustedMilestone: strp("Sprint 2"), Assignee: strp("bob"), Labels: []string{"bug"},
-						NoWeight: true},
+					Scope: &model.BoardScope{Milestone: &model.BoardTimebox{ID: 90001, UntrustedTitle: "Sprint 2"}, Assignee: strp("bob"),
+						Labels: []string{"bug"}, NoWeight: true},
 					Lists: []model.BoardList{
 						{ID: 81, Position: intp(0), Kind: "assignee", Assignee: strp("carol"),
 							SearchIssues: &model.ListSearch{State: "opened", Labels: []string{}, Assignee: strp("carol")}},

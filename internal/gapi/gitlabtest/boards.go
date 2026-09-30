@@ -2,6 +2,7 @@ package gitlabtest
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 )
 
@@ -94,7 +95,10 @@ func (s *Server) boardJSON(p *project, b board) map[string]any {
 	})
 	rows := make([]map[string]any, 0, len(lists))
 	for _, l := range lists {
-		row := map[string]any{"id": l.id, "label": nil, "position": l.position}
+		// Alpha's namespace has WIP limits, a paid feature, so every list
+		// carries its limit keys (ee/lib/ee/api/entities/list.rb).
+		row := map[string]any{"id": l.id, "label": nil, "position": l.position, "max_issue_count": 0,
+			"max_issue_weight": 0, "limit_metric": nil}
 		switch l.kind {
 		case listLabel:
 			row["label"] = s.labelJSON(p, l.value)
@@ -154,4 +158,28 @@ func (s *Server) listBoards(p *project) []map[string]any {
 		out = append(out, s.boardJSON(p, b))
 	}
 	return out
+}
+
+// AddBoards gives a project n more boards, each with a list for each
+// of its labels, so a listing pages and meets its budget. It reports
+// whether the project exists.
+func (s *Server) AddBoards(projectPath string, n int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	next := int64(98500)
+	for _, b := range p.boards {
+		next = max(next, b.id+1)
+	}
+	for i := range n {
+		b := board{id: next + int64(i), name: fmt.Sprintf("Generated board %d", i+1)}
+		for j, l := range p.labels {
+			b.lists = append(b.lists, boardList{id: (next+int64(i))*10 + int64(j), kind: listLabel, position: j, value: l.Name})
+		}
+		p.boards = append(p.boards, b)
+	}
+	return true
 }

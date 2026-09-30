@@ -641,6 +641,9 @@ func TestBoards(t *testing.T) {
 	if strings.Join(got, " ") != want {
 		t.Errorf("lists = %s, want %s", strings.Join(got, " "), want)
 	}
+	if l := boards[0]["lists"].([]any)[0].(map[string]any); l["max_issue_count"] != float64(0) || l["limit_metric"] != nil {
+		t.Errorf("a paid list's limit keys = %v", l)
+	}
 	if m := boards[2]["milestone"].(map[string]any); len(m) != 1 || m["title"] != "Upcoming" {
 		t.Errorf("special milestone = %v", m)
 	}
