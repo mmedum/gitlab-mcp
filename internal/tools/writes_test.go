@@ -1058,8 +1058,8 @@ func TestTrackTimeRefusesBeforeSending(t *testing.T) {
 			t.Errorf("%v: %s, want %q", c.args, text, c.want)
 		}
 	}
-	// Spent time needs its own witness: updated_at does not move when time
-	// is added.
+	// Spent time needs its own witness: updated_at does not move when spent
+	// time is added or reset.
 	if text := h.fails("track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": w, "reset_spent": true},
 		"invalid"); !strings.Contains(text, "need total_time_spent") {
 		t.Errorf("no spent witness: %s", text)

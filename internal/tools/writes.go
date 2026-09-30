@@ -350,7 +350,7 @@ type trackTimeIn struct {
 	ResetEstimate  bool     `json:"reset_estimate,omitempty" jsonschema:"Remove the estimate"`
 	AddSpent       string   `json:"add_spent,omitempty" jsonschema:"Add this duration to the time spent, in the same form as estimate; a leading minus, such as -30m, subtracts, down to zero at most"`
 	ResetSpent     bool     `json:"reset_spent,omitempty" jsonschema:"Set the time spent back to zero"`
-	TotalTimeSpent *int64   `json:"total_time_spent,omitempty" jsonschema:"Required with add_spent or reset_spent: the seconds spent as your latest read gave them, time_stats.total_time_spent of get_issue or get_merge_request or total_time_spent of track_time. GitLab does not move updated_at when time is added, so this is the witness that catches the same time added twice: the call is refused [stale] if the total moved. A [stale] refusal is NOT a retry signal: read it again and decide whether the time still needs adding"`
+	TotalTimeSpent *int64   `json:"total_time_spent,omitempty" jsonschema:"Required with add_spent or reset_spent: the seconds spent as your latest read gave them, time_stats.total_time_spent of get_issue or get_merge_request or total_time_spent of track_time. GitLab does not move updated_at when spent time is added or reset, so this is the witness that catches the same change sent twice: the call is refused [stale] if the total moved. A [stale] refusal is NOT a retry signal: read it again and decide whether the time still needs adding"`
 	DryRun         bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
 }
 
@@ -360,7 +360,7 @@ func trackTime() definition {
 			Description: "Set or reset the time estimate of an issue or a merge request, and add or reset its time spent: " +
 				"estimate or reset_estimate, add_spent or reset_spent, at least one. updated_at from your latest read is " +
 				"required, and the call is refused [stale] if the item changed since; adding or resetting spent time also needs " +
-				"total_time_spent from that read, since GitLab does not move updated_at when time is added. Adding time is never repeated after a " +
+				"total_time_spent from that read, since GitLab does not move updated_at when spent time is added or reset. Adding time is never repeated after a " +
 				"lost answer; the result then says what a read of the total shows. The result gives the time stats before " +
 				"and after, as read back, and says so when nothing changed. GitLab records each change as a note on the item." +
 				visibleNote},

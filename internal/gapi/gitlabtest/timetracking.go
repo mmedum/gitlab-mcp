@@ -15,8 +15,9 @@ import (
 // time_tracking_endpoints.rb serves it at v19.4.1-ee: each write needs
 // admin_issue (Planner and up) or admin_merge_request (Developer and up)
 // and answers 403 without it; setting and resetting answer 200, adding
-// spent time 201. A changed estimate and a reset move updated_at; added
-// spent time does not, as the live run saw on gitlab.com (§18 row 101).
+// spent time 201. A changed estimate moves updated_at; adding or
+// resetting spent time does not, as the live runs saw on gitlab.com (§18
+// row 101).
 // GitLab's system notes for these changes are not modeled.
 
 const (
@@ -71,7 +72,6 @@ func (s *Server) serveTime(w http.ResponseWriter, r *http.Request, p *project, t
 		s.addSpent(w, b, ts)
 	default:
 		ts.TotalTimeSpent = 0
-		bump(updated, s.opts.Now().UTC())
 		humanize(ts)
 		writeJSON(w, http.StatusOK, ts)
 	}

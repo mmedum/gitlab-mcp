@@ -982,7 +982,8 @@ func TestTimeTracking(t *testing.T) {
 	before = updated()
 	resp, body = send(t, s, "POST", issue+"reset_spent_time", tok, nil)
 	wantStatus(t, "reset_spent_time", resp, body, 200)
-	if body["total_time_spent"] != float64(0) || body["human_total_time_spent"] != nil || !updated().After(before) {
+	// A reset leaves updated_at where it was too.
+	if body["total_time_spent"] != float64(0) || body["human_total_time_spent"] != nil || !updated().Equal(before) {
 		t.Errorf("reset_spent_time = %v", body)
 	}
 	resp, body = send(t, s, "POST", issue+"reset_time_estimate", tok, nil)

@@ -100,8 +100,8 @@ type TimeTracking struct {
 	AddSpent      string
 	ResetSpent    bool
 	// TotalTimeSpent is the spent-time witness, the total in seconds the
-	// caller read. GitLab does not move updated_at when time is added
-	// (§18 row 101), so only the total catches a repeat.
+	// caller read. GitLab does not move updated_at when spent time is
+	// added or reset (§18 row 101), so only the total catches a repeat.
 	TotalTimeSpent *int64
 }
 
@@ -149,7 +149,7 @@ func (in TimeTracking) steps() ([]timeStep, error) {
 	}
 	if (in.AddSpent != "" || in.ResetSpent) && in.TotalTimeSpent == nil {
 		return nil, gapi.Errf(gapi.ClassInvalid, "add_spent and reset_spent need total_time_spent, the seconds spent as your latest read "+
-			"gave them in time_stats: GitLab does not move updated_at when time is added, so the total is what catches a change made "+
+			"gave them in time_stats: GitLab does not move updated_at when spent time is added or reset, so the total is what catches a change made "+
 			"since, or this call made twice")
 	}
 	var steps []timeStep
@@ -271,14 +271,14 @@ func (s *Service) readTimed(ctx context.Context, p gapi.Project, mr bool, iid in
 
 // checkSpentWitness refuses spent time sent against a total that moved
 // since the caller read it (§4.6). updated_at cannot: GitLab leaves it
-// where it was when time is added.
+// where it was when spent time is added or reset.
 func checkSpentWitness(witness *int64, steps []timeStep, current gitlab.TimeStats, what string) error {
 	spends := slices.ContainsFunc(steps, func(st timeStep) bool { return st.op == "add_spent_time" || st.op == "reset_spent_time" })
 	if !spends || witness == nil || *witness == current.TotalTimeSpent {
 		return nil
 	}
 	return gapi.Errf(gapi.ClassStale, "the time spent on the %s changed since it was read: total_time_spent is now %d (%s), not %d. "+
-		"GitLab does not move updated_at when time is added, so this may be this same call landing before. Read it again, "+
+		"GitLab does not move updated_at when spent time is added or reset, so this may be this same call landing before. Read it again, "+
 		"check the time still needs adding, and pass the new total_time_spent", what, current.TotalTimeSpent,
 		human(current.HumanTotalTimeSpent), *witness)
 }
