@@ -117,6 +117,36 @@ func AskRunPipeline(project, ref string, kind RefKind, variables, inputs []strin
 	)...)
 }
 
+// branchKinds say why a merge request's branch counts as protected.
+var branchKinds = map[RefKind]string{
+	DefaultBranch:   "the project's default branch",
+	ProtectedBranch: "protected",
+	UnknownRef:      "not found, so whether it is protected cannot be told",
+}
+
+// AskRunMergeRequestPipeline asks before run_merge_request_pipeline
+// when both of the merge request's branches count as protected, so its
+// jobs may see protected variables. The whole head and the branches are
+// bound.
+func AskRunMergeRequestPipeline(project string, iid int64, title, source, target, sha string, sourceKind, targetKind RefKind) Question {
+	kind := func(k RefKind) string {
+		if why, ok := branchKinds[k]; ok {
+			return why
+		}
+		return "protected"
+	}
+	q := ask(
+		fmt.Sprintf("run_merge_request_pipeline: run a pipeline for merge request !%d in %s at head %s?", iid, quoted(project, quotedLen),
+			askSHA(sha)),
+		"title: "+quoted(title, quotedLen),
+		fmt.Sprintf("source branch %s: %s", quoted(source, quotedLen), kind(sourceKind)),
+		fmt.Sprintf("target branch %s: %s", quoted(target, quotedLen), kind(targetKind)),
+		"With both branches protected, its jobs may see protected variables, and may deploy or publish.",
+	)
+	q.Bind += "\x00" + sha + "\x00" + source + "\x00" + target
+	return q
+}
+
 // runOptions names the variables and inputs a run is given, by key.
 func runOptions(variables, inputs []string) []string {
 	var out []string

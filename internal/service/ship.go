@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -413,6 +414,163 @@ func (s *Service) findPipeline(ctx context.Context, p gapi.Project, ref string, 
 		return "", err
 	}
 	return fmt.Sprintf("pipeline %d, %s", rows[0].ID, rows[0].Status), nil
+}
+
+// RunMergeRequestPipeline runs a merge request's pipeline: merged
+// results where the project has them on, detached otherwise, as GitLab
+// decides (MergeRequests::CreatePipelineService).
+func (s *Service) RunMergeRequestPipeline(ctx context.Context, raw string, iid int64) (model.MergeRequestPipelineWrite, error) {
+	t, err := s.writeTarget(ctx, raw)
+	if err != nil {
+		return model.MergeRequestPipelineWrite{}, err
+	}
+	mr, err := s.client.GetMergeRequest(ctx, t.p, iid)
+	if err != nil {
+		return model.MergeRequestPipelineWrite{}, err
+	}
+	if mr.SourceProjectID != t.project.ID {
+		// GitLab runs a fork's pipeline in this project, with its
+		// unprotected variables and its runners, when the project allows
+		// it, and in the fork otherwise. The setting is shown only to
+		// maintainers, so where it would run cannot be told (§17.14).
+		return model.MergeRequestPipelineWrite{}, gapi.Errf(gapi.ClassBlocked, "the merge request comes from a fork, and its pipeline "+
+			"would run the fork's code, in this project with its variables and runners or in the fork; nothing was sent. Review the "+
+			"fork's code, then run the pipeline from the merge request's Pipelines tab in GitLab")
+	}
+	out := model.MergeRequestPipelineWrite{Outcome: "created", Write: model.Write{Target: t.ref}, IID: iid,
+		SourceBranch: mr.SourceBranch, TargetBranch: mr.TargetBranch}
+	if gapi.IsDryRun(ctx) {
+		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("POST", "run a merge request pipeline", nil)
+		return out, nil
+	}
+	if err := s.askMRRun(ctx, t, mr); err != nil {
+		return model.MergeRequestPipelineWrite{}, err
+	}
+	start := time.Now()
+	pl, err := s.client.CreateMergeRequestPipeline(ctx, t.p, iid)
+	if err != nil {
+		return model.MergeRequestPipelineWrite{}, mrPipelineFailed(err, func() (string, error) {
+			return s.findMRPipeline(ctx, t, mr, start)
+		})
+	}
+	out.PipelineID, out.PipelineIID, out.Kind, out.Status = pl.ID, pl.IID, mrPipelineKind(pl.Ref, mr), pl.Status
+	out.Ref, out.SHA, out.Source, out.WebURL = pl.Ref, pl.SHA, pl.Source, pl.WebURL
+	return out, nil
+}
+
+// mrPipelineKind names a merge request pipeline by its ref.
+func mrPipelineKind(ref string, mr *gitlab.MergeRequest) string {
+	switch ref {
+	case fmt.Sprintf("refs/merge-requests/%d/merge", mr.IID):
+		return "merged_results"
+	case fmt.Sprintf("refs/merge-requests/%d/head", mr.IID):
+		return "detached"
+	case mr.SourceBranch:
+		return "source_branch"
+	}
+	return ""
+}
+
+// permissionRefused is GitLab's 400 for an account that may not create
+// the pipeline or run one for the branch
+// (Gitlab::Ci::Pipeline::Chain::Validate::Abilities).
+var permissionRefused = regexp.MustCompile(`(?i)insufficient permissions to create a new pipeline|do not have sufficient permission to run a pipeline`)
+
+// mrPipelineFailed names GitLab's refusals of a merge request pipeline
+// and settles a lost answer by reading (§4.5).
+func mrPipelineFailed(err error, find func() (string, error)) error {
+	var e *gapi.Error
+	if !errors.As(err, &e) {
+		return err
+	}
+	switch {
+	case e.Status == 405:
+		return gapi.Wrap(gapi.ClassConflict, err, "GitLab ran no pipeline: the merge request has no commits yet. Push a commit to "+
+			"its source branch first")
+	case e.Status == 400 && permissionRefused.MatchString(e.Message):
+		return gapi.Wrap(gapi.ClassForbidden, err, "GitLab refused to run the pipeline for this account, and nothing ran "+
+			"(it answers 400 for this, not 403). %s", e.Message)
+	case e.Status == 400:
+		return gapi.Wrap(gapi.ClassConflict, err, "GitLab could not create the pipeline, and nothing ran. Often the CI "+
+			"configuration has no jobs for merge request pipelines; lint_ci checks it. %s", e.Message)
+	}
+	return settle(err, "merge request pipeline", find)
+}
+
+// findMRPipeline settles a lost run_merge_request_pipeline: a merge
+// request pipeline on one of the merge request's refs, created since
+// shortly before the call, that this account started. The listing does
+// not name who started a pipeline, so each candidate is read.
+func (s *Service) findMRPipeline(ctx context.Context, t target, mr *gitlab.MergeRequest, start time.Time) (string, error) {
+	me, err := s.me(ctx)
+	if err != nil {
+		return "", err
+	}
+	rows, _, err := s.client.ListMergeRequestPipelines(ctx, t.p, mr.IID, gapi.ListOptions{PerPage: 20})
+	if err != nil {
+		return "", err
+	}
+	checked := 0
+	for _, r := range rows {
+		if r.Source != "merge_request_event" || r.ProjectID != t.project.ID || r.CreatedAt.Before(start.Add(-settleSkew)) ||
+			mrPipelineKind(r.Ref, mr) == "" {
+			continue
+		}
+		if checked++; checked > maxSettleReads {
+			break
+		}
+		pl, err := s.client.GetPipeline(ctx, t.p, r.ID)
+		if err != nil {
+			return "", err
+		}
+		if pl.User != nil && pl.User.Username == me.Username {
+			return fmt.Sprintf("pipeline %d, %s, on %s", pl.ID, pl.Status, pl.Ref), nil
+		}
+	}
+	return "", nil
+}
+
+// maxSettleReads bounds the pipelines read to settle a lost merge
+// request pipeline.
+const maxSettleReads = 5
+
+// askMRRun asks before a merge request pipeline whose jobs may see
+// protected variables: GitLab gives them one only when its source and
+// target branches are both protected, in the same project
+// (Ci::Pipeline#protected_for_merge_request?). The project's setting
+// and the account's push rights, which it also checks, are not read, so
+// it asks in a few more cases than that. A branch that cannot be read
+// may be protected by name, so it counts as protected. The branches are
+// read only when a question could go out.
+func (s *Service) askMRRun(ctx context.Context, t target, mr *gitlab.MergeRequest) error {
+	if !asks(ctx) {
+		return nil
+	}
+	var source, tgt render.RefKind
+	if err := parallel(
+		func() (err error) { source, err = s.branchKind(ctx, t, mr.SourceBranch); return err },
+		func() (err error) { tgt, err = s.branchKind(ctx, t, mr.TargetBranch); return err },
+	); err != nil || source == 0 || tgt == 0 {
+		return err
+	}
+	return ask(ctx, render.AskRunMergeRequestPipeline(t.ref.Project.Path, mr.IID, mr.Title, mr.SourceBranch, mr.TargetBranch, mr.SHA,
+		source, tgt))
+}
+
+// branchKind is why a branch counts as protected, or 0 when it does not.
+func (s *Service) branchKind(ctx context.Context, t target, name string) (render.RefKind, error) {
+	b, err := s.client.GetBranch(ctx, t.p, name)
+	switch {
+	case err == nil && b.Default:
+		return render.DefaultBranch, nil
+	case err == nil && b.Protected:
+		return render.ProtectedBranch, nil
+	case err == nil:
+		return 0, nil
+	case gapi.IsClass(err, gapi.ClassNotFound):
+		return render.UnknownRef, nil
+	}
+	return 0, err
 }
 
 // RetryPipeline retries a pipeline's failed and canceled jobs.

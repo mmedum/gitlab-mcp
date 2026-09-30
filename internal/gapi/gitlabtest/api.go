@@ -204,6 +204,7 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 			message(w, http.StatusNotFound, "404 Discussion Not Found")
 		}
 	case get && s.serveMRReview(w, r, p, mr, user, rest):
+	case s.serveMRShip(w, r, p, mr, user, rest):
 	case s.serveMRWrite(w, r, p, mr, user, rest):
 	default:
 		routeNotFound(w)

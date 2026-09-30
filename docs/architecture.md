@@ -420,6 +420,7 @@ time and the signed-in user:
 | issue, merge request | the project's issues or merge requests by author, `created_after`, title equal |
 | commit | the branch head: moved, with this author and message |
 | pipeline | pipelines on the ref, source `api`, `created_after` |
+| merge request pipeline | the merge request's pipelines, source `merge_request_event`, on its refs, created since, each read for who started it |
 | release | the release by tag name |
 | spent time added or reset | the item's total spent: moved by exactly the amount, or at zero after a reset |
 | an estimate never confirmed (it repeats, so this is after its retries) | the item's estimate: at the value asked or not |
@@ -586,9 +587,10 @@ rather than reporting success.
 Registration decides what the server can do (§4.3), and `confirm:
 true` is an argument the model writes, which a persuaded model writes
 too. So when the client can ask, the server asks the person itself,
-through MCP form elicitation, before fourteen writes: `merge_merge_request`,
+through MCP form elicitation, before fifteen writes: `merge_merge_request`,
 `approve_merge_request`, `play_job`, `create_release`, `create_tag`,
 `run_pipeline` on the default branch or a protected branch or tag,
+`run_merge_request_pipeline` when both its branches are protected,
 `update_issue` when it makes a confidential issue public, and the seven
 deletes of the Destructive kind. The set is the core the maintainer
 chose on 2026-09-29 (§14): the writes that ship, publish or destroy.
@@ -624,7 +626,15 @@ questions asked often are answered without reading (§18 row 94).
    or tag it names, as GitLab reads it, and a ref that is neither is
    asked about, since its protection cannot be told. It reads only when a
    question could go out, so a client that cannot ask pays no extra
-   read.
+   read. `run_merge_request_pipeline` asks by GitLab's own rule for
+   protected variables in a merge request pipeline: the source and
+   target branches both protected, in the same project
+   (`Ci::Pipeline#protected_for_merge_request?`). A branch it cannot
+   read counts as protected, and the project's setting and the
+   account's push rights, which GitLab also checks, are not read, so it
+   asks in a few more cases than GitLab exposes them. A merged results
+   pipeline into a protected branch from an unprotected one does not
+   ask: its jobs get no protected variables (§18 row 104).
 5. **What the question says.** The tool, the target and the
    consequence, in the server's words: a merge by its merge request,
    title, branches, head and whether it squashes or removes the source
@@ -1079,8 +1089,15 @@ Ship: `run_pipeline` (ref, variables and inputs; variables named in the
 result, values masked), `retry_pipeline`, `retry_job` and `play_job`
 (each with values for the inputs the job declares: GitLab refuses a
 name a job's `inputs:` does not include, and a job that declares none
-takes any and uses none), `cancel_pipeline`. Deleting a
-pipeline is written off (§8a).
+takes any and uses none), `cancel_pipeline`, and
+`run_merge_request_pipeline`: the pipeline merge request rules select,
+merged results where the project has them on (Premium) and the source
+branch's head otherwise. GitLab picks, and the result names the kind by
+the pipeline's ref: `refs/merge-requests/N/merge` is merged results,
+`…/head` is detached. It takes no `async`: GitLab's asynchronous create
+answers 202 with no body, so there would be no pipeline to report and
+nothing to settle a lost answer by. A merge request from a fork is
+refused (§17.14). Deleting a pipeline is written off (§8a).
 
 ### 7.7 Planning, todos and search
 
@@ -1172,9 +1189,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Ninety-two tools. With the default toolsets: fifty-seven by default,
-thirty-seven in read-only mode, sixty-nine with Ship and Destructive
-both enabled. Every toolset and flag on registers all ninety-two.
+Ninety-three tools. With the default toolsets: fifty-seven by default,
+thirty-seven in read-only mode, seventy with Ship and Destructive
+both enabled. Every toolset and flag on registers all ninety-three.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people:
 every write but `add_todo`, `subscribe` and `mark_todos_done`, whose
@@ -1248,6 +1265,7 @@ Destructive kinds, as a signal and not a control.
 | `rebase_merge_request` | Ship | default | `PUT …/merge_requests/:iid/rebase` (takes the head `sha`) |
 | `move_issue` | Ship | default | `POST …/issues/:iid/move` (never to a more visible project) |
 | `run_pipeline` | Ship | default | `POST …/pipeline` |
+| `run_merge_request_pipeline` | Ship | default | `POST …/merge_requests/:iid/pipelines` (never for a fork's merge request) |
 | `retry_pipeline` | Ship | default | `POST …/pipelines/:id/retry` |
 | `retry_job` | Ship | default | `POST …/jobs/:id/retry` |
 | `play_job` | Ship | default | `POST …/jobs/:id/play` |
@@ -1310,7 +1328,7 @@ The groups below are the design's verdicts; the TSV is the record.
 | user, metadata, version | Used: `get_me`, login, `doctor`. `/version` written off as deprecated for `/metadata`. Personal access token `self` routes written off with the token path (§10) |
 | projects (read), groups (read), members (read), users (search) | Used for navigation. Project create, update, fork, transfer, archive, share, import and export written off: administration |
 | issues, issue notes and discussions | Used, starting and resolving threads, links, moves (Ship), time tracking, subscribing, to-dos, resource events and linked items included. Clone and award emoji deferred; delete written off (Owner-only, permanent) |
-| merge requests, notes, discussions | Used, time tracking, subscribing, to-dos, resource events and linked items included; rebase gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
+| merge requests, notes, discussions | Used, time tracking, subscribing, to-dos, resource events and linked items included; rebase and running a merge request pipeline gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
 | draft notes | Used: the review path |
 | approvals (merge-request level) | Used: approve, unapprove, state. Approval rules and project approval settings written off: governance configuration, Premium |
 | repository files, tree, commits, branches, tags, compare | Used, blame included. Cherry-pick and revert used as Write behind the protected-branch guard (§17.13); tag create gated under `releases`, tag delete Destructive. Raw archive deferred; commit statuses written off (a CI integration's surface); "delete merged branches" written off |
@@ -2320,6 +2338,21 @@ fixed in its "Tighten … after review" commit:
 
     **Decided 2026-09-27 (maintainer): as proposed.** The `planning`
     toolset is the one §17.11 would extend with epics after 1.0.
+14. **A merge request pipeline for a fork.** GitLab runs a fork's merge
+    request pipeline in the target project, with the fork's code, the
+    target's unprotected variables and its runners, when the caller may
+    create pipelines there and the project allows it
+    (`ci_allow_fork_pipelines_to_run_in_parent_project`); otherwise in
+    the fork, on its source branch. GitLab shows that setting only to
+    maintainers, so the server cannot tell which. GitLab's own advice is
+    to review a fork's code before running it in the parent, which is
+    the step a persuaded model skips. **Decided 2026-09-30: refused.**
+    `run_merge_request_pipeline` answers a fork's merge request
+    `[blocked]`, dry run included, before anything is sent, and points
+    to the merge request's Pipelines tab. This is the narrow choice:
+    allowing forks later, held to the allow-list in both projects as
+    `rebase_merge_request` is, and asking the person, is an addition
+    (§18 row 104).
 
 ### 17a. Deferred cleanups
 
@@ -2337,6 +2370,10 @@ REST call can close:
   `run_pipeline` on the same ref in that window reads as this one. The
   pipeline's variables would tell them apart, and reading them reads
   their values (§18 row 82). Found in phase 3.
+  `run_merge_request_pipeline` has the same limit: it settles by this
+  account's newest merge request pipeline on the merge request's refs
+  since shortly before the call, so a second run on the same merge
+  request in that window reads as this one.
 
 The 1.0 security review added a third, closed after 1.0:
 `update_label` and `update_milestone` could not clear a description or a
@@ -2487,3 +2524,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 101 | GitLab's time tracking API answers as the OpenAPI file publishes it, refuses a bad duration, and leaves `updated_at` alone on spent time | At v19.4.1-ee: `lib/api/time_tracking_endpoints.rb` L74-154; `lib/gitlab/time_tracking_formatter.rb` L10-25; `app/models/concerns/time_trackable.rb` L23 (`has_many :timelogs, autosave: true`), L45-61 `spend_time`, L92-94 (`time_estimate=` capped at `MAX_INT_VALUE`) and L113-118 (`timelogs.new`); `app/models/timelog.rb` L12 (`MAX_TOTAL_TIME_SPENT = 126230400`), L20 and L77-81 (the range validation, `on: :create`), L22 `belongs_to :issue, touch: true` and L23 `belongs_to :merge_request, touch: true`; `app/services/issuable_base_service.rb` L332-349 and L390 (`save(touch:)`); `app/services/merge_requests/update_service.rb` L24 and L350-379 and `add_spent_time_service.rb` L8-11; `config/authz/roles/planner.yml`, `config/authz/roles/reporter.yml` and `config/authz/roles/developer.yml`; and `lib/gitlab_chronic_duration.rb` of the gitlab-chronic-duration gem | **Refuted (tier 1; `updated_at` and the human forms tier 1, live).** Setting and resetting the estimate and resetting spent time answer 200, not the 201 the file publishes; adding spent time answers 201. The parser is ChronicDuration with 8-hour days and 20-day months, a week a quarter month, a bare number as hours; it drops words it does not know, so `5 foo` is five hours, and an estimate keeps a zero, so a word alone sets the estimate to 0 rather than failing. An estimate past `MAX_INT_VALUE` is stored as it, not refused. A duration that parses to nothing adds a timelog with no time, refused 400 by its validation. Subtracting past zero is 400, and so is a new timelog taking the total past `MAX_TOTAL_TIME_SPENT`, four years: refused, not clamped. Spent time on an issue goes through the update service, which saves with `touch`; on a merge request the API sets `use_specialized_service`, and `AddSpentTimeService` calls `spend_time` and a plain `save`. The source reads as the new timelog touching its item through `belongs_to … touch: true`. The live run on gitlab.com, 2026-09-30, refutes that: adding 1h30m with an estimate moved the issue's `updated_at`, but adding -30m and then 1m alone left it at the same instant, and on the merge request adding 15m and then 1m alone left it too; a call carrying a witness from before each of those spent-only calls was answered, not refused. Setting an estimate, and resetting it, moved it. A second run sent each reset alone: resetting spent time left `updated_at` at the same instant on the issue and on the merge request, and resetting the estimate next was accepted with that `updated_at`. So `updated_at` cannot catch spent time added or reset twice, and `total_time_spent` is the witness for both. The human forms are null at zero, and gitlab.com writes them in hours and minutes: an estimate of `1d 2h` read back as `10h`. Writes need `admin_issue` (Planner and up) or `admin_merge_request` (Developer and up), 403 otherwise. `track_time` takes a strict subset of the syntax, checks `updated_at`, takes the total spent as a second witness whenever it adds or resets spent time, and never repeats a spent-time write |
 | 102 | Subscribing and adding a to-do for oneself fail when nothing changes, and GitLab deduplicates a to-do | At v19.4.1-ee: `lib/api/subscriptions.rb` L12-34 (the merge request finder asks for `update_merge_request`, L19; the issue's is `find_project_issue`), L77-107 (`not_modified!` at L82 and L102); `lib/api/helpers.rb` L352-378 (`find_merge_request_with_access`: 404 when missing, `authorize!` 403 when it exists and the ability is missing) and L684-686 (`not_modified!` is 304); `app/policies/issuable_policy.rb` L43-44 and `config/authz/roles/developer.yml` L123; `app/models/concerns/subscribable.rb` L20-28; `app/models/concerns/issuable.rb` L148-151 (participants `author`, `system_note_authors`, `notes_for_participants`, `assignees`) and L553-555; `app/models/merge_request.rb` L198 (`reviewers`); `app/models/note.rb` L75 (`author`); `app/models/concerns/mentionable.rb` L27-29 (every mention); `app/models/concerns/awardable.rb` L11 (`award_emoji`); `app/models/concerns/participable.rb` L87-90 and L106-140; `lib/api/todos.rb` L15-47; `app/services/todo_service.rb` L40-41, L98-113, L129-130, L158-176, L206-207, L214-222, L236-243, L347-365, L399-421 and L442-455; `app/models/todo.rb` L52; `db/structure.sql` (the `todos` indexes, none unique) | **Refuted (tier 1; the two 304s tier 1, live).** Both answer 304 with no body when the state already holds, which the OpenAPI file does not publish. Subscribing to an issue while subscribed, or unsubscribing while not, is 304; so is adding a to-do while a pending `marked` one the account added is on the item. Other pending to-dos (assigned, mentioned, review requested) and a done one do not stop a new one, since `excluded_user_ids` matches the action. That check runs before `bulk_insert_todos` with no lock and no unique index, so it is not a dedupe a retry can lean on: the to-do POST is a create and is never repeated. The account's pending to-dos on an item are marked done when it comments outside a thread or edits such a comment, closes, merges, pushes to or reviews a merge request, or reacts with an emoji; an update alone does not. A participant is subscribed without a subscription record: the author, assignees, a merge request's reviewers, every note's author, system notes included, emoji reactors, and every user mentioned in the item or a note; so a first subscribe to one's own item is 304. Subscribing to a merge request, or unsubscribing, needs `update_merge_request`: Developer and up, or the author or an assignee who can read it; anyone else gets 403, even on a public project, and so does anyone who may not read it. The 403 carries no reason, and an archived project or a hidden merge request refuses alike. An issue needs only read access, 404 otherwise. The client takes a 304 as an answer only where a call says why, through `DoAnswered`, and reports it; `subscribe` and `add_todo` report it as unchanged. A live run on gitlab.com, 2026-09-30, had `subscribe` answered 304 for a participant and `add_todo` 304 for a pending to-do. |
 | 103 | A snippet update carries a witness GitLab enforces, the personal routes find only personal snippets, and a snippet delete's `If-Unmodified-Since` compares whole seconds | `lib/api/snippets.rb` L183-258, `lib/api/project_snippets.rb` L115-199, `lib/api/helpers/snippets_helpers.rb`, `lib/api/helpers.rb` `check_unmodified_since!` and `destroy_conditionally!`, `app/services/snippets/update_service.rb`, `base_service.rb` and `destroy_service.rb`, `app/models/snippet_input_action.rb`, `app/finders/snippets_finder.rb`, `app/workers/repositories/post_receive_worker.rb` L86-90, `app/policies/project_snippet_policy.rb` and `personal_snippet_policy.rb`, and `config/authz/roles/guest.yml`, `config/authz/roles/reporter.yml` and `config/authz/roles/maintainer.yml` at v19.4.1-ee | **Refuted (tier 1; the moved `updated_at` tier 1, live).** The PUT checks no witness, so `update_snippet` reads and compares `updated_at` first; `Snippets::UpdateService` runs no quick action, so the description and content are plain. `files` excludes `content` and `file_name`; `content` on a snippet of several files is 400; an action `SnippetInputAction` refuses is 422, and one the repository cannot commit 400. The personal routes find snippets through `SnippetsFinder(author:)`, which also returns the author's snippets in projects, so a project snippet reached without its project is refused, and the allow-list is held against the project. The delete goes through the same `destroy_conditionally!` as a comment's: `Time.parse` keeps an RFC 3339 fraction and `updated_at` is compared at full precision, so the witness is sent stretched to the end of its millisecond, as row 62 found; only an HTTP-date is cut to the second, and would refuse nearly every delete. `Snippets::UpdateService#update_snippet_attributes` copies only the first file action's content and path into the snippet's row, so the answer's `updated_at` can be the old one after a change to another file. A change to content or files is a commit to the snippet's repository, and its post-receive job, `Repositories::PostReceiveWorker#process_snippet_changes`, calls `snippet.touch` once Sidekiq runs it, after the answer: the live run on gitlab.com, 2026-09-30, read `updated_at` 0.7 seconds past the answer's on both snippets, and the next write with the answer's value was refused `[stale]`. The job's delay is a queue's, with no bound a read could wait out, so `update_snippet` hands on no `updated_at` after such a change and says to read the snippet with `get_snippet` for the next witness; a change of title or description alone commits nothing, and its answer's `updated_at` holds. A read made before the job runs can still give a witness that goes stale, which the next write refuses `[stale]` and a read again settles. A create, delete or move action applied twice fails the second time, so such a PUT is not repeated after a lost answer. A delete answers 204, not the 200 the file publishes. GitLab lets a project's maintainers update and delete anyone's snippet there (`update_snippet` and `admin_snippet` in `config/authz/roles/maintainer.yml`); the server keeps to your own, as it does with comments |
+| 104 | GitLab's merge request pipeline create answers as the OpenAPI file publishes it, and a lost answer can be settled | `lib/api/merge_requests.rb` L138-141 and L740-800, `app/services/merge_requests/create_pipeline_service.rb`, `ee/app/services/ee/merge_requests/create_pipeline_service.rb`, `app/models/ci/pipeline.rb` `protected_ref?`, `protected_for_merge_request?` and `merge_request_event_first`, `app/models/merge_request.rb` `ref_path`, `merge_ref_path` and `source_branch_ref`, `app/models/project.rb` `protected_for?`, `app/finders/ci/pipelines_for_merge_request_finder.rb`, `lib/gitlab/ci/pipeline/chain/validate/abilities.rb`, `lib/api/helpers.rb` `not_allowed!` and `render_validation_error!`, and `ee/app/models/ee/project_ci_cd_setting.rb` at v19.4.1-ee | **Refuted (tier 1).** A created pipeline answers 200, not the 201 the file publishes. The create runs with `allow_duplicate: true`, so every call makes a new pipeline. A merge request with no commits answers 405; a pipeline not saved answers 400 with its errors, and so does an account that may not create pipelines or run one on the branch (`Insufficient permissions to create a new pipeline`), with no 403. EE tries merged results first where `merge_pipelines` is licensed (Premium) and on, on `refs/merge-requests/N/merge` at a merge commit, and falls back to detached on `refs/merge-requests/N/head`; a same-project account that may not push to the source branch gets a pipeline on the branch itself. `async` answers 202 with no body, so it is not offered. A fork's pipeline runs in the target or the fork by a setting only maintainers see (§17.14). Protected variables reach a merge request pipeline only on a merge request ref, in the same project, with both branches protected, the project's `protect_merge_request_pipelines` on and the account able to push to both, which is the rule `run_merge_request_pipeline` asks by (§4.12). The merge request's pipelines list its own first, newest first, with no user, so the settle reads each candidate for who started it |

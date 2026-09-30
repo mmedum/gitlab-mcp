@@ -285,8 +285,8 @@ GET /projects/{id}/merge_requests/{merge_request_iid}/related_issues	used	1	Clie
 GET /projects/{id}/merge_requests/{merge_request_iid}/participants	deferred	1	participants; get_merge_request may add it (§17a)
 GET /projects/{id}/merge_requests/{merge_request_iid}/reviewers	deferred	1	reviewer states; get_merge_request carries the reviewers
 GET /projects/{id}/merge_requests/{merge_request_iid}/merge_ref	deferred	1	the merge ref commit; no task in §8 needs it
-GET /projects/{id}/merge_requests/{merge_request_iid}/pipelines	deferred	1	a merge request's pipelines; list_pipelines by ref covers it (§17a)
-POST /projects/{id}/merge_requests/{merge_request_iid}/pipelines	deferred	1	running a merge request pipeline: a Ship candidate (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/pipelines	used	1	Client.ListMergeRequestPipelines: settles a lost run_merge_request_pipeline (§4.5)
+POST /projects/{id}/merge_requests/{merge_request_iid}/pipelines	gated	1	Client.CreateMergeRequestPipeline: run_merge_request_pipeline, Ship; a lost answer is settled by the merge request's pipelines (§4.5)
 GET /projects/{id}/merge_requests/{merge_request_iid}/blockees	deferred	1	merge request dependencies, Premium (§17a)
 * /projects/{id}/merge_requests/{merge_request_iid}/blocks*	deferred	4	merge request dependencies, Premium (§17a)
 * /projects/{id}/merge_requests/{merge_request_iid}/context_commits*	deferred	3	context commits (§17a)

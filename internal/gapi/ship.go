@@ -81,6 +81,30 @@ func (c *Client) CreatePipeline(ctx context.Context, p Project, in PipelineCreat
 	return &out, err
 }
 
+// CreateMergeRequestPipeline runs a merge request pipeline: merged
+// results where the project has them on, detached otherwise. GitLab
+// answers 200 with the pipeline, 405 when the merge request has no
+// commits, and 400 when the pipeline is not saved, a missing permission
+// included (lib/api/merge_requests.rb). It creates one, so it is not
+// repeated (§4.5).
+func (c *Client) CreateMergeRequestPipeline(ctx context.Context, p Project, iid int64) (*gitlab.PipelineDetail, error) {
+	var out gitlab.PipelineDetail
+	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/pipelines", Args: []string{p.segment(), idArg(iid)},
+		Name: "run_merge_request_pipeline"}, &out)
+	return &out, err
+}
+
+// ListMergeRequestPipelines lists a merge request's pipelines: its merge
+// request pipelines first, newest first, then branch pipelines for its
+// commits (Ci::PipelinesForMergeRequestFinder). It settles a lost
+// run_merge_request_pipeline.
+func (c *Client) ListMergeRequestPipelines(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.Pipeline, Page, error) {
+	var out []gitlab.Pipeline
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/pipelines", Args: []string{p.segment(), idArg(iid)},
+		Name: "list_merge_request_pipelines"}, opts, &out)
+	return out, page, err
+}
+
 // RetryPipeline retries a pipeline's failed and canceled jobs; with
 // none, GitLab changes nothing. Each retry creates jobs, so it is not
 // repeated.

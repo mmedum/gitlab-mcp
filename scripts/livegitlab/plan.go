@@ -507,6 +507,7 @@ func planShip(s scratch) []step {
 	w := s.Name[len(s.Name)-6:]
 	branch := "ship-" + w
 	branch2 := "write2-" + w // phase 2's, one commit the default branch lacks
+	mrBranch := "mrpipe-" + w
 	tag, tag2 := "live-"+w, "live-"+w+"-b"
 	stale := strings.Repeat("0", 40)
 	now := time.Now().UTC()
@@ -554,6 +555,17 @@ func planShip(s scratch) []step {
 		{tool: "delete_branch", args: map[string]any{"project": p, "branch": s.Default, "sha": "{{w2_head}}", "confirm": true},
 			expectError: true, why: "the default branch"},
 		{tool: "delete_branch", args: map[string]any{"project": p, "branch": branch2, "sha": "{{w2_head}}", "unmerged": true, "confirm": true}},
+
+		// A merge request pipeline, on a merge request of its own: the
+		// CI configuration gives merge request pipelines to mrpipe-
+		// branches only.
+		{tool: "create_branch", args: map[string]any{"project": p, "branch": mrBranch, "ref": s.Default}},
+		{tool: "create_commit", args: map[string]any{"project": p, "branch": mrBranch, "message": "A change to run a pipeline for",
+			"actions": []any{map[string]any{"action": "create", "file_path": "ship/mr-pipeline.txt", "content": "pipeline\n"}}}},
+		{tool: "create_merge_request", args: map[string]any{"project": p, "source_branch": mrBranch,
+			"title": "Merge request pipeline " + s.Name}, save: map[string]string{"mrpipe_mr": "iid"}},
+		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "dry_run": true}},
+		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}},
 
 		// CI: a pipeline run and canceled, the failed one retried, a job
 		// retried, the manual one started.
@@ -904,8 +916,8 @@ func init() {
 		"lint_ci", "list_item_events", "list_boards", "list_todos", "add_todo", "subscribe", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",
 		"create_commit",
-		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "retry_pipeline", "retry_job",
-		"play_job", "cancel_pipeline", "delete_branch", "delete_comment", "list_wiki_pages", "get_wiki_page", "save_wiki_page",
+		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "run_merge_request_pipeline",
+		"retry_pipeline", "retry_job", "play_job", "cancel_pipeline", "delete_branch", "delete_comment", "list_wiki_pages", "get_wiki_page", "save_wiki_page",
 		"delete_wiki_page", "list_releases", "get_release", "create_release", "list_environments", "list_deployments",
 		// Without a project these read or write the maintainer's own
 		// snippets and activity, which are not the run's.

@@ -95,6 +95,13 @@ var askCases = map[string]askCase{
 		setup: func(*harness) map[string]any { return map[string]any{"project": alpha, "ref": "main"} },
 		shows: []string{"run a pipeline on `main`", "the project's default branch"},
 	},
+	"run_merge_request_pipeline": {
+		setup: func(h *harness) map[string]any {
+			return map[string]any{"project": alpha, "iid": releaseMR(h, "main")}
+		},
+		shows: []string{"run a pipeline for merge request !", "source branch `release/1.0`: protected",
+			"target branch `main`: the project's default branch", "protected variables"},
+	},
 	"create_release": {
 		setup: func(*harness) map[string]any {
 			return map[string]any{"project": alpha, "tag_name": "v9.9.9", "ref": "main"}
@@ -335,6 +342,8 @@ func TestNothingIsAskedThatWouldNotBeWritten(t *testing.T) {
 		h := askingHarness(t, protocol, p, harnessOptions{})
 		p.then(accepts)
 		h.ok("run_pipeline", map[string]any{"project": alpha, "ref": "feature/login"})
+		h.ok("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": 1})
+		h.ok("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": releaseMR(h, "feature/login")})
 		h.ok("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": issueWitness(h, 2), "confidential": true})
 		h.fails("play_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed}, "conflict")
 		if n := len(p.asked()); n != 0 {
@@ -531,6 +540,15 @@ func TestADeclineIsRefusedBeforeAnythingRuns(t *testing.T) {
 	if text := textOf(res); !res.IsError || !strings.Contains(text, "not confirmed by the person") || len(h.gl.Requests()) != 0 {
 		t.Fatalf("%s; %d requests", text, len(h.gl.Requests()))
 	}
+}
+
+// releaseMR opens a merge request from the protected release/1.0 into
+// target and returns its number.
+func releaseMR(h *harness, target string) any {
+	h.t.Helper()
+	_, out := h.ok("create_merge_request", map[string]any{"project": alpha, "source_branch": "release/1.0", "target_branch": target,
+		"title": "Release into " + target})
+	return get(out, "iid")
 }
 
 // run_pipeline asks on a protected branch or tag as on the default

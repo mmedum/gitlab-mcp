@@ -93,6 +93,30 @@ func PipelineWrite(w model.PipelineWrite, _ Boundary) string {
 	return b.String()
 }
 
+// mrPipelineKinds name the kinds of merge request pipeline.
+var mrPipelineKinds = map[string]string{
+	"merged_results": "a merged results pipeline: the source branch merged into the target",
+	"detached":       "a detached pipeline: the source branch's head",
+	"source_branch":  "a pipeline on the source branch itself",
+}
+
+// MergeRequestPipelineWrite renders run_merge_request_pipeline.
+func MergeRequestPipelineWrite(w model.MergeRequestPipelineWrite, _ Boundary) string {
+	var b strings.Builder
+	writeHead(&b, fmt.Sprintf("Started pipeline %d for merge request !%d.", w.PipelineID, w.IID), w.Write)
+	fmt.Fprintf(&b, "\nFrom %s into %s.", Ident(w.SourceBranch), Ident(w.TargetBranch))
+	if w.PipelineID != 0 {
+		kind, ok := mrPipelineKinds[w.Kind]
+		if !ok {
+			kind = "a pipeline on a ref this server does not recognize"
+		}
+		fmt.Fprintf(&b, "\nIt is %s.", kind)
+		fmt.Fprintf(&b, "\n%s; #%d on %s at %s, from %s.", Ident(w.WebURL), w.PipelineIID, Ident(w.Ref), shortSHA(w.SHA), Ident(w.Source))
+		fmt.Fprintf(&b, "\nStatus: %s.", Ident(w.Status))
+	}
+	return b.String()
+}
+
 // JobWrite renders retry_job and play_job.
 func JobWrite(w model.JobWrite, _ Boundary) string {
 	var b strings.Builder

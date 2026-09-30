@@ -26,7 +26,7 @@ func definitions() []definition {
 		listPipelines(), getPipeline(), listJobs(), getJobLog(), getTestReport(), lintCI(), listJobArtifacts(), getJobArtifact(),
 		listLabels(), listMilestones(), listBoards(), search(), listTodos(), markTodosDone(), addTodo(), subscribe(),
 		mergeMergeRequest(), approveMergeRequest(), unapproveMergeRequest(), rebaseMergeRequest(), moveIssue(),
-		runPipeline(), retryPipeline(), retryJob(), playJob(), cancelPipeline(),
+		runPipeline(), runMergeRequestPipeline(), retryPipeline(), retryJob(), playJob(), cancelPipeline(),
 		deleteBranch(), deleteComment(),
 		listWikiPages(), getWikiPage(), saveWikiPage(), deleteWikiPage(),
 		listSnippets(), getSnippet(), createSnippet(), updateSnippet(), deleteSnippet(),

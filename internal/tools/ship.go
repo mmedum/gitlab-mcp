@@ -119,6 +119,27 @@ func runPipeline() definition {
 	}
 }
 
+type runMRPipelineIn struct {
+	Project idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	IID     int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	DryRun  bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without running anything"`
+}
+
+func runMergeRequestPipeline() definition {
+	return tool[runMRPipelineIn, model.MergeRequestPipelineWrite]{
+		sp: spec{Name: "run_merge_request_pipeline", Asks: "before it runs a pipeline for a merge request whose source and target " +
+			"branches are both protected", Kind: Ship,
+			Description: "Run a merge request pipeline, the one merge request rules select: merged results where the project " +
+				"has them on, the source branch's head otherwise; GitLab decides, and the result names the kind. It runs the " +
+				"project's jobs with the account's permissions. A merge request from a fork is refused. Never repeated after " +
+				"a lost answer: the result then says whether a read found the pipeline." + shipNote},
+		run: func(ctx context.Context, svc *service.Service, in runMRPipelineIn) (model.MergeRequestPipelineWrite, error) {
+			return svc.RunMergeRequestPipeline(ctx, string(in.Project), in.IID)
+		},
+		text: render.MergeRequestPipelineWrite,
+	}
+}
+
 type pipelineIDIn struct {
 	Project    idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
 	PipelineID int64    `json:"pipeline_id" jsonschema:"The pipeline's id, as list_pipelines and pipeline URLs give it; not the #number shown beside it"`
