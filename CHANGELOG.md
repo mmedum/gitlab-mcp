@@ -24,7 +24,7 @@ lifted verbatim.
 - `track_time` sets or resets an issue's or a merge request's time estimate and adds or resets its time spent, with the `updated_at` witness; `get_issue` and `get_merge_request` show the time stats.
 - `add_todo` adds a to-do for yourself on an issue or a merge request and returns its id for `mark_todos_done`; while a pending to-do you added is there it adds none and names that one.
 - `subscribe` subscribes you to an issue's or a merge request's notifications, or unsubscribes you, and says when you already were so.
-- `update_snippet` changes one of your own snippets, its title, description and files, with the `updated_at` witness and never its visibility; `delete_snippet` (Destructive) deletes one, GitLab refusing it if the snippet changed since your read.
+- `update_snippet` changes one of your own private snippets, its title, description and files, with the `updated_at` witness and never its visibility; `delete_snippet` (Destructive) deletes one, GitLab refusing it if the snippet changed since your read.
 
 ## [2.0.0] - 2026-09-29
 

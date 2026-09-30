@@ -30,6 +30,10 @@ const (
 type snippet struct {
 	gitlab.Snippet
 	files [][2]string // path, content
+	// row is the file_name and content the snippet's own database row
+	// holds: its first file at create, then what each update copies
+	// there. Its updated_at moves only with the row.
+	row [2]string
 }
 
 // event is an event and the action it filters by, which differs from
@@ -53,10 +57,11 @@ func (s *Server) fillToolsets(p *project) {
 		&snippet{Snippet: gitlab.Snippet{ID: SnippetAlpha, Title: "Generated snippet", Description: &desc, Visibility: "internal",
 			Author: s.user("bob"), ProjectID: &pid, CreatedAt: at, UpdatedAt: at,
 			WebURL: fmt.Sprintf("%s/-/snippets/%d", p.WebURL, SnippetAlpha)},
-			files: [][2]string{{"notes.md", "# Notes\n\nGenerated.\n"}, {"run.sh", "#!/bin/sh\necho generated\n"}}},
+			files: [][2]string{{"notes.md", "# Notes\n\nGenerated.\n"}, {"run.sh", "#!/bin/sh\necho generated\n"}},
+			row:   [2]string{"notes.md", "# Notes\n\nGenerated.\n"}},
 		&snippet{Snippet: gitlab.Snippet{ID: SnippetPersonal, Title: "Personal snippet", Visibility: "private",
 			Author: s.user(DefaultUser), CreatedAt: at, UpdatedAt: at, WebURL: fmt.Sprintf("%s/-/snippets/%d", s.URL, SnippetPersonal)},
-			files: [][2]string{{"scratch.txt", "generated scratch\n"}}})
+			files: [][2]string{{"scratch.txt", "generated scratch\n"}}, row: [2]string{"scratch.txt", "generated scratch\n"}})
 
 	release := p.commits["release/1.0"][0]
 	notes := "Notes for 1.0.\n\n<!-- hidden -->Fixed things.\n"
@@ -430,6 +435,7 @@ func (s *Server) createSnippet(w http.ResponseWriter, r *http.Request, p *projec
 	for _, f := range files {
 		sn.files = append(sn.files, [2]string{f.FilePath, f.Content})
 	}
+	sn.row = sn.files[0]
 	s.snippets = append(s.snippets, sn)
 	writeJSON(w, http.StatusCreated, s.snippetJSON(sn))
 }
@@ -488,11 +494,12 @@ type snippetFileAction struct {
 
 // valid is SnippetInputAction's validation.
 func (a snippetFileAction) valid() bool {
+	blank := strings.TrimSpace(a.Content) == ""
 	switch a.Action {
 	case "create":
-		return a.Content != ""
+		return !blank
 	case "update":
-		return a.FilePath != "" && a.Content != "" && (a.PreviousPath == "" || a.PreviousPath == a.FilePath)
+		return a.FilePath != "" && !blank && (a.PreviousPath == "" || a.PreviousPath == a.FilePath)
 	case "delete":
 		return a.FilePath != ""
 	case "move":
@@ -504,8 +511,12 @@ func (a snippetFileAction) valid() bool {
 // updateSnippet is the body of a snippet PUT, as the API's params and
 // Snippets::UpdateService take it: files excludes content and file_name,
 // content on a snippet of several files is 400, an invalid action 422,
-// and an action the snippet's repository cannot commit 400. updated_at
-// moves when anything changed. Visibility is taken as sent.
+// and an action the snippet's repository cannot commit 400. The row
+// takes the title, description, visibility, content and file_name sent,
+// or with files the first action's content and path
+// (update_snippet_attributes), and updated_at moves only when the row
+// changes: a change to another file leaves it. Visibility is taken as
+// sent.
 func (s *Server) updateSnippet(w http.ResponseWriter, r *http.Request, sn *snippet) {
 	b, ok := readBody(w, r)
 	if !ok || !snippetUpdateParams(w, b, len(sn.files)) {
@@ -529,11 +540,18 @@ func (s *Server) updateSnippet(w http.ResponseWriter, r *http.Request, sn *snipp
 			return
 		}
 	}
+	row := sn.row
 	if v, sent := b.str("content"); sent {
-		files[0][1] = v
+		files[0][1], row[1] = v, v
 	}
 	if v, sent := b.str("file_name"); sent {
-		files[0][0] = v
+		files[0][0], row[0] = v, v
+	}
+	if len(actions) > 0 {
+		if actions[0].Content != "" {
+			row[1] = actions[0].Content
+		}
+		row[0] = actions[0].FilePath
 	}
 	next := sn.Snippet
 	if v, sent := b.str("title"); sent {
@@ -545,10 +563,10 @@ func (s *Server) updateSnippet(w http.ResponseWriter, r *http.Request, sn *snipp
 	if v, sent := b.str("visibility"); sent {
 		next.Visibility = v
 	}
-	if !reflect.DeepEqual(next, sn.Snippet) || !slices.Equal(files, sn.files) {
+	if !reflect.DeepEqual(next, sn.Snippet) || row != sn.row {
 		next.UpdatedAt = s.opts.Now().UTC().Truncate(time.Microsecond)
-		sn.Snippet, sn.files = next, files
 	}
+	sn.Snippet, sn.files, sn.row = next, files, row
 	writeJSON(w, http.StatusOK, s.snippetJSON(sn))
 }
 
@@ -817,6 +835,32 @@ func (s *Server) SnippetFiles(id int64) [][2]string {
 		}
 	}
 	return nil
+}
+
+// SetSnippetVisibility sets a snippet's visibility, as a change made in
+// GitLab's own pages does.
+func (s *Server) SetSnippetVisibility(id int64, visibility string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sn := range s.snippets {
+		if sn.ID == id {
+			sn.Visibility = visibility
+			return true
+		}
+	}
+	return false
+}
+
+// SnippetUpdatedAt is a snippet's updated_at as kept, to the microsecond.
+func (s *Server) SnippetUpdatedAt(id int64) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sn := range s.snippets {
+		if sn.ID == id {
+			return sn.UpdatedAt
+		}
+	}
+	return time.Time{}
 }
 
 // TouchSnippet moves a snippet's updated_at, as an edit made elsewhere

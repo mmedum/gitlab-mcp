@@ -1153,3 +1153,31 @@ func TestSnippetWrites(t *testing.T) {
 	resp, body = send(t, s, "DELETE", project, s.Token(), nil)
 	wantStatus(t, "a maintainer's delete of another's snippet", resp, body, 204)
 }
+
+// A snippet's updated_at moves with its own row: the title, the
+// description, the visibility, or the first file action's content and
+// path. A change to another file leaves it. Blank content in a create
+// or update action is 422.
+func TestSnippetUpdatedAtMovesWithTheRow(t *testing.T) {
+	s, now := frozen(t)
+	bob := s.TokenFor("bob", "api")
+	project := "/projects/" + itoa(s.ProjectID(ProjectAlpha)) + "/snippets/" + itoa(SnippetAlpha)
+	was := s.SnippetUpdatedAt(SnippetAlpha)
+	*now = now.Add(time.Hour)
+	for _, action := range []string{"create", "update"} {
+		resp, body := send(t, s, "PUT", project, bob, obj{"files": []obj{{"action": action, "file_path": "run.sh", "content": " \n"}}})
+		wantError(t, "blank "+action, resp, body, 422, "message", "Snippet actions have invalid data")
+	}
+	resp, body := send(t, s, "PUT", project, bob, obj{"files": []obj{
+		{"action": "update", "file_path": "notes.md", "content": "# Notes\n\nGenerated.\n"},
+		{"action": "update", "file_path": "run.sh", "content": "echo other\n"}}})
+	wantStatus(t, "a change to the second file", resp, body, 200)
+	if got := s.SnippetUpdatedAt(SnippetAlpha); !got.Equal(was) || s.SnippetFiles(SnippetAlpha)[1][1] != "echo other\n" {
+		t.Errorf("updated_at %v, files %q", got, s.SnippetFiles(SnippetAlpha))
+	}
+	resp, body = send(t, s, "PUT", project, bob, obj{"files": []obj{{"action": "update", "file_path": "run.sh", "content": "echo 3\n"}}})
+	wantStatus(t, "a change to the first action's file", resp, body, 200)
+	if got := s.SnippetUpdatedAt(SnippetAlpha); !got.Equal(*now) {
+		t.Errorf("updated_at %v, want %v", got, *now)
+	}
+}

@@ -435,7 +435,8 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 	}
 	// A POST fails closed: it repeats after a failure that may have
 	// followed the write only when its call site says why that is safe.
-	p.repeatable = call.Method != http.MethodPost || call.Repeatable != "" || call.ReadOnly != ""
+	// Another method repeats unless its call site says why it may not.
+	p.repeatable = call.Method != http.MethodPost && call.Once == "" || call.Repeatable != "" || call.ReadOnly != ""
 	return p, nil
 }
 

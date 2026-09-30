@@ -44,6 +44,11 @@ type Call struct {
 	// through DoAnswered, which reports the 304; Do refuses it. Empty
 	// means a 304 is unexpected.
 	NotModified string
+	// Once is the reason a PUT or DELETE may not be sent twice, such as
+	// "a file created twice fails the second time": after a failure that
+	// may have followed the write it is not repeated, and is
+	// [ambiguous_outcome] as a create is. Empty means the method decides.
+	Once string
 	// ReadOnly is the reason a POST changes nothing, such as "linting
 	// creates nothing". Such a call may repeat and may run under a dry
 	// run, and `scripts/gates outcomes` asks it for no outcome. Empty

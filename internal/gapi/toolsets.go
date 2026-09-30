@@ -178,18 +178,34 @@ type SnippetUpdate struct {
 	Files       []SnippetFileAction `json:"files,omitempty"`
 }
 
-// UpdateSnippet changes a personal snippet.
+// once says why a snippet update may not be sent twice: a file created,
+// deleted or moved once is not there to act on again, so a repeat fails
+// or acts on what another write left. An update of content alone lands
+// the same way twice.
+func (in SnippetUpdate) once() string {
+	for _, a := range in.Files {
+		if a.Action != "update" {
+			return "a file created, deleted or moved twice fails the second time"
+		}
+	}
+	return ""
+}
+
+// UpdateSnippet changes a personal snippet. A change that creates,
+// deletes or moves a file is not repeated.
 func (c *Client) UpdateSnippet(ctx context.Context, id int64, in SnippetUpdate) (*gitlab.Snippet, error) {
 	var out gitlab.Snippet
-	err := c.Do(ctx, Call{Method: "PUT", Path: "snippets/{}", Args: []string{idArg(id)}, Body: in, Name: "update_snippet"}, &out)
+	err := c.Do(ctx, Call{Method: "PUT", Path: "snippets/{}", Args: []string{idArg(id)}, Body: in, Once: in.once(),
+		Name: "update_snippet"}, &out)
 	return &out, err
 }
 
-// UpdateProjectSnippet changes a project's snippet.
+// UpdateProjectSnippet changes a project's snippet. A change that
+// creates, deletes or moves a file is not repeated.
 func (c *Client) UpdateProjectSnippet(ctx context.Context, p Project, id int64, in SnippetUpdate) (*gitlab.Snippet, error) {
 	var out gitlab.Snippet
 	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/snippets/{}", Args: []string{p.segment(), idArg(id)}, Body: in,
-		Name: "update_snippet"}, &out)
+		Once: in.once(), Name: "update_snippet"}, &out)
 	return &out, err
 }
 

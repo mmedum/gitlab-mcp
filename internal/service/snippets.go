@@ -329,6 +329,12 @@ func (s *Service) UpdateSnippet(ctx context.Context, in SnippetEdit) (model.Snip
 	if err != nil {
 		return model.SnippetUpdate{}, err
 	}
+	// Writing into a public or internal snippet is how private content
+	// leaves, which create_snippet's private-only rule closes (§4.7).
+	if before.Visibility != "private" {
+		return model.SnippetUpdate{}, gapi.Errf(gapi.ClassBlocked, "the snippet is %s, and this server writes only to private "+
+			"snippets, as create_snippet makes them; nothing was sent", before.Visibility)
+	}
 	// GitLab's PUT checks no witness (§18 row 103), so the window between
 	// this read and the write stays open; the check narrows it.
 	if err := checkWitness(witness, before.UpdatedAt, "snippet"); err != nil {
@@ -360,23 +366,75 @@ func (s *Service) UpdateSnippet(ctx context.Context, in SnippetEdit) (model.Snip
 		after, err = s.client.UpdateSnippet(ctx, in.ID, body)
 	}
 	if err != nil {
-		return model.SnippetUpdate{}, err
+		return model.SnippetUpdate{}, s.settleSnippetUpdate(ctx, err, t, in, before, planned)
 	}
 	if after.ID != in.ID || after.UpdatedAt.IsZero() {
 		return model.SnippetUpdate{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the change without the snippet; "+
 			"get_snippet shows what it holds")
 	}
 	out.Visibility, out.Files, out.UpdatedAt, out.WebURL = after.Visibility, snippetFiles(*after), &after.UpdatedAt, after.WebURL
+	// GitLab's answer names the files but shows no content, so content
+	// and file actions it accepted count as changed.
+	committed := in.Content != nil || len(in.Files) > 0
 	out.Changed = names(field{"title", after.Title != before.Title},
 		field{"description", snippetDescription(after) != snippetDescription(before)},
-		field{"files", !slices.Equal(files, out.Files)})
+		field{"files", len(in.Files) > 0 || !slices.Equal(files, out.Files)}, field{"content", in.Content != nil})
 	if in.Description != nil {
 		out.DescriptionRemoved = removedFrom(snippetDescription(before), snippetDescription(after))
 	}
-	if after.UpdatedAt.Equal(before.UpdatedAt) {
+	moved := !after.UpdatedAt.Equal(before.UpdatedAt)
+	switch {
+	case len(out.Changed) == 0 && !moved:
 		out.Outcome, out.Notes = "unchanged", []string{"GitLab kept the snippet as it was: it already read so."}
+	case committed && !moved:
+		// Snippets::UpdateService copies only the first file action into
+		// the snippet's row, so a change to another file leaves the row,
+		// and updated_at, as they were (§18 row 103).
+		out.Notes = append(out.Notes, "GitLab changed the files without moving updated_at, so a later read's updated_at "+
+			"does not show this change.")
+	}
+	if in.Title != nil && after.Title != *in.Title || !slices.Equal(out.Files, planned) {
+		out.Notes = append(out.Notes, "GitLab stored the snippet otherwise than was sent; get_snippet shows what it holds.")
 	}
 	return out, nil
+}
+
+// settleSnippetUpdate reads a snippet whose change GitLab did not
+// confirm. Such a change created, deleted or moved a file and is not
+// repeated, so the read says what it can and the call is not sent again.
+func (s *Service) settleSnippetUpdate(ctx context.Context, err error, t target, in SnippetEdit, before *gitlab.Snippet,
+	planned []string) error {
+	if !gapi.IsClass(err, gapi.ClassAmbiguousOutcome) {
+		return err
+	}
+	var now *gitlab.Snippet
+	var readErr error
+	if in.Project != "" {
+		now, readErr = s.client.GetProjectSnippet(ctx, t.p, in.ID)
+	} else {
+		now, readErr = s.client.GetSnippet(ctx, in.ID)
+	}
+	if readErr != nil {
+		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the snippet change, and reading it to find out "+
+			"failed too, so it is unknown: read it before doing anything, and do not repeat the call")
+	}
+	files := snippetFiles(*now)
+	shown := make([]string, len(files))
+	for i, f := range files {
+		shown[i] = render.Ident(f)
+	}
+	shows := fmt.Sprintf("its files are %s and its updated_at %s", strings.Join(shown, ", "), now.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	switch {
+	case slices.Equal(files, planned) && !slices.Equal(files, snippetFiles(*before)):
+		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the snippet change, but a read shows it most "+
+			"likely landed: %s. Do not repeat the call", shows)
+	case slices.Equal(files, snippetFiles(*before)) && now.UpdatedAt.Equal(before.UpdatedAt):
+		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the snippet change, and a read shows the "+
+			"snippet as it was: %s. It most likely did not land; read it again before calling again, in case the request is "+
+			"still on its way", shows)
+	}
+	return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the snippet change, and a read shows neither "+
+		"the snippet as it was nor as asked: %s. Whether this landed is unknown: read it before doing anything", shows)
 }
 
 // checkSnippetEdit refuses an update_snippet call that says nothing to
@@ -391,7 +449,7 @@ func checkSnippetEdit(in SnippetEdit) (time.Time, error) {
 	case in.Content != nil && len(in.Files) > 0:
 		return time.Time{}, gapi.Errf(gapi.ClassInvalid, "pass content or files, not both: content replaces the file "+
 			"of a one-file snippet, and files changes a snippet's files one action at a time")
-	case in.Content != nil && *in.Content == "":
+	case in.Content != nil && strings.TrimSpace(*in.Content) == "":
 		return time.Time{}, gapi.Errf(gapi.ClassInvalid, "content is empty, and GitLab refuses an empty snippet file")
 	}
 	return parseWitness(in.UpdatedAt)
@@ -431,7 +489,7 @@ func snippetActions(files []string, changes []SnippetFileChange) ([]gapi.Snippet
 		case c.PreviousPath != "" && c.Action != "move":
 			return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d: previous_path is the file a move starts from; "+
 				"%s takes path alone", n, c.Action)
-		case c.Content == "" && (c.Action == "create" || c.Action == "update"):
+		case strings.TrimSpace(c.Content) == "" && (c.Action == "create" || c.Action == "update"):
 			return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d (%s %s) has no content, and GitLab refuses an empty "+
 				"snippet file", n, c.Action, c.Path)
 		case c.Content != "" && c.Action == "delete":

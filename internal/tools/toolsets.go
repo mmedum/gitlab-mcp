@@ -186,7 +186,8 @@ type updateSnippetIn struct {
 func updateSnippet() definition {
 	return tool[updateSnippetIn, model.SnippetUpdate]{
 		sp: spec{Name: "update_snippet", Kind: Write, Toolset: "snippets",
-			Description: "Change one of your own snippets, in a project or personal: its title, its description, and its files. " +
+			Description: "Change one of your own private snippets, in a project or personal: its title, its description, and its " +
+				"files; an internal or public snippet is refused [blocked], since writing into it publishes what is written. " +
 				"content replaces a one-file snippet's file; files creates, updates, deletes or moves files one at a time, " +
 				"and is how a snippet of several files is changed. Another person's snippet is refused [blocked], even where " +
 				"GitLab would allow it. updated_at from your read is required: GitLab keeps no version a write could check, " +

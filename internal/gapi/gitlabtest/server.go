@@ -206,6 +206,9 @@ type Fault struct {
 	// Skip lets that many matching requests through before the fault
 	// applies, to fail a later read of the same path.
 	Skip int
+	// Before runs as the request arrives, before it is served: a change
+	// made elsewhere between a client's read and its write.
+	Before func()
 }
 
 // Inject adds a fault.
@@ -328,6 +331,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/api/v4/"):
 		rest := strings.TrimPrefix(path, "/api/v4")
 		if f := s.takeFault(r.Method, rest, r.URL.RawQuery); f != nil {
+			if f.Before != nil {
+				f.Before()
+			}
 			if f.Pass {
 				time.Sleep(f.Delay)
 				s.serveAPI(w, r, rest)

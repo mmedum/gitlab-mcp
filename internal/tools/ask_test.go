@@ -162,7 +162,7 @@ var askCases = map[string]askCase{
 			_, out := h.ok("get_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal})
 			return map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": get(out, "updated_at"), "confirm": true}
 		},
-		shows: []string{"delete snippet 80002, `Personal snippet`, in your personal snippets", "files: `scratch.txt`"},
+		shows: []string{"delete snippet 80002, `Personal snippet`, in your personal snippets", "It has 1 file:", "file `scratch.txt`"},
 	},
 }
 

@@ -182,7 +182,9 @@ replace it with a `read_api` one.
 - **Snippets are private.** `create_snippet` has no visibility input:
   every snippet it creates is private, because a public snippet is the
   simplest way for private content to leave. `update_snippet` has none
-  either, and leaves a snippet's visibility as it is. A personal snippet
+  either, and writes only to a private snippet: it refuses an internal
+  or public one, even your own, since writing into it publishes what is
+  written. A personal snippet
   is in no namespace, so `GITLAB_MCP_WRITE_NAMESPACES` refuses creating,
   changing or deleting one.
 - **Variable values are not echoed.** `run_pipeline` and `play_job` send

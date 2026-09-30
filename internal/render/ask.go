@@ -228,18 +228,34 @@ func AskDeleteWikiPage(project, title, slug string) Question {
 	)
 }
 
+// askFiles is how many of a snippet's files a question names, each on
+// its own line; the rest are counted.
+const askFiles = 10
+
 // AskDeleteSnippet asks before delete_snippet; project is empty for a
-// personal snippet. The whole title and every file name are bound.
+// personal snippet. It counts the files and names each on its own line,
+// the first askFiles of them. The whole title and every file name are
+// bound.
 func AskDeleteSnippet(project string, id int64, title string, files []string) Question {
 	where := "your personal snippets"
 	if project != "" {
 		where = quoted(project, quotedLen)
 	}
-	q := ask(
+	noun := "files"
+	if len(files) == 1 {
+		noun = "file"
+	}
+	lines := []string{
 		fmt.Sprintf("delete_snippet: delete snippet %d, %s, in %s for good?", id, quoted(title, quotedLen), where),
-		"files: "+quoted(strings.Join(files, ", "), quotedLen),
-		"Its history goes with it.",
-	)
+		fmt.Sprintf("It has %d %s:", len(files), noun),
+	}
+	for _, f := range files[:min(len(files), askFiles)] {
+		lines = append(lines, "file "+quoted(f, quotedLen))
+	}
+	if more := len(files) - askFiles; more > 0 {
+		lines = append(lines, fmt.Sprintf("and %d more.", more))
+	}
+	q := ask(append(lines, "Its files and their history go with it.")...)
 	q.Bind += "\x00" + title + "\x00" + strings.Join(files, "\x00")
 	return q
 }
