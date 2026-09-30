@@ -380,7 +380,7 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, fifty-five tools, stays under the 64-tool point where one
+default surface, fifty-seven tools, stays under the 64-tool point where one
 client starts regrouping tools. A read joins the default when it answers a
 question a default tool acts on: `list_boards` did, beside `list_labels`
 and `list_milestones`, since a board's columns are read with
@@ -420,10 +420,20 @@ time and the signed-in user:
 | release | the release by tag name |
 | spent time added or reset | the item's total spent: moved by exactly the amount, or at zero after a reset |
 | an estimate never confirmed (it repeats, so this is after its retries) | the item's estimate: at the value asked or not |
+| a to-do added for oneself | the account's pending to-dos it added on the item, created since shortly before the call |
 
 Found means **created**, and the result carries it. Not found means
 **not created**, and the result says so without creating it. Anything
 else stays **unknown**, and the result says not to repeat the call.
+
+A to-do added for oneself looks deduplicated, since GitLab answers 304
+while a pending one the account added is on the item, but it is a
+create all the same: the check runs before the insert without a lock
+or a unique index, and a to-do marked done in between, which a comment
+or a close does on its own, lets a second through (§18 row 102). So
+`add_todo` is never repeated. Subscribing sets a state and repeats; a
+304 after a retry is reported as the first attempt's change, since it
+most likely was.
 
 ### 4.6 A write carries a witness, and never destroys what it cannot see
 
@@ -479,7 +489,8 @@ to post what it read. Two layers:
    Ship and Destructive call to projects under those namespaces; any
    other target is `[blocked]` naming the setting. This is the control.
    `doctor` says whether it is set. `mark_todos_done` is held to it by
-   each item's project, read once for that when the setting is on.
+   each item's project, read once for that when the setting is on;
+   `add_todo` and `subscribe` by the item's project, as any write.
 2. Every write result names the target project's visibility, so a write
    to a public project is visible as one.
 
@@ -1082,6 +1093,27 @@ untrusted.
 `list_todos`, `mark_todos_done` (by id; at
 most 100). `search` per §7.1.
 
+`add_todo` adds a to-do for the signed-in account on an issue or a
+merge request and returns its id, which `mark_todos_done` takes.
+`subscribe` subscribes the account to an item's notifications, or
+unsubscribes it. Both touch only the account's own list and
+notifications. GitLab answers 304 when the state already holds, which
+the result reports as unchanged: `subscribe` with the state read back,
+`add_todo` with the pending to-do already there, found by reading the
+account's to-dos in the project. A participant is subscribed until they
+unsubscribe: the author, assignees, a merge request's reviewers, the
+author of any note, system notes included, anyone who reacted with an
+emoji, and anyone @-mentioned in the item or its comments. Subscribing to a merge
+request needs the rights to update it; GitLab's 403 does not say why, so
+the result keeps its text and says the role may be the cause, or that
+the project is archived. `subscribe` repeats after a lost answer and
+`add_todo` never does; its lost answer is settled by reading (§4.5,
+§18 row 102). GitLab marks the account's pending to-dos on an item done
+when it comments outside a thread, closes, merges or reviews it, which
+the description says. A dry run reads the current state and says
+whether anything would be sent. Both are writes only the account sees,
+so their `openWorldHint` is false (§8).
+
 ### 7.8 Optional toolsets
 
 - `wiki`: `list_wiki_pages`, `get_wiki_page`, `save_wiki_page` (create,
@@ -1113,11 +1145,13 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Eighty-eight tools. With the default toolsets: fifty-five by default,
-thirty-seven in read-only mode, sixty-seven with Ship and Destructive
-both enabled. Every toolset and flag on registers all eighty-eight.
+Ninety tools. With the default toolsets: fifty-seven by default,
+thirty-seven in read-only mode, sixty-nine with Ship and Destructive
+both enabled. Every toolset and flag on registers all ninety.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
-`openWorldHint` is true where the result is visible to other people.
+`openWorldHint` is true where the result is visible to other people:
+every write but `add_todo` and `subscribe`, whose effect only the
+account sees, marked `OwnOnly` on their spec in `register`.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
 Destructive kinds, as a signal and not a control.
 
@@ -1178,6 +1212,8 @@ Destructive kinds, as a signal and not a control.
 | `search` | Read | default | `GET /search`, `/groups/:id/search`, `/projects/:id/search` |
 | `list_todos` | Read | default | `GET /todos` |
 | `mark_todos_done` | Write | default | `POST /todos/:id/mark_as_done` |
+| `add_todo` | Write | default | `POST …/issues|merge_requests/:iid/todo` |
+| `subscribe` | Write | default | `POST …/issues|merge_requests/:iid/subscribe`, `/unsubscribe` |
 | `merge_merge_request` | Ship | default | `PUT …/merge_requests/:iid/merge` |
 | `approve_merge_request` | Ship | default | `POST …/merge_requests/:iid/approve` |
 | `unapprove_merge_request` | Ship | default | `POST …/merge_requests/:iid/unapprove` |
@@ -1236,15 +1272,15 @@ operations it covers. The gate fails on an operation with neither, a
 client call with no row, and a row or rule matching nothing.
 
 The committed snapshot is v19.4.1-ee, 1,856 operations; the TSV holds
-323 exact rows and 226 prefix rules, and the gate reports the counts.
+346 exact rows and 224 prefix rules, and the gate reports the counts.
 The groups below are the design's verdicts; the TSV is the record.
 
 | Group (path prefix) | Verdict |
 |---|---|
 | user, metadata, version | Used: `get_me`, login, `doctor`. `/version` written off as deprecated for `/metadata`. Personal access token `self` routes written off with the token path (§10) |
 | projects (read), groups (read), members (read), users (search) | Used for navigation. Project create, update, fork, transfer, archive, share, import and export written off: administration |
-| issues, issue notes and discussions | Used, starting and resolving threads, links, moves (Ship) and time tracking included. Clone, subscribe and award emoji deferred; delete written off (Owner-only, permanent) |
-| merge requests, notes, discussions | Used, time tracking included; rebase gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
+| issues, issue notes and discussions | Used, starting and resolving threads, links, moves (Ship), time tracking, subscribing and to-dos included. Clone and award emoji deferred; delete written off (Owner-only, permanent) |
+| merge requests, notes, discussions | Used, time tracking, subscribing and to-dos included; rebase gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
 | draft notes | Used: the review path |
 | approvals (merge-request level) | Used: approve, unapprove, state. Approval rules and project approval settings written off: governance configuration, Premium |
 | repository files, tree, commits, branches, tags, compare | Used, blame included. Cherry-pick and revert used as Write behind the protected-branch guard (§17.13); tag create gated under `releases`, tag delete Destructive. Raw archive deferred; commit statuses written off (a CI integration's surface); "delete merged branches" written off |
@@ -2388,3 +2424,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 99 | GitLab's resource event lists are ordered, complete, and shaped as the OpenAPI file publishes them | `lib/api/resource_label_events.rb`, `resource_state_events.rb`, `resource_milestone_events.rb` and `helpers/resource_events_helpers.rb`, `ee/lib/api/resource_weight_events.rb` and `resource_iteration_events.rb`, `lib/api/entities/resource_*_event.rb` and `ee/lib/api/entities/resource_weight_event.rb`, `lib/gitlab/pagination/offset_pagination.rb` `add_default_order`, `app/models/resource_label_event.rb` `visible_to_user?`, `app/policies/resource_label_event_policy.rb`, `app/finders/resource_milestone_event_finder.rb` and `resource_state_event_finder.rb`, and `app/services/resource_events/change_milestone_service.rb` and `change_state_service.rb` at v19.4.1-ee | **Refuted (tier 1).** Each list pages by offset in id order, oldest first. Label events are filtered after the page is cut, so a page can be short and `X-Total` counts events the account cannot see; a deleted label's event is kept with `label: null`. Milestone events are filtered before paging to milestones the account can read, which also drops those of a deleted milestone; a removal names the milestone removed. A state event's `source_merge_request_id` is a global id, and `source_commit` is set when a commit closed the item. Weight is an issue's only, and the route checks no license, so on Free it is empty rather than refused (inferred: weights are a paid feature, and nothing else writes them); iteration events are Premium and not read. A group's labels and milestones are read by whoever may read the group: anyone for a public group, else its members and its projects' members (`app/policies/group_policy.rb`, `group_label_policy.rb`, `milestone_policy.rb`). A milestone event's `state` is the item's state when the event was made. Order is by id, not time, and an imported item's ids need not follow its times. `list_item_events` reads each list whole or its newest pages, follows the next-page signal past page 1's count, starts a cut history after the oldest event kept and assumes ids follow time there, says the history is GitLab's, and names a deleted label as one |
 | 100 | A board's lists can be read from GitLab as a board shows them | `lib/api/boards.rb`, `boards_responses.rb` and `entities/board.rb` and `list.rb`, `ee/lib/ee/api/entities/board.rb` and `list.rb`, `ee/lib/api/entities/special_board_filter.rb`, `app/models/board.rb`, `list.rb` and `concerns/boards/listable.rb`, `ee/app/models/ee/board.rb` and `ee/list.rb`, `app/models/concerns/timebox.rb`, `app/services/boards/create_service.rb`, `lists/base_create_service.rb`, `lists/move_service.rb` and `base_items_list_service.rb`, `ee/app/services/ee/boards/issues/list_service.rb`, `app/controllers/concerns/boards_actions.rb` and `ee/app/assets/javascripts/boards/constants.js`, `lib/api/entities/user_safe.rb`, `app/finders/issuable_finder/params.rb` and `lib/api/issues.rb` at v19.4.1-ee | **Refined (tier 1).** `GET /projects/:id/boards` pages boards by id and carries each board's lists whole. Lists come ordered by kind, then position, and every kind shares one position sequence, so position is the board's order. No list names its kind: `label` is always present, null unless a label list, and `assignee`, `milestone` and `iteration` only on their kind; a status list carries none. Open and Closed are never returned. Open holds open issues in none of the board's lists, Closed every closed issue, and `hide_backlog_list` and `hide_closed_list` hide them. Scope keys appear only with scoped boards, a paid feature: `milestone` is a milestone or a filter with only a title (No Milestone, Any Milestone, Upcoming, Started), `weight` -1 is any and -2 none. A board milestone is applied to label lists' issues (`label_links`), a filter in its place is not, and where the rest of a scope is applied was not found, so the result says it is unverified. `search_issues`' `milestone` is a title that reads `none` and `any` in any case, `No Milestone`, `Any Milestone`, `#upcoming` and `#started` as filters, and the issues route takes no milestone id (`app/finders/issuable_finder/params.rb`, `lib/api/issues.rb`), so a milestone so titled has no arguments. Lists carry `max_issue_count`, `max_issue_weight` and `limit_metric` with WIP limits, a paid feature; a list's assignee is `UserSafe`, `public_email` included. A project has no board until someone opens its board page, and `POST /projects/:id/boards` works on Free, as `multiple_issue_boards_available?` is true for projects |
 | 101 | GitLab's time tracking API answers as the OpenAPI file publishes it, refuses a bad duration, and leaves `updated_at` alone on spent time | At v19.4.1-ee: `lib/api/time_tracking_endpoints.rb` L74-154; `lib/gitlab/time_tracking_formatter.rb` L10-25; `app/models/concerns/time_trackable.rb` L23 (`has_many :timelogs, autosave: true`), L45-61 `spend_time`, L92-94 (`time_estimate=` capped at `MAX_INT_VALUE`) and L113-118 (`timelogs.new`); `app/models/timelog.rb` L12 (`MAX_TOTAL_TIME_SPENT = 126230400`), L20 and L77-81 (the range validation, `on: :create`), L22 `belongs_to :issue, touch: true` and L23 `belongs_to :merge_request, touch: true`; `app/services/issuable_base_service.rb` L332-349 and L390 (`save(touch:)`); `app/services/merge_requests/update_service.rb` L24 and L350-379 and `add_spent_time_service.rb` L8-11; `config/authz/roles/planner.yml`, `config/authz/roles/reporter.yml` and `config/authz/roles/developer.yml`; and `lib/gitlab_chronic_duration.rb` of the gitlab-chronic-duration gem | **Refuted (tier 1; `updated_at` and the human forms tier 1, live).** Setting and resetting the estimate and resetting spent time answer 200, not the 201 the file publishes; adding spent time answers 201. The parser is ChronicDuration with 8-hour days and 20-day months, a week a quarter month, a bare number as hours; it drops words it does not know, so `5 foo` is five hours, and an estimate keeps a zero, so a word alone sets the estimate to 0 rather than failing. An estimate past `MAX_INT_VALUE` is stored as it, not refused. A duration that parses to nothing adds a timelog with no time, refused 400 by its validation. Subtracting past zero is 400, and so is a new timelog taking the total past `MAX_TOTAL_TIME_SPENT`, four years: refused, not clamped. Spent time on an issue goes through the update service, which saves with `touch`; on a merge request the API sets `use_specialized_service`, and `AddSpentTimeService` calls `spend_time` and a plain `save`. The source reads as the new timelog touching its item through `belongs_to … touch: true`. The live run on gitlab.com, 2026-09-30, refutes that: adding 1h30m with an estimate moved the issue's `updated_at`, but adding -30m and then 1m alone left it at the same instant, and on the merge request adding 15m and then 1m alone left it too; a call carrying a witness from before each of those spent-only calls was answered, not refused. Setting an estimate, and resetting it, moved it. A second run sent each reset alone: resetting spent time left `updated_at` at the same instant on the issue and on the merge request, and resetting the estimate next was accepted with that `updated_at`. So `updated_at` cannot catch spent time added or reset twice, and `total_time_spent` is the witness for both. The human forms are null at zero, and gitlab.com writes them in hours and minutes: an estimate of `1d 2h` read back as `10h`. Writes need `admin_issue` (Planner and up) or `admin_merge_request` (Developer and up), 403 otherwise. `track_time` takes a strict subset of the syntax, checks `updated_at`, takes the total spent as a second witness whenever it adds or resets spent time, and never repeats a spent-time write |
+| 102 | Subscribing and adding a to-do for oneself fail when nothing changes, and GitLab deduplicates a to-do | At v19.4.1-ee: `lib/api/subscriptions.rb` L12-34 (the merge request finder asks for `update_merge_request`, L19; the issue's is `find_project_issue`), L77-107 (`not_modified!` at L82 and L102); `lib/api/helpers.rb` L352-378 (`find_merge_request_with_access`: 404 when missing, `authorize!` 403 when it exists and the ability is missing) and L684-686 (`not_modified!` is 304); `app/policies/issuable_policy.rb` L43-44 and `config/authz/roles/developer.yml` L123; `app/models/concerns/subscribable.rb` L20-28; `app/models/concerns/issuable.rb` L148-151 (participants `author`, `system_note_authors`, `notes_for_participants`, `assignees`) and L553-555; `app/models/merge_request.rb` L198 (`reviewers`); `app/models/note.rb` L75 (`author`); `app/models/concerns/mentionable.rb` L27-29 (every mention); `app/models/concerns/awardable.rb` L11 (`award_emoji`); `app/models/concerns/participable.rb` L87-90 and L106-140; `lib/api/todos.rb` L15-47; `app/services/todo_service.rb` L40-41, L98-113, L129-130, L158-176, L206-207, L214-222, L236-243, L347-365, L399-421 and L442-455; `app/models/todo.rb` L52; `db/structure.sql` (the `todos` indexes, none unique) | **Refuted (tier 1).** Both answer 304 with no body when the state already holds, which the OpenAPI file does not publish. Subscribing to an issue while subscribed, or unsubscribing while not, is 304; so is adding a to-do while a pending `marked` one the account added is on the item. Other pending to-dos (assigned, mentioned, review requested) and a done one do not stop a new one, since `excluded_user_ids` matches the action. That check runs before `bulk_insert_todos` with no lock and no unique index, so it is not a dedupe a retry can lean on: the to-do POST is a create and is never repeated. The account's pending to-dos on an item are marked done when it comments outside a thread or edits such a comment, closes, merges, pushes to or reviews a merge request, or reacts with an emoji; an update alone does not. A participant is subscribed without a subscription record: the author, assignees, a merge request's reviewers, every note's author, system notes included, emoji reactors, and every user mentioned in the item or a note; so a first subscribe to one's own item is 304. Subscribing to a merge request, or unsubscribing, needs `update_merge_request`: Developer and up, or the author or an assignee who can read it; anyone else gets 403, even on a public project, and so does anyone who may not read it. The 403 carries no reason, and an archived project or a hidden merge request refuses alike. An issue needs only read access, 404 otherwise. The client takes a 304 as an answer only where a call says why, through `DoAnswered`, and reports it; `subscribe` and `add_todo` report it as unchanged |

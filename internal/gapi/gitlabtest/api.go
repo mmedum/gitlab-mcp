@@ -147,7 +147,7 @@ func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, 
 	get := r.Method == http.MethodGet
 	switch {
 	case get && len(rest) == 0:
-		writeJSON(w, http.StatusOK, iss)
+		writeJSON(w, http.StatusOK, s.withSubscribed(p, issueNotifiable(iss), user))
 	case get && match(rest, "related_merge_requests"):
 		writePage(s, w, r, relatedMRs(p, iss))
 	case get && match(rest, "closed_by"):
@@ -176,10 +176,15 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 		message(w, http.StatusNotFound, "404 Merge Request Not Found")
 		return
 	}
+	if !s.mrReadable(p, user) {
+		// find_merge_request_with_access: it exists, and may not be read.
+		message(w, http.StatusForbidden, "403 Forbidden")
+		return
+	}
 	get := r.Method == http.MethodGet
 	switch {
 	case get && len(rest) == 0:
-		writeJSON(w, http.StatusOK, mr)
+		writeJSON(w, http.StatusOK, s.withSubscribed(p, mrNotifiable(mr), user))
 	case get && match(rest, "approvals"):
 		s.approvals(w, p, mr, user)
 	case get && match(rest, "closes_issues"):

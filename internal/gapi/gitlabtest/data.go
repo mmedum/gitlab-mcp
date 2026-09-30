@@ -66,6 +66,9 @@ type project struct {
 	private bool
 	members map[string]bool
 	groupID int64
+	// mrPrivate lets only members with the Reporter role or higher read
+	// the project's merge requests.
+	mrPrivate bool
 
 	issues      []*gitlab.Issue
 	mrs         []*gitlab.MergeRequest

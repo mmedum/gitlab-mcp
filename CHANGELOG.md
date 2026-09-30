@@ -22,6 +22,8 @@ lifted verbatim.
 - `list_item_events` reads an issue's or a merge request's change history, newest first: labels added and removed, state changes with the commit or merge request behind them, the milestone and an issue's weight.
 - `list_boards` lists a project's issue boards and their lists in board order, with the `search_issues` arguments that read each list, and describes the Open and Closed lists GitLab does not return.
 - `track_time` sets or resets an issue's or a merge request's time estimate and adds or resets its time spent, with the `updated_at` witness; `get_issue` and `get_merge_request` show the time stats.
+- `add_todo` adds a to-do for yourself on an issue or a merge request and returns its id for `mark_todos_done`; while a pending to-do you added is there it adds none and names that one.
+- `subscribe` subscribes you to an issue's or a merge request's notifications, or unsubscribes you, and says when you already were so.
 
 ## [2.0.0] - 2026-09-29
 

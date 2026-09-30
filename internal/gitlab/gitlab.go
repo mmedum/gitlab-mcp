@@ -204,6 +204,14 @@ type TimeStats struct {
 	HumanTotalTimeSpent *string `json:"human_total_time_spent"`
 }
 
+// ItemSubscription is the part of an issue or a merge request that says
+// whether the signed-in account is subscribed to it: what subscribing
+// answers, and what reading the one item gives.
+type ItemSubscription struct {
+	Subscribed bool   `json:"subscribed"`
+	WebURL     string `json:"web_url"`
+}
+
 // DiffRefs are the three SHAs a diff position is computed against.
 type DiffRefs struct {
 	BaseSHA  string `json:"base_sha"`

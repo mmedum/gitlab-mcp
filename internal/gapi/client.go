@@ -340,10 +340,37 @@ func (pc *projectCache) forget() {
 // ------------------------------------------------------------ the call
 
 // Do sends one call and decodes a JSON response into out, which may be
-// nil.
+// nil. A call that may answer 304 goes through DoAnswered, so its empty
+// answer is never taken for a decoded one.
 func (c *Client) Do(ctx context.Context, call Call, out any) error {
+	if call.NotModified != "" {
+		return Errf(ClassUnexpected, "%s may answer 304, which Do cannot report; it goes through DoAnswered", call.Name)
+	}
 	_, err := c.do(ctx, call, out)
 	return err
+}
+
+// Answered is what a call that may answer 304 came to, besides its body.
+type Answered struct {
+	// NotModified is GitLab's 304: the state asked for already held, and
+	// out was left as it was.
+	NotModified bool
+	// Resent is set when an earlier attempt may have reached GitLab and
+	// its answer was lost, so a 304 may be that attempt's own work.
+	Resent bool
+}
+
+// DoAnswered sends a call whose Call.NotModified says why a 304 answers
+// it, and reports whether GitLab answered 304.
+func (c *Client) DoAnswered(ctx context.Context, call Call, out any) (Answered, error) {
+	if call.NotModified == "" {
+		return Answered{}, Errf(ClassUnexpected, "%s declares no reason a 304 answers it; it goes through Do", call.Name)
+	}
+	res, err := c.do(ctx, call, out)
+	if err != nil {
+		return Answered{}, err
+	}
+	return Answered{NotModified: res.status == http.StatusNotModified, Resent: res.resent}, nil
 }
 
 // response is what a successful call left besides the decoded body.
@@ -351,6 +378,9 @@ type response struct {
 	status  int
 	header  http.Header
 	request *url.URL // the URL finally answered, after a moved project
+	// resent is set when an earlier attempt may have reached GitLab
+	// before its answer was lost.
+	resent bool
 }
 
 // prepared is a call checked and built, ready to send.
@@ -411,7 +441,7 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 
 // send makes the attempts.
 func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, error) {
-	redirected, reauthorized := false, false
+	redirected, reauthorized, resent := false, false, false
 	var last verdict
 	for attempt := 1; attempt <= c.maxAttempts; attempt++ {
 		if attempt > 1 {
@@ -478,7 +508,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 			if err := c.decode(ctx, res, p.name, out); err != nil {
 				return nil, err
 			}
-			return &response{status: res.status, header: res.header, request: p.endpoint}, nil
+			return &response{status: res.status, header: res.header, request: p.endpoint, resent: resent}, nil
 		}
 		if v.throttle {
 			// The instance throttle holds every call, not only this one.
@@ -487,9 +517,17 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 		if !v.retry || attempt == c.maxAttempts {
 			return nil, v.err
 		}
+		resent = resent || mayHaveLanded(sendErr, status)
 		last = v
 	}
 	return nil, last.err
+}
+
+// mayHaveLanded reports whether a failed attempt may have reached
+// GitLab: a lost answer or a 5xx may have followed the write, while a
+// 429 and a connection never made reached nothing.
+func mayHaveLanded(sendErr error, status int) bool {
+	return sendErr != nil && !neverSent(sendErr) || status >= 500
 }
 
 // reauthorize drops a token GitLab refused and, for a call that may
@@ -845,7 +883,7 @@ func (c *Client) decide(ctx context.Context, call Call, name string, repeatable 
 	if sendErr != nil {
 		return classifyTransport(ctx, name, repeatable, sendErr)
 	}
-	if res.status >= 200 && res.status < 300 {
+	if res.status >= 200 && res.status < 300 || res.status == http.StatusNotModified && call.NotModified != "" {
 		return verdict{}
 	}
 	return classifyStatus(call, name, repeatable, res.status, res.header, res.body)

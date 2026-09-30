@@ -290,3 +290,38 @@ func TodosDone(w model.TodosDone, _ Boundary) string {
 	}
 	return b.String()
 }
+
+// SubscriptionWrite renders subscribe.
+func SubscriptionWrite(w model.SubscriptionWrite, _ Boundary) string {
+	var b strings.Builder
+	item := noteableItem(w.Type, w.IID)
+	head := "Your subscription to " + item + " was not changed."
+	switch w.Outcome {
+	case "subscribed":
+		head = "Subscribed you to " + item + "."
+	case "unsubscribed":
+		head = "Unsubscribed you from " + item + "."
+	}
+	writeHead(&b, head, w.Write)
+	state := "not subscribed"
+	if w.Subscribed {
+		state = "subscribed"
+	}
+	fmt.Fprintf(&b, "\nYou are %s to %s.", state, item)
+	return b.String()
+}
+
+// TodoWrite renders add_todo.
+func TodoWrite(w model.TodoWrite, _ Boundary) string {
+	var b strings.Builder
+	item := noteableItem(w.Type, w.IID)
+	head := "No to-do was added for " + item + "."
+	if w.Outcome == "created" {
+		head = "Added a to-do for " + item + "."
+	}
+	writeHead(&b, head, w.Write)
+	if w.TodoID != 0 {
+		fmt.Fprintf(&b, "\nTo-do item %d; mark_todos_done clears it.", w.TodoID)
+	}
+	return b.String()
+}

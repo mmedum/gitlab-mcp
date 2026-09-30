@@ -458,6 +458,29 @@ func phase2(s scratch) []step {
 		{tool: "track_time", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mr}}", "updated_at": "{{mr_tt4}}",
 			"reset_estimate": true}},
 
+		// Your own notifications and to-do items on the scratch issue and
+		// merge request. The account takes part in both, so it is
+		// subscribed until it unsubscribes: the first subscribe is
+		// unchanged. Each to-do added is marked done, so the account's
+		// list is left as it was.
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "dry_run": true}},
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue}},
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "unsubscribe": true, "dry_run": true}},
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "unsubscribe": true}},
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "unsubscribe": true}},
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue}},
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "unsubscribe": true}},
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}},
+		{tool: "subscribe", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}},
+		{tool: "add_todo", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "dry_run": true}},
+		{tool: "add_todo", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue}, save: map[string]string{"todo_issue": "todo_id"}},
+		{tool: "add_todo", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "dry_run": true}},
+		{tool: "add_todo", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue}},
+		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo_issue}}"}}},
+		{tool: "add_todo", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}, save: map[string]string{"todo_mr": "todo_id"}},
+		{tool: "add_todo", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}},
+		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo_mr}}"}}},
+
 		// The history the writes above made: labels swapped, the milestone
 		// set and cleared, closed and reopened.
 		{tool: "list_item_events", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "max": 2}, paged: true},
@@ -811,7 +834,7 @@ var rules = map[string]rule{
 		ids, _ := st.args["ids"].([]any)
 		for _, id := range ids {
 			if name, ok := id.(string); !ok || !strings.HasPrefix(name, "{{todo") {
-				return fmt.Errorf("%s: ids must be saved from list_todos in the scratch project, not written into the plan", st.tool)
+				return fmt.Errorf("%s: ids must be saved from list_todos in the scratch project or from add_todo, not written into the plan", st.tool)
 			}
 		}
 		return nil
@@ -834,7 +857,7 @@ func init() {
 	for _, tool := range []string{"get_project", "get_issue", "list_discussions", "get_merge_request", "list_mr_files",
 		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "get_test_report",
-		"lint_ci", "list_item_events", "list_boards", "list_todos", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
+		"lint_ci", "list_item_events", "list_boards", "list_todos", "add_todo", "subscribe", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",
 		"create_commit",
 		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "retry_pipeline", "retry_job",

@@ -26,6 +26,11 @@ add_review_comment.line	2
 add_review_comment.project	4
 add_review_comment.resolve_thread	1
 add_review_comment.side	2
+add_todo.*	6
+add_todo.dry_run	2
+add_todo.iid	6
+add_todo.project	6
+add_todo.type	6
 approve_merge_request.*	3
 approve_merge_request.dry_run	1
 approve_merge_request.iid	3
@@ -407,9 +412,9 @@ list_tree.recursive	2
 list_tree.ref	2
 list_wiki_pages.*	1
 list_wiki_pages.project	1
-mark_todos_done.*	2
+mark_todos_done.*	4
 mark_todos_done.dry_run	1
-mark_todos_done.ids	2
+mark_todos_done.ids	4
 merge_merge_request.*	4
 merge_merge_request.auto_merge	1
 merge_merge_request.dry_run	1
@@ -540,6 +545,12 @@ submit_review.iid	3
 submit_review.project	3
 submit_review.reviewer_state	2
 submit_review.summary	2
+subscribe.*	9
+subscribe.dry_run	2
+subscribe.iid	9
+subscribe.project	9
+subscribe.type	9
+subscribe.unsubscribe	4
 track_time.*	12
 track_time.add_spent	8
 track_time.dry_run	1

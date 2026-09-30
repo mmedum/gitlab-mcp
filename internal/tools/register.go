@@ -65,11 +65,12 @@ func (k Kind) Scope() scopes.Kind {
 
 // annotations are the hints a client shows (§8). They are hints and not
 // controls: registration is the control. openWorldHint is true where the
-// result is visible to other people, which every GitLab write is.
-func (k Kind) annotations(idempotent bool) *mcp.ToolAnnotations {
+// result is visible to other people, which every GitLab write is but
+// those whose effect only the account sees (spec.OwnOnly).
+func (k Kind) annotations(idempotent, ownOnly bool) *mcp.ToolAnnotations {
 	switch k {
 	case Write:
-		return &mcp.ToolAnnotations{DestructiveHint: ptr(false), IdempotentHint: idempotent, OpenWorldHint: ptr(true)}
+		return &mcp.ToolAnnotations{DestructiveHint: ptr(false), IdempotentHint: idempotent, OpenWorldHint: ptr(!ownOnly)}
 	case Ship, Destructive:
 		return &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: idempotent, OpenWorldHint: ptr(true)}
 	}
@@ -90,6 +91,9 @@ type spec struct {
 	Toolset string
 	// Idempotent marks a write that lands the same way twice.
 	Idempotent bool
+	// OwnOnly marks a Write whose effect only the signed-in account sees,
+	// such as its to-do list, so openWorldHint is false (§8).
+	OwnOnly bool
 	// Bucket is the rate bucket the tool's requests are charged to
 	// beyond the general one, for the log line.
 	Bucket gapi.Bucket
@@ -200,7 +204,7 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 	mt := &mcp.Tool{
 		Name:         t.sp.Name,
 		Description:  description,
-		Annotations:  t.sp.Kind.annotations(t.sp.Idempotent),
+		Annotations:  t.sp.Kind.annotations(t.sp.Idempotent, t.sp.OwnOnly),
 		InputSchema:  in,
 		OutputSchema: out,
 	}

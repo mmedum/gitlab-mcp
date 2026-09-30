@@ -1307,6 +1307,25 @@ type TodoDone struct {
 	Error   string `json:"error" jsonschema:"Why it was not marked; empty when it was"`
 }
 
+// SubscriptionWrite is subscribe's result.
+type SubscriptionWrite struct {
+	Outcome string `json:"outcome" jsonschema:"subscribed, unsubscribed, unchanged (it already was so) or dry_run"`
+	Write
+	Type       string `json:"type" jsonschema:"issue or merge_request"`
+	IID        int64  `json:"iid"`
+	WebURL     string `json:"web_url"`
+	Subscribed bool   `json:"subscribed" jsonschema:"Whether you are subscribed after the call, as GitLab answered; in a dry run, as read now"`
+}
+
+// TodoWrite is add_todo's result.
+type TodoWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created, unchanged (a pending to-do you added is already there) or dry_run"`
+	Write
+	Type   string `json:"type" jsonschema:"issue or merge_request"`
+	IID    int64  `json:"iid"`
+	TodoID int64  `json:"todo_id" jsonschema:"The to-do item's id, which mark_todos_done takes; when unchanged, the one already there; 0 in a dry run that would add one, or when it could not be found"`
+}
+
 // ------------------------------------------------------------------ ship
 
 // MergeWrite is merge_merge_request's result.

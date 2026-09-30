@@ -38,6 +38,12 @@ type Call struct {
 	// means the method decides: GET, PUT and DELETE repeat, POST does
 	// not. A create is never declared repeatable (§4.5).
 	Repeatable string
+	// NotModified is the reason a 304 answers this call rather than
+	// failing it, such as "already subscribed". GitLab answers 304 with no
+	// body when the state asked for already holds. Such a call goes
+	// through DoAnswered, which reports the 304; Do refuses it. Empty
+	// means a 304 is unexpected.
+	NotModified string
 	// ReadOnly is the reason a POST changes nothing, such as "linting
 	// creates nothing". Such a call may repeat and may run under a dry
 	// run, and `scripts/gates outcomes` asks it for no outcome. Empty
