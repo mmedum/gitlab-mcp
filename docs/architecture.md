@@ -1272,7 +1272,7 @@ operations it covers. The gate fails on an operation with neither, a
 client call with no row, and a row or rule matching nothing.
 
 The committed snapshot is v19.4.1-ee, 1,856 operations; the TSV holds
-344 exact rows and 224 prefix rules, and the gate reports the counts.
+346 exact rows and 224 prefix rules, and the gate reports the counts.
 The groups below are the design's verdicts; the TSV is the record.
 
 | Group (path prefix) | Verdict |
