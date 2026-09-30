@@ -252,6 +252,10 @@ lint_ci.offset	1
 lint_ci.project	4
 lint_ci.ref	1
 lint_ci.simulate	1
+list_boards.*	2
+list_boards.max	2
+list_boards.page_token	1
+list_boards.project	2
 list_branches.*	5
 list_branches.max	2
 list_branches.page_token	1
