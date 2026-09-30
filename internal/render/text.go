@@ -539,7 +539,7 @@ func ItemEvents(l model.ItemEvents, bd Boundary) string {
 	b.WriteString("\nThe history is GitLab's label, state, milestone and weight events, and shows only what GitLab returns: " +
 		"events for labels you cannot read, and for milestones you cannot read or that were deleted, are left out.")
 	if l.Since != nil {
-		fmt.Fprintf(&b, " GitLab has more events than this server reads in one call: the history starts at %s, and older events are not shown.",
+		fmt.Fprintf(&b, " GitLab has more events than this server reads in one call: the history covers what came after %s, and events up to then are not shown.",
 			when(*l.Since))
 	}
 	for _, e := range l.Events {
@@ -593,7 +593,7 @@ func eventText(e model.ItemEvent, bd Boundary) string {
 	case "milestone":
 		m := "a milestone GitLab does not name"
 		if e.Milestone != nil {
-			m = fmt.Sprintf("the milestone %s (id %d)", bd.Inline(e.Milestone.UntrustedTitle), e.Milestone.ID)
+			m = fmt.Sprintf("the milestone %s (id %d)", bd.Inline(e.Milestone.Title), e.Milestone.ID)
 		}
 		switch e.Action {
 		case "add":

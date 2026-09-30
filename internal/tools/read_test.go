@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/config"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
@@ -398,7 +399,7 @@ func TestListItemEvents(t *testing.T) {
 		t.Errorf("state: %v %v", get(out, "events", 2), get(out, "events", 3))
 	}
 	// A milestone title is someone else's text, inside the boundary.
-	if get(out, "events", 5, "milestone", "untrusted_title") != "Sprint 2" ||
+	if get(out, "events", 5, "milestone", "title") != "Sprint 2" ||
 		!regexp.MustCompile(`@alice set the milestone <<<[0-9a-f]{16}>>>Sprint 2<<</[0-9a-f]{16}>>> \(id 90001\)`).MatchString(text) ||
 		!strings.Contains(text, "was written by GitLab users") {
 		t.Errorf("milestone: %v\n%s", get(out, "events", 5), text)
@@ -471,7 +472,7 @@ func TestListItemEventsPages(t *testing.T) {
 func TestListItemEventsPastTheReadLimit(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	// Four seeded label events and 1,500 more: 16 pages, of which 1 and
-	// 8 to 16 are read, and 804 events from the 701st on are shown.
+	// 8 to 16 are read, and the 803 events after the 701st are shown.
 	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, false, 1, 1500)
 	// A close now is newer than the cut, so it is shown, first.
 	h.ok("update_issue", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "updated_at": issueWitness(h, 1),
@@ -480,7 +481,7 @@ func TestListItemEventsPastTheReadLimit(t *testing.T) {
 	text, out := h.ok("list_item_events", args)
 	since, _ := get(out, "since").(string)
 	if since == "" || get(out, "listing", "total") != nil || get(out, "listing", "complete") != false ||
-		!strings.Contains(text, "the history starts at "+since+", and older events are not shown") {
+		!strings.Contains(text, "the history covers what came after "+since+", and events up to then are not shown") {
 		t.Fatalf("since = %v, listing = %v\n%s", since, get(out, "listing"), text)
 	}
 	if get(out, "events", 0, "state") != "closed" {
@@ -489,7 +490,7 @@ func TestListItemEventsPastTheReadLimit(t *testing.T) {
 	n := 0
 	for {
 		for _, e := range get(out, "events").([]any) {
-			if get(e, "created_at").(string) < since {
+			if get(e, "created_at").(string) <= since {
 				t.Fatalf("an event from before the cut is shown: %v", e)
 			}
 			n++
@@ -501,8 +502,8 @@ func TestListItemEventsPastTheReadLimit(t *testing.T) {
 		args["page_token"] = tok
 		_, out = h.ok("list_item_events", args)
 	}
-	if n != 805 || get(out, "listing", "complete") != false {
-		t.Errorf("read %d events, want 804 label events and the close; last listing %v", n, get(out, "listing"))
+	if n != 804 || get(out, "listing", "complete") != false {
+		t.Errorf("read %d events, want 803 label events and the close; last listing %v", n, get(out, "listing"))
 	}
 	pages := map[string]bool{}
 	for _, r := range h.gl.Requests() {
@@ -523,6 +524,136 @@ func TestListItemEventsWithoutAPageCount(t *testing.T) {
 	text := h.fails("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1}, "unexpected")
 	if !strings.Contains(text, "cannot be read newest first") {
 		t.Errorf("error = %s", text)
+	}
+}
+
+// A page token names the last event shown, so an event added between
+// calls neither repeats one nor skips one.
+func TestListItemEventsCursor(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	args := map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1}
+	_, all := h.ok("list_item_events", args)
+	args["max"] = 3
+	_, first := h.ok("list_item_events", args)
+	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, false, 1, 1) // now the newest
+	args["page_token"] = get(first, "listing", "next_page_token")
+	_, second := h.ok("list_item_events", args)
+	for i := range 3 {
+		if got, want := get(second, "events", i, "id"), get(all, "events", 3+i, "id"); got != want {
+			t.Errorf("second page event %d = %v, want %v", i, got, want)
+		}
+	}
+}
+
+// The history covers what came after since: an event of another kind at
+// exactly that time may have company the cut kind lost, so it is left
+// out too.
+func TestListItemEventsSinceIsExclusive(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, false, 1, 1500)
+	args := map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1, "max": 100}
+	_, out := h.ok("list_item_events", args)
+	since, err := time.Parse(time.RFC3339, get(out, "since").(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.gl.AddStateEvent(gitlabtest.ProjectAlpha, false, 1, "closed", since)
+	for {
+		for _, e := range get(out, "events").([]any) {
+			if at, _ := time.Parse(time.RFC3339, get(e, "created_at").(string)); !at.After(since) {
+				t.Fatalf("an event at or before since %s is shown: %v", since, e)
+			}
+		}
+		tok, ok := get(out, "listing", "next_page_token").(string)
+		if !ok {
+			break
+		}
+		args["page_token"] = tok
+		_, out = h.ok("list_item_events", args)
+	}
+}
+
+// A cut kind whose newest events GitLab filtered out entirely leaves no
+// time to start the history from, and the call says so rather than
+// claim the history is whole.
+func TestListItemEventsCutAndFilteredAway(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.AddLabelEventsFor(gitlabtest.ProjectAlpha, false, 1, 1500, gitlabtest.SecretLabel)
+	text := h.fails("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1}, "unexpected")
+	if !strings.Contains(text, "where the history starts cannot be told") {
+		t.Errorf("error = %s", text)
+	}
+}
+
+// Page 1's count can be short of what is there by the time the rest is
+// read; the last page's next-page signal is followed to the end.
+func TestListItemEventsFollowsPastTheCount(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, false, 1, 150)
+	h.gl.Inject(gitlabtest.Fault{Path: fmt.Sprintf("/projects/%d/issues/1/resource_label_events", alphaID), Query: "page=1&",
+		Status: http.StatusOK, Body: "[]", Header: http.Header{"X-Total-Pages": {"1"}, "X-Total": {"100"}, "X-Next-Page": {"2"}}})
+	_, out := h.ok("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1})
+	if get(out, "events", 0, "user", "username") != "dave" || get(out, "events", 0, "kind") != "label" {
+		t.Errorf("the newest event, on page 2, is missing: %v", get(out, "events", 0))
+	}
+}
+
+// Offset pages read at different moments can overlap; an event is shown
+// once.
+func TestListItemEventsDedupes(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, false, 1, 150)
+	h.gl.Inject(gitlabtest.Fault{Path: fmt.Sprintf("/projects/%d/issues/1/resource_label_events", alphaID), Query: "page=2&", Times: 10,
+		Status: http.StatusOK, Header: http.Header{"X-Total-Pages": {"2"}, "X-Total": {"101"}},
+		Body: `[{"id":110001,"user":{"username":"bob"},"created_at":"2026-01-05T16:00:00Z","label":{"id":96001,"name":"bug"},"action":"add"}]`})
+	args := map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1, "max": 100}
+	n := 0
+	for {
+		_, out := h.ok("list_item_events", args)
+		for _, e := range get(out, "events").([]any) {
+			if get(e, "id") == float64(110001) && get(e, "kind") == "label" {
+				n++
+			}
+		}
+		tok, ok := get(out, "listing", "next_page_token").(string)
+		if !ok {
+			break
+		}
+		args["page_token"] = tok
+	}
+	if n != 1 {
+		t.Errorf("event 110001 shown %d times", n)
+	}
+}
+
+// After page 1, a kind's pages are read a few at once, and the first
+// failure of any kind stops the other reads.
+func TestListItemEventsReadsAtOnceAndStopsAtAFailure(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, false, 1, 1500)
+	labels := fmt.Sprintf("/projects/%d/issues/1/resource_label_events", alphaID)
+	h.gl.Inject(gitlabtest.Fault{Path: labels, Pass: true, Delay: 150 * time.Millisecond, Times: 10})
+	began := time.Now()
+	h.ok("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1})
+	// Ten pages one after another take 1.5 s; page 1 and then three
+	// rounds of at most four take 0.6 s.
+	if took := time.Since(began); took > 1100*time.Millisecond {
+		t.Errorf("reading ten pages took %v: they were not read at once", took)
+	}
+
+	h.gl.ResetRequests()
+	h.gl.Inject(gitlabtest.Fault{Path: labels, Pass: true, Delay: 300 * time.Millisecond, Times: 10})
+	h.gl.Inject(gitlabtest.Fault{Path: fmt.Sprintf("/projects/%d/issues/1/resource_state_events", alphaID),
+		Status: http.StatusForbidden, Body: `{"message":"403 Forbidden"}`})
+	h.fails("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1}, "forbidden")
+	n := 0
+	for _, r := range h.gl.Requests() {
+		if strings.HasSuffix(r.EscapedPath, "/resource_label_events") {
+			n++
+		}
+	}
+	if n > 1 {
+		t.Errorf("%d label pages were read after the state events failed", n)
 	}
 }
 

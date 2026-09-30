@@ -422,8 +422,8 @@ type ItemEvents struct {
 	Type    string      `json:"type" jsonschema:"issue or merge_request"`
 	Events  []ItemEvent `json:"events" jsonschema:"Newest first"`
 	// Since is set when GitLab has more events of one kind than one call
-	// reads: the timeline then covers only from this time on.
-	Since   *time.Time `json:"since" jsonschema:"Null when the timeline goes back to the start; otherwise events before this time exist and are not shown"`
+	// reads: the history then covers only what came after it.
+	Since   *time.Time `json:"since" jsonschema:"Null when the history goes back to the start; otherwise it covers only events after this time, and events at or before it are not shown. It assumes GitLab's event ids follow time, which an imported item's may not"`
 	Listing Listing    `json:"listing"`
 }
 
@@ -440,16 +440,10 @@ type ItemEvent struct {
 	State        *string `json:"state" jsonschema:"For a state event, the state it moved to: opened, closed, reopened, merged or locked"`
 	// SourceCommit and SourceMergeRequestID say what closed or merged
 	// the item, when GitLab recorded it.
-	SourceCommit         *string         `json:"source_commit" jsonschema:"For a state event, the commit that caused it, when GitLab recorded one"`
-	SourceMergeRequestID *int64          `json:"source_merge_request_id" jsonschema:"For a state event, the merge request that caused it, when GitLab recorded one: its global id, not its !number"`
-	Milestone            *EventMilestone `json:"milestone" jsonschema:"For a milestone event, the milestone added or removed"`
-	Weight               *int            `json:"weight" jsonschema:"For a weight event, the new weight; null otherwise, and when the weight was removed"`
-}
-
-// EventMilestone is the milestone a milestone event names.
-type EventMilestone struct {
-	ID             int64  `json:"id"`
-	UntrustedTitle string `json:"untrusted_title"`
+	SourceCommit         *string    `json:"source_commit" jsonschema:"For a state event, the commit that caused it, when GitLab recorded one"`
+	SourceMergeRequestID *int64     `json:"source_merge_request_id" jsonschema:"For a state event, the merge request that caused it, when GitLab recorded one: its global id, not its !number"`
+	Milestone            *Milestone `json:"milestone" jsonschema:"For a milestone event, the milestone added or removed; its title is untrusted text"`
+	Weight               *int       `json:"weight" jsonschema:"For a weight event, the new weight; null otherwise, and when the weight was removed"`
 }
 
 // ------------------------------------------------------------ repository

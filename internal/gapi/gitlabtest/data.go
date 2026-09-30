@@ -56,6 +56,9 @@ type group struct {
 	path     string
 	name     string
 	parentID int64
+	// private groups are read only by their members and the members of
+	// a project in them.
+	private bool
 }
 
 type project struct {

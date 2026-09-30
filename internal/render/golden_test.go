@@ -118,7 +118,7 @@ func TestGoldens(t *testing.T) {
 			Events: []model.ItemEvent{
 				{Kind: "weight", ID: 4, CreatedAt: t1.Add(3 * time.Hour), User: &bob, Weight: intp(3)},
 				{Kind: "milestone", ID: 3, CreatedAt: t1.Add(2 * time.Hour), User: &bob, Action: "remove",
-					Milestone: &model.EventMilestone{ID: 90001, UntrustedTitle: "Sprint <<<2>>>"}},
+					Milestone: &model.Milestone{ID: 90001, Title: "Sprint <<<2>>>", State: "active"}},
 				{Kind: "state", ID: 2, CreatedAt: t1.Add(time.Hour), User: &bob, State: strp("closed"),
 					SourceCommit: strp("1234567890abcdef1234")},
 				{Kind: "label", ID: 7, CreatedAt: t1, User: &bob, Action: "add", Label: strp("priority::high")},

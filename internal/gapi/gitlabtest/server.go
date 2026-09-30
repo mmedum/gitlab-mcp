@@ -193,6 +193,12 @@ type Fault struct {
 	// discards that answer and sends the fault's: the answer to a write
 	// that succeeded was lost.
 	AfterApply bool
+	// Query, when set, limits the fault to requests whose raw query
+	// contains it, such as "page=2&".
+	Query string
+	// Pass serves the request as usual after Delay: a slow answer, not
+	// a wrong one.
+	Pass bool
 }
 
 // Inject adds a fault.
@@ -226,11 +232,11 @@ func Application429(path string, retryAfter, times int) Fault {
 		Body: `{"message":{"error":"This endpoint has been requested too many times. Try again later."}}`}
 }
 
-func (s *Server) takeFault(method, apiPath string) *Fault {
+func (s *Server) takeFault(method, apiPath, query string) *Fault {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, f := range s.faults {
-		if (f.Method == "" || f.Method == method) && strings.HasPrefix(apiPath, f.Path) {
+		if (f.Method == "" || f.Method == method) && strings.HasPrefix(apiPath, f.Path) && strings.Contains(query+"&", f.Query) {
 			f.Times--
 			if f.Times <= 0 {
 				s.faults = append(s.faults[:i], s.faults[i+1:]...)
@@ -310,7 +316,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serveOAuth(w, r)
 	case strings.HasPrefix(path, "/api/v4/"):
 		rest := strings.TrimPrefix(path, "/api/v4")
-		if f := s.takeFault(r.Method, rest); f != nil {
+		if f := s.takeFault(r.Method, rest, r.URL.RawQuery); f != nil {
+			if f.Pass {
+				time.Sleep(f.Delay)
+				s.serveAPI(w, r, rest)
+				return
+			}
 			if f.AfterApply {
 				s.serveAPI(httptest.NewRecorder(), r, rest)
 			}

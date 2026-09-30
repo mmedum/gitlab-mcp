@@ -53,6 +53,8 @@ type itemEvent struct {
 	commit      *string
 	sourceMR    *int64
 	weight      *int
+	// itemState is the item's state when a milestone event was made.
+	itemState string
 }
 
 // itemState is what an event records a change of.
@@ -93,9 +95,11 @@ func (s *Server) recordChanges(p *project, key string, before, after itemState, 
 	}
 	switch {
 	case after.milestone != nil && (before.milestone == nil || before.milestone.ID != after.milestone.ID):
-		s.addEvent(p, key, itemEvent{kind: "milestone", user: user, at: now, action: "add", milestoneID: after.milestone.ID})
+		s.addEvent(p, key, itemEvent{kind: "milestone", user: user, at: now, action: "add", milestoneID: after.milestone.ID,
+			itemState: after.state})
 	case after.milestone == nil && before.milestone != nil:
-		s.addEvent(p, key, itemEvent{kind: "milestone", user: user, at: now, action: "remove", milestoneID: before.milestone.ID})
+		s.addEvent(p, key, itemEvent{kind: "milestone", user: user, at: now, action: "remove", milestoneID: before.milestone.ID,
+			itemState: after.state})
 	}
 	if before.state != "" && after.state != before.state {
 		state := after.state
@@ -120,13 +124,54 @@ func (s *Server) labelID(p *project, name string) int64 {
 	return 0
 }
 
+// groupReadable is GitLab's read_group: a public group is read by
+// anyone; a private one by its members, its ancestors' members, and the
+// members of a project in it or below it.
+func (s *Server) groupReadable(id int64, user string) bool {
+	var g *group
+	for _, x := range s.groups {
+		if x.id == id {
+			g = x
+		}
+	}
+	if g == nil || !g.private {
+		return g != nil
+	}
+	for a := id; a != 0; a = s.parentOf(a) {
+		if _, ok := s.groupLevels[a][user]; ok {
+			return true
+		}
+	}
+	for _, p := range s.projects {
+		for a := p.groupID; a != 0; a = s.parentOf(a) {
+			if a == id && p.members[user] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// SetGroupPrivate makes a group private.
+func (s *Server) SetGroupPrivate(path string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, g := range s.groups {
+		if g.path == path {
+			g.private = true
+			return true
+		}
+	}
+	return false
+}
+
 // eventLabel finds a label by id anywhere on the instance, and whether
 // user may read it; nil when it was deleted.
 func (s *Server) eventLabel(id int64, user string) (*gitlab.Label, bool) {
-	for _, ls := range s.groupLabels {
+	for g, ls := range s.groupLabels {
 		for _, l := range ls {
 			if l.ID == id {
-				return &l, true
+				return &l, s.groupReadable(g, user)
 			}
 		}
 	}
@@ -143,9 +188,9 @@ func (s *Server) eventLabel(id int64, user string) (*gitlab.Label, bool) {
 // eventMilestone finds a milestone by id anywhere on the instance, nil
 // when it was deleted or user may not read it.
 func (s *Server) eventMilestone(id int64, user string) *gitlab.ProjectMilestone {
-	for _, ms := range s.groupMilestones {
+	for g, ms := range s.groupMilestones {
 		for _, m := range ms {
-			if m.ID == id {
+			if m.ID == id && s.groupReadable(g, user) {
 				return &m
 			}
 		}
@@ -198,7 +243,7 @@ func (s *Server) serveItemEvents(w http.ResponseWriter, r *http.Request, p *proj
 			if m == nil {
 				continue
 			}
-			row["action"], row["milestone"], row["state"] = e.action, m, "opened"
+			row["action"], row["milestone"], row["state"] = e.action, m, e.itemState
 		case "weight":
 			row["weight"] = e.weight
 		}
@@ -235,8 +280,8 @@ func (s *Server) fillItemEvents(alpha, secret *project) {
 		{kind: "label", user: "bob", at: at(1), action: "add", labelID: s.labelID(alpha, "bug")},
 		{kind: "label", user: "bob", at: at(2), action: "add", labelID: DeletedLabelID},
 		{kind: "label", user: "bob", at: at(3), action: "add", labelID: secretLabel.ID},
-		{kind: "milestone", user: "alice", at: at(4), action: "add", milestoneID: MilestoneActive},
-		{kind: "milestone", user: "alice", at: at(5), action: "add", milestoneID: deletedMilestoneID},
+		{kind: "milestone", user: "alice", at: at(4), action: "add", milestoneID: MilestoneActive, itemState: "opened"},
+		{kind: "milestone", user: "alice", at: at(5), action: "add", milestoneID: deletedMilestoneID, itemState: "opened"},
 		{kind: "weight", user: "carol", at: at(6), weight: &three},
 		{kind: "state", user: "alice", at: at(7), state: "closed", sourceMR: &mrID},
 		{kind: "state", user: "bob", at: at(8), state: "reopened"},
@@ -250,7 +295,7 @@ func (s *Server) fillItemEvents(alpha, secret *project) {
 	s.addEvent(alpha, key, itemEvent{kind: "label", user: mr.Author.Username, at: mr.CreatedAt, action: "add",
 		labelID: s.labelID(alpha, "feature")})
 	s.addEvent(alpha, key, itemEvent{kind: "milestone", user: "alice", at: mr.CreatedAt.Add(time.Hour), action: "add",
-		milestoneID: MilestoneGroup})
+		milestoneID: MilestoneGroup, itemState: "opened"})
 
 	head := alpha.commits["main"][0].ID
 	for _, i := range alpha.issues {
@@ -265,6 +310,12 @@ func (s *Server) fillItemEvents(alpha, secret *project) {
 // when mr is set, an hour apart from the hour after its newest event,
 // adding and removing the label docs in turn.
 func (s *Server) AddLabelEvents(projectPath string, mr bool, iid int64, n int) bool {
+	return s.AddLabelEventsFor(projectPath, mr, iid, n, "docs")
+}
+
+// AddStateEvent adds a state event to an issue, or a merge request when
+// mr is set, at a given time.
+func (s *Server) AddStateEvent(projectPath string, mr bool, iid int64, state string, at time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.projectByPath(projectPath)
@@ -274,6 +325,31 @@ func (s *Server) AddLabelEvents(projectPath string, mr bool, iid int64, n int) b
 	key := "issue:" + itoa(iid)
 	if mr {
 		key = "mr:" + itoa(iid)
+	}
+	s.addEvent(p, key, itemEvent{kind: "state", user: "dave", at: at.UTC(), state: state})
+	return true
+}
+
+// AddLabelEventsFor is AddLabelEvents with a label named by the
+// instance's first label of that name, in any project.
+func (s *Server) AddLabelEventsFor(projectPath string, mr bool, iid int64, n int, label string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	key := "issue:" + itoa(iid)
+	if mr {
+		key = "mr:" + itoa(iid)
+	}
+	id := s.labelID(p, label)
+	for _, q := range s.projects {
+		for _, l := range q.labels {
+			if id == 0 && l.Name == label {
+				id = l.ID
+			}
+		}
 	}
 	at := p.CreatedAt
 	for _, e := range p.itemEvents[key] {
@@ -287,7 +363,7 @@ func (s *Server) AddLabelEvents(projectPath string, mr bool, iid int64, n int) b
 			action = "remove"
 		}
 		s.addEvent(p, key, itemEvent{kind: "label", user: "dave", at: at.Add(time.Duration(i+1) * time.Hour), action: action,
-			labelID: s.labelID(p, "docs")})
+			labelID: id})
 	}
 	return true
 }
