@@ -180,21 +180,12 @@ func (s *Service) CreateSnippet(ctx context.Context, in SnippetCreate) (model.Sn
 		paths = append(paths, f.Path)
 		body.Files = append(body.Files, gapi.SnippetFileCreate{FilePath: f.Path, Content: f.Content})
 	}
-	var t target
-	if in.Project != "" {
-		var err error
-		if t, err = s.writeTarget(ctx, in.Project); err != nil {
-			return model.SnippetWrite{}, err
-		}
-	} else {
-		if _, err := s.api(); err != nil {
-			return model.SnippetWrite{}, err
-		}
-		if len(s.cfg.WriteNamespaces) > 0 {
-			return model.SnippetWrite{}, gapi.Errf(gapi.ClassBlocked, "writes are confined to the namespaces %s names, and a personal "+
-				"snippet is in none; nothing was sent. Create it in a project instead", config.EnvWriteNamespaces)
-		}
-		t.ref = model.WriteTarget{Visibility: "private"}
+	t, err := s.snippetTarget(ctx, in.Project, "Create it in a project instead")
+	if err != nil {
+		return model.SnippetWrite{}, err
+	}
+	if in.Project == "" {
+		t.ref.Visibility = "private"
 	}
 	if gapi.IsDryRun(ctx) {
 		return model.SnippetWrite{Outcome: "dry_run", Visibility: "private", Files: paths, Write: model.Write{DryRun: true, Target: t.ref,
@@ -202,7 +193,6 @@ func (s *Service) CreateSnippet(ctx context.Context, in SnippetCreate) (model.Sn
 	}
 	start := time.Now()
 	var sn *gitlab.Snippet
-	var err error
 	if in.Project != "" {
 		sn, err = s.client.CreateProjectSnippet(ctx, t.p, body)
 	} else {
@@ -246,4 +236,285 @@ func (s *Service) findSnippet(ctx context.Context, p gapi.Project, inProject boo
 		}
 	}
 	return "", nil
+}
+
+// snippetTarget resolves where a snippet write goes: a project, held to
+// the write allow-list, or the account's own snippets, which the
+// allow-list refuses, a personal snippet being in no namespace. A
+// personal target names no project and no visibility; the caller says
+// what the snippet's is.
+func (s *Service) snippetTarget(ctx context.Context, raw, instead string) (target, error) {
+	if raw != "" {
+		return s.writeTarget(ctx, raw)
+	}
+	if _, err := s.api(); err != nil {
+		return target{}, err
+	}
+	if len(s.cfg.WriteNamespaces) > 0 {
+		return target{}, gapi.Errf(gapi.ClassBlocked, "writes are confined to the namespaces %s names, and a personal "+
+			"snippet is in none; nothing was sent. %s", config.EnvWriteNamespaces, instead)
+	}
+	return target{}, nil
+}
+
+// ownSnippet reads a snippet this server may change: the signed-in
+// account's own. GitLab lets a project's maintainers change anyone's
+// snippet there; another person's snippet is theirs. GitLab's personal
+// routes also find the account's snippets in projects, so one reached
+// without its project is refused: the allow-list is held against the
+// project.
+func (s *Service) ownSnippet(ctx context.Context, t target, inProject bool, id int64, verb string) (*gitlab.Snippet, error) {
+	var sn *gitlab.Snippet
+	var me *gitlab.User
+	if err := parallel(
+		func() (err error) {
+			if inProject {
+				sn, err = s.client.GetProjectSnippet(ctx, t.p, id)
+			} else {
+				sn, err = s.client.GetSnippet(ctx, id)
+			}
+			return err
+		},
+		func() (err error) { me, err = s.me(ctx); return err },
+	); err != nil {
+		return nil, err
+	}
+	switch {
+	case !inProject && sn.ProjectID != nil:
+		return nil, gapi.Errf(gapi.ClassInvalid, "snippet %d is in the project with id %d, not one of your personal snippets; "+
+			"pass that project", id, *sn.ProjectID)
+	case sn.Author.Username != me.Username:
+		return nil, gapi.Errf(gapi.ClassBlocked, "the snippet is @%s's, and this server %s only your own; nothing was sent",
+			sn.Author.Username, verb)
+	}
+	return sn, nil
+}
+
+// SnippetFileChange is one change to a snippet's files.
+type SnippetFileChange struct {
+	Action       string // create, update, delete or move
+	Path         string
+	PreviousPath string // the file a move starts from
+	Content      string
+}
+
+// SnippetFileActions are the actions a file change takes.
+var SnippetFileActions = []string{"create", "update", "delete", "move"}
+
+// SnippetEdit is update_snippet's request. Nil fields are not changed.
+type SnippetEdit struct {
+	Project     string // empty for a personal snippet
+	ID          int64
+	Title       *string
+	Description *string
+	// Content replaces the file of a one-file snippet.
+	Content *string
+	// Files changes a snippet's files, one action each.
+	Files     []SnippetFileChange
+	UpdatedAt string
+}
+
+// UpdateSnippet changes one of the signed-in account's own snippets. Its
+// visibility is left as it is.
+func (s *Service) UpdateSnippet(ctx context.Context, in SnippetEdit) (model.SnippetUpdate, error) {
+	witness, err := checkSnippetEdit(in)
+	if err != nil {
+		return model.SnippetUpdate{}, err
+	}
+	t, err := s.snippetTarget(ctx, in.Project, "Change a project's snippet instead")
+	if err != nil {
+		return model.SnippetUpdate{}, err
+	}
+	before, err := s.ownSnippet(ctx, t, in.Project != "", in.ID, "changes")
+	if err != nil {
+		return model.SnippetUpdate{}, err
+	}
+	// GitLab's PUT checks no witness (§18 row 103), so the window between
+	// this read and the write stays open; the check narrows it.
+	if err := checkWitness(witness, before.UpdatedAt, "snippet"); err != nil {
+		return model.SnippetUpdate{}, err
+	}
+	files := snippetFiles(*before)
+	if in.Content != nil && len(files) > 1 {
+		return model.SnippetUpdate{}, gapi.Errf(gapi.ClassInvalid, "the snippet has %d files, and GitLab changes a snippet of "+
+			"several files only through files: pass an update action naming the file", len(files))
+	}
+	actions, planned, err := snippetActions(files, in.Files)
+	if err != nil {
+		return model.SnippetUpdate{}, err
+	}
+	if in.Project == "" {
+		t.ref.Visibility = before.Visibility
+	}
+	body := gapi.SnippetUpdate{Title: in.Title, Description: in.Description, Content: in.Content, Files: actions}
+	out := model.SnippetUpdate{Outcome: "updated", Write: model.Write{Target: t.ref}, ID: before.ID, Visibility: before.Visibility,
+		Files: planned, Changed: []string{}, WebURL: before.WebURL}
+	if gapi.IsDryRun(ctx) {
+		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("PUT", "change the snippet", fieldsOf(body))
+		return out, nil
+	}
+	var after *gitlab.Snippet
+	if in.Project != "" {
+		after, err = s.client.UpdateProjectSnippet(ctx, t.p, in.ID, body)
+	} else {
+		after, err = s.client.UpdateSnippet(ctx, in.ID, body)
+	}
+	if err != nil {
+		return model.SnippetUpdate{}, err
+	}
+	if after.ID != in.ID || after.UpdatedAt.IsZero() {
+		return model.SnippetUpdate{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the change without the snippet; "+
+			"get_snippet shows what it holds")
+	}
+	out.Visibility, out.Files, out.UpdatedAt, out.WebURL = after.Visibility, snippetFiles(*after), &after.UpdatedAt, after.WebURL
+	out.Changed = names(field{"title", after.Title != before.Title},
+		field{"description", snippetDescription(after) != snippetDescription(before)},
+		field{"files", !slices.Equal(files, out.Files)})
+	if in.Description != nil {
+		out.DescriptionRemoved = removedFrom(snippetDescription(before), snippetDescription(after))
+	}
+	if after.UpdatedAt.Equal(before.UpdatedAt) {
+		out.Outcome, out.Notes = "unchanged", []string{"GitLab kept the snippet as it was: it already read so."}
+	}
+	return out, nil
+}
+
+// checkSnippetEdit refuses an update_snippet call that says nothing to
+// change or that GitLab would refuse whatever the snippet holds, and
+// reads its witness.
+func checkSnippetEdit(in SnippetEdit) (time.Time, error) {
+	switch {
+	case in.Title == nil && in.Description == nil && in.Content == nil && len(in.Files) == 0:
+		return time.Time{}, gapi.Errf(gapi.ClassInvalid, "nothing to change: pass title, description, content or files")
+	case in.Title != nil && strings.TrimSpace(*in.Title) == "":
+		return time.Time{}, gapi.Errf(gapi.ClassInvalid, "title is empty")
+	case in.Content != nil && len(in.Files) > 0:
+		return time.Time{}, gapi.Errf(gapi.ClassInvalid, "pass content or files, not both: content replaces the file "+
+			"of a one-file snippet, and files changes a snippet's files one action at a time")
+	case in.Content != nil && *in.Content == "":
+		return time.Time{}, gapi.Errf(gapi.ClassInvalid, "content is empty, and GitLab refuses an empty snippet file")
+	}
+	return parseWitness(in.UpdatedAt)
+}
+
+// snippetDescription is a snippet's description, "" when it has none.
+func snippetDescription(sn *gitlab.Snippet) string {
+	if sn.Description == nil {
+		return ""
+	}
+	return *sn.Description
+}
+
+// snippetActions checks each file change against the snippet's files
+// as GitLab's SnippetInputAction does, and against what the changes
+// before it leave, so a change GitLab would refuse or apply to another
+// file is refused before anything is sent. It returns the actions and
+// the files they leave.
+func snippetActions(files []string, changes []SnippetFileChange) ([]gapi.SnippetFileAction, []string, error) {
+	have := slices.Clone(files)
+	missing := func(n int, path string) error {
+		names := make([]string, len(have))
+		for i, f := range have {
+			names[i] = render.Ident(f)
+		}
+		return gapi.Errf(gapi.ClassInvalid, "file change %d: the snippet has no file %q; its files are %s", n, path,
+			strings.Join(names, ", "))
+	}
+	out := make([]gapi.SnippetFileAction, 0, len(changes))
+	for i, c := range changes {
+		n := i + 1
+		switch {
+		case !slices.Contains(SnippetFileActions, c.Action):
+			return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d: action must be one of %s", n, strings.Join(SnippetFileActions, ", "))
+		case strings.TrimSpace(c.Path) == "":
+			return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d (%s) has no path", n, c.Action)
+		case c.PreviousPath != "" && c.Action != "move":
+			return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d: previous_path is the file a move starts from; "+
+				"%s takes path alone", n, c.Action)
+		case c.Content == "" && (c.Action == "create" || c.Action == "update"):
+			return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d (%s %s) has no content, and GitLab refuses an empty "+
+				"snippet file", n, c.Action, c.Path)
+		case c.Content != "" && c.Action == "delete":
+			return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d: delete takes no content", n)
+		}
+		switch c.Action {
+		case "create":
+			if slices.Contains(have, c.Path) {
+				return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d creates %q, which the snippet already has; update it instead",
+					n, c.Path)
+			}
+			have = append(have, c.Path)
+		case "update":
+			if !slices.Contains(have, c.Path) {
+				return nil, nil, missing(n, c.Path)
+			}
+		case "delete":
+			if !slices.Contains(have, c.Path) {
+				return nil, nil, missing(n, c.Path)
+			}
+			have = slices.DeleteFunc(have, func(f string) bool { return f == c.Path })
+		case "move":
+			switch {
+			case c.PreviousPath == "":
+				return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d: a move needs previous_path, the file it renames", n)
+			case !slices.Contains(have, c.PreviousPath):
+				return nil, nil, missing(n, c.PreviousPath)
+			case c.Path == c.PreviousPath:
+				return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d moves %q onto itself", n, c.Path)
+			case slices.Contains(have, c.Path):
+				return nil, nil, gapi.Errf(gapi.ClassInvalid, "file change %d moves onto %q, which the snippet already has", n, c.Path)
+			}
+			have[slices.Index(have, c.PreviousPath)] = c.Path
+		}
+		out = append(out, gapi.SnippetFileAction{Action: c.Action, FilePath: c.Path, PreviousPath: c.PreviousPath, Content: c.Content})
+	}
+	if len(have) == 0 {
+		return nil, nil, gapi.Errf(gapi.ClassInvalid, "the changes delete every file, and a snippet holds at least one; "+
+			"delete_snippet deletes the snippet")
+	}
+	return out, have, nil
+}
+
+// DeleteSnippet deletes one of the signed-in account's own snippets.
+func (s *Service) DeleteSnippet(ctx context.Context, raw string, id int64, updatedAt string) (model.SnippetDelete, error) {
+	witness, err := parseWitness(updatedAt)
+	if err != nil {
+		return model.SnippetDelete{}, err
+	}
+	t, err := s.snippetTarget(ctx, raw, "Delete a project's snippet instead")
+	if err != nil {
+		return model.SnippetDelete{}, err
+	}
+	sn, err := s.ownSnippet(ctx, t, raw != "", id, "deletes")
+	if err != nil {
+		return model.SnippetDelete{}, err
+	}
+	if err := checkWitness(witness, sn.UpdatedAt, "snippet"); err != nil {
+		return model.SnippetDelete{}, err
+	}
+	if raw == "" {
+		t.ref.Visibility = sn.Visibility
+	}
+	out := model.SnippetDelete{Outcome: "deleted", Write: model.Write{Target: t.ref}, ID: id}
+	if gapi.IsDryRun(ctx) {
+		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the snippet", nil)
+		return out, nil
+	}
+	if err := ask(ctx, render.AskDeleteSnippet(t.ref.Project.Path, id, sn.Title, snippetFiles(*sn))); err != nil {
+		return model.SnippetDelete{}, err
+	}
+	// GitLab refuses the delete with 412 when the snippet changed after
+	// the time read, as it does a comment's.
+	var readErr error
+	if raw == "" {
+		err = s.client.DeleteSnippet(ctx, id, witness)
+		_, readErr = s.client.GetSnippet(ctx, id)
+	} else {
+		err = s.client.DeleteProjectSnippet(ctx, t.p, id, witness)
+		_, readErr = s.client.GetProjectSnippet(ctx, t.p, id)
+	}
+	if out.Notes, err = deleted(err, readErr, "snippet"); err != nil {
+		return model.SnippetDelete{}, err
+	}
+	return out, nil
 }

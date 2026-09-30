@@ -1079,3 +1079,77 @@ func TestClosingClearsYourTodos(t *testing.T) {
 		t.Errorf("to-do after the close: %q", got)
 	}
 }
+
+// Snippet PUT and DELETE, as lib/api/snippets.rb and project_snippets.rb
+// answer them.
+func TestSnippetWrites(t *testing.T) {
+	s, now := frozen(t)
+	*now = now.Add(123456 * time.Microsecond)
+	bob, carol := s.TokenFor("bob", "api"), s.TokenFor("carol", "api")
+	project := "/projects/" + itoa(s.ProjectID(ProjectAlpha)) + "/snippets/" + itoa(SnippetAlpha)
+
+	resp, body := send(t, s, "PUT", project, bob, obj{"content": "x"})
+	wantError(t, "content on several files", resp, body, 400, "message", "you must use the `files` parameter")
+	resp, body = send(t, s, "PUT", project, bob, obj{"files": []obj{{"action": "update", "file_path": "notes.md", "content": "x"}},
+		"content": "x"})
+	wantError(t, "files with content", resp, body, 400, "error", "mutually exclusive")
+	resp, body = send(t, s, "PUT", project, bob, obj{})
+	wantError(t, "nothing", resp, body, 400, "error", "at least one parameter")
+	resp, body = send(t, s, "PUT", project, bob, obj{"files": []obj{{"action": "move", "file_path": "x"}}})
+	wantError(t, "a move without previous_path", resp, body, 422, "message", "Snippet actions have invalid data")
+	resp, body = send(t, s, "PUT", project, bob, obj{"files": []obj{{"action": "update", "file_path": "gone.md", "content": "x"}}})
+	wantError(t, "an update of a missing file", resp, body, 400, "message", "Repository Error updating the snippet")
+	resp, body = send(t, s, "PUT", project, carol, obj{"title": "x"})
+	wantError(t, "a non-member", resp, body, 403, "message", "403")
+
+	resp, body = send(t, s, "PUT", project, bob, obj{"files": []obj{{"action": "update", "file_path": "run.sh", "content": "echo 2\n"},
+		{"action": "move", "previous_path": "notes.md", "file_path": "README.md"}, {"action": "create", "file_path": "c.txt", "content": "c"}}})
+	wantStatus(t, "file actions", resp, body, 200)
+	if got := s.SnippetFiles(SnippetAlpha); len(got) != 3 || got[0][0] != "README.md" || got[1][1] != "echo 2\n" || got[2][0] != "c.txt" {
+		t.Errorf("files = %v", got)
+	}
+	// Shown to the millisecond; kept to the microsecond.
+	if body["updated_at"] != "2026-09-26T12:00:00.123Z" {
+		t.Errorf("updated_at = %v", body["updated_at"])
+	}
+	// The personal routes find the author's snippets in projects too.
+	resp, body = send(t, s, "PUT", "/snippets/"+itoa(SnippetAlpha), bob, obj{"title": "Renamed"})
+	wantStatus(t, "the author's project snippet by the personal route", resp, body, 200)
+	resp, body = send(t, s, "PUT", "/snippets/"+itoa(SnippetAlpha), s.Token(), obj{"title": "x"})
+	wantStatus(t, "another's snippet by the personal route", resp, body, 404)
+
+	// If-Unmodified-Since as Time.parse reads it: an HTTP-date is to the
+	// second, so the updated_at it shows is before the one kept; RFC 3339
+	// keeps the fraction.
+	personal := "/snippets/" + itoa(SnippetPersonal)
+	if !s.TouchSnippet(SnippetPersonal, *now) {
+		t.Fatal("touch")
+	}
+	del := func(since string) *http.Response {
+		req, err := http.NewRequest("DELETE", s.URL+"/api/v4"+personal, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+s.Token())
+		req.Header.Set("If-Unmodified-Since", since)
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp
+	}
+	for _, since := range []string{now.Format(http.TimeFormat), "2026-09-26T12:00:00.123Z"} {
+		if resp := del(since); resp.StatusCode != 412 {
+			t.Errorf("If-Unmodified-Since %s = %d, want 412", since, resp.StatusCode)
+		}
+	}
+	if resp := del("2026-09-26T12:00:00.123999Z"); resp.StatusCode != 204 {
+		t.Errorf("delete = %d, want 204", resp.StatusCode)
+	}
+	if s.SnippetFiles(SnippetPersonal) != nil {
+		t.Error("the snippet is still there")
+	}
+	resp, body = send(t, s, "DELETE", project, s.Token(), nil)
+	wantStatus(t, "a maintainer's delete of another's snippet", resp, body, 204)
+}

@@ -1506,6 +1506,27 @@ type SnippetWrite struct {
 	WebURL     string   `json:"web_url"`
 }
 
+// SnippetUpdate is update_snippet's result.
+type SnippetUpdate struct {
+	Outcome string `json:"outcome" jsonschema:"updated, unchanged or dry_run"`
+	Write
+	ID         int64      `json:"id"`
+	Visibility string     `json:"visibility"`
+	Files      []string   `json:"files" jsonschema:"The snippet's files after the write"`
+	Changed    []string   `json:"changed" jsonschema:"Of title, description and files (their names), those whose value differs after the write, as GitLab reported it; file content is not compared"`
+	UpdatedAt  *time.Time `json:"updated_at" jsonschema:"Pass as updated_at to the next update_snippet or delete_snippet; null for a dry run"`
+	// DescriptionRemoved is set when the description was replaced.
+	DescriptionRemoved *Removed `json:"description_removed" jsonschema:"What replacing the description took out; null when it was not replaced"`
+	WebURL             string   `json:"web_url"`
+}
+
+// SnippetDelete is delete_snippet's result.
+type SnippetDelete struct {
+	Outcome string `json:"outcome" jsonschema:"deleted or dry_run"`
+	Write
+	ID int64 `json:"id"`
+}
+
 // -------------------------------------------------------------- releases
 
 // ReleaseRow is one release of a listing.

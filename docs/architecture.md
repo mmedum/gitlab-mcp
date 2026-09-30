@@ -358,7 +358,7 @@ Four kinds, decided in one `register` (`CLAUDE.md` rule 14):
 | Read | every GET | always |
 | Write | issues, comments, reviews, branches, commits to unprotected branches, merge requests, todos, wiki, snippets | unless read-only |
 | Ship | merge, approve, unapprove, run, retry, play and cancel CI, create a release | `GITLAB_MCP_ENABLE_SHIP=true` |
-| Destructive | delete a branch, a comment, a wiki page | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, plus `confirm: true` per call |
+| Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, plus `confirm: true` per call |
 
 Ship is its own kind because it is where a persuaded call stops being a
 record someone can edit and becomes an effect: code in the default
@@ -461,6 +461,9 @@ most likely was.
   edit repeated after a lost answer is not `[stale]`. The answer is
   read back: an `updated_at` that did not move is `[unexpected]`, and a
   text stored otherwise is reported.
+- **Snippet edits:** GitLab's snippet PUT checks no witness (§18 row
+  103), so `update_snippet` re-reads and compares `updated_at` as the
+  comment edits do, with the same window open.
 - **Wiki pages:** GitLab's wiki API exposes neither a version nor an
   `updated_at` (`lib/api/entities/wiki_page.rb`), so the witness is
   `content_sha256`, a hash of the content `get_wiki_page` returned. A
@@ -468,9 +471,11 @@ most likely was.
   window stays open.
 - **Deletes:** a branch carries its head `sha`, compared with a fresh
   read, since GitLab's own branch delete checks only an author date. A
-  comment carries its `updated_at`, sent as `If-Unmodified-Since`, which
-  GitLab enforces (412, `[stale]`): the one conditional request its REST
-  API honors for a delete this server makes.
+  comment or a snippet carries its `updated_at`, sent as
+  `If-Unmodified-Since`, which GitLab enforces (412, `[stale]`): the one
+  conditional request its REST API honors for the deletes this server
+  makes. Both go through the same check, so a snippet's is sent as a
+  comment's is, to the end of the millisecond shown (§18 rows 62, 103).
 - **Omitted means unchanged.** GitLab's PUT changes only the parameters
   sent, and the server sends only what the caller gave.
 - **Lists change by add and remove.** Labels through GitLab's own
@@ -568,10 +573,10 @@ rather than reporting success.
 Registration decides what the server can do (§4.3), and `confirm:
 true` is an argument the model writes, which a persuaded model writes
 too. So when the client can ask, the server asks the person itself,
-through MCP form elicitation, before thirteen writes: `merge_merge_request`,
+through MCP form elicitation, before fourteen writes: `merge_merge_request`,
 `approve_merge_request`, `play_job`, `create_release`, `create_tag`,
 `run_pipeline` on the default branch or a protected branch or tag,
-`update_issue` when it makes a confidential issue public, and the six
+`update_issue` when it makes a confidential issue public, and the seven
 deletes of the Destructive kind. The set is the core the maintainer
 chose on 2026-09-29 (§14): the writes that ship, publish or destroy.
 Retrying, cancelling, rebasing, moving and commenting do not ask, since
@@ -1122,6 +1127,9 @@ so their `openWorldHint` is false (§8).
 - `snippets`: `list_snippets`, `get_snippet`, `create_snippet` — private
   visibility only; a public or internal snippet from a model is how
   private content leaves (§4.7), so visibility is not an input.
+  `update_snippet` (with `updated_at`, §4.6) changes the title, the
+  description and the files, never the visibility; `delete_snippet` is
+  Destructive. Both act on your own snippets only, as with comments.
 - `releases`: `list_releases`, `get_release`, `create_release` (Ship:
   it creates a tag and starts tag pipelines), `create_tag` (Write,
   refusing protected names), `delete_tag` (Destructive).
@@ -1145,9 +1153,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Ninety tools. With the default toolsets: fifty-seven by default,
+Ninety-two tools. With the default toolsets: fifty-seven by default,
 thirty-seven in read-only mode, sixty-nine with Ship and Destructive
-both enabled. Every toolset and flag on registers all ninety.
+both enabled. Every toolset and flag on registers all ninety-two.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people:
 every write but `add_todo` and `subscribe`, whose effect only the
@@ -1233,6 +1241,8 @@ Destructive kinds, as a signal and not a control.
 | `list_snippets` | Read | snippets | `GET /snippets`, `…/snippets` |
 | `get_snippet` | Read | snippets | `GET …/snippets/:id`, `/raw` |
 | `create_snippet` | Write | snippets | `POST …/snippets` (private) |
+| `update_snippet` | Write | snippets | `PUT …/snippets/:id` (own snippets; takes `updated_at`; never visibility) |
+| `delete_snippet` | Destructive | snippets | `DELETE …/snippets/:id` (own snippets; `If-Unmodified-Since`) |
 | `list_releases` | Read | releases | `GET …/releases` |
 | `get_release` | Read | releases | `GET …/releases/:tag` |
 | `create_release` | Ship | releases | `POST …/releases`, with asset links into the project |
@@ -1291,7 +1301,7 @@ The groups below are the design's verdicts; the TSV is the record.
 | search | Used |
 | todos | Used |
 | wikis (project) | Used under the `wiki` toolset. Group wikis deferred (Premium) |
-| snippets | Used under `snippets`; update and delete deferred |
+| snippets | Used under `snippets`, update and delete included, the delete Destructive. The public listing, comments and reactions deferred |
 | releases, release links | Used under `releases`, with asset links only at create and only into the project itself; update and delete, of a release or a link, written off |
 | environments, deployments | Read used under `deployments`. Stop, delete and deployment approval written off: they act on running infrastructure |
 | events | Used under `activity` |
@@ -1882,7 +1892,7 @@ each is fixed. Owed: nothing.*
 **Phase 7 — the person confirms what ships or deletes.** Asked for by
 the maintainer on 2026-09-29, after the same was built in a sibling:
 the server asks the person, through MCP form elicitation, before the
-thirteen writes of §4.12, with the set the maintainer chose. The
+writes of §4.12, with the set the maintainer chose. The
 question is quoted in code spans and the form has no fields, as the
 maintainer's check in Claude Code found clearest (§18 rows 94–96).
 
@@ -2425,3 +2435,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 100 | A board's lists can be read from GitLab as a board shows them | `lib/api/boards.rb`, `boards_responses.rb` and `entities/board.rb` and `list.rb`, `ee/lib/ee/api/entities/board.rb` and `list.rb`, `ee/lib/api/entities/special_board_filter.rb`, `app/models/board.rb`, `list.rb` and `concerns/boards/listable.rb`, `ee/app/models/ee/board.rb` and `ee/list.rb`, `app/models/concerns/timebox.rb`, `app/services/boards/create_service.rb`, `lists/base_create_service.rb`, `lists/move_service.rb` and `base_items_list_service.rb`, `ee/app/services/ee/boards/issues/list_service.rb`, `app/controllers/concerns/boards_actions.rb` and `ee/app/assets/javascripts/boards/constants.js`, `lib/api/entities/user_safe.rb`, `app/finders/issuable_finder/params.rb` and `lib/api/issues.rb` at v19.4.1-ee | **Refined (tier 1).** `GET /projects/:id/boards` pages boards by id and carries each board's lists whole. Lists come ordered by kind, then position, and every kind shares one position sequence, so position is the board's order. No list names its kind: `label` is always present, null unless a label list, and `assignee`, `milestone` and `iteration` only on their kind; a status list carries none. Open and Closed are never returned. Open holds open issues in none of the board's lists, Closed every closed issue, and `hide_backlog_list` and `hide_closed_list` hide them. Scope keys appear only with scoped boards, a paid feature: `milestone` is a milestone or a filter with only a title (No Milestone, Any Milestone, Upcoming, Started), `weight` -1 is any and -2 none. A board milestone is applied to label lists' issues (`label_links`), a filter in its place is not, and where the rest of a scope is applied was not found, so the result says it is unverified. `search_issues`' `milestone` is a title that reads `none` and `any` in any case, `No Milestone`, `Any Milestone`, `#upcoming` and `#started` as filters, and the issues route takes no milestone id (`app/finders/issuable_finder/params.rb`, `lib/api/issues.rb`), so a milestone so titled has no arguments. Lists carry `max_issue_count`, `max_issue_weight` and `limit_metric` with WIP limits, a paid feature; a list's assignee is `UserSafe`, `public_email` included. A project has no board until someone opens its board page, and `POST /projects/:id/boards` works on Free, as `multiple_issue_boards_available?` is true for projects |
 | 101 | GitLab's time tracking API answers as the OpenAPI file publishes it, refuses a bad duration, and leaves `updated_at` alone on spent time | At v19.4.1-ee: `lib/api/time_tracking_endpoints.rb` L74-154; `lib/gitlab/time_tracking_formatter.rb` L10-25; `app/models/concerns/time_trackable.rb` L23 (`has_many :timelogs, autosave: true`), L45-61 `spend_time`, L92-94 (`time_estimate=` capped at `MAX_INT_VALUE`) and L113-118 (`timelogs.new`); `app/models/timelog.rb` L12 (`MAX_TOTAL_TIME_SPENT = 126230400`), L20 and L77-81 (the range validation, `on: :create`), L22 `belongs_to :issue, touch: true` and L23 `belongs_to :merge_request, touch: true`; `app/services/issuable_base_service.rb` L332-349 and L390 (`save(touch:)`); `app/services/merge_requests/update_service.rb` L24 and L350-379 and `add_spent_time_service.rb` L8-11; `config/authz/roles/planner.yml`, `config/authz/roles/reporter.yml` and `config/authz/roles/developer.yml`; and `lib/gitlab_chronic_duration.rb` of the gitlab-chronic-duration gem | **Refuted (tier 1; `updated_at` and the human forms tier 1, live).** Setting and resetting the estimate and resetting spent time answer 200, not the 201 the file publishes; adding spent time answers 201. The parser is ChronicDuration with 8-hour days and 20-day months, a week a quarter month, a bare number as hours; it drops words it does not know, so `5 foo` is five hours, and an estimate keeps a zero, so a word alone sets the estimate to 0 rather than failing. An estimate past `MAX_INT_VALUE` is stored as it, not refused. A duration that parses to nothing adds a timelog with no time, refused 400 by its validation. Subtracting past zero is 400, and so is a new timelog taking the total past `MAX_TOTAL_TIME_SPENT`, four years: refused, not clamped. Spent time on an issue goes through the update service, which saves with `touch`; on a merge request the API sets `use_specialized_service`, and `AddSpentTimeService` calls `spend_time` and a plain `save`. The source reads as the new timelog touching its item through `belongs_to … touch: true`. The live run on gitlab.com, 2026-09-30, refutes that: adding 1h30m with an estimate moved the issue's `updated_at`, but adding -30m and then 1m alone left it at the same instant, and on the merge request adding 15m and then 1m alone left it too; a call carrying a witness from before each of those spent-only calls was answered, not refused. Setting an estimate, and resetting it, moved it. A second run sent each reset alone: resetting spent time left `updated_at` at the same instant on the issue and on the merge request, and resetting the estimate next was accepted with that `updated_at`. So `updated_at` cannot catch spent time added or reset twice, and `total_time_spent` is the witness for both. The human forms are null at zero, and gitlab.com writes them in hours and minutes: an estimate of `1d 2h` read back as `10h`. Writes need `admin_issue` (Planner and up) or `admin_merge_request` (Developer and up), 403 otherwise. `track_time` takes a strict subset of the syntax, checks `updated_at`, takes the total spent as a second witness whenever it adds or resets spent time, and never repeats a spent-time write |
 | 102 | Subscribing and adding a to-do for oneself fail when nothing changes, and GitLab deduplicates a to-do | At v19.4.1-ee: `lib/api/subscriptions.rb` L12-34 (the merge request finder asks for `update_merge_request`, L19; the issue's is `find_project_issue`), L77-107 (`not_modified!` at L82 and L102); `lib/api/helpers.rb` L352-378 (`find_merge_request_with_access`: 404 when missing, `authorize!` 403 when it exists and the ability is missing) and L684-686 (`not_modified!` is 304); `app/policies/issuable_policy.rb` L43-44 and `config/authz/roles/developer.yml` L123; `app/models/concerns/subscribable.rb` L20-28; `app/models/concerns/issuable.rb` L148-151 (participants `author`, `system_note_authors`, `notes_for_participants`, `assignees`) and L553-555; `app/models/merge_request.rb` L198 (`reviewers`); `app/models/note.rb` L75 (`author`); `app/models/concerns/mentionable.rb` L27-29 (every mention); `app/models/concerns/awardable.rb` L11 (`award_emoji`); `app/models/concerns/participable.rb` L87-90 and L106-140; `lib/api/todos.rb` L15-47; `app/services/todo_service.rb` L40-41, L98-113, L129-130, L158-176, L206-207, L214-222, L236-243, L347-365, L399-421 and L442-455; `app/models/todo.rb` L52; `db/structure.sql` (the `todos` indexes, none unique) | **Refuted (tier 1).** Both answer 304 with no body when the state already holds, which the OpenAPI file does not publish. Subscribing to an issue while subscribed, or unsubscribing while not, is 304; so is adding a to-do while a pending `marked` one the account added is on the item. Other pending to-dos (assigned, mentioned, review requested) and a done one do not stop a new one, since `excluded_user_ids` matches the action. That check runs before `bulk_insert_todos` with no lock and no unique index, so it is not a dedupe a retry can lean on: the to-do POST is a create and is never repeated. The account's pending to-dos on an item are marked done when it comments outside a thread or edits such a comment, closes, merges, pushes to or reviews a merge request, or reacts with an emoji; an update alone does not. A participant is subscribed without a subscription record: the author, assignees, a merge request's reviewers, every note's author, system notes included, emoji reactors, and every user mentioned in the item or a note; so a first subscribe to one's own item is 304. Subscribing to a merge request, or unsubscribing, needs `update_merge_request`: Developer and up, or the author or an assignee who can read it; anyone else gets 403, even on a public project, and so does anyone who may not read it. The 403 carries no reason, and an archived project or a hidden merge request refuses alike. An issue needs only read access, 404 otherwise. The client takes a 304 as an answer only where a call says why, through `DoAnswered`, and reports it; `subscribe` and `add_todo` report it as unchanged |
+| 103 | A snippet update carries a witness GitLab enforces, the personal routes find only personal snippets, and a snippet delete's `If-Unmodified-Since` compares whole seconds | `lib/api/snippets.rb` L183-258, `lib/api/project_snippets.rb` L115-199, `lib/api/helpers/snippets_helpers.rb`, `lib/api/helpers.rb` `check_unmodified_since!` and `destroy_conditionally!`, `app/services/snippets/update_service.rb`, `base_service.rb` and `destroy_service.rb`, `app/models/snippet_input_action.rb`, `app/finders/snippets_finder.rb`, `app/policies/project_snippet_policy.rb` and `personal_snippet_policy.rb`, and `config/authz/roles/guest.yml`, `config/authz/roles/reporter.yml` and `config/authz/roles/maintainer.yml` at v19.4.1-ee | **Refuted (tier 1).** The PUT checks no witness, so `update_snippet` reads and compares `updated_at` first; `Snippets::UpdateService` runs no quick action, so the description and content are plain. `files` excludes `content` and `file_name`; `content` on a snippet of several files is 400; an action `SnippetInputAction` refuses is 422, and one the repository cannot commit 400. The personal routes find snippets through `SnippetsFinder(author:)`, which also returns the author's snippets in projects, so a project snippet reached without its project is refused, and the allow-list is held against the project. The delete goes through the same `destroy_conditionally!` as a comment's: `Time.parse` keeps an RFC 3339 fraction and `updated_at` is compared at full precision, so the witness is sent stretched to the end of its millisecond, as row 62 found; only an HTTP-date is cut to the second, and would refuse nearly every delete. A delete answers 204, not the 200 the file publishes. GitLab lets a project's maintainers update and delete anyone's snippet there (`update_snippet` and `admin_snippet` in `config/authz/roles/maintainer.yml`); the server keeps to your own, as it does with comments |

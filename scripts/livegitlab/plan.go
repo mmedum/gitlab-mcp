@@ -610,10 +610,40 @@ func planShip(s scratch) []step {
 			"files": []any{map[string]any{"path": "a.md", "content": "# A\n"}, map[string]any{"path": "b.sh", "content": "echo b\n"}}},
 			save: map[string]string{"snippet": "id"}},
 		{tool: "create_snippet", args: map[string]any{"project": p, "title": "Live snippet two " + w,
-			"files": []any{map[string]any{"path": "c.txt", "content": "c\n"}}}},
+			"files": []any{map[string]any{"path": "c.txt", "content": "c\n"}}}, save: map[string]string{"snippet2": "id"}},
 		{tool: "list_snippets", args: map[string]any{"project": p, "max": 1}, paged: true},
-		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}"}},
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}"}, save: map[string]string{"snippet_at": "updated_at"}},
 		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "file": "b.sh", "offset": 0}},
+
+		// The two-file snippet changed through files, from the updated_at a
+		// read gives; the one-file snippet through content, then deleted.
+		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at}}",
+			"content": "one file only\n"}, expectError: true, why: "content on a snippet of two files"},
+		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at}}",
+			"title": "Live snippet renamed " + w, "description": "Changed.\n/close stays text.\n", "dry_run": true,
+			"files": []any{map[string]any{"action": "update", "path": "a.md", "content": "# A, changed\n"}}}},
+		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at}}",
+			"title": "Live snippet renamed " + w, "description": "Changed.\n/close stays text.\n", "files": []any{
+				map[string]any{"action": "update", "path": "a.md", "content": "# A, changed\n"},
+				map[string]any{"action": "create", "path": "d.md", "content": "# D\n"},
+				map[string]any{"action": "move", "previous_path": "b.sh", "path": "run.sh", "content": "echo moved\n"}}},
+			save: map[string]string{"snippet_at2": "updated_at"}},
+		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at}}",
+			"title": "Stale"}, expectError: true, why: "a witness from before the change"},
+		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "updated_at": "{{snippet_at2}}",
+			"files": []any{map[string]any{"action": "delete", "path": "d.md"}}}},
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet}}", "file": "run.sh"}},
+		{tool: "get_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}"}, save: map[string]string{"snippet2_at": "updated_at"}},
+		{tool: "update_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}", "updated_at": "{{snippet2_at}}",
+			"content": "c, changed\n"}, save: map[string]string{"snippet2_at2": "updated_at"}},
+		{tool: "delete_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}", "updated_at": "{{snippet2_at}}",
+			"confirm": true}, expectError: true, why: "a witness from before the change"},
+		{tool: "delete_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}", "updated_at": "{{snippet2_at2}}"},
+			expectError: true, why: "no confirm: true"},
+		{tool: "delete_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}", "updated_at": "{{snippet2_at2}}",
+			"dry_run": true}},
+		{tool: "delete_snippet", args: map[string]any{"project": p, "snippet_id": "{{snippet2}}", "updated_at": "{{snippet2_at2}}",
+			"confirm": true}},
 
 		// Releases: two, so the listing pages.
 		{tool: "create_release", args: map[string]any{"project": p, "tag_name": tag, "ref": s.Default, "dry_run": true}},
@@ -865,7 +895,7 @@ func init() {
 		"delete_wiki_page", "list_releases", "get_release", "create_release", "list_environments", "list_deployments",
 		// Without a project these read or write the maintainer's own
 		// snippets and activity, which are not the run's.
-		"list_snippets", "get_snippet", "create_snippet", "list_events",
+		"list_snippets", "get_snippet", "create_snippet", "update_snippet", "delete_snippet", "list_events",
 		"get_blame", "list_job_artifacts", "get_job_artifact", "cherry_pick_commit", "revert_commit", "rebase_merge_request",
 		"create_label", "update_label", "delete_label", "create_milestone", "update_milestone", "delete_milestone",
 		"create_tag", "delete_tag"} {

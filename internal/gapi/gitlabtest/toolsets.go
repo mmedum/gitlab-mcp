@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -211,6 +212,8 @@ func (s *Server) serveToolsetWrite(w http.ResponseWriter, r *http.Request, p *pr
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodPost && match(seg, "snippets"):
 		s.createSnippet(w, r, p, user)
+	case (r.Method == http.MethodPut || r.Method == http.MethodDelete) && match(seg, "snippets", "*"):
+		s.writeSnippet(w, r, p, user, seg[1])
 	case r.Method == http.MethodPost && match(seg, "releases"):
 		s.createRelease(w, r, p, user)
 	default:
@@ -245,6 +248,8 @@ func (s *Server) serveToolsetTop(w http.ResponseWriter, r *http.Request, user st
 		writePage(s, w, r, rows)
 	case r.Method == http.MethodPost && match(seg, "snippets"):
 		s.createSnippet(w, r, nil, user)
+	case (r.Method == http.MethodPut || r.Method == http.MethodDelete) && match(seg, "snippets", "*"):
+		s.writeSnippet(w, r, nil, user, seg[1])
 	case get && len(seg) >= 2 && seg[0] == "snippets":
 		sn := s.findSnippet(nil, seg[1], user)
 		if sn == nil {
@@ -319,16 +324,19 @@ func (s *Server) updateWikiPage(w http.ResponseWriter, r *http.Request, p *proje
 
 // -------------------------------------------------------------- snippets
 
-// findSnippet finds a snippet of p, or a personal one when p is nil,
-// that user may read: a private one is its author's and, in a project,
-// its members'.
+// findSnippet finds a snippet of p, or one on the personal routes when p
+// is nil, that user may read: a private one is its author's and, in a
+// project, its members'. The personal routes find the user's own
+// snippets in projects too, as SnippetsFinder does without a project;
+// GitLab's also finds others' in projects the user sees, which this
+// instance leaves out.
 func (s *Server) findSnippet(p *project, id, user string) *snippet {
 	for _, sn := range s.snippets {
 		if itoa(sn.ID) != id {
 			continue
 		}
 		switch {
-		case p == nil && sn.ProjectID != nil, p != nil && (sn.ProjectID == nil || *sn.ProjectID != p.ID):
+		case p == nil && sn.ProjectID != nil && sn.Author.Username != user, p != nil && (sn.ProjectID == nil || *sn.ProjectID != p.ID):
 			return nil
 		case sn.Visibility == "private" && sn.Author.Username != user && (p == nil || !p.members[user]):
 			return nil
@@ -343,8 +351,13 @@ func (s *Server) snippetJSON(sn *snippet) map[string]any {
 	for _, f := range sn.files {
 		files = append(files, map[string]any{"path": f[0], "raw_url": sn.WebURL + "/raw/main/" + f[0]})
 	}
-	return withExtra(sn.Snippet, map[string]any{"files": files, "file_name": sn.files[0][0], "raw_url": sn.WebURL + "/raw"})
+	// GitLab shows times to the millisecond and keeps them to the
+	// microsecond.
+	return withExtra(sn.Snippet, map[string]any{"files": files, "file_name": sn.files[0][0], "raw_url": sn.WebURL + "/raw",
+		"created_at": shownTime(sn.CreatedAt), "updated_at": shownTime(sn.UpdatedAt)})
 }
+
+func shownTime(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
 
 // serveSnippet serves one snippet, its first file raw, or one file raw
 // at a ref, which is HEAD or the snippet repository's main.
@@ -404,7 +417,7 @@ func (s *Server) createSnippet(w http.ResponseWriter, r *http.Request, p *projec
 		id = max(id, sn.ID)
 	}
 	id++
-	now := s.opts.Now().UTC()
+	now := s.opts.Now().UTC().Truncate(time.Microsecond)
 	sn := &snippet{Snippet: gitlab.Snippet{ID: id, Title: title, Visibility: visibility, Author: s.user(user), CreatedAt: now, UpdatedAt: now,
 		WebURL: fmt.Sprintf("%s/-/snippets/%d", s.URL, id)}}
 	if d, ok := b.str("description"); ok {
@@ -419,6 +432,204 @@ func (s *Server) createSnippet(w http.ResponseWriter, r *http.Request, p *projec
 	}
 	s.snippets = append(s.snippets, sn)
 	writeJSON(w, http.StatusCreated, s.snippetJSON(sn))
+}
+
+// writeSnippet is PUT and DELETE on a snippet, as lib/api/snippets.rb
+// and project_snippets.rb make them. The personal routes find only the
+// user's own snippets, their snippets in projects included
+// (SnippetsFinder with author:); a project's find the project's. An
+// update needs update_snippet: the author, or a maintainer of the
+// project. A delete needs admin_snippet: the author, at least a reporter
+// in a project, or a maintainer; it is conditional on
+// If-Unmodified-Since, as destroy_conditionally! makes it.
+func (s *Server) writeSnippet(w http.ResponseWriter, r *http.Request, p *project, user, id string) {
+	var sn *snippet
+	if p == nil {
+		for _, c := range s.snippets {
+			if itoa(c.ID) == id && c.Author.Username == user {
+				sn = c
+			}
+		}
+	} else {
+		sn = s.findSnippet(p, id, user)
+	}
+	if sn == nil {
+		message(w, http.StatusNotFound, "404 Snippet Not Found")
+		return
+	}
+	author := sn.Author.Username == user
+	if r.Method == http.MethodDelete {
+		if p != nil && p.levels[user] < 40 && (!author || p.levels[user] < 20) {
+			message(w, http.StatusForbidden, "403 Forbidden")
+			return
+		}
+		if since, ok := unmodifiedSince(r); ok && sn.UpdatedAt.After(since) {
+			message(w, http.StatusPreconditionFailed, "412 Precondition Failed")
+			return
+		}
+		s.snippets = slices.DeleteFunc(s.snippets, func(c *snippet) bool { return c == sn })
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if p != nil && !author && p.levels[user] < 40 {
+		message(w, http.StatusForbidden, "403 Forbidden")
+		return
+	}
+	s.updateSnippet(w, r, sn)
+}
+
+// snippetFileAction is one element of a snippet update's files.
+type snippetFileAction struct {
+	Action       string `json:"action"`
+	FilePath     string `json:"file_path"`
+	PreviousPath string `json:"previous_path"`
+	Content      string `json:"content"`
+}
+
+// valid is SnippetInputAction's validation.
+func (a snippetFileAction) valid() bool {
+	switch a.Action {
+	case "create":
+		return a.Content != ""
+	case "update":
+		return a.FilePath != "" && a.Content != "" && (a.PreviousPath == "" || a.PreviousPath == a.FilePath)
+	case "delete":
+		return a.FilePath != ""
+	case "move":
+		return a.PreviousPath != "" && a.FilePath != a.PreviousPath
+	}
+	return false
+}
+
+// updateSnippet is the body of a snippet PUT, as the API's params and
+// Snippets::UpdateService take it: files excludes content and file_name,
+// content on a snippet of several files is 400, an invalid action 422,
+// and an action the snippet's repository cannot commit 400. updated_at
+// moves when anything changed. Visibility is taken as sent.
+func (s *Server) updateSnippet(w http.ResponseWriter, r *http.Request, sn *snippet) {
+	b, ok := readBody(w, r)
+	if !ok || !snippetUpdateParams(w, b, len(sn.files)) {
+		return
+	}
+	var actions []snippetFileAction
+	if b.has("files") {
+		if err := json.Unmarshal(b["files"], &actions); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "files is invalid"})
+			return
+		}
+	}
+	files := slices.Clone(sn.files)
+	for _, a := range actions {
+		if !a.valid() {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"message": map[string]any{"error": "Snippet actions have invalid data"}})
+			return
+		}
+		if files, ok = applySnippetAction(files, a); !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"message": map[string]any{"error": "Repository Error updating the snippet"}})
+			return
+		}
+	}
+	if v, sent := b.str("content"); sent {
+		files[0][1] = v
+	}
+	if v, sent := b.str("file_name"); sent {
+		files[0][0] = v
+	}
+	next := sn.Snippet
+	if v, sent := b.str("title"); sent {
+		next.Title = v
+	}
+	if v, sent := b.str("description"); sent {
+		next.Description = &v
+	}
+	if v, sent := b.str("visibility"); sent {
+		next.Visibility = v
+	}
+	if !reflect.DeepEqual(next, sn.Snippet) || !slices.Equal(files, sn.files) {
+		next.UpdatedAt = s.opts.Now().UTC().Truncate(time.Microsecond)
+		sn.Snippet, sn.files = next, files
+	}
+	writeJSON(w, http.StatusOK, s.snippetJSON(sn))
+}
+
+// snippetUpdateParams answers the refusals of a snippet PUT's params,
+// Grape's and validate_params_for_multiple_files; it reports whether
+// the update may go on.
+func snippetUpdateParams(w http.ResponseWriter, b body, files int) bool {
+	if !b.valid(w, "visibility", "private", "internal", "public") {
+		return false
+	}
+	if !b.has("content") && !b.has("description") && !b.has("files") && !b.has("file_name") && !b.has("title") && !b.has("visibility") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "content, description, files, file_name, title, visibility are missing, " +
+			"at least one parameter must be provided"})
+		return false
+	}
+	for _, k := range []string{"content", "file_name"} {
+		if b.has("files") && b.has(k) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "files, " + k + " are mutually exclusive"})
+			return false
+		}
+	}
+	for _, k := range []string{"title", "content"} {
+		if v, sent := b.str(k); sent && strings.TrimSpace(v) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": k + " is empty"})
+			return false
+		}
+	}
+	if (b.has("content") || b.has("file_name")) && files > 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"message": map[string]any{
+			"error": "To update Snippets with multiple files, you must use the `files` parameter"}})
+		return false
+	}
+	return true
+}
+
+// applySnippetAction commits one file action as the snippet repository
+// would; it reports false for one Git refuses: a file created twice, or
+// one updated, deleted or moved that is not there.
+func applySnippetAction(files [][2]string, a snippetFileAction) ([][2]string, bool) {
+	find := func(path string) int { return slices.IndexFunc(files, func(f [2]string) bool { return f[0] == path }) }
+	switch a.Action {
+	case "create":
+		if find(a.FilePath) >= 0 {
+			return nil, false
+		}
+		return append(files, [2]string{a.FilePath, a.Content}), true
+	case "update":
+		i := find(a.FilePath)
+		if i < 0 {
+			return nil, false
+		}
+		files[i][1] = a.Content
+	case "delete":
+		i := find(a.FilePath)
+		if i < 0 {
+			return nil, false
+		}
+		files = slices.Delete(files, i, i+1)
+	case "move":
+		i := find(a.PreviousPath)
+		if i < 0 || find(a.FilePath) >= 0 {
+			return nil, false
+		}
+		files[i][0] = a.FilePath
+		if a.Content != "" {
+			files[i][1] = a.Content
+		}
+	}
+	return files, true
+}
+
+// unmodifiedSince reads If-Unmodified-Since as check_unmodified_since!
+// does, with Ruby's Time.parse: an RFC 3339 time keeps its fraction, an
+// HTTP-date is to the second, and anything unparseable is no condition.
+func unmodifiedSince(r *http.Request) (time.Time, bool) {
+	v := r.Header.Get("If-Unmodified-Since")
+	if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+		return t, true
+	}
+	t, err := http.ParseTime(v)
+	return t, err == nil
 }
 
 // -------------------------------------------------------------- releases
@@ -593,6 +804,33 @@ func (s *Server) SnippetVisibility(id int64) string {
 		}
 	}
 	return ""
+}
+
+// SnippetFiles is a snippet's files, each its path and content, in
+// order; nil when there is no such snippet.
+func (s *Server) SnippetFiles(id int64) [][2]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sn := range s.snippets {
+		if sn.ID == id {
+			return slices.Clone(sn.files)
+		}
+	}
+	return nil
+}
+
+// TouchSnippet moves a snippet's updated_at, as an edit made elsewhere
+// does.
+func (s *Server) TouchSnippet(id int64, at time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sn := range s.snippets {
+		if sn.ID == id {
+			sn.UpdatedAt = at.UTC()
+			return true
+		}
+	}
+	return false
 }
 
 // Release is a project's release of a tag.

@@ -66,6 +66,9 @@ var plainInputs = map[string]string{
 		"action (§18 row 67)",
 	"save_wiki_page.content":     "a wiki page: WikiPages::CreateService and UpdateService run no quick action (§18 row 67)",
 	"create_snippet.description": "a snippet's description: Snippets::CreateService runs no quick action (§18 row 67)",
+	"update_snippet.description": "a snippet's description: Snippets::UpdateService runs no quick action (§18 row 103)",
+	"update_snippet.content": "a snippet file's content, committed to the snippet's repository; Snippets::UpdateService runs no " +
+		"quick action (§18 row 103)",
 	"create_release.description": "release notes: Releases::CreateService runs no quick action (§18 row 67)",
 	"create_release.name":        "a release's name: Releases::CreateService runs no quick action (§18 row 67)",
 	"create_release.tag_message": "an annotated tag's message, written into Git; Releases::CreateService runs no quick action (§18 row 67)",

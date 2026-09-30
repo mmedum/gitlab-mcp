@@ -64,11 +64,12 @@ func TestQuestionsAreInertMarkdown(t *testing.T) {
 		"delete_milestone":      AskDeleteMilestone(x, x),
 		"delete_wiki_page":      AskDeleteWikiPage(x, x, x),
 		"delete_comment":        AskDeleteComment(x, "merge_request", 6, x, x),
+		"delete_snippet":        AskDeleteSnippet(x, 7, x, []string{x, x}),
 	}
 	// Every hostile value reaches its own span.
 	wantSpans := map[string]int{"merge_merge_request": 4, "approve_merge_request": 2, "play_job": 5, "run_pipeline": 4,
 		"create_release": 4, "create_tag": 3, "update_issue": 2, "delete_branch": 2, "delete_tag": 2, "delete_label": 2,
-		"delete_milestone": 2, "delete_wiki_page": 3, "delete_comment": 3}
+		"delete_milestone": 2, "delete_wiki_page": 3, "delete_comment": 3, "delete_snippet": 3}
 	for name, q := range qs {
 		if !strings.HasPrefix(q.Text, name+": ") {
 			t.Errorf("%s: %q", name, q.Text)
@@ -124,6 +125,13 @@ func TestAskBinds(t *testing.T) {
 	long := strings.Repeat("w", 400)
 	if x, y := AskDeleteComment("p", "issue", 1, "u", long), AskDeleteComment("p", "issue", 1, "u", long[:399]+"!"); x.Text != y.Text || x.Bind == y.Bind {
 		t.Error("a comment past its shown start is not bound")
+	}
+	if x, y := AskDeleteSnippet("p", 1, long, []string{"a"}), AskDeleteSnippet("p", 1, long[:399]+"!", []string{"a"}); x.Text != y.Text || x.Bind == y.Bind {
+		t.Error("a snippet's title past its shown start is not bound")
+	}
+	files := []string{strings.Repeat("f", 200), "b"}
+	if x, y := AskDeleteSnippet("", 1, "t", files), AskDeleteSnippet("", 1, "t", append(files[:1:1], "c")); x.Text != y.Text || x.Bind == y.Bind {
+		t.Error("a snippet's file past the shown names is not bound")
 	}
 	one, two := 1, 2
 	if x, y := AskDeleteLabel("p", "triage", &one), AskDeleteLabel("p", "triage", &two); x.Text == y.Text || x.Bind != y.Bind {

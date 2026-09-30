@@ -228,6 +228,22 @@ func AskDeleteWikiPage(project, title, slug string) Question {
 	)
 }
 
+// AskDeleteSnippet asks before delete_snippet; project is empty for a
+// personal snippet. The whole title and every file name are bound.
+func AskDeleteSnippet(project string, id int64, title string, files []string) Question {
+	where := "your personal snippets"
+	if project != "" {
+		where = quoted(project, quotedLen)
+	}
+	q := ask(
+		fmt.Sprintf("delete_snippet: delete snippet %d, %s, in %s for good?", id, quoted(title, quotedLen), where),
+		"files: "+quoted(strings.Join(files, ", "), quotedLen),
+		"Its history goes with it.",
+	)
+	q.Bind += "\x00" + title + "\x00" + strings.Join(files, "\x00")
+	return q
+}
+
 // AskDeleteComment asks before delete_comment, showing the start of the
 // comment; the whole comment is bound. kind is "issue" or
 // "merge_request".

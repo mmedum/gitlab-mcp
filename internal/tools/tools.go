@@ -29,7 +29,7 @@ func definitions() []definition {
 		runPipeline(), retryPipeline(), retryJob(), playJob(), cancelPipeline(),
 		deleteBranch(), deleteComment(),
 		listWikiPages(), getWikiPage(), saveWikiPage(), deleteWikiPage(),
-		listSnippets(), getSnippet(), createSnippet(),
+		listSnippets(), getSnippet(), createSnippet(), updateSnippet(), deleteSnippet(),
 		listReleases(), getRelease(), createRelease(), createTag(), deleteTag(),
 		createLabel(), updateLabel(), deleteLabel(), createMilestone(), updateMilestone(), deleteMilestone(),
 		listEnvironments(), listDeployments(),
