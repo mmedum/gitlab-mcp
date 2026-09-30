@@ -328,6 +328,29 @@ func quotedList(ss []string) string {
 	return strings.Join(out, ", ")
 }
 
+// breakBareDomains breaks the last dot of each bare domain bareShape
+// finds, except in an address, on either side of its @: jane.ai@
+// example.com is an address a question means to show, and a client
+// links it as mail at most.
+func breakBareDomains(s string) string {
+	ms := bareShape.FindAllStringSubmatchIndex(s, -1)
+	if len(ms) == 0 {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range ms {
+		if (m[0] > 0 && s[m[0]-1] == '@') || s[m[1]-1] == '@' {
+			continue
+		}
+		b.WriteString(s[last:m[2]])
+		b.WriteString("[.]")
+		last = m[3]
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
 // quoted is text from GitLab or from a call's arguments, shown in a
 // question put to the person (§4.12), where no boundary can go: a client
 // draws the question as plain text in a dialog, or as Markdown. It
@@ -336,8 +359,8 @@ func quotedList(ss []string) string {
 // is made one line; every backtick, grave or acute mark and quote mark
 // a reader could take for one becomes a plain single quote, so it
 // cannot close its span or seem to; and a URL scheme, a mailto:, a
-// leading "www." and a bare domain followed by a path are broken so no
-// client draws a link. It is cut at max runes. Text with nothing to show
+// leading "www.", a bare domain followed by a path, and a bare domain a
+// fuzzy linkifier would link are broken so no client draws a link. It is cut at max runes. Text with nothing to show
 // is said in words, since an empty span is two backticks Markdown shows
 // as they are: "empty" when it is blank, and "invisible characters
 // only" when it is not.
@@ -347,10 +370,11 @@ func quoted(s string, max int) string {
 	s, _ = Line(s, max+1)
 	s = strings.Join(strings.Fields(blankMarks.Replace(s)), " ")
 	s = quoteMarks.Replace(s)
-	s = linkShape.ReplaceAllString(s, "${1}${2}[:]//")
-	s = mailtoShape.ReplaceAllString(s, "${1}${2}[:]")
-	s = wwwShape.ReplaceAllString(s, "${1}${2}[.]")
-	s = pathShape.ReplaceAllString(s, "${1}${2}[.]${3}${4}")
+	s = linkShape.ReplaceAllString(s, "${1}[:]//")
+	s = mailtoShape.ReplaceAllString(s, "${1}[:]")
+	s = wwwShape.ReplaceAllString(s, "${1}[.]")
+	s = pathShape.ReplaceAllString(s, "${1}[.]${2}${3}")
+	s = breakBareDomains(s)
 	switch {
 	case s == "" && blank:
 		return "empty"
@@ -375,19 +399,37 @@ var (
 	// blankMarks are characters drawn as blank space that hidden does not
 	// remove; they become spaces and collapse with the rest.
 	blankMarks = strings.NewReplacer("\u2800", " ", "\u3164", " ", "\uffa0", " ")
-	// Each shape starts where a letter or digit does not precede it,
-	// spelled out because \b is ASCII-only and counts "_" as a letter: a
-	// link after an underscore or in a non-Latin script is found too.
+	// No shape is anchored: \b is ASCII-only, and a class before the
+	// shape would consume a separator the next link needs, which is how
+	// 2.0.0 missed a link right after punctuation or another link. A
+	// match inside a longer word is broken too, which costs only a
+	// bracket.
 	//
 	// linkShape is a URL scheme followed by //, as a client links it.
-	linkShape = regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}+.-])([a-z][a-z0-9+.-]*)://`)
+	linkShape = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*)://`)
 	// mailtoShape is a mail link without //.
-	mailtoShape = regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}])(mailto):`)
+	mailtoShape = regexp.MustCompile(`(?i)(mailto):`)
 	// wwwShape is a host a client links without a scheme.
-	wwwShape = regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}])(www)\.`)
+	wwwShape = regexp.MustCompile(`(?i)(www)\.`)
 	// pathShape is a bare domain followed by a path, a port, a query or a
 	// fragment, x.example/..., which a client links too; its last dot is
-	// broken. Letters from any script count, so a non-ASCII domain is
-	// broken as well.
-	pathShape = regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}-])([\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*)\.(\p{L}{2,63})([/:?#])`)
+	// broken. A label is what linkify-it reads as one, in any script, so a
+	// non-ASCII domain is broken as well.
+	pathShape = regexp.MustCompile(`(?i)(` + domain + `)\.([\p{L}\p{M}]{2,63})([/:?#])`)
+	// bareShape is a bare domain with nothing after it, evil.com, which a
+	// client with a fuzzy linkifier links. It is the rule linkify-it (the
+	// markdown-it linkifier) applies with fuzzyLink on: a last label of
+	// two ASCII letters, a punycode label, or one of its default generic
+	// TLDs. A file name like report.pdf is left alone; a Markdown file's
+	// is not, since .md is a country's. The match ends where the word does.
+	bareShape = regexp.MustCompile(`(?i)` + domain + `(\.)(?:[a-z]{2}|biz|com|edu|gov|net|org|pro|web|xxx|aero|asia|coop|info|museum|name|shop|рф|xn--[a-z0-9-]+)(?:[` + domainSep + `]|$)`)
+)
+
+// A domain as linkify-it reads one: labels of characters that are not
+// space, punctuation, a control or one of its text separators, so a
+// symbol counts (pay$.com), with hyphens among them, joined by dots.
+const (
+	domainSep   = `\s\p{Z}\p{P}\p{Cc}<>\x{ff5c}`
+	domainLabel = `(?:[^` + domainSep + `]|-)+`
+	domain      = domainLabel + `(?:\.` + domainLabel + `)*`
 )

@@ -30,6 +30,11 @@ lifted verbatim.
 
 - `mark_todos_done` sets `openWorldHint` false, as `add_todo` and `subscribe` do: only you see its effect.
 
+### Fixed
+
+- A question breaks a link right after punctuation or another link, and in a domain whose letters carry combining marks; 2.0.0 left those drawable.
+- A question breaks a bare domain a fuzzy Markdown linkifier would link, like `evil.com`; a file name like `report.pdf` and an email address stay as they are.
+
 ## [2.0.0] - 2026-09-29
 
 ### Added

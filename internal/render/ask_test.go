@@ -21,6 +21,18 @@ func TestQuotedIsOneInertLine(t *testing.T) {
 		{"see https://evil.example.com/a and HTTP://x.example", span("see https[:]//evil.example[.]com/a and HTTP[:]//x.example")},
 		{"visit www.evil.example today", span("visit www[.]evil.example today")},
 		{"go to evil.example.com/login now", span("go to evil.example[.]com/login now")},
+		// A link right after punctuation or another link is broken too:
+		// the shapes anchored in 2.0.0 consumed the separator and missed these.
+		{"see .https://evil.example and -https://evil.example", span("see .https[:]//evil.example and -https[:]//evil.example")},
+		{"x.example/y.example/z", span("x[.]example/y[.]example/z")},
+		{"www.www.evil.example mailto:mailto:someone@example.com", span("www[.]www[.]evil.example mailto[:]mailto[:]someone@example.com")},
+		{"see bu\u0308cher.example/a", span("see bu\u0308cher[.]example/a")},
+		// A bare domain is broken where a fuzzy linkifier would link it,
+		// and a file name or an address is not.
+		{"visit evil.com or sub.evil.io, then evil.co.uk.", span("visit evil[.]com or sub.evil[.]io, then evil.co[.]uk.")},
+		{"report.pdf and write to someone@example.com", span("report.pdf and write to someone@example.com")},
+		{"jane.ai@example.com and sales.team.eu@example.com", span("jane.ai@example.com and sales.team.eu@example.com")},
+		{"pay$.com and evil\u263a.com", span("pay$[.]com and evil\u263a[.]com")},
 		{"write to mailto:someone@example.com", span("write to mailto[:]someone@example.com")},
 		{"\u201cclose\u201d \u2018it\u2019 \uff02now\uff02 \u00abhere\u00bb", span("'close' 'it' 'now' 'here'")},
 		{"zero\u200bwidth \u202ereversed\u0007bell \U000E0041tag", span("zerowidth reversed bell tag")},
