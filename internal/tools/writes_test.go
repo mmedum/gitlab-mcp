@@ -118,6 +118,10 @@ func TestDryRunsSendNothing(t *testing.T) {
 		{"mark_todos_done", map[string]any{"ids": []int{gitlabtest.TodoAssigned}}},
 		{"track_time", map[string]any{"project": alpha, "type": "issue", "iid": 3, "updated_at": issueWitness(h, 3),
 			"estimate": "1w", "add_spent": "-1h", "total_time_spent": 36000}},
+		{"subscribe", map[string]any{"project": alpha, "type": "issue", "iid": 1, "unsubscribe": true}},
+		{"subscribe", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "unsubscribe": true}},
+		{"add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 1}},
+		{"add_todo", map[string]any{"project": alpha, "type": "merge_request", "iid": 1}},
 	} {
 		args := c.args
 		args["dry_run"] = true
@@ -590,6 +594,137 @@ func TestMarkTodosDone(t *testing.T) {
 		t.Errorf("state %q\n%s", h.gl.TodoState(gitlabtest.TodoAssigned), text)
 	}
 	h.fails("mark_todos_done", map[string]any{"ids": []int{}}, "invalid")
+}
+
+// A to-do you add has an id mark_todos_done takes. While it is pending
+// GitLab adds no other, and the result names the one there; a to-do of
+// another kind does not stop it.
+func TestAddTodo(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, out := h.ok("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 1})
+	id, _ := get(out, "todo_id").(float64)
+	if get(out, "outcome") != "created" || id == 0 || h.gl.TodoState(int64(id)) != "pending" {
+		t.Fatalf("created: %v", out)
+	}
+	if !strings.Contains(text, "Added a to-do for #1.") || !strings.Contains(text, fmt.Sprintf("To-do item %d", int64(id))) {
+		t.Errorf("text:\n%s", text)
+	}
+	sent := writesSent(h)
+	text, out = h.ok("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 1})
+	if get(out, "outcome") != "unchanged" || get(out, "todo_id") != id || !strings.Contains(text, "already there") {
+		t.Errorf("again: %v\n%s", out, text)
+	}
+	if writesSent(h) != sent+1 || len(h.gl.PendingTodos("alice")) != 3 {
+		t.Errorf("again: %d writes, pending %v", writesSent(h)-sent, h.gl.PendingTodos("alice"))
+	}
+	_, out = h.ok("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 1, "dry_run": true})
+	if get(out, "outcome") != "dry_run" || get(out, "todo_id") != id || get(out, "would_send") != nil {
+		t.Errorf("dry run with one there: %v", out)
+	}
+	if _, out = h.ok("mark_todos_done", map[string]any{"ids": []float64{id}}); get(out, "outcome") != "done" {
+		t.Fatalf("mark: %v", out)
+	}
+	if _, out = h.ok("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 1}); get(out, "outcome") != "created" ||
+		get(out, "todo_id") == id {
+		t.Errorf("after it was done: %v", out)
+	}
+	// alice's review request on !1 is pending, and is not one she added.
+	if _, out = h.ok("add_todo", map[string]any{"project": alpha, "type": "merge_request", "iid": 1}); get(out, "outcome") != "created" {
+		t.Errorf("merge request: %v", out)
+	}
+	h.fails("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 999}, "not_found")
+	h.fails("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 999, "dry_run": true}, "not_found")
+	h.fails("add_todo", map[string]any{"project": alpha, "type": "epic", "iid": 1}, "invalid")
+}
+
+// A lost answer is sent again: the second lands as GitLab's 304, and
+// the result names the to-do the first added.
+func TestALostTodoIsSentAgain(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/2/todo", AfterApply: true,
+		Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	_, out := h.ok("add_todo", map[string]any{"project": alpha, "type": "issue", "iid": 2})
+	pending := h.gl.PendingTodos("alice")
+	if get(out, "outcome") != "unchanged" || get(out, "todo_id") != float64(pending[len(pending)-1]) || len(pending) != 3 {
+		t.Errorf("result %v, pending %v", out, pending)
+	}
+}
+
+// You are subscribed to what you take part in; unsubscribing and
+// subscribing change it, and asking for the state it is in is unchanged.
+func TestSubscribe(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	issue := map[string]any{"project": alpha, "type": "issue", "iid": 1}
+	with := func(extra map[string]any) map[string]any {
+		out := maps.Clone(issue)
+		maps.Copy(out, extra)
+		return out
+	}
+	text, out := h.ok("subscribe", issue)
+	if get(out, "outcome") != "unchanged" || get(out, "subscribed") != true || get(out, "web_url") == "" ||
+		!strings.Contains(text, "You already were subscribed") {
+		t.Errorf("a participant: %v\n%s", out, text)
+	}
+	text, out = h.ok("subscribe", with(map[string]any{"unsubscribe": true}))
+	if get(out, "outcome") != "unsubscribed" || get(out, "subscribed") != false || h.gl.Subscribed(alpha, "issue", 1, "alice") ||
+		!strings.Contains(text, "Unsubscribed you from #1.") {
+		t.Errorf("unsubscribe: %v\n%s", out, text)
+	}
+	if _, out = h.ok("subscribe", with(map[string]any{"unsubscribe": true})); get(out, "outcome") != "unchanged" || get(out, "subscribed") != false {
+		t.Errorf("unsubscribe again: %v", out)
+	}
+	_, out = h.ok("subscribe", with(map[string]any{"dry_run": true}))
+	if get(out, "outcome") != "dry_run" || get(out, "subscribed") != false || get(out, "would_send", "operation") != "subscribe to the issue" {
+		t.Errorf("dry run: %v", out)
+	}
+	if _, out = h.ok("subscribe", issue); get(out, "outcome") != "subscribed" || !h.gl.Subscribed(alpha, "issue", 1, "alice") {
+		t.Errorf("subscribe: %v", out)
+	}
+	_, out = h.ok("subscribe", with(map[string]any{"dry_run": true}))
+	if get(out, "outcome") != "dry_run" || get(out, "would_send") != nil || !strings.Contains(fmt.Sprint(get(out, "notes")), "already are subscribed") {
+		t.Errorf("dry run, already: %v", out)
+	}
+	mr := map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "unsubscribe": true}
+	if _, out = h.ok("subscribe", mr); get(out, "outcome") != "unsubscribed" || h.gl.Subscribed(alpha, "mr", 1, "alice") {
+		t.Errorf("merge request: %v", out)
+	}
+	h.fails("subscribe", map[string]any{"project": alpha, "type": "issue", "iid": 999}, "not_found")
+	h.fails("subscribe", map[string]any{"project": alpha, "type": "issue", "iid": 0}, "invalid")
+}
+
+// GitLab lets only those who may update a merge request subscribe to it;
+// anyone who can read an issue may subscribe to it.
+func TestSubscribingToAMergeRequestNeedsTheRightsToUpdateIt(t *testing.T) {
+	h := newHarness(t, harnessOptions{token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
+	text := h.fails("subscribe", map[string]any{"project": alpha, "type": "merge_request", "iid": 1}, "forbidden")
+	if !strings.Contains(text, "the Developer role or higher, or its author or an assignee") || h.gl.Subscribed(alpha, "mr", 1, "dave") {
+		t.Errorf("forbidden: %s", text)
+	}
+	if _, out := h.ok("subscribe", map[string]any{"project": alpha, "type": "issue", "iid": 1}); get(out, "outcome") != "subscribed" {
+		t.Errorf("issue: %v", out)
+	}
+	h.gl.SetMemberLevel(alpha, "dave", 30)
+	if _, out := h.ok("subscribe", map[string]any{"project": alpha, "type": "merge_request", "iid": 1}); get(out, "outcome") != "subscribed" {
+		t.Errorf("as a Developer: %v", out)
+	}
+}
+
+// Subscribing and adding a to-do are held to the allow-list by the
+// item's project, as marking one done is, and nothing is sent.
+func TestSubscriptionsAndNewTodosAreHeldToTheAllowList(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: config.Config{WriteNamespaces: []string{gitlabtest.GroupSub}}})
+	sent := writesSent(h)
+	for _, dry := range []bool{false, true} {
+		for _, tool := range []string{"subscribe", "add_todo"} {
+			text := h.fails(tool, map[string]any{"project": alpha, "type": "issue", "iid": 1, "dry_run": dry}, "blocked")
+			if !strings.Contains(text, config.EnvWriteNamespaces) {
+				t.Errorf("%s: %s", tool, text)
+			}
+		}
+	}
+	if writesSent(h) != sent || len(h.gl.PendingTodos("alice")) != 2 {
+		t.Error("a write outside the allow-list was sent")
+	}
 }
 
 // ------------------------------------------------------ where writes go

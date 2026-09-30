@@ -845,7 +845,7 @@ func (c *Client) decide(ctx context.Context, call Call, name string, repeatable 
 	if sendErr != nil {
 		return classifyTransport(ctx, name, repeatable, sendErr)
 	}
-	if res.status >= 200 && res.status < 300 {
+	if res.status >= 200 && res.status < 300 || res.status == http.StatusNotModified && call.NotModified != "" {
 		return verdict{}
 	}
 	return classifyStatus(call, name, repeatable, res.status, res.header, res.body)

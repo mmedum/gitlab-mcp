@@ -453,3 +453,47 @@ func markTodosDone() definition {
 		text: render.TodosDone,
 	}
 }
+
+type addTodoIn struct {
+	Project idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	Type    string   `json:"type" jsonschema:"issue or merge_request"`
+	IID     int64    `json:"iid" jsonschema:"The number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	DryRun  bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
+}
+
+func addTodo() definition {
+	return tool[addTodoIn, model.TodoWrite]{
+		sp: spec{Name: "add_todo", Kind: Write, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+			Description: "Add a to-do item for yourself on an issue or a merge request. The result gives its id, which " +
+				"mark_todos_done takes. While a pending to-do you added is there, GitLab adds none and the result is unchanged, " +
+				"with that one's id; other pending items, such as a mention, do not count. Only you see your to-do list."},
+		run: func(ctx context.Context, svc *service.Service, in addTodoIn) (model.TodoWrite, error) {
+			return svc.AddTodo(ctx, string(in.Project), in.Type, in.IID)
+		},
+		text: render.TodoWrite,
+	}
+}
+
+// -------------------------------------------------------- subscriptions
+
+type subscribeIn struct {
+	Project     idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	Type        string   `json:"type" jsonschema:"issue or merge_request"`
+	IID         int64    `json:"iid" jsonschema:"The number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	Unsubscribe bool     `json:"unsubscribe,omitempty" jsonschema:"Unsubscribe instead of subscribing"`
+	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent, and whether you are subscribed now, without writing anything"`
+}
+
+func subscribe() definition {
+	return tool[subscribeIn, model.SubscriptionWrite]{
+		sp: spec{Name: "subscribe", Kind: Write, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+			Description: "Subscribe yourself to an issue's or a merge request's notifications, or unsubscribe with unsubscribe: " +
+				"true. You are already subscribed to what you created, are assigned to or commented on, until you unsubscribe. " +
+				"The result says whether you are subscribed, and says unchanged when you already were so. On a merge request " +
+				"GitLab allows it only to a Developer or higher, or its author or an assignee. Only you see your subscriptions."},
+		run: func(ctx context.Context, svc *service.Service, in subscribeIn) (model.SubscriptionWrite, error) {
+			return svc.Subscribe(ctx, string(in.Project), in.Type, in.IID, !in.Unsubscribe)
+		},
+		text: render.SubscriptionWrite,
+	}
+}

@@ -103,6 +103,10 @@ type Server struct {
 	groupLevels     map[int64]map[string]int
 	todos           []todo
 	snippets        []*snippet
+	// subscriptions is the subscription each user set on an item, by
+	// project, item and user; an item nobody set one on falls back to
+	// taking part in it.
+	subscriptions map[string]bool
 
 	faults   []*Fault
 	requests []Request
