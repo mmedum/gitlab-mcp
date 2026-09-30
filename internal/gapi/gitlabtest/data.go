@@ -56,6 +56,9 @@ type group struct {
 	path     string
 	name     string
 	parentID int64
+	// private groups are read only by their members and the members of
+	// a project in them.
+	private bool
 }
 
 type project struct {
@@ -116,6 +119,9 @@ type project struct {
 	environments []gitlab.Environment
 	deployments  []gitlab.Deployment
 	events       []event
+	// itemEvents are the resource events of each issue and merge
+	// request, by "issue:12" or "mr:3", oldest first.
+	itemEvents map[string][]itemEvent
 }
 
 // fakeSHA is a stable 40-hex id for a name.
@@ -150,6 +156,7 @@ func (s *Server) generate() {
 	s.nextIssueID = firstIssueID
 	s.nextMRID = firstMRID
 	s.nextNoteID = firstNoteID
+	s.nextEventID = firstItemEventID
 
 	alpha := s.newProject(GroupTop, "alpha", "Alpha", "public", firstGroupID, "alice", "bob")
 	s.fillAlpha(alpha)
@@ -157,6 +164,7 @@ func (s *Server) generate() {
 	s.fillSmall(beta)
 	secret := s.newProject(GroupTop, "secret", "Secret", "private", firstGroupID, "bob")
 	s.fillSmall(secret)
+	s.fillItemEvents(alpha, secret)
 	for i := range s.opts.ExtraProjects {
 		p := s.newProject(GroupTop, fmt.Sprintf("bulk-%04d", i+1), fmt.Sprintf("Bulk %d", i+1), "public", firstGroupID, "carol")
 		s.fillSmall(p)
@@ -201,6 +209,7 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		junit:       map[int64][]gitlab.TestCase{},
 		suiteErrors: map[int64]string{},
 		levels:      map[string]int{},
+		itemEvents:  map[string][]itemEvent{},
 	}
 	// The first member maintains the project; the rest develop it.
 	for i, m := range members {

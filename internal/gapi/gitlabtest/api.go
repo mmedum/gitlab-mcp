@@ -152,6 +152,8 @@ func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, 
 		writePage(s, w, r, relatedMRs(p, iss))
 	case get && match(rest, "closed_by"):
 		writePage(s, w, r, closedBy(p, iss))
+	case get && len(rest) == 1 && itemEventKinds[rest[0]] != "":
+		s.serveItemEvents(w, r, p, "issue:"+iid, itemEventKinds[rest[0]], "Issue", iss.ID, user)
 	case get && match(rest, "discussions"):
 		s.listDiscussions(w, r, p.discussions["issue:"+iid])
 	case get && match(rest, "discussions", "*"):
@@ -184,6 +186,8 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 		s.linkedIssues(w, r, p, mr, user, true)
 	case get && match(rest, "related_issues"):
 		s.linkedIssues(w, r, p, mr, user, false)
+	case get && len(rest) == 1 && itemEventKinds[rest[0]] != "" && rest[0] != "resource_weight_events":
+		s.serveItemEvents(w, r, p, "mr:"+iid, itemEventKinds[rest[0]], "MergeRequest", mr.ID, user)
 	case get && match(rest, "notes", "*"):
 		s.getNote(w, p, mrTarget(mr), rest[1])
 	case get && match(rest, "discussions"):

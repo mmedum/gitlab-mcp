@@ -83,6 +83,8 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 		"list_members":    {"query": nil},
 		"list_todos":      {"action": nil, "type": nil},
 		"search":          {"group": nil, "search": "package", "state": nil, "ref": nil},
+
+		"list_item_events": {"page_token": nil},
 	}
 	for _, tool := range list.Tools {
 		schema := tool.InputSchema.(map[string]any)
@@ -125,7 +127,7 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 		t.Fatalf("the per-call line or the request line is missing:\n%s", out)
 	}
 	// The second pass went deep: GitLab answered the payload reads.
-	for _, call := range []string{"get_issue", "list_discussions", "get_merge_request", "get_file", "get_commit_diff",
+	for _, call := range []string{"get_issue", "list_discussions", "list_issue_label_events", "get_merge_request", "get_file", "get_commit_diff",
 		"list_mr_diffs", "list_draft_notes", "compare_refs", "list_tags", "get_pipeline", "get_job_log", "get_test_report",
 		"lint_ci", "list_labels", "list_milestones", "list_members", "list_todos", "search"} {
 		if !strings.Contains(out, `"call":"`+call+`","attempt":1,"status":200`) {

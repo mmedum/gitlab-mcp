@@ -511,3 +511,92 @@ func linkIDs(rows []map[string]any) []any {
 	}
 	return out
 }
+
+// The event lists answer as GitLab's do: a label event whose label the
+// user cannot read is dropped after the page is cut, so the page is
+// short and X-Total counts it; a deleted label's event is kept with
+// label null; a deleted milestone's event is gone before paging; and a
+// merge request has no weight list.
+func TestItemEvents(t *testing.T) {
+	s := New(t, Options{})
+	get := func(path, token string) ([]map[string]any, *http.Response) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", s.URL+"/api/v4/projects/2001/"+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out []map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out, resp
+	}
+	alice, bob := s.Token(), s.TokenFor("bob", "api")
+	page2, resp := get("issues/1/resource_label_events?per_page=2&page=2", alice)
+	if len(page2) != 1 || resp.Header.Get("X-Total") != "4" || page2[0]["label"] != nil || page2[0]["action"] != "remove" {
+		t.Errorf("page 2 for alice = %v, X-Total %s", page2, resp.Header.Get("X-Total"))
+	}
+	if page2, _ = get("issues/1/resource_label_events?per_page=2&page=2", bob); len(page2) != 2 ||
+		page2[0]["label"].(map[string]any)["name"] != SecretLabel {
+		t.Errorf("page 2 for bob = %v", page2)
+	}
+	milestones, resp := get("issues/1/resource_milestone_events", alice)
+	if len(milestones) != 1 || resp.Header.Get("X-Total") != "1" || milestones[0]["resource_type"] != "Issue" {
+		t.Errorf("milestone events = %v", milestones)
+	}
+	if weights, _ := get("issues/1/resource_weight_events", alice); len(weights) != 2 || weights[0]["issue_id"] != float64(30001) ||
+		weights[0]["weight"] != float64(3) || weights[1]["weight"] != nil {
+		t.Errorf("weight events = %v", weights)
+	}
+	if _, resp := get("merge_requests/1/resource_weight_events", alice); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("a merge request's weight events: %d", resp.StatusCode)
+	}
+}
+
+// A private group's labels and milestones are read by its members and
+// the members of its projects only: its label events are dropped after
+// paging, its milestone events before. A milestone event carries the
+// item's state when it was made.
+func TestItemEventsGroupAccessAndState(t *testing.T) {
+	s := New(t, Options{})
+	do := func(method, path, token, body string) ([]map[string]any, *http.Response) {
+		t.Helper()
+		req, _ := http.NewRequest(method, s.URL+"/api/v4/projects/2001/"+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out []map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out, resp
+	}
+	alice, dave := s.Token(), s.TokenFor("dave", "api")
+	s.AddLabelEventsFor(ProjectAlpha, false, 2, 1, GroupLabel)
+	if rows, _ := do("GET", "issues/2/resource_label_events", dave, ""); len(rows) != 1 {
+		t.Errorf("a public group's label: %v", rows)
+	}
+	if rows, _ := do("GET", "merge_requests/1/resource_milestone_events", dave, ""); len(rows) != 1 {
+		t.Errorf("a public group's milestone: %v", rows)
+	}
+	s.SetGroupPrivate(GroupTop)
+	if rows, resp := do("GET", "issues/2/resource_label_events", dave, ""); len(rows) != 0 || resp.Header.Get("X-Total") != "1" {
+		t.Errorf("a private group's label for an outsider: %v, X-Total %s", rows, resp.Header.Get("X-Total"))
+	}
+	if rows, resp := do("GET", "merge_requests/1/resource_milestone_events", dave, ""); len(rows) != 0 || resp.Header.Get("X-Total") != "0" {
+		t.Errorf("a private group's milestone for an outsider: %v", rows)
+	}
+	if rows, _ := do("GET", "merge_requests/1/resource_milestone_events", alice, ""); len(rows) != 1 {
+		t.Errorf("a private group's milestone for a member of its project: %v", rows)
+	}
+
+	if _, resp := do("PUT", "issues/3", alice, `{"milestone_id":90001,"state_event":"close"}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("update: %d", resp.StatusCode)
+	}
+	if rows, _ := do("GET", "issues/3/resource_milestone_events", alice, ""); len(rows) != 1 || rows[0]["state"] != "closed" {
+		t.Errorf("milestone event state = %v", rows)
+	}
+}

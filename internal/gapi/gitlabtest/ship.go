@@ -46,7 +46,9 @@ func (s *Server) merge(w http.ResponseWriter, r *http.Request, p *project, mr *g
 	p.trees[mr.TargetBranch] = cloneTree(p.trees[mr.SourceBranch])
 	delete(p.fileCommits, mr.TargetBranch)
 	setBranch(p, mr.TargetBranch)
+	before := mrState(mr)
 	mr.State, mr.MergedAt, mr.MergeUser, mr.MergeCommitSHA = "merged", &now, &merger, &commit.ID
+	s.recordChanges(p, mrTarget(mr).key(), before, mrState(mr), user)
 	mr.DetailedMergeStatus = "not_open"
 	bump(&mr.UpdatedAt, now)
 	if remove, _ := b.boolean("should_remove_source_branch"); remove {

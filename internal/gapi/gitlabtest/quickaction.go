@@ -90,6 +90,8 @@ func (t target) key() string { return t.kind + ":" + itoa(t.iid) }
 // runCommands applies commands to t and returns GitLab's summary lines.
 func (s *Server) runCommands(p *project, t target, cmds []command, user string) []string {
 	now := s.opts.Now().UTC()
+	before := itemState{labels: slices.Clone(*t.labels), state: *t.state}
+	defer func() { s.recordChanges(p, t.key(), before, itemState{labels: *t.labels, state: *t.state}, user) }()
 	var summary []string
 	for _, c := range cmds {
 		switch c.name {
