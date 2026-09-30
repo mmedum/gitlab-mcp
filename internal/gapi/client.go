@@ -573,6 +573,10 @@ type attemptResult struct {
 	body   []byte
 }
 
+// TooLarge reports whether err is a response refused for being larger
+// than MaxResponseBytes.
+func TooLarge(err error) bool { return errors.Is(err, errTooLarge) }
+
 var (
 	errTooLarge      = fmt.Errorf("the response is larger than %d bytes", MaxResponseBytes)
 	errHeaderTimeout = errors.New("no response headers within the timeout")

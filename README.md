@@ -79,6 +79,7 @@ contract: tools keep their names and output fields.
 | `get_pipeline` | One pipeline with the jobs that failed, trigger jobs included |
 | `list_jobs` | A pipeline's jobs |
 | `get_job_log` | A window of a job's log, secrets masked; the failing section on request |
+| `get_test_report` | A pipeline's test counts and failed cases, secrets masked, bounded |
 | `lint_ci` | Check a project's CI configuration at a ref, or configuration you pass |
 | `list_job_artifacts` | The files a job kept as artifacts |
 | `get_job_artifact` | One text file of a job's artifacts, secrets masked, bounded |

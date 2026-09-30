@@ -562,6 +562,65 @@ type JobPipe struct {
 	ID int64 `json:"id"`
 }
 
+// TestReport is GET /projects/:id/pipelines/:pipeline_id/test_report:
+// every suite with every case, parsed from the jobs' JUnit artifacts
+// when read (TestReportEntity at v19.4.1-ee). Times are fractional
+// seconds, though the OpenAPI file says integer.
+type TestReport struct {
+	TotalTime    float64     `json:"total_time"`
+	TotalCount   int         `json:"total_count"`
+	SuccessCount int         `json:"success_count"`
+	FailedCount  int         `json:"failed_count"`
+	SkippedCount int         `json:"skipped_count"`
+	ErrorCount   int         `json:"error_count"`
+	TestSuites   []TestSuite `json:"test_suites"`
+}
+
+// TestSuite is one suite of a test report: a job's report, parallel jobs
+// merged. With SuiteError set it has no cases and its counts are 0. The
+// summary's suites carry no cases, and their build_ids are not decoded.
+type TestSuite struct {
+	Name         string     `json:"name"`
+	TotalTime    float64    `json:"total_time"`
+	TotalCount   int        `json:"total_count"`
+	SuccessCount int        `json:"success_count"`
+	FailedCount  int        `json:"failed_count"`
+	SkippedCount int        `json:"skipped_count"`
+	ErrorCount   int        `json:"error_count"`
+	SuiteError   *string    `json:"suite_error"`
+	TestCases    []TestCase `json:"test_cases"`
+}
+
+// TestCase is one case of a suite. A failure's or an error's detail is
+// in SystemOutput. The case's stack_trace is not decoded: JUnit is
+// GitLab's only test report parser, and it never sets one.
+type TestCase struct {
+	Status        string  `json:"status"` // success, failed, skipped or error
+	Name          string  `json:"name"`
+	Classname     *string `json:"classname"`
+	File          *string `json:"file"`
+	ExecutionTime float64 `json:"execution_time"` // seconds
+	SystemOutput  *string `json:"system_output"`
+}
+
+// TestReportSummary is GET …/pipelines/:pipeline_id/test_report_summary:
+// the counts GitLab stored as each job finished, with no cases.
+type TestReportSummary struct {
+	Total      TestReportTotal `json:"total"`
+	TestSuites []TestSuite     `json:"test_suites"`
+}
+
+// TestReportTotal is a summary's totals.
+type TestReportTotal struct {
+	Time       float64 `json:"time"`
+	Count      int     `json:"count"`
+	Success    int     `json:"success"`
+	Failed     int     `json:"failed"`
+	Skipped    int     `json:"skipped"`
+	Error      int     `json:"error"`
+	SuiteError *string `json:"suite_error"`
+}
+
 // Lint is GET /projects/:id/ci/lint.
 type Lint struct {
 	Valid      bool      `json:"valid"`

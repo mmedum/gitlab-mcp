@@ -208,6 +208,10 @@ func phase1(s scratch) []step {
 		{tool: "get_job_log", args: map[string]any{"project": p, "job_id": s.JobFailed, "failed_only": true}},
 		{tool: "get_job_log", args: map[string]any{"project": p, "job_id": s.JobFailed, "byte_offset": 0, "byte_limit": 2000}},
 		{tool: "get_job_log", args: map[string]any{"project": p, "job_id": s.JobPassed}},
+		{tool: "get_test_report", args: map[string]any{"project": p, "pipeline_id": s.Pipeline}},
+		{tool: "get_test_report", args: map[string]any{"project": p, "pipeline_id": s.Pipeline, "offset": 1}},
+		{tool: "get_test_report", args: map[string]any{"project": p, "pipeline_id": s.Pipeline, "offset": 5}, expectError: true,
+			why: "the report has one failed case, so offset 5 is past its end"},
 		{tool: "lint_ci", args: map[string]any{"project": p, "ref": s.Default, "simulate": true, "include_jobs": true, "offset": 10}},
 		{tool: "lint_ci", args: map[string]any{"project": p}},
 
@@ -782,8 +786,8 @@ var rules = map[string]rule{
 func init() {
 	for _, tool := range []string{"get_project", "get_issue", "list_discussions", "get_merge_request", "list_mr_files",
 		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
-		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "lint_ci",
-		"list_todos", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
+		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "get_test_report",
+		"lint_ci", "list_todos", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "create_branch",
 		"create_commit",
 		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "retry_pipeline", "retry_job",

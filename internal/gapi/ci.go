@@ -9,7 +9,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
-// The phase-1 CI reads: pipelines, jobs, a job's log and the CI lint.
+// The CI reads: pipelines, jobs, a job's log, test reports and the CI
+// lint.
 
 // PipelineQuery filters ListPipelines.
 type PipelineQuery struct {
@@ -50,6 +51,25 @@ func (c *Client) GetPipeline(ctx context.Context, p Project, id int64) (*gitlab.
 	var out gitlab.PipelineDetail
 	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/pipelines/{}", Args: []string{p.segment(), idArg(id)},
 		Name: "get_pipeline"}, &out)
+	return &out, err
+}
+
+// GetTestReport reads a pipeline's test report, every case of every
+// suite in one body: GitLab does not page it. A body over
+// MaxResponseBytes is refused; TooLarge tells that apart.
+func (c *Client) GetTestReport(ctx context.Context, p Project, pipeline int64) (*gitlab.TestReport, error) {
+	var out gitlab.TestReport
+	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/pipelines/{}/test_report", Args: []string{p.segment(), idArg(pipeline)},
+		Name: "get_test_report"}, &out)
+	return &out, err
+}
+
+// GetTestReportSummary reads the counts GitLab stored for a pipeline's
+// test report, with no cases.
+func (c *Client) GetTestReportSummary(ctx context.Context, p Project, pipeline int64) (*gitlab.TestReportSummary, error) {
+	var out gitlab.TestReportSummary
+	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/pipelines/{}/test_report_summary",
+		Args: []string{p.segment(), idArg(pipeline)}, Name: "get_test_report_summary"}, &out)
 	return &out, err
 }
 

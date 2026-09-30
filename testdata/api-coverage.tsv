@@ -368,8 +368,8 @@ GET /projects/{id}/pipelines/latest	deferred	1	the latest pipeline; list_pipelin
 GET /projects/{id}/pipelines/{pipeline_id}/bridges	written-off	1	deprecated in GitLab 19.2 for trigger_jobs, which lib/api/ci/pipelines.rb serves with the same handler
 GET /projects/{id}/pipelines/{pipeline_id}/trigger_jobs	used	1	Client.ListPipelineTriggerJobs: get_pipeline's failed trigger jobs and the downstream pipelines that failed them
 PUT /projects/{id}/pipelines/{pipeline_id}/metadata	deferred	1	renaming a pipeline (§17a)
-GET /projects/{id}/pipelines/{pipeline_id}/test_report	deferred	1	test reports (§17a)
-GET /projects/{id}/pipelines/{pipeline_id}/test_report_summary	deferred	1	test report summaries (§17a)
+GET /projects/{id}/pipelines/{pipeline_id}/test_report	used	1	Client.GetTestReport: get_test_report shows the counts and the failed cases
+GET /projects/{id}/pipelines/{pipeline_id}/test_report_summary	used	1	Client.GetTestReportSummary: get_test_report shows the stored counts when the full report is too large to read
 GET /projects/{id}/pipelines/{pipeline_id}/variables	written-off	1	pipeline variables: CI configuration and secrets (§8a)
 GET /pipelines	deferred	1	pipelines the account triggered; list_pipelines per project covers the task
 GET /projects/{id}/jobs	deferred	1	every job in a project; list_jobs per pipeline covers the task

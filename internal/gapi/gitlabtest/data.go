@@ -94,6 +94,13 @@ type project struct {
 	bridges   map[int64][]gitlab.Bridge
 	traces    map[int64]string
 	ciConfig  map[string]string
+	// junit holds each job's JUnit report by job id, and suiteErrors the
+	// jobs whose report GitLab could not parse.
+	junit       map[int64][]gitlab.TestCase
+	suiteErrors map[int64]string
+	// summaryLags holds the test report summaries back, as before the
+	// worker that writes them has run.
+	summaryLags bool
 
 	// Planning: the project's own labels and milestones, and each
 	// member's access level; members above says only who may see it.
@@ -191,6 +198,8 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		bridges:     map[int64][]gitlab.Bridge{},
 		traces:      map[int64]string{},
 		ciConfig:    map[string]string{},
+		junit:       map[int64][]gitlab.TestCase{},
+		suiteErrors: map[int64]string{},
 		levels:      map[string]int{},
 	}
 	// The first member maintains the project; the rest develop it.
