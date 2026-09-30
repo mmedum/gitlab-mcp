@@ -61,13 +61,15 @@ func TestShipAndDestructiveAreRegisteredOnlyByTheirFlags(t *testing.T) {
 	}
 	// A toolset's Ship and Destructive tools need both the toolset and
 	// the flag.
-	releases := config.Config{Toolsets: []string{"releases", "wiki"}}
+	releases := config.Config{Toolsets: []string{"releases", "wiki", "snippets"}}
 	if got := names(releases); slices.Contains(got, "create_release") || slices.Contains(got, "delete_wiki_page") ||
-		!slices.Contains(got, "list_releases") || !slices.Contains(got, "save_wiki_page") {
+		slices.Contains(got, "delete_snippet") || !slices.Contains(got, "list_releases") || !slices.Contains(got, "save_wiki_page") ||
+		!slices.Contains(got, "update_snippet") {
 		t.Errorf("toolsets without the flags: %v", got)
 	}
 	releases.EnableShip, releases.EnableDestructive = true, true
-	if got := names(releases); !slices.Contains(got, "create_release") || !slices.Contains(got, "delete_wiki_page") {
+	if got := names(releases); !slices.Contains(got, "create_release") || !slices.Contains(got, "delete_wiki_page") ||
+		!slices.Contains(got, "delete_snippet") {
 		t.Errorf("toolsets with the flags: %v", got)
 	}
 }

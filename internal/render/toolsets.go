@@ -129,6 +129,32 @@ func SnippetWrite(w model.SnippetWrite, _ Boundary) string {
 	return b.String()
 }
 
+// SnippetUpdate renders update_snippet.
+func SnippetUpdate(w model.SnippetUpdate, _ Boundary) string {
+	var b strings.Builder
+	writeHead(&b, outcomeLine(w.Outcome, fmt.Sprintf("snippet %d", w.ID), ""), w.Write)
+	if w.Target.Project.Path == "" {
+		b.WriteString("\nA personal snippet.")
+	}
+	fmt.Fprintf(&b, "\nFiles: %s.", idents(w.Files))
+	if w.DryRun {
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\n%s; visibility %s, unchanged.", Ident(w.WebURL), Ident(w.Visibility))
+	changedLine(&b, w.Outcome, w.Changed)
+	removedLine(&b, "description", w.DescriptionRemoved)
+	witnessLine(&b, w.UpdatedAt, "update_snippet or delete_snippet")
+	return b.String()
+}
+
+// SnippetDelete renders delete_snippet.
+func SnippetDelete(w model.SnippetDelete, _ Boundary) string {
+	var b strings.Builder
+	writeHead(&b, fmt.Sprintf("Deleted snippet %d.", w.ID), w.Write)
+	goneLine(&b, w.Write, "snippet")
+	return b.String()
+}
+
 // -------------------------------------------------------------- releases
 
 // Releases renders list_releases.

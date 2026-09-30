@@ -116,6 +116,10 @@ GET /projects/{id}/snippets/{snippet_id}/raw	gated	1	Client.ProjectSnippetRaw: g
 GET /projects/{id}/snippets/{snippet_id}/files/{ref}/{file_path}/raw	gated	1	Client.ProjectSnippetFileRaw: get_snippet's other files in a project, at HEAD, snippets toolset
 POST /snippets	gated	1	Client.CreateSnippet: create_snippet, always private, snippets toolset
 POST /projects/{id}/snippets	gated	1	Client.CreateProjectSnippet: create_snippet in a project, always private, snippets toolset
+PUT /snippets/{id}	gated	1	Client.UpdateSnippet: update_snippet, your own, visibility never sent, snippets toolset
+PUT /projects/{id}/snippets/{snippet_id}	gated	1	Client.UpdateProjectSnippet: update_snippet in a project, your own, visibility never sent, snippets toolset
+DELETE /snippets/{id}	gated	1	Client.DeleteSnippet: delete_snippet, your own, with If-Unmodified-Since, Destructive and snippets toolset
+DELETE /projects/{id}/snippets/{snippet_id}	gated	1	Client.DeleteProjectSnippet: delete_snippet in a project, your own, with If-Unmodified-Since, Destructive and snippets toolset
 GET /projects/{id}/repository/tags/{tag_name}	gated	1	Client.GetTag: create_release looks its tag up, to require ref for a new tag and say whether GitLab made one
 GET /projects/{id}/releases	gated	1	Client.ListReleases: list_releases, releases toolset
 GET /projects/{id}/releases/{tag_name}	gated	1	Client.GetRelease: get_release, releases toolset; settles a lost create_release by the tag (§4.5)
@@ -434,10 +438,6 @@ POST /projects/{id}/wikis/attachments	deferred	1	wiki attachments (§17a)
 * /projects/{id}/wiki_pages*	deferred	5	wiki page API; the wikis routes carry save and read (§17a)
 
 # Snippets (§8a): used under the toolset, update and delete deferred
-PUT /snippets/{id}	deferred	1	snippet update (§8a)
-DELETE /snippets/{id}	deferred	1	snippet delete (§8a)
-PUT /projects/{id}/snippets/{snippet_id}	deferred	1	snippet update (§8a)
-DELETE /projects/{id}/snippets/{snippet_id}	deferred	1	snippet delete (§8a)
 GET /snippets/all	written-off	1	every snippet on the instance: an administrator's listing (§8a)
 GET /snippets/public	deferred	1	public snippets; list_snippets covers the account's own
 GET /snippets/{id}/user_agent_detail	written-off	1	user agent details: an administrator's spam tooling (§8a)

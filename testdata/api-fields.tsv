@@ -169,6 +169,8 @@ GET /projects/{id}/snippets response files	reasoned	the snippet entity publishes
 GET /projects/{id}/snippets/{snippet_id} response files	reasoned	the snippet entity publishes files as an untyped hash; lib/api/entities/snippet.rb exposes each as path and raw_url, and only path is decoded
 POST /snippets response files	reasoned	the snippet entity publishes files as an untyped hash; lib/api/entities/snippet.rb exposes each as path and raw_url, and only path is decoded
 POST /projects/{id}/snippets response files	reasoned	the snippet entity publishes files as an untyped hash; lib/api/entities/snippet.rb exposes each as path and raw_url, and only path is decoded
+PUT /snippets/{id} response files	reasoned	the snippet entity publishes files as an untyped hash; lib/api/entities/snippet.rb exposes each as path and raw_url, and only path is decoded
+PUT /projects/{id}/snippets/{snippet_id} response files	reasoned	the snippet entity publishes files as an untyped hash; lib/api/entities/snippet.rb exposes each as path and raw_url, and only path is decoded
 GET /projects/{id}/repository/tags/{tag_name} response commit.stats	reasoned	the tag read and the single commit read share gitlab.Commit; GitLab sends stats only on the commit read, and create_release reads only whether the tag exists
 POST /projects/{id}/jobs/{job_id}/play response artifacts	reasoned	the route presents a build with Entities::Ci::Job, which exposes artifacts (lib/api/ci/jobs.rb at v19.4.1-ee); the file publishes the bridge entity
 POST /projects/{id}/issues/{noteable_id}/discussions response notes	reasoned	GitLab's OpenAPI generator publishes an entity exposed as a collection as a bare $ref; the route returns a JSON array

@@ -112,6 +112,8 @@ contract: tools keep their names and output fields.
 | `list_snippets` | A project's snippets, or your own (`snippets` toolset) |
 | `get_snippet` | One snippet and a file of it, bounded (`snippets` toolset) |
 | `create_snippet` | Create a snippet, always private (`snippets` toolset) |
+| `update_snippet` | Change one of your own private snippets: title, description, files; refused if it changed since you read it (`snippets` toolset) |
+| `delete_snippet` | Delete one of your own snippets (`snippets` toolset, Destructive) |
 | `list_releases` | A project's releases (`releases` toolset) |
 | `get_release` | One release and its notes (`releases` toolset) |
 | `create_release` | Create a release, and its tag at a ref, with asset links to the project's own pages (`releases` toolset, Ship) |

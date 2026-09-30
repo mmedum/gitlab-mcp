@@ -91,7 +91,7 @@ Every tool has one kind, and the kind decides whether it is registered:
 | Read | every GET | always |
 | Write | issues and their links, comments, reviews, branches, commits, cherry-picks and reverts to unprotected branches, merge requests, todos, wiki, snippets, labels, milestones, unprotected tags | unless `GITLAB_MCP_READ_ONLY=true` |
 | Ship | merge, approve, unapprove, rebase, run, retry, play and cancel CI, create a release, move an issue to another project | only with `GITLAB_MCP_ENABLE_SHIP=true` |
-| Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
+| Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
 
 A review that would approve counts as Ship, and so does making a
 confidential issue public: without the flag the call is `[blocked]`.
@@ -176,11 +176,17 @@ replace it with a `read_api` one.
   you pass `unmerged: true`, and needs the head `sha` you read.
   `delete_comment` deletes only your own comments, even where GitLab
   would let a maintainer delete anyone's, and GitLab refuses it if the
-  comment was edited after your read.
+  comment was edited after your read. `delete_snippet` and
+  `update_snippet` act only on your own snippets in the same way, and
+  GitLab refuses the delete if the snippet changed after your read.
 - **Snippets are private.** `create_snippet` has no visibility input:
   every snippet it creates is private, because a public snippet is the
-  simplest way for private content to leave. A personal snippet is in
-  no namespace, so `GITLAB_MCP_WRITE_NAMESPACES` refuses one.
+  simplest way for private content to leave. `update_snippet` has none
+  either, and writes only to a private snippet: it refuses an internal
+  or public one, even your own, since writing into it publishes what is
+  written. A personal snippet
+  is in no namespace, so `GITLAB_MCP_WRITE_NAMESPACES` refuses creating,
+  changing or deleting one.
 - **Variable values are not echoed.** `run_pipeline` and `play_job` send
   the variables you give and name only their keys in the result. Job
   inputs on `retry_job` and `play_job` are named the same way. GitLab

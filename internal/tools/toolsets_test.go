@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/config"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
@@ -183,6 +184,259 @@ func TestCreateSnippetIsPrivate(t *testing.T) {
 	h2.ok("create_snippet", map[string]any{"project": alpha, "title": "Inside", "files": files[:1]})
 }
 
+// snippetAt is a snippet's updated_at as get_snippet shows it; project
+// is "" for a personal snippet.
+func snippetAt(h *harness, project string, id any) string {
+	h.t.Helper()
+	args := map[string]any{"snippet_id": id}
+	if project != "" {
+		args["project"] = project
+	}
+	_, out := h.ok("get_snippet", args)
+	return get(out, "updated_at").(string)
+}
+
+func TestUpdateOneFileSnippet(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(config.Config{}, "snippets")})
+	_, made := h.ok("create_snippet", map[string]any{"title": "Mine", "description": "one\ntwo",
+		"files": []map[string]any{{"path": "a.txt", "content": "old\n"}}})
+	id := get(made, "id").(float64)
+	at := snippetAt(h, "", id)
+	args := func(extra map[string]any) map[string]any {
+		out := map[string]any{"snippet_id": id, "updated_at": at}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+
+	before := writesSent(h)
+	h.fails("update_snippet", args(nil), "invalid")
+	h.fails("update_snippet", args(map[string]any{"title": " "}), "invalid")
+	h.fails("update_snippet", args(map[string]any{"content": ""}), "invalid")
+	h.fails("update_snippet", args(map[string]any{"content": "x", "files": []map[string]any{{"action": "create", "path": "b", "content": "b"}}}),
+		"invalid")
+	h.fails("update_snippet", map[string]any{"snippet_id": id, "updated_at": "yesterday", "title": "x"}, "invalid")
+	h.fails("update_snippet", map[string]any{"snippet_id": id, "updated_at": "2020-01-01T00:00:00Z", "title": "x"}, "stale")
+	_, dry := h.ok("update_snippet", args(map[string]any{"content": "new\n", "dry_run": true}))
+	if get(dry, "outcome") != "dry_run" || fmt.Sprint(get(dry, "would_send", "fields")) != "[content]" {
+		t.Errorf("dry run = %v", dry)
+	}
+	if writesSent(h) != before {
+		t.Fatal("a refusal or a dry run wrote")
+	}
+
+	text, out := h.ok("update_snippet", args(map[string]any{"title": "Mine, renamed", "description": "one", "content": "new\n"}))
+	if get(out, "outcome") != "updated" || get(out, "visibility") != "private" || fmt.Sprint(get(out, "changed")) != "[title description content]" ||
+		get(out, "description_removed", "lines") != float64(1) || !strings.Contains(text, "A personal snippet.") {
+		t.Errorf("update = %v\n%s", out, text)
+	}
+	if files := h.gl.SnippetFiles(int64(id)); len(files) != 1 || files[0] != [2]string{"a.txt", "new\n"} {
+		t.Errorf("GitLab holds %v", files)
+	}
+	// The witness moved with the write.
+	h.fails("update_snippet", args(map[string]any{"title": "again"}), "stale")
+
+	// A change to the content is a commit, and GitLab moves updated_at
+	// again once it has processed it: no witness is handed on, and a
+	// read gives the one that holds.
+	if get(out, "updated_at") != nil || !strings.Contains(text, "read the snippet with get_snippet") {
+		t.Errorf("a witness about to go stale was handed on: %v\n%s", out, text)
+	}
+	at = snippetAt(h, "", id)
+	// A title alone is no commit: its answer's updated_at holds.
+	_, renamed := h.ok("update_snippet", args(map[string]any{"title": "Mine, renamed again"}))
+	at, _ = get(renamed, "updated_at").(string)
+	if at == "" || at != snippetAt(h, "", id) {
+		t.Fatalf("title change = %v", renamed)
+	}
+	_, same := h.ok("update_snippet", args(map[string]any{"title": "Mine, renamed again"}))
+	if get(same, "outcome") != "unchanged" || get(same, "updated_at") != at {
+		t.Errorf("same title = %v", same)
+	}
+}
+
+func TestUpdateSnippetFiles(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(config.Config{}, "snippets")})
+	_, made := h.ok("create_snippet", map[string]any{"project": alpha, "title": "Two",
+		"files": []map[string]any{{"path": "a.md", "content": "# A\n"}, {"path": "b.sh", "content": "echo b\n"}}})
+	id := get(made, "id").(float64)
+	at := snippetAt(h, alpha, id)
+	files := func(changes ...map[string]any) map[string]any {
+		return map[string]any{"project": alpha, "snippet_id": id, "updated_at": at, "files": changes}
+	}
+	change := func(action, path, previous, content string) map[string]any {
+		out := map[string]any{"action": action, "path": path}
+		if previous != "" {
+			out["previous_path"] = previous
+		}
+		if content != "" {
+			out["content"] = content
+		}
+		return out
+	}
+
+	before := writesSent(h)
+	// content replaces a one-file snippet's file; this one has two.
+	text := h.fails("update_snippet", map[string]any{"project": alpha, "snippet_id": id, "updated_at": at, "content": "x"}, "invalid")
+	if !strings.Contains(text, "has 2 files") {
+		t.Errorf("content on two files: %s", text)
+	}
+	for _, bad := range []map[string]any{
+		files(change("rename", "a.md", "", "x")),
+		files(change("create", "a.md", "", "x")),
+		files(change("create", "c.md", "", "")),
+		files(change("update", "missing.md", "", "x")),
+		files(change("update", "a.md", "b.sh", "x")),
+		files(change("delete", "a.md", "", "x")),
+		files(change("move", "c.md", "", "")),
+		files(change("move", "a.md", "a.md", "")),
+		files(change("move", "b.sh", "a.md", "")),
+		files(change("delete", "a.md", "", ""), change("update", "a.md", "", "x")),
+		files(change("delete", "a.md", "", ""), change("delete", "b.sh", "", "")),
+		files(change("update", "", "", "x")),
+	} {
+		h.fails("update_snippet", bad, "invalid")
+	}
+	if writesSent(h) != before {
+		t.Fatal("a refused file change was sent")
+	}
+
+	text, out := h.ok("update_snippet", files(change("update", "b.sh", "", "echo c\n"), change("move", "c.md", "a.md", ""),
+		change("create", "d.txt", "", "d\n"), change("delete", "c.md", "", "")))
+	if get(out, "outcome") != "updated" || strings.Join(strs(get(out, "files")), ",") != "b.sh,d.txt" ||
+		fmt.Sprint(get(out, "changed")) != "[files]" || !strings.Contains(text, "Project: ") {
+		t.Errorf("file changes = %v\n%s", out, text)
+	}
+	if got := h.gl.SnippetFiles(int64(id)); fmt.Sprint(got) != "[[b.sh echo c\n] [d.txt d\n]]" {
+		t.Errorf("GitLab holds %q", got)
+	}
+	if v := h.gl.SnippetVisibility(int64(id)); v != "private" {
+		t.Errorf("visibility = %s", v)
+	}
+}
+
+// Another person's snippet is refused, even where GitLab lets a
+// maintainer change it; one of yours in a project is reached through
+// its project.
+func TestSnippetWritesAreYourOwn(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(destructive, "snippets")})
+	at := snippetAt(h, alpha, gitlabtest.SnippetAlpha)
+	before := writesSent(h)
+	text := h.fails("update_snippet", map[string]any{"project": alpha, "snippet_id": gitlabtest.SnippetAlpha, "updated_at": at,
+		"title": "x"}, "blocked")
+	if !strings.Contains(text, "@bob") {
+		t.Errorf("another's snippet: %s", text)
+	}
+	h.fails("delete_snippet", map[string]any{"project": alpha, "snippet_id": gitlabtest.SnippetAlpha, "updated_at": at, "confirm": true},
+		"blocked")
+	if writesSent(h) != before {
+		t.Fatal("a write to another's snippet was sent")
+	}
+
+	_, made := h.ok("create_snippet", map[string]any{"project": alpha, "title": "Mine", "files": []map[string]any{{"path": "a", "content": "a"}}})
+	id := get(made, "id").(float64)
+	at = snippetAt(h, alpha, id)
+	before = writesSent(h)
+	text = h.fails("update_snippet", map[string]any{"snippet_id": id, "updated_at": at, "title": "x"}, "invalid")
+	if !strings.Contains(text, "pass that project") {
+		t.Errorf("a project snippet by the personal route: %s", text)
+	}
+	h.fails("delete_snippet", map[string]any{"snippet_id": id, "updated_at": at, "confirm": true}, "invalid")
+	if writesSent(h) != before {
+		t.Fatal("a refusal wrote")
+	}
+}
+
+// Under the write allow-list a personal snippet is in no namespace, and
+// a project outside it is refused.
+func TestSnippetWritesHoldToTheAllowList(t *testing.T) {
+	cfg := withToolsets(config.Config{EnableDestructive: true, WriteNamespaces: []string{gitlabtest.GroupSub}}, "snippets")
+	h := newHarness(t, harnessOptions{cfg: cfg})
+	personal := snippetAt(h, "", gitlabtest.SnippetPersonal)
+	project := snippetAt(h, alpha, gitlabtest.SnippetAlpha)
+	before := writesSent(h)
+	h.fails("update_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": personal, "title": "x"}, "blocked")
+	h.fails("delete_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": personal, "confirm": true}, "blocked")
+	h.fails("update_snippet", map[string]any{"project": alpha, "snippet_id": gitlabtest.SnippetAlpha, "updated_at": project, "title": "x"},
+		"blocked")
+	h.fails("delete_snippet", map[string]any{"project": alpha, "snippet_id": gitlabtest.SnippetAlpha, "updated_at": project, "confirm": true},
+		"blocked")
+	if writesSent(h) != before {
+		t.Fatal("a write outside the allow-list was sent")
+	}
+}
+
+func TestDeleteSnippet(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(destructive, "snippets")})
+	// GitLab keeps updated_at to the microsecond and shows the
+	// millisecond; the witness still holds.
+	if !h.gl.TouchSnippet(gitlabtest.SnippetPersonal, time.Date(2026, 9, 1, 10, 0, 0, 123456000, time.UTC)) {
+		t.Fatal("touch")
+	}
+	at := snippetAt(h, "", gitlabtest.SnippetPersonal)
+	args := func(at string) map[string]any {
+		return map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at, "confirm": true}
+	}
+	before := writesSent(h)
+	h.fails("delete_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at}, "blocked")
+	h.fails("delete_snippet", args("2020-01-01T00:00:00Z"), "stale")
+	h.fails("delete_snippet", args("yesterday"), "invalid")
+	dryArgs := args(at)
+	dryArgs["dry_run"] = true
+	if _, dry := h.ok("delete_snippet", dryArgs); get(dry, "outcome") != "dry_run" {
+		t.Errorf("dry run = %v", dry)
+	}
+	if writesSent(h) != before {
+		t.Fatal("a refusal or a dry run wrote")
+	}
+
+	text, out := h.ok("delete_snippet", args(at))
+	if get(out, "outcome") != "deleted" || !strings.Contains(text, "finds no such snippet") {
+		t.Errorf("delete = %v\n%s", out, text)
+	}
+	if h.gl.SnippetFiles(gitlabtest.SnippetPersonal) != nil {
+		t.Error("the snippet is still there")
+	}
+	// The witness went as If-Unmodified-Since, stretched to the end of
+	// its millisecond.
+	sent := ""
+	for _, r := range h.gl.Requests() {
+		if r.Method == "DELETE" {
+			sent = r.IfUnmodifiedSince
+		}
+	}
+	if sent != "2026-09-01T10:00:00.123999Z" {
+		t.Errorf("If-Unmodified-Since = %q", sent)
+	}
+	h.fails("delete_snippet", args(at), "not_found")
+
+	// A project snippet of your own.
+	_, made := h.ok("create_snippet", map[string]any{"project": alpha, "title": "Mine", "files": []map[string]any{{"path": "a", "content": "a"}}})
+	id := get(made, "id").(float64)
+	_, out = h.ok("delete_snippet", map[string]any{"project": alpha, "snippet_id": id, "updated_at": snippetAt(h, alpha, id), "confirm": true})
+	if get(out, "outcome") != "deleted" || get(out, "target", "project", "path") != alpha {
+		t.Errorf("project delete = %v", out)
+	}
+}
+
+// A change between the server's read and its delete: GitLab's own check
+// refuses it with 412, which is [stale].
+func TestDeleteSnippetChangedAfterTheReadIsStale(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(destructive, "snippets")})
+	at := snippetAt(h, "", gitlabtest.SnippetPersonal)
+	h.gl.Inject(gitlabtest.Fault{Method: "DELETE", Path: fmt.Sprintf("/snippets/%d", gitlabtest.SnippetPersonal), Status: 412,
+		Body: `{"message":"412 Precondition Failed"}`})
+	h.fails("delete_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at, "confirm": true}, "stale")
+	if h.gl.SnippetFiles(gitlabtest.SnippetPersonal) == nil {
+		t.Error("the snippet was deleted")
+	}
+	if !h.gl.TouchSnippet(gitlabtest.SnippetPersonal, time.Now().Add(time.Hour)) {
+		t.Fatal("touch")
+	}
+	h.fails("delete_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at, "confirm": true}, "stale")
+}
+
 // -------------------------------------------------------------- releases
 
 func TestReleases(t *testing.T) {
@@ -345,4 +599,175 @@ func TestCreateReleaseWithAssetLinks(t *testing.T) {
 		"links": []map[string]any{{"name": "x", "url": base + "/example-group/alpha/x", "direct_asset_path": "/../up"}}}, "invalid")
 	h.fails("create_release", map[string]any{"project": alpha, "tag_name": gitlabtest.TagPlain, "dry_run": true,
 		"links": []map[string]any{link(" ", base+"/example-group/alpha/x")}}, "invalid")
+}
+
+// A delete is read back: a snippet GitLab says it deleted and still
+// holds is a defect to report, and one whose answer was lost is gone.
+func TestDeleteSnippetIsReadBack(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(destructive, "snippets")})
+	at := snippetAt(h, "", gitlabtest.SnippetPersonal)
+	path := fmt.Sprintf("/snippets/%d", gitlabtest.SnippetPersonal)
+	h.gl.Inject(gitlabtest.Fault{Method: "DELETE", Path: path, Status: 204})
+	h.fails("delete_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at, "confirm": true}, "unexpected")
+	h.gl.Inject(gitlabtest.Fault{Method: "DELETE", Path: path, Status: 502, AfterApply: true, Body: `{"message":"502 Bad Gateway"}`})
+	_, out := h.ok("delete_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at, "confirm": true})
+	if get(out, "outcome") != "deleted" || !strings.Contains(fmt.Sprint(get(out, "notes")), "it is gone") {
+		t.Errorf("lost delete = %v", out)
+	}
+}
+
+// A snippet that is not private is not written to, personal or in a
+// project: writing into one is how private content leaves (§4.7).
+func TestUpdateSnippetWritesOnlyPrivateSnippets(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(config.Config{}, "snippets")})
+	for _, project := range []string{"", alpha} {
+		args := map[string]any{"title": "Mine", "files": []map[string]any{{"path": "a", "content": "a"}}}
+		if project != "" {
+			args["project"] = project
+		}
+		_, made := h.ok("create_snippet", args)
+		id := get(made, "id").(float64)
+		for _, visibility := range []string{"internal", "public"} {
+			if !h.gl.SetSnippetVisibility(int64(id), visibility) {
+				t.Fatal("visibility")
+			}
+			call := map[string]any{"snippet_id": id, "updated_at": snippetAt(h, project, id), "title": "x"}
+			if project != "" {
+				call["project"] = project
+			}
+			before := writesSent(h)
+			text := h.fails("update_snippet", call, "blocked")
+			if !strings.Contains(text, "writes only to private snippets") || writesSent(h) != before {
+				t.Errorf("%s %s snippet: %s", project, visibility, text)
+			}
+		}
+	}
+}
+
+// Content that is only white space is refused before anything is sent,
+// as GitLab refuses it.
+func TestUpdateSnippetRefusesBlankContent(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(config.Config{}, "snippets")})
+	at := snippetAt(h, "", gitlabtest.SnippetPersonal)
+	before := writesSent(h)
+	h.fails("update_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at, "content": " \n\t"}, "invalid")
+	for _, action := range []string{"create", "update"} {
+		path := "scratch.txt"
+		if action == "create" {
+			path = "new.txt"
+		}
+		h.fails("update_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at,
+			"files": []map[string]any{{"action": action, "path": path, "content": "  \n"}}}, "invalid")
+	}
+	if writesSent(h) != before {
+		t.Fatal("blank content was sent")
+	}
+}
+
+// A change to a file other than the first leaves the updated_at GitLab
+// answers where it was; the commit's post-receive job moves it after.
+// The result hands on no witness, and a read gives the moved one.
+func TestUpdateSnippetFilesMoveUpdatedAtAfterTheAnswer(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(destructive, "snippets")})
+	_, made := h.ok("create_snippet", map[string]any{"project": alpha, "title": "Two",
+		"files": []map[string]any{{"path": "a.md", "content": "# A\n"}, {"path": "b.sh", "content": "echo b\n"}}})
+	id := get(made, "id").(float64)
+	at := snippetAt(h, alpha, id)
+	text, out := h.ok("update_snippet", map[string]any{"project": alpha, "snippet_id": id, "updated_at": at, "files": []map[string]any{
+		{"action": "update", "path": "a.md", "content": "# A\n"}, {"action": "update", "path": "b.sh", "content": "echo z\n"}}})
+	if get(out, "outcome") != "updated" || fmt.Sprint(get(out, "changed")) != "[files]" || get(out, "updated_at") != nil ||
+		!strings.Contains(text, "read the snippet with get_snippet") {
+		t.Errorf("update = %v\n%s", out, text)
+	}
+	if got := h.gl.SnippetFiles(int64(id)); got[1][1] != "echo z\n" {
+		t.Errorf("GitLab holds %q", got)
+	}
+	// The old witness is stale now, and the one a read gives deletes.
+	h.fails("delete_snippet", map[string]any{"project": alpha, "snippet_id": id, "updated_at": at, "confirm": true}, "stale")
+	h.ok("delete_snippet", map[string]any{"project": alpha, "snippet_id": id, "updated_at": snippetAt(h, alpha, id), "confirm": true})
+}
+
+// A change that creates, deletes or moves a file is sent once: a lost
+// answer is settled by reading the snippet, never by sending it again.
+// A change of content alone may repeat.
+func TestUpdateSnippetFileActionsAreNotRepeated(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: withToolsets(config.Config{}, "snippets")})
+	path := fmt.Sprintf("/snippets/%d", gitlabtest.SnippetPersonal)
+	puts := func() int {
+		n := 0
+		for _, r := range h.gl.Requests() {
+			if r.Method == "PUT" {
+				n++
+			}
+		}
+		return n
+	}
+	create := func(name string) map[string]any {
+		return map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": snippetAt(h, "", gitlabtest.SnippetPersonal),
+			"files": []map[string]any{{"action": "create", "path": name, "content": "x\n"}}}
+	}
+
+	// Landed, answer lost.
+	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: path, Status: 502, AfterApply: true, Body: `{"message":"502 Bad Gateway"}`})
+	h.gl.ResetRequests()
+	text := h.fails("update_snippet", create("b.txt"), "ambiguous_outcome")
+	if puts() != 1 || !strings.Contains(text, "most likely landed") || !strings.Contains(text, "b.txt") {
+		t.Errorf("%d PUTs: %s", puts(), text)
+	}
+	// Not landed.
+	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: path, Status: 502, Body: `{"message":"502 Bad Gateway"}`})
+	h.gl.ResetRequests()
+	text = h.fails("update_snippet", create("c.txt"), "ambiguous_outcome")
+	if puts() != 1 || !strings.Contains(text, "as it was") {
+		t.Errorf("%d PUTs: %s", puts(), text)
+	}
+	if len(h.gl.SnippetFiles(gitlabtest.SnippetPersonal)) != 2 {
+		t.Errorf("GitLab holds %q", h.gl.SnippetFiles(gitlabtest.SnippetPersonal))
+	}
+	// A title alone repeats.
+	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: path, Status: 502, Body: `{"message":"502 Bad Gateway"}`})
+	h.gl.ResetRequests()
+	h.ok("update_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal,
+		"updated_at": snippetAt(h, "", gitlabtest.SnippetPersonal), "title": "Again"})
+	if puts() != 2 {
+		t.Errorf("%d PUTs for a title", puts())
+	}
+}
+
+// The witness goes to the end of the millisecond GitLab showed, and
+// GitLab compares it with updated_at to the microsecond: a change after
+// the server's read within that millisecond is not seen, one after it
+// is refused [stale].
+func TestDeleteSnippetWitnessAgainstAChangeAfterTheRead(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		after time.Duration
+		class string
+	}{
+		{"within the shown millisecond", 400 * time.Microsecond, ""},
+		{"after it", 700 * time.Microsecond, "stale"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, harnessOptions{cfg: withToolsets(destructive, "snippets")})
+			kept := time.Date(2026, 9, 1, 10, 0, 0, 123456000, time.UTC)
+			if !h.gl.TouchSnippet(gitlabtest.SnippetPersonal, kept) {
+				t.Fatal("touch")
+			}
+			at := snippetAt(h, "", gitlabtest.SnippetPersonal)
+			h.gl.Inject(gitlabtest.Fault{Method: "DELETE", Path: fmt.Sprintf("/snippets/%d", gitlabtest.SnippetPersonal), Pass: true,
+				Before: func() { h.gl.TouchSnippet(gitlabtest.SnippetPersonal, kept.Add(c.after)) }})
+			args := map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": at, "confirm": true}
+			if c.class == "" {
+				h.ok("delete_snippet", args)
+				if h.gl.SnippetFiles(gitlabtest.SnippetPersonal) != nil {
+					t.Error("the snippet is still there")
+				}
+				return
+			}
+			h.fails("delete_snippet", args, c.class)
+			if h.gl.SnippetFiles(gitlabtest.SnippetPersonal) == nil {
+				t.Error("the snippet was deleted")
+			}
+		})
+	}
 }

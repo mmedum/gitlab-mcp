@@ -157,6 +157,13 @@ var askCases = map[string]askCase{
 		},
 		shows: []string{"delete a comment on issue #1", "by `" + gitlabtest.DefaultUser + "`", "text: `"},
 	},
+	"delete_snippet": {
+		setup: func(h *harness) map[string]any {
+			_, out := h.ok("get_snippet", map[string]any{"snippet_id": gitlabtest.SnippetPersonal})
+			return map[string]any{"snippet_id": gitlabtest.SnippetPersonal, "updated_at": get(out, "updated_at"), "confirm": true}
+		},
+		shows: []string{"delete snippet 80002, `Personal snippet`, in your personal snippets", "It has 1 file:", "file `scratch.txt`"},
+	},
 }
 
 // asksPerson is every tool registered to ask, from the definitions
@@ -176,8 +183,8 @@ func asksPerson() []string {
 // comes from the definitions, with a floor.
 func TestEveryAskingToolAsksThePerson(t *testing.T) {
 	names := asksPerson()
-	if len(names) < 13 {
-		t.Fatalf("found %d tools that ask, below the floor of 13: %v", len(names), names)
+	if len(names) < 14 {
+		t.Fatalf("found %d tools that ask, below the floor of 14: %v", len(names), names)
 	}
 	for _, name := range names {
 		c, ok := askCases[name]

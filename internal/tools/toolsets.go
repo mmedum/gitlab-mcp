@@ -165,6 +165,69 @@ func createSnippet() definition {
 	}
 }
 
+type snippetFileChangeIn struct {
+	Action       string `json:"action" jsonschema:"create, update, delete or move"`
+	Path         string `json:"path" jsonschema:"The file, such as notes.md; for a move, its new path"`
+	PreviousPath string `json:"previous_path,omitempty" jsonschema:"For a move only: the file's path now"`
+	Content      string `json:"content,omitempty" jsonschema:"The file's whole new content: required to create or update, optional for a move, not for a delete"`
+}
+
+type updateSnippetIn struct {
+	Project     idOrPath              `json:"project,omitempty" jsonschema:"The project the snippet is in; omit for a personal snippet, which GITLAB_MCP_WRITE_NAMESPACES refuses when it is set"`
+	SnippetID   int64                 `json:"snippet_id" jsonschema:"The snippet's id, as list_snippets gives it"`
+	Title       *string               `json:"title,omitempty" jsonschema:"A new title"`
+	Description *string               `json:"description,omitempty" jsonschema:"A new description, in Markdown, replacing the old; an empty string clears it. The result counts what it removed"`
+	Content     *string               `json:"content,omitempty" jsonschema:"The new content of a one-file snippet's file, replacing the old. A snippet of several files is changed through files; not with files"`
+	Files       []snippetFileChangeIn `json:"files,omitempty" jsonschema:"Changes to the snippet's files, applied in order: create a file, update one's content, delete one, or move one to a new path. Not with content"`
+	UpdatedAt   string                `json:"updated_at" jsonschema:"Required: the snippet's updated_at as get_snippet or list_snippets returned it. The call is refused [stale] if the snippet changed since. A [stale] refusal is NOT a retry signal: read the snippet again and redo the change on what it holds"`
+	DryRun      bool                  `json:"dry_run,omitempty" jsonschema:"Check the change and return what would be sent without writing anything"`
+}
+
+func updateSnippet() definition {
+	return tool[updateSnippetIn, model.SnippetUpdate]{
+		sp: spec{Name: "update_snippet", Kind: Write, Toolset: "snippets",
+			Description: "Change one of your own private snippets, in a project or personal: its title, its description, and its " +
+				"files; an internal or public snippet is refused [blocked], since writing into it publishes what is written. " +
+				"content replaces a one-file snippet's file; files creates, updates, deletes or moves files one at a time, " +
+				"and is how a snippet of several files is changed. Another person's snippet is refused [blocked], even where " +
+				"GitLab would allow it. updated_at from your read is required: GitLab keeps no version a write could check, " +
+				"so the server reads the snippet first and refuses [stale] if it changed. Visibility is not an input and " +
+				"stays as it is. The result gives the new updated_at after a change of title or description alone; after a " +
+				"change to content or files GitLab moves updated_at again shortly after it answers, so read the snippet with " +
+				"get_snippet for the next witness." + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in updateSnippetIn) (model.SnippetUpdate, error) {
+			files := make([]service.SnippetFileChange, 0, len(in.Files))
+			for _, f := range in.Files {
+				files = append(files, service.SnippetFileChange{Action: f.Action, Path: f.Path, PreviousPath: f.PreviousPath, Content: f.Content})
+			}
+			return svc.UpdateSnippet(ctx, service.SnippetEdit{Project: string(in.Project), ID: in.SnippetID, Title: in.Title,
+				Description: in.Description, Content: in.Content, Files: files, UpdatedAt: in.UpdatedAt})
+		},
+		text: render.SnippetUpdate,
+	}
+}
+
+type deleteSnippetIn struct {
+	Project   idOrPath `json:"project,omitempty" jsonschema:"The project the snippet is in; omit for a personal snippet, which GITLAB_MCP_WRITE_NAMESPACES refuses when it is set"`
+	SnippetID int64    `json:"snippet_id" jsonschema:"The snippet's id, as list_snippets gives it"`
+	UpdatedAt string   `json:"updated_at" jsonschema:"The snippet's updated_at as get_snippet or list_snippets returned it; after a change to its files, read it again, as GitLab moves it shortly after. GitLab refuses the delete [stale] if it changed since. A [stale] refusal is NOT a retry signal: read the snippet again before deciding"`
+	Confirm   bool     `json:"confirm,omitempty" jsonschema:"Must be true: a deleted snippet cannot be restored"`
+	DryRun    bool     `json:"dry_run,omitempty" jsonschema:"Check the snippet and return what would be sent without deleting it"`
+}
+
+func deleteSnippet() definition {
+	return tool[deleteSnippetIn, model.SnippetDelete]{
+		sp: spec{Name: "delete_snippet", Asks: "before it deletes", Kind: Destructive, Toolset: "snippets", Idempotent: true,
+			Description: "Delete one of your own snippets, in a project or personal, with its files and their history. Another " +
+				"person's snippet is refused [blocked], even where GitLab would allow it. updated_at from your read is " +
+				"required. The result is read back." + destructiveNote + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in deleteSnippetIn) (model.SnippetDelete, error) {
+			return svc.DeleteSnippet(ctx, string(in.Project), in.SnippetID, in.UpdatedAt)
+		},
+		text: render.SnippetDelete,
+	}
+}
+
 // -------------------------------------------------------------- releases
 
 type listReleasesIn struct {
