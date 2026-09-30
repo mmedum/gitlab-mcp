@@ -938,6 +938,71 @@ type Milestones struct {
 	Listing    Listing        `json:"listing"`
 }
 
+// Boards is list_boards' result.
+type Boards struct {
+	Project ProjectRef `json:"project"`
+	Boards  []Board    `json:"boards"`
+	// BudgetChars bounds a page with max: a page ends early when the
+	// next board's lists would pass it.
+	BudgetChars int     `json:"budget_chars" jsonschema:"About how many characters of boards and lists one page holds; a page ends early rather than pass it"`
+	Listing     Listing `json:"listing"`
+}
+
+// Board is one issue board. GitLab never returns its Open and Closed
+// lists; OpenList and ClosedList say whether the board shows them.
+type Board struct {
+	ID            int64  `json:"id"`
+	UntrustedName string `json:"untrusted_name"`
+	OpenList      bool   `json:"open_list" jsonschema:"Whether the board shows its Open list, first: open issues in none of its label, assignee, milestone, iteration or open-status lists"`
+	ClosedList    bool   `json:"closed_list" jsonschema:"Whether the board shows its Closed list, last: every closed issue"`
+	// Scope is null on a board without one, and where GitLab does not
+	// return scopes, a paid feature.
+	Scope *BoardScope `json:"scope" jsonschema:"The filter the board applies to all its lists; null when it has none"`
+	Lists []BoardList `json:"lists" jsonschema:"The lists between Open and Closed in board order, left to right"`
+	// ListsNotShown counts the lists past the first 100.
+	ListsNotShown int `json:"lists_not_shown" jsonschema:"Lists past the first 100, not shown"`
+}
+
+// BoardScope is a board's own filter.
+type BoardScope struct {
+	Milestone *BoardTimebox `json:"milestone" jsonschema:"The milestone the board is limited to; null when it has none or a filter"`
+	// MilestoneFilter is GitLab's filter in place of a milestone.
+	MilestoneFilter *string  `json:"milestone_filter" jsonschema:"GitLab's milestone filter the board is limited to, spelled as search_issues' milestone takes it: None, Any, #upcoming or #started"`
+	Assignee        *string  `json:"assignee" jsonschema:"A username"`
+	Labels          []string `json:"labels" jsonschema:"Label names"`
+	Weight          *int     `json:"weight" jsonschema:"Only issues of this weight; null when the board does not filter by weight"`
+	NoWeight        bool     `json:"no_weight" jsonschema:"Only issues without a weight"`
+}
+
+// BoardList is one list of a board.
+type BoardList struct {
+	ID       int64   `json:"id"`
+	Position *int    `json:"position"`
+	Kind     string  `json:"kind" jsonschema:"label, assignee, milestone, iteration or unknown. GitLab names no kind, so it is read from the field present; a status list is unknown"`
+	Label    *string `json:"label" jsonschema:"For a label list, the label's exact name"`
+	Assignee *string `json:"assignee" jsonschema:"For an assignee list, the username"`
+	// Milestone and Iteration name the list's timebox.
+	Milestone *BoardTimebox `json:"milestone"`
+	Iteration *BoardTimebox `json:"iteration"`
+	// SearchIssues is null when search_issues cannot return the list.
+	SearchIssues *ListSearch `json:"search_issues" jsonschema:"The search_issues arguments, with the project, that return the list's issues; null when search_issues cannot"`
+	SearchNote   string      `json:"search_note" jsonschema:"Why search_issues cannot return the list, or what its arguments leave out; empty otherwise"`
+}
+
+// BoardTimebox is the milestone or iteration a list names.
+type BoardTimebox struct {
+	ID             int64  `json:"id"`
+	UntrustedTitle string `json:"untrusted_title"`
+}
+
+// ListSearch is the search_issues arguments that return a list's issues.
+type ListSearch struct {
+	State              string   `json:"state"`
+	Labels             []string `json:"labels"`
+	Assignee           *string  `json:"assignee"`
+	UntrustedMilestone *string  `json:"untrusted_milestone" jsonschema:"Pass as milestone: the exact title GitLab holds, not cleaned for display"`
+}
+
 // Member is one row of list_members.
 type Member struct {
 	ID          int64   `json:"id"`

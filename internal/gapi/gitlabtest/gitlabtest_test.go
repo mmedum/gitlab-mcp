@@ -600,3 +600,54 @@ func TestItemEventsGroupAccessAndState(t *testing.T) {
 		t.Errorf("milestone event state = %v", rows)
 	}
 }
+
+// Boards answer as GitLab's do: lists by kind, then position, each with
+// the key of its kind only and label always present; a special milestone
+// filter carries a title and no id; a project without a board has none.
+func TestBoards(t *testing.T) {
+	s := New(t, Options{})
+	get := func(project string) []map[string]any {
+		t.Helper()
+		req, _ := http.NewRequest("GET", s.URL+"/api/v4/projects/"+project+"/boards", nil)
+		req.Header.Set("Authorization", "Bearer "+s.Token())
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out []map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+	boards := get("2001")
+	if len(boards) != 3 {
+		t.Fatalf("boards = %v", boards)
+	}
+	var got []string
+	for _, l := range boards[0]["lists"].([]any) {
+		row := l.(map[string]any)
+		keys := []string{}
+		for _, k := range []string{"assignee", "milestone", "iteration"} {
+			if _, ok := row[k]; ok {
+				keys = append(keys, k)
+			}
+		}
+		if _, ok := row["label"]; !ok {
+			t.Errorf("list %v has no label key", row)
+		}
+		got = append(got, fmt.Sprintf("%v:%v%v", row["position"], row["label"] != nil, keys))
+	}
+	want := "0:true[] 3:true[] 1:false[assignee] 4:false[milestone] 2:false[iteration] 5:false[]"
+	if strings.Join(got, " ") != want {
+		t.Errorf("lists = %s, want %s", strings.Join(got, " "), want)
+	}
+	if l := boards[0]["lists"].([]any)[0].(map[string]any); l["max_issue_count"] != float64(0) || l["limit_metric"] != nil {
+		t.Errorf("a paid list's limit keys = %v", l)
+	}
+	if m := boards[2]["milestone"].(map[string]any); len(m) != 1 || m["title"] != "Upcoming" {
+		t.Errorf("special milestone = %v", m)
+	}
+	if b := get(url.PathEscape(ProjectBeta)); len(b) != 0 {
+		t.Errorf("beta boards = %v", b)
+	}
+}

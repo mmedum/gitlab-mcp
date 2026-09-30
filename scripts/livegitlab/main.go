@@ -598,6 +598,51 @@ func seedPhase1(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Red
 			red.Known(redact.KindID, itoa(made.ID))
 		}
 	}
+	return seedBoards(ctx, c, s, red)
+}
+
+// seedBoards makes two issue boards, the first with a list for each of
+// the run's labels, so list_boards has lists to read and a second page.
+// A project has no board until one is made; label lists are Free, the
+// other kinds paid.
+func seedBoards(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor) error {
+	id := itoa(s.ID)
+	var labels []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := c.Do(ctx, gapi.Call{Method: "GET", Path: "projects/{}/labels", Args: []string{id}, Name: "live_labels"}, &labels); err != nil {
+		return fmt.Errorf("read the labels: %w", err)
+	}
+	var boardID int64
+	for _, name := range []string{"Live board " + s.Name, "Live board two " + s.Name} {
+		var board struct {
+			ID int64 `json:"id"`
+		}
+		if err := c.Do(ctx, gapi.Call{Method: "POST", Path: "projects/{}/boards", Args: []string{id},
+			Body: map[string]any{"name": name}, Name: "live_seed"}, &board); err != nil {
+			return fmt.Errorf("create a board: %w", err)
+		}
+		red.Known(redact.KindID, itoa(board.ID))
+		if boardID == 0 {
+			boardID = board.ID
+		}
+	}
+	for _, want := range []string{s.Label2, s.Label} {
+		for _, l := range labels {
+			if l.Name != want {
+				continue
+			}
+			var list struct {
+				ID int64 `json:"id"`
+			}
+			if err := c.Do(ctx, gapi.Call{Method: "POST", Path: "projects/{}/boards/{}/lists", Args: []string{id, itoa(boardID)},
+				Body: map[string]any{"label_id": l.ID}, Name: "live_seed"}, &list); err != nil {
+				return fmt.Errorf("create a board list: %w", err)
+			}
+			red.Known(redact.KindID, itoa(list.ID))
+		}
+	}
 	return nil
 }
 

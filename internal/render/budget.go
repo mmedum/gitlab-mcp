@@ -26,6 +26,9 @@ const (
 	// result, and TestOutputBudget one case's output within that.
 	TestReportBudget = 40000
 	TestOutputBudget = 4000
+	// BoardsBudget bounds one page of list_boards, by an estimate of
+	// each board's lists.
+	BoardsBudget = 30000
 	// TitleChars bounds a one-line title.
 	TitleChars = 200
 )

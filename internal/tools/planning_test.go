@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -195,5 +197,146 @@ func TestFindUsersAndMembersPage(t *testing.T) {
 		if get(second, "listing", "complete") != true || get(second, "listing", "returned") != float64(1) {
 			t.Errorf("%s: second page = %v", tool, get(second, "listing"))
 		}
+	}
+}
+
+// Alpha's boards (gitlabtest.fillBoards): one with a list of every kind at
+// positions GitLab's order does not follow, one scoped to a milestone, a
+// label and a weight, one scoped to the Upcoming filter.
+func TestListBoards(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, out := h.ok("list_boards", map[string]any{"project": gitlabtest.ProjectAlpha})
+	if column(out, "boards", "id") != fmt.Sprintf("%d,%d,%d", gitlabtest.BoardDevelopment, gitlabtest.BoardSprint,
+		gitlabtest.BoardUpcoming) || get(out, "listing", "complete") != true {
+		t.Errorf("boards = %v", get(out, "boards"))
+	}
+	dev := get(out, "boards", 0).(map[string]any)
+	// Board order is by position; GitLab answered by kind first.
+	if got := column(dev, "lists", "kind"); got != "label,assignee,iteration,label,milestone,unknown" {
+		t.Errorf("kinds in board order = %s", got)
+	}
+	if column(dev, "lists", "position") != "0,1,2,3,4,5" || get(dev, "scope") != nil ||
+		get(dev, "open_list") != true || get(dev, "closed_list") != true {
+		t.Errorf("development = %v", dev)
+	}
+	want := []string{
+		`map[assignee:<nil> labels:[bug] state:opened untrusted_milestone:<nil>]`,
+		`map[assignee:bob labels:[] state:opened untrusted_milestone:<nil>]`,
+		`<nil>`,
+		`map[assignee:<nil> labels:[feature] state:opened untrusted_milestone:<nil>]`,
+		`map[assignee:<nil> labels:[] state:opened untrusted_milestone:Sprint 2]`,
+		`<nil>`,
+	}
+	for i, w := range want {
+		if got := fmt.Sprint(get(dev, "lists", i, "search_issues")); got != w {
+			t.Errorf("list %d search_issues = %s, want %s", i, got, w)
+		}
+	}
+	if get(dev, "lists", 1, "assignee") != "bob" || get(dev, "lists", 2, "iteration", "untrusted_title") != "Iteration 1" ||
+		get(dev, "lists", 4, "milestone", "id") != float64(gitlabtest.MilestoneActive) {
+		t.Errorf("list values = %v", get(dev, "lists"))
+	}
+	for _, s := range []string{
+		"- label bug (list id 98012, position 0): search_issues state opened, labels bug.",
+		"- assignee @bob (list id 98013, position 1): search_issues state opened, assignee bob.",
+		"(list id 98015, iteration id 98100, position 2): search_issues cannot return it: search_issues has no iteration filter.",
+		"- a list of unknown kind, perhaps a status list (list id 98016, position 5): search_issues cannot return it: its kind is unknown.",
+		"- Open: open issues in none of the lists below.",
+		"- Closed: every closed issue; search_issues state closed.",
+		"GitLab returns them by kind first",
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("text lacks %q:\n%s", s, text)
+		}
+	}
+
+	// A board scoped to a milestone: its label lists carry it.
+	sprint := get(out, "boards", 1).(map[string]any)
+	if fmt.Sprint(get(sprint, "scope")) != "map[assignee:<nil> labels:[bug] milestone:map[id:90001 untrusted_title:Sprint 2] "+
+		"milestone_filter:<nil> no_weight:false weight:3]" ||
+		get(sprint, "closed_list") != false || get(sprint, "lists", 0, "search_issues", "untrusted_milestone") != "Sprint 2" {
+		t.Errorf("sprint = %v", sprint)
+	}
+	if !strings.Contains(text, "- Closed: hidden on this board.") || !strings.Contains(text, ", labels bug, weight 3.") ||
+		!strings.Contains(text, "Its labels are in no list's arguments") ||
+		!strings.Contains(text, "its weight cannot be reproduced") ||
+		!strings.Contains(text, "Its milestone filter is in no list's arguments") || strings.Contains(text, "add the rest") {
+		t.Errorf("text:\n%s", text)
+	}
+	// GitLab's Upcoming filter is named as search_issues takes it.
+	up := get(out, "boards", 2).(map[string]any)
+	if fmt.Sprint(get(up, "scope")) != "map[assignee:carol labels:[] milestone:<nil> milestone_filter:#upcoming no_weight:true weight:<nil>]" ||
+		get(up, "open_list") != false || len(get(up, "lists").([]any)) != 0 {
+		t.Errorf("upcoming = %v", up)
+	}
+	// Board names and milestone and iteration titles are inside the
+	// boundary; a marker in a name is defused.
+	if !regexp.MustCompile(`Board 98002: <<<[0-9a-f]{16}>>>Sprint << <2>>> board<<</[0-9a-f]{16}>>>`).MatchString(text) ||
+		!regexp.MustCompile(`milestone <<<[0-9a-f]{16}>>>Sprint 2<<</[0-9a-f]{16}>>> \(list id 98014, milestone id 90001, position 4\)`).MatchString(text) ||
+		!strings.Contains(text, "was written by GitLab users") {
+		t.Errorf("untrusted text:\n%s", text)
+	}
+
+	_, page := h.ok("list_boards", map[string]any{"project": gitlabtest.ProjectAlpha, "max": 2})
+	if column(page, "boards", "id") != fmt.Sprintf("%d,%d", gitlabtest.BoardDevelopment, gitlabtest.BoardSprint) ||
+		get(page, "listing", "next_page_token") == nil || get(page, "listing", "total") != float64(3) {
+		t.Errorf("page = %v", page)
+	}
+	text, last := h.ok("list_boards", map[string]any{"project": gitlabtest.ProjectAlpha, "max": 2,
+		"page_token": get(page, "listing", "next_page_token")})
+	if column(last, "boards", "id") != fmt.Sprint(gitlabtest.BoardUpcoming) || get(last, "listing", "complete") != true ||
+		strings.Contains(text, "no board yet") {
+		t.Errorf("last page = %v\n%s", last, text)
+	}
+	text, empty := h.ok("list_boards", map[string]any{"project": gitlabtest.ProjectBeta})
+	if len(get(empty, "boards").([]any)) != 0 || !strings.Contains(text, "0 boards shown; the listing is complete (total 0).\nThe project has no board yet") ||
+		strings.Contains(text, "Open") {
+		t.Errorf("empty = %v\n%s", empty, text)
+	}
+	h.fails("list_boards", map[string]any{"project": gitlabtest.ProjectSecret}, "not_found")
+}
+
+// A page ends at the budget, before max, and the token continues from
+// the first board it left out.
+func TestListBoardsBudget(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.AddBoards(gitlabtest.ProjectAlpha, 150)
+	seen := map[string]bool{}
+	args := map[string]any{"project": gitlabtest.ProjectAlpha, "max": 100}
+	pages := 0
+	for {
+		text, out := h.ok("list_boards", args)
+		pages++
+		n := len(get(out, "boards").([]any))
+		if len(text) > 40000 || n == 0 {
+			t.Fatalf("page %d: %d boards in %d characters", pages, n, len(text))
+		}
+		for _, id := range strings.Split(column(out, "boards", "id"), ",") {
+			if seen[id] {
+				t.Errorf("board %s shown twice", id)
+			}
+			seen[id] = true
+		}
+		tok := get(out, "listing", "next_page_token")
+		if tok == nil {
+			break
+		}
+		if n >= 100 {
+			t.Errorf("page %d was cut by max, not the budget", pages)
+		}
+		args["page_token"] = tok
+	}
+	if len(seen) != 153 || pages < 3 {
+		t.Errorf("%d boards over %d pages", len(seen), pages)
+	}
+}
+
+// The Open list's description leaves out what GitLab's does: status lists
+// included.
+func TestListBoardsSchema(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	raw, _ := json.Marshal(listed(t, h)["list_boards"].OutputSchema)
+	if !strings.Contains(string(raw), "iteration or open-status lists") {
+		t.Errorf("open_list is not described as GitLab's backlog: %s", raw)
 	}
 }

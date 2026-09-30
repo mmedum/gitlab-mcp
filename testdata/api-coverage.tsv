@@ -626,7 +626,9 @@ GET /issues/{id}	written-off	1	an issue by its global id; issues are addressed b
 POST /markdown	deferred	1	rendering Markdown server-side; a body is shown as its source (§4.1)
 * /templates/*	deferred	8	instance templates for new files (§17a)
 * /projects/{id}/templates/*	deferred	2	project templates for new files (§17a)
-* /projects/{id}/boards*	deferred	10	issue boards (§17a)
+GET /projects/{id}/boards	used	1	Client.ListBoards: list_boards, a project's boards with their lists
+GET /projects/{id}/boards/{board_id}/lists	deferred	1	a board's lists; list_boards reads them from the board, which carries them whole
+* /projects/{id}/boards*	deferred	8	one board or list by id, which list_boards carries, and board and list writes, which no tool makes (§17a)
 * /groups/{id}/boards*	deferred	10	issue boards (§17a)
 * /projects/{id}/error_tracking*	deferred	6	error tracking: operations tooling, not in 1.0
 * /projects/{id}/alert_management_alerts*	deferred	5	alert management: operations tooling, not in 1.0

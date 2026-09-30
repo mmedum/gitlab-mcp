@@ -78,6 +78,8 @@ var byName = map[string]reflect.Type{
 	"ArtifactEntry": reflect.TypeFor[ArtifactEntry](), "RebaseState": reflect.TypeFor[RebaseState](), "MergeRequestRebase": reflect.TypeFor[MergeRequestRebase](), "DownstreamPipeline": reflect.TypeFor[DownstreamPipeline](), "Lint": reflect.TypeFor[Lint](),
 	"LintJob": reflect.TypeFor[LintJob](), "Label": reflect.TypeFor[Label](),
 	"ProjectMilestone": reflect.TypeFor[ProjectMilestone](), "Member": reflect.TypeFor[Member](),
+	"Board": reflect.TypeFor[Board](), "BoardList": reflect.TypeFor[BoardList](), "BoardLabel": reflect.TypeFor[BoardLabel](),
+	"BoardUser": reflect.TypeFor[BoardUser](), "BoardTimebox": reflect.TypeFor[BoardTimebox](),
 	"Todo": reflect.TypeFor[Todo](), "TodoProject": reflect.TypeFor[TodoProject](),
 	"TodoTarget": reflect.TypeFor[TodoTarget](), "DraftNote": reflect.TypeFor[DraftNote](),
 	"SearchHit": reflect.TypeFor[SearchHit](), "SearchCommit": reflect.TypeFor[SearchCommit](),

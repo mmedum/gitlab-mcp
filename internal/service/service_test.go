@@ -469,3 +469,73 @@ func TestCommitMergeRequestsReadByID(t *testing.T) {
 		t.Errorf("merge requests read at %v, want %s", paths, want)
 	}
 }
+
+// A board without the paid scope keys, or with them all empty, has no
+// scope; GitLab's filters are named as search_issues' milestone takes
+// them, and a milestone titled like one stays a milestone.
+func TestBoardRow(t *testing.T) {
+	for _, c := range []struct{ body, scope string }{
+		{`{"id":1,"name":"Free","lists":[]}`, "<nil>"},
+		{`{"id":1,"name":"Paid","milestone":null,"assignee":null,"labels":[],"weight":-1,"lists":[]}`, "<nil>"},
+		{`{"id":1,"name":"None","milestone":{"title":"No Milestone"},"lists":[]}`, "filter None"},
+		{`{"id":1,"name":"Up","milestone":{"title":"Upcoming"},"lists":[]}`, "filter #upcoming"},
+		{`{"id":1,"name":"Named","milestone":{"id":5,"title":"Upcoming"},"lists":[]}`, "milestone Upcoming"},
+	} {
+		var b gitlab.Board
+		if err := json.Unmarshal([]byte(c.body), &b); err != nil {
+			t.Fatal(err)
+		}
+		row := boardRow(b)
+		got := "<nil>"
+		switch {
+		case row.Scope == nil:
+		case row.Scope.MilestoneFilter != nil:
+			got = "filter " + *row.Scope.MilestoneFilter
+		case row.Scope.Milestone != nil:
+			got = "milestone " + row.Scope.Milestone.UntrustedTitle
+		}
+		if got != c.scope {
+			t.Errorf("%s: scope %s, want %s", c.body, got, c.scope)
+		}
+	}
+	var b gitlab.Board
+	_ = json.Unmarshal([]byte(`{"id":1,"name":"x","milestone":{"title":"Started"},
+		"lists":[{"id":2,"label":null,"position":1},{"id":3,"label":{"id":4,"name":"bug"},"position":0}]}`), &b)
+	row := boardRow(b)
+	if row.Lists[0].Kind != "label" || row.Lists[1].Kind != "unknown" || row.Lists[1].SearchIssues != nil ||
+		row.Lists[0].SearchIssues.UntrustedMilestone != nil {
+		t.Errorf("lists = %+v", row.Lists)
+	}
+}
+
+// A search argument is the exact title GitLab holds, never the one
+// cleaned for display; a title search_issues would read as a filter is
+// not passed.
+func TestBoardListSearchTitles(t *testing.T) {
+	long := strings.Repeat("x", 250)
+	var b gitlab.Board
+	_ = json.Unmarshal([]byte(`{"id":1,"name":"x","milestone":{"id":7,"title":"Sprint  2\u200b"},"lists":[
+		{"id":2,"label":{"id":4,"name":"bug"},"position":0},
+		{"id":3,"label":null,"position":1,"milestone":{"id":8,"title":"`+long+`"}},
+		{"id":4,"label":null,"position":2,"milestone":{"id":9,"title":"NONE"}},
+		{"id":5,"label":null,"position":3,"milestone":{"id":10,"title":"#started"}}]}`), &b)
+	row := boardRow(b)
+	if got := row.Lists[0].SearchIssues.UntrustedMilestone; got == nil || *got != "Sprint  2\u200b" {
+		t.Errorf("label list milestone = %v, want the exact scope title", got)
+	}
+	if got := row.Lists[1].SearchIssues.UntrustedMilestone; got == nil || *got != long ||
+		row.Lists[1].Milestone.UntrustedTitle == long {
+		t.Errorf("milestone list: argument %d chars, shown %q", len(*got), row.Lists[1].Milestone.UntrustedTitle)
+	}
+	for _, l := range row.Lists[2:] {
+		if l.SearchIssues != nil || !strings.Contains(l.SearchNote, "milestone filters") {
+			t.Errorf("list %d titled as a filter: %+v", l.ID, l)
+		}
+	}
+	_ = json.Unmarshal([]byte(`{"id":1,"name":"x","milestone":{"id":7,"title":"any"},"lists":[
+		{"id":2,"label":{"id":4,"name":"bug"},"position":0}]}`), &b)
+	row = boardRow(b)
+	if l := row.Lists[0]; l.SearchIssues == nil || l.SearchIssues.UntrustedMilestone != nil || l.SearchNote == "" {
+		t.Errorf("label list on a board scoped to a milestone titled any = %+v", l)
+	}
+}

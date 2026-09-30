@@ -345,3 +345,16 @@ func TestPipelineFailedByATriggerJob(t *testing.T) {
 		t.Errorf("text:\n%s", got)
 	}
 }
+
+// Only a project with no board says so; an empty later page is the end
+// of the listing.
+func TestBoardsEmpty(t *testing.T) {
+	bd := NewBoundary()
+	zero, three := 0, 3
+	none := Boards(model.Boards{Listing: model.Listing{Complete: true, Total: &zero}}, bd)
+	later := Boards(model.Boards{Listing: model.Listing{Complete: true, Total: &three}}, bd)
+	if !strings.Contains(none, "no board yet") || strings.Contains(later, "no board yet") ||
+		!strings.Contains(later, "the listing is complete") {
+		t.Errorf("no boards:\n%s\nlater page:\n%s", none, later)
+	}
+}

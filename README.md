@@ -86,6 +86,7 @@ contract: tools keep their names and output fields.
 | `get_job_artifact` | One text file of a job's artifacts, secrets masked, bounded |
 | `list_labels` | The labels a project's issues and merge requests can carry |
 | `list_milestones` | A project's or a group's milestones |
+| `list_boards` | A project's issue boards and their lists, each with the `search_issues` arguments that read it |
 | `search` | Code, commits, comments and more, in a project, a group or everywhere |
 | `list_todos` | Your to-do items |
 | `mark_todos_done` | Mark your to-do items done |

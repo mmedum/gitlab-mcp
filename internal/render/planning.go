@@ -69,6 +69,138 @@ func Milestones(m model.Milestones, bd Boundary) string {
 	return b.String()
 }
 
+// Boards renders list_boards.
+func Boards(l model.Boards, bd Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Issue boards of %s\n", projectLine(l.Project))
+	b.WriteString(listingLine("boards", l.Listing))
+	if len(l.Boards) == 0 {
+		if l.Listing.Total != nil && *l.Listing.Total == 0 {
+			b.WriteString("\nThe project has no board yet: GitLab makes the first when someone opens its board page.")
+		}
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\nA page holds about %d characters of boards and lists, and ends early rather than pass it. ", l.BudgetChars)
+	b.WriteString("Lists are shown in board order, left to right, by their position; GitLab returns them by kind first. " +
+		"GitLab does not return the Open and Closed lists, so they are described here. Each list's search_issues " +
+		"arguments go with project.\n" + bd.Notice())
+	for _, x := range l.Boards {
+		fmt.Fprintf(&b, "\n\nBoard %d: %s", x.ID, bd.Inline(x.UntrustedName))
+		if x.Scope != nil {
+			b.WriteString("\n" + boardScope(*x.Scope, bd))
+		}
+		if x.OpenList {
+			b.WriteString("\n- Open: open issues in none of the lists below. search_issues cannot leave issues out: " +
+				"search state opened and drop those the lists below hold.")
+		} else {
+			b.WriteString("\n- Open: hidden on this board.")
+		}
+		for _, list := range x.Lists {
+			b.WriteString("\n- " + boardList(list, bd))
+		}
+		if x.ListsNotShown > 0 {
+			fmt.Fprintf(&b, "\n- %d more lists, not shown.", x.ListsNotShown)
+		}
+		if x.ClosedList {
+			b.WriteString("\n- Closed: every closed issue; search_issues state closed.")
+		} else {
+			b.WriteString("\n- Closed: hidden on this board.")
+		}
+	}
+	return b.String()
+}
+
+// boardScope names a board's scope and says what the lists' arguments
+// carry of it.
+func boardScope(s model.BoardScope, bd Boundary) string {
+	var parts, notes []string
+	switch {
+	case s.Milestone != nil:
+		parts = append(parts, fmt.Sprintf("milestone %s (id %d)", bd.Inline(s.Milestone.UntrustedTitle), s.Milestone.ID))
+		notes = append(notes, "Label lists' arguments carry its milestone, as GitLab applies it to them; whether it "+
+			"applies to the other lists is not verified.")
+	case s.MilestoneFilter != nil:
+		parts = append(parts, "milestone filter "+Ident(*s.MilestoneFilter))
+		notes = append(notes, "Its milestone filter is in no list's arguments: GitLab does not apply it to label lists, "+
+			"and where it applies it otherwise is not verified. search_issues takes it as milestone "+Ident(*s.MilestoneFilter)+".")
+	}
+	if s.Assignee != nil {
+		parts = append(parts, "assignee @"+Ident(*s.Assignee))
+	}
+	if len(s.Labels) > 0 {
+		parts = append(parts, "labels "+idents(s.Labels))
+	}
+	var rest []string
+	if s.Assignee != nil {
+		rest = append(rest, "assignee")
+	}
+	if len(s.Labels) > 0 {
+		rest = append(rest, "labels")
+	}
+	if len(rest) > 0 {
+		notes = append(notes, "Its "+strings.Join(rest, " and ")+" are in no list's arguments: where GitLab applies "+
+			"them is not verified; add them to a search_issues call to match what the board shows.")
+	}
+	switch {
+	case s.NoWeight:
+		parts = append(parts, "no weight")
+	case s.Weight != nil:
+		parts = append(parts, fmt.Sprintf("weight %d", *s.Weight))
+	}
+	if s.NoWeight || s.Weight != nil {
+		notes = append(notes, "search_issues has no weight filter, so its weight cannot be reproduced.")
+	}
+	return "Scope: " + strings.Join(parts, ", ") + ". " + strings.Join(notes, " ")
+}
+
+func boardList(l model.BoardList, bd Boundary) string {
+	var s string
+	ids := []string{fmt.Sprintf("list id %d", l.ID)}
+	switch l.Kind {
+	case "label":
+		s = "label " + Ident(*l.Label)
+	case "assignee":
+		s = "assignee @" + Ident(*l.Assignee)
+	case "milestone":
+		s = "milestone " + bd.Inline(l.Milestone.UntrustedTitle)
+		ids = append(ids, fmt.Sprintf("milestone id %d", l.Milestone.ID))
+	case "iteration":
+		s = "iteration " + bd.Inline(l.Iteration.UntrustedTitle)
+		ids = append(ids, fmt.Sprintf("iteration id %d", l.Iteration.ID))
+	default:
+		s = "a list of unknown kind, perhaps a status list"
+	}
+	if l.Position != nil {
+		ids = append(ids, fmt.Sprintf("position %d", *l.Position))
+	}
+	s += " (" + strings.Join(ids, ", ") + "): "
+	q := l.SearchIssues
+	if q == nil {
+		return s + "search_issues cannot return it: " + l.SearchNote + "."
+	}
+	args := []string{"state " + Ident(q.State)}
+	if len(q.Labels) > 0 {
+		args = append(args, "labels "+idents(q.Labels))
+	}
+	if q.Assignee != nil {
+		args = append(args, "assignee "+Ident(*q.Assignee))
+	}
+	if q.UntrustedMilestone != nil {
+		// The argument is the exact title; the text shows it cleaned.
+		title, _ := Line(*q.UntrustedMilestone, TitleChars)
+		arg := "milestone " + bd.Inline(title)
+		if title != *q.UntrustedMilestone {
+			arg += " (shown cleaned; pass the exact title from search_issues.untrusted_milestone)"
+		}
+		args = append(args, arg)
+	}
+	s += "search_issues " + strings.Join(args, ", ") + "."
+	if l.SearchNote != "" {
+		s += " Note: " + l.SearchNote + "."
+	}
+	return s
+}
+
 // Members renders list_members.
 func Members(l model.Members, _ Boundary) string {
 	var b strings.Builder
