@@ -1,0 +1,5 @@
+Updated draft 80001 on !3.
+Project: example-group/alpha (project id 2001), public: anyone can see what is written there.
+Sits on README.md, added line, new 3, at head 1234567890ab.
+The text was replaced; the old one lost 1 line(s), 12 characters.
+note_sha256 is 3333333333333333333333333333333333333333333333333333333333333333; pass it to update_review_comment for the next change.

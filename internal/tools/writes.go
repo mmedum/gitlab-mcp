@@ -236,6 +236,55 @@ func deleteReviewComment() definition {
 	}
 }
 
+type updateReviewCommentIn struct {
+	Project        idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	IID            int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	DraftID        int64    `json:"draft_id" jsonschema:"The draft's id, as list_review_comments or add_review_comment gave it"`
+	Body           string   `json:"body" jsonschema:"The draft's new text, in Markdown, replacing the old one whole; the result counts what it removed"`
+	NoteSHA256     string   `json:"note_sha256" jsonschema:"The draft's note_sha256 as list_review_comments, add_review_comment or the last update_review_comment gave it. The edit is refused [stale] if the draft changed since. A [stale] refusal is NOT a retry signal: read the draft again before deciding"`
+	EscapeCommands bool     `json:"escape_commands,omitempty" jsonschema:"GitLab runs a line starting with a slash, such as /close or /merge, as a command when the draft is published. By default such a line refuses the call; true sends each one as plain text instead, with a leading backslash that renders the same. There is no way to run them"`
+	DryRun         bool     `json:"dry_run,omitempty" jsonschema:"Check the draft and return what would be sent, and what the quick-action guard would do to the text, without writing anything"`
+}
+
+func updateReviewComment() definition {
+	return tool[updateReviewCommentIn, model.DraftUpdate]{
+		sp: spec{Name: "update_review_comment", Kind: Write, Idempotent: true, OwnOnly: true, Guarded: []string{"body"},
+			Description: "Replace the text of one of your own draft review comments, keeping it where it is: in its thread or on " +
+				"its line of the diff. Only your drafts can be edited; nobody else sees them until they are published. " +
+				"note_sha256 from your read is required, and the call is refused [stale] if the draft changed since. The " +
+				"result counts what the old text lost and gives the new note_sha256. A quick-action line in the body refuses " +
+				"the call unless escape_commands is true, because GitLab runs it when the draft is published."},
+		run: func(ctx context.Context, svc *service.Service, in updateReviewCommentIn) (model.DraftUpdate, error) {
+			return svc.UpdateReviewComment(ctx, service.DraftEdit{Project: string(in.Project), IID: in.IID, DraftID: in.DraftID,
+				Body: in.Body, NoteSHA256: in.NoteSHA256})
+		},
+		text: render.DraftUpdate,
+	}
+}
+
+type publishReviewCommentIn struct {
+	Project idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	IID     int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	DraftID int64    `json:"draft_id" jsonschema:"The draft's id, as list_review_comments or add_review_comment gave it"`
+	DryRun  bool     `json:"dry_run,omitempty" jsonschema:"Check the draft and return what would be sent without writing anything"`
+}
+
+func publishReviewComment() definition {
+	return tool[publishReviewCommentIn, model.DraftPublish]{
+		sp: spec{Name: "publish_review_comment", Kind: Write, Bucket: gapi.BucketNotes,
+			Description: "Publish one of your own draft review comments now, on its own, as the thread or reply it was drafted " +
+				"as; submit_review publishes all of them at once. A reply drafted to resolve its thread resolves it, and one " +
+				"that was not reopens a resolved thread, as GitLab does. A draft with a quick-action line is refused. GitLab " +
+				"does not say what it created, so the server reads the threads afterwards and reports the comment; if GitLab " +
+				"deleted the draft without saving it, the outcome is lost and the result gives the text back. Never repeated " +
+				"after a lost answer." + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in publishReviewCommentIn) (model.DraftPublish, error) {
+			return svc.PublishReviewComment(ctx, string(in.Project), in.IID, in.DraftID)
+		},
+		text: render.DraftPublish,
+	}
+}
+
 type submitReviewIn struct {
 	Project        idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
 	IID            int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`

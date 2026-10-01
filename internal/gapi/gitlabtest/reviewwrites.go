@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
@@ -363,11 +364,126 @@ func (s *Server) createDraft(w http.ResponseWriter, r *http.Request, p *project,
 	writeJSON(w, http.StatusCreated, withExtra(d, map[string]any{"merge_request_id": mr.ID}))
 }
 
-func (s *Server) deleteDraft(w http.ResponseWriter, p *project, mr *gitlab.MergeRequest, user, id string) {
+// ownDraft is the index of the user's draft by id, -1 when there is
+// none: GitLab finds a draft only among its author's.
+func (s *Server) ownDraft(p *project, mr *gitlab.MergeRequest, user, id string) int {
 	uid := s.user(user).ID
-	i := slices.IndexFunc(p.drafts[mr.IID], func(d gitlab.DraftNote) bool {
+	return slices.IndexFunc(p.drafts[mr.IID], func(d gitlab.DraftNote) bool {
 		return strconv.FormatInt(d.ID, 10) == id && d.AuthorID == uid
 	})
+}
+
+// maxNoteChars is description_and_note_max_size's default.
+const maxNoteChars = 1_000_000
+
+// updateDraft is PUT …/draft_notes/:id: note is required, and the
+// position is written as sent, so one left out is cleared. A draft the
+// model refuses to save is a 500, as update! raises unrescued.
+func (s *Server) updateDraft(w http.ResponseWriter, r *http.Request, p *project, mr *gitlab.MergeRequest, user, id string) {
+	b, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	note, _ := b.str("note")
+	if strings.TrimSpace(note) == "" {
+		message(w, http.StatusBadRequest, "400 Bad request - Missing params to modify")
+		return
+	}
+	i := s.ownDraft(p, mr, user, id)
+	if i < 0 {
+		message(w, http.StatusNotFound, "404 Not found")
+		return
+	}
+	pos, ok := readPosition(w, b)
+	if !ok {
+		return
+	}
+	var code *string
+	if pos != nil {
+		c, ok := s.checkPosition(w, p, mr, pos)
+		if !ok {
+			return
+		}
+		if c != "" {
+			code = &c
+		}
+	}
+	if utf8.RuneCountInString(note) > maxNoteChars {
+		message(w, http.StatusInternalServerError, "500 Internal Server Error")
+		return
+	}
+	d := &p.drafts[mr.IID][i]
+	d.Note, d.Position, d.LineCode = note, pos, code
+	writeJSON(w, http.StatusOK, withExtra(*d, map[string]any{"merge_request_id": mr.ID}))
+}
+
+// publishDraft is PUT …/draft_notes/:id/publish. Its quick actions run;
+// a draft that was only commands saves no comment, and is deleted with
+// a 204 all the same, as GitLab only logs that.
+func (s *Server) publishDraft(w http.ResponseWriter, p *project, mr *gitlab.MergeRequest, user, id string) {
+	i := s.ownDraft(p, mr, user, id)
+	if i < 0 {
+		message(w, http.StatusNotFound, "404 Not found")
+		return
+	}
+	d := p.drafts[mr.IID][i]
+	p.drafts[mr.IID] = slices.Delete(p.drafts[mr.IID], i, i+1)
+	s.publish(p, mrTarget(mr), user, d)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// publish turns a draft into the comment it was drafted as. A reply
+// resolves its thread when the draft says so and reopens it otherwise
+// (DraftNotes::PublishService#set_discussion_resolve_status).
+func (s *Server) publish(p *project, t target, user string, d gitlab.DraftNote) {
+	cmds, kept := extract(d.Note)
+	s.runCommands(p, t, cmds, user)
+	if kept == "" {
+		return
+	}
+	if d.DiscussionID == nil {
+		s.startThread(p, t, user, kept, d.Position)
+		return
+	}
+	s.reply(p, t, user, *d.DiscussionID, kept)
+	if i := findDiscussion(p, t.key(), *d.DiscussionID); i >= 0 {
+		s.setResolved(&p.discussions[t.key()][i], user, d.ResolveDiscussion)
+	}
+}
+
+// DropDraft deletes a draft as GitLab does when it publishes one whose
+// comment does not save, for a test to stage that loss.
+func (s *Server) DropDraft(projectPath string, iid, id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	n := len(p.drafts[iid])
+	p.drafts[iid] = slices.DeleteFunc(p.drafts[iid], func(d gitlab.DraftNote) bool { return d.ID == id })
+	return len(p.drafts[iid]) < n
+}
+
+// EditDraft changes a draft's text, as its author would in GitLab.
+func (s *Server) EditDraft(projectPath string, iid, id int64, note string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	for i := range p.drafts[iid] {
+		if p.drafts[iid][i].ID == id {
+			p.drafts[iid][i].Note = note
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) deleteDraft(w http.ResponseWriter, p *project, mr *gitlab.MergeRequest, user, id string) {
+	i := s.ownDraft(p, mr, user, id)
 	if i < 0 {
 		message(w, http.StatusNotFound, "404 Not Found")
 		return
@@ -396,19 +512,7 @@ func (s *Server) publishDrafts(w http.ResponseWriter, r *http.Request, p *projec
 	})
 	slices.SortFunc(mine, func(a, b gitlab.DraftNote) int { return int(a.ID - b.ID) })
 	for _, d := range mine {
-		cmds, kept := extract(d.Note)
-		s.runCommands(p, t, cmds, user)
-		switch {
-		case d.DiscussionID != nil:
-			if kept != "" {
-				s.reply(p, t, user, *d.DiscussionID, kept)
-			}
-			if i := findDiscussion(p, t.key(), *d.DiscussionID); i >= 0 && d.ResolveDiscussion {
-				s.setResolved(&p.discussions[t.key()][i], user, true)
-			}
-		case kept != "":
-			s.startThread(p, t, user, kept, d.Position)
-		}
+		s.publish(p, t, user, d)
 	}
 	if summary, _ := b.str("note"); strings.TrimSpace(summary) != "" {
 		s.addNote(p, t, user, summary)

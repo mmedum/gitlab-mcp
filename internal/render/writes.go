@@ -161,6 +161,9 @@ func CommentWrite(w model.CommentWrite, _ Boundary) string {
 		}
 	}
 	witnessLine(&b, w.UpdatedAt, "update_comment")
+	if w.NoteSHA256 != "" {
+		fmt.Fprintf(&b, "\nnote_sha256 is %s; pass it to update_review_comment to change the draft.", w.NoteSHA256)
+	}
 	return b.String()
 }
 
@@ -233,6 +236,54 @@ func DraftDelete(w model.DraftDelete, _ Boundary) string {
 	var b strings.Builder
 	writeHead(&b, fmt.Sprintf("Deleted draft %d.", w.DraftID), w.Write)
 	fmt.Fprintf(&b, "\nYour drafts left on the merge request: %d.", w.Remaining)
+	return b.String()
+}
+
+// DraftUpdate renders update_review_comment.
+func DraftUpdate(w model.DraftUpdate, _ Boundary) string {
+	var b strings.Builder
+	writeHead(&b, outcomeLine(w.Outcome, fmt.Sprintf("draft %d on %s", w.DraftID, mrItem(w.IID)), ""), w.Write)
+	draftPlace(&b, w.DiscussionID, w.Position, w.LineRange, "Sits on")
+	removedLine(&b, "text", w.BodyRemoved)
+	fmt.Fprintf(&b, "\nnote_sha256 is %s; pass it to update_review_comment for the next change.", w.NoteSHA256)
+	return b.String()
+}
+
+// draftPlace says where a draft or the comment it became is.
+func draftPlace(b *strings.Builder, discussionID string, p *model.DiffPosition, r *model.LineSpan, verb string) {
+	if discussionID != "" {
+		fmt.Fprintf(b, "\nThread: %s.", Ident(discussionID))
+	}
+	if p != nil {
+		fmt.Fprintf(b, "\n%s %s, %s, at head %s.", verb, fileName(p.OldPath, p.NewPath), lineOf(p), shortSHA(p.HeadSHA))
+		if r != nil {
+			fmt.Fprintf(b, " It covers %s lines %d to %d.", r.Side, r.Start, r.End)
+		}
+	}
+}
+
+// DraftPublish renders publish_review_comment. A lost draft's text is
+// shown in a boundary: a draft may quote anyone.
+func DraftPublish(w model.DraftPublish, bd Boundary) string {
+	var b strings.Builder
+	head := fmt.Sprintf("Published draft %d as comment %d.", w.DraftID, w.NoteID)
+	if w.Outcome == "lost" {
+		head = fmt.Sprintf("Draft %d was lost: GitLab deleted it without publishing a comment.", w.DraftID)
+	}
+	writeHead(&b, head, w.Write)
+	verb := "Sits on"
+	if w.DryRun {
+		verb = "Would sit on"
+	}
+	draftPlace(&b, w.DiscussionID, w.Position, w.LineRange, verb)
+	if w.ThreadResolved != nil {
+		fmt.Fprintf(&b, "\nThe thread is %s, as read back.", map[bool]string{true: "resolved", false: "unresolved"}[*w.ThreadResolved])
+	}
+	witnessLine(&b, w.UpdatedAt, "update_comment")
+	if w.Outcome == "lost" {
+		b.WriteString("\n" + bd.Notice() + "\n")
+		b.WriteString(bd.Block(Origin{Kind: "draft_comment", Project: w.Target.Project.Path, Item: mrItem(w.IID)}, w.UntrustedBody))
+	}
 	return b.String()
 }
 

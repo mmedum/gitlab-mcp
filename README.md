@@ -66,6 +66,8 @@ contract: tools keep their names and output fields.
 | `add_review_comment` | A draft review comment, on the merge request or a diff line |
 | `list_review_comments` | Your unpublished review comments on a merge request |
 | `delete_review_comment` | Delete one of your drafts |
+| `update_review_comment` | Change the text of one of your drafts, keeping its place |
+| `publish_review_comment` | Publish one of your drafts on its own |
 | `submit_review` | Publish all your drafts at once, with a summary and reviewer state |
 | `get_file` | A file at a ref, bounded |
 | `list_tree` | A directory listing at a ref |

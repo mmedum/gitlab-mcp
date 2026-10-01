@@ -202,6 +202,32 @@ func (c *Client) DeleteDraftNote(ctx context.Context, p Project, iid, draft int6
 		Args: []string{p.segment(), idArg(iid), idArg(draft)}, Name: "delete_review_comment"}, nil)
 }
 
+// DraftUpdate is PUT …/draft_notes/:id. GitLab writes both fields
+// whole: a position left out clears the draft's place on the diff.
+type DraftUpdate struct {
+	Note     string            `json:"note"`
+	Position *diffpos.Position `json:"position,omitempty"`
+}
+
+// UpdateDraftNote replaces the text of one of the signed-in account's
+// drafts, and its position with the one sent. Sent twice, it writes the
+// same twice.
+func (c *Client) UpdateDraftNote(ctx context.Context, p Project, iid, draft int64, in DraftUpdate) (*gitlab.DraftNote, error) {
+	var out gitlab.DraftNote
+	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/merge_requests/{}/draft_notes/{}",
+		Args: []string{p.segment(), idArg(iid), idArg(draft)}, Body: in, Name: "update_review_comment"}, &out)
+	return &out, err
+}
+
+// PublishDraftNote publishes one of the signed-in account's drafts as a
+// comment. GitLab answers 204 without the comment and deletes the draft,
+// so it is sent once.
+func (c *Client) PublishDraftNote(ctx context.Context, p Project, iid, draft int64) error {
+	return c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/merge_requests/{}/draft_notes/{}/publish",
+		Args: []string{p.segment(), idArg(iid), idArg(draft)}, Bucket: BucketNotes,
+		Once: "publishing creates a comment and deletes the draft", Name: "publish_review_comment"}, nil)
+}
+
 // publishBody is bulk_publish's request.
 type publishBody struct {
 	Note          string `json:"note,omitempty"`

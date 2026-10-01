@@ -173,11 +173,16 @@ replace it with a `read_api` one.
   after. GitLab keeps no version of a wiki page, so a change or delete
   carries a hash of the content you read, which the server compares
   with a fresh read; as with issues, a change made between that read and
-  the write is not caught.
+  the write is not caught. A draft review comment carries no version
+  either, so its edit carries a hash of the text you read.
 - **Only your own comments are edited.** `update_comment` refuses
   another person's comment, even where GitLab would allow the edit, and
   a note GitLab wrote. GitLab holds no witness for an edit, so an edit
   made between your read and the write is overwritten, as with issues.
+  `update_review_comment` and `publish_review_comment` act only on your
+  own drafts, which are the only ones GitLab shows you. Publishing a
+  draft written elsewhere that holds a quick-action line is refused,
+  since GitLab runs it on publishing.
 - **Deletes are narrow.** `delete_branch` refuses the default branch,
   every protected branch, and one GitLab does not count merged unless
   you pass `unmerged: true`, and needs the head `sha` you read.

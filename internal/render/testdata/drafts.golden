@@ -6,10 +6,12 @@ Draft 80001, a new inline thread on src/login.go new line 3:
 <<<UNTRUSTED 0123456789abcdef kind=draft_comment project=example-group/alpha item=!3>>>
 Rename this.
 <<<END 0123456789abcdef>>>
+note_sha256 1111111111111111111111111111111111111111111111111111111111111111, for update_review_comment.
 
 Draft 80002, a reply in thread aaaa that resolves it when published:
 <<<UNTRUSTED 0123456789abcdef kind=draft_comment project=example-group/alpha item=!3>>>
 Agreed.
 <<<END 0123456789abcdef>>>
+note_sha256 2222222222222222222222222222222222222222222222222222222222222222, for update_review_comment.
 
 Not shown for the budget; the next page starts with drafts 80003.
