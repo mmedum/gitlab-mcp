@@ -445,9 +445,12 @@ func phase2(s scratch) []step {
 		{tool: "create_commit", args: map[string]any{"project": p, "branch": branch, "message": "A change after review",
 			"actions": []any{create("written/after-review.txt", "after review\n")}}},
 		// GitLab makes the version in the background after the push.
-		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "max": 1}, paged: true,
+		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "max": 1},
 			until: &waitFor{path: "versions.0.id", saved: "mr_v1", every: 5 * time.Second, within: time.Minute},
 			save:  map[string]string{"mr_v2": "versions.0.id"}},
+		// Paged on its own: a paged step saves again from the page it
+		// follows to, which holds an older version.
+		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "max": 1}, paged: true},
 		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v1}}"}},
 		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v1}}",
 			"to_version": "{{mr_v2}}", "commit_offset": 1, "file_offset": 0, "diff_offset": 5}},
