@@ -99,8 +99,8 @@ confidential issue public: without the flag the call is `[blocked]`.
 **The person confirms what ships or deletes.** A registered tool can
 still be called by a model a comment has persuaded, and `confirm: true`
 is an argument the model writes. So when the client supports MCP
-elicitation, the server asks you itself before a merge, an approval, a
-manual job, a release, a new tag, a pipeline on a protected ref or for
+elicitation, the server asks you itself before a merge, an approval,
+applying review suggestions, a manual job, a release, a new tag, a pipeline on a protected ref or for
 a merge request between two protected branches,
 publishing a confidential issue and every delete. Text from GitLab in
 the question stands in backticks or code style, on one line, with no
@@ -151,8 +151,12 @@ replace it with a `read_api` one.
   `create_commit` refuses the project's default branch and every
   protected branch, and `create_branch` refuses a name a protected-branch
   rule covers, read at call time. `apply_suggestions` refuses a merge
-  request whose source branch is the default or a protected one, and
-  applies only suggestions on the merge request you name.
+  request whose source branch is the default or a protected one,
+  applies only suggestions on the merge request you name, and refuses
+  one whose text holds hidden or bidirectional characters, which can
+  make code read otherwise than it runs. `list_discussions` shows each
+  suggestion's exact text with such characters written out, and you are
+  asked with the text before anything is committed under your name.
 - **`lint_ci` sends nothing GitLab would fetch.** Configuration you pass
   to it may not use `include:`, since GitLab fetches what an include
   names while linting.

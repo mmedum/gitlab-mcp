@@ -60,6 +60,42 @@ func AskMerge(project string, iid int64, title, source, target, sha string, auto
 	return q
 }
 
+// AskedSuggestion is one suggestion AskApplySuggestions shows: where it
+// goes and the text it commits.
+type AskedSuggestion struct {
+	ID               int64
+	Path             string
+	FromLine, ToLine int
+	To               string
+}
+
+// askSuggestions caps the suggestions one question shows; the rest are
+// counted, and every one is bound.
+const askSuggestions = 5
+
+// AskApplySuggestions asks before apply_suggestions: the text is someone
+// else's, committed under the person's name. The head and each whole
+// text are bound.
+func AskApplySuggestions(project string, iid int64, source, sha string, sgs []AskedSuggestion) Question {
+	lines := []string{fmt.Sprintf("apply_suggestions: commit %d suggestion(s) from merge request !%d in %s to its source branch %s "+
+		"at head %s, under your name?", len(sgs), iid, quoted(project, quotedLen), quoted(source, quotedLen), askSHA(sha))}
+	for i, sg := range sgs {
+		if i == askSuggestions {
+			lines = append(lines, fmt.Sprintf("and %d more suggestions, not shown here", len(sgs)-i))
+			break
+		}
+		lines = append(lines, fmt.Sprintf("suggestion %d on %s %s puts in %s", sg.ID, quoted(sg.Path, quotedLen),
+			lineRange(sg.FromLine, sg.ToLine), clipped(sg.To)))
+	}
+	lines = append(lines, "Someone else wrote this text; the commit is yours.")
+	q := ask(lines...)
+	q.Bind += "\x00" + sha + "\x00" + source
+	for _, sg := range sgs {
+		q.Bind += fmt.Sprintf("\x00%d\x00%s", sg.ID, sum(sg.To))
+	}
+	return q
+}
+
 // AskApprove asks before approve_merge_request.
 func AskApprove(project string, iid int64, title, sha string) Question {
 	q := ask(
@@ -311,14 +347,19 @@ func AskDeleteComment(project, kind string, iid int64, author, body string) Ques
 // body0 is the start of a body, quoted on one line, and how much more
 // there is.
 func body0(body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return "text: empty"
+	return "text: " + clipped(strings.TrimSpace(body))
+}
+
+// clipped is a text quoted on one line, cut at bodyLen with a count of
+// the rest.
+func clipped(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return "empty"
 	}
-	if n := utf8.RuneCountInString(body); n > bodyLen {
-		return fmt.Sprintf("text: %s (%d more characters)", quoted(string([]rune(body)[:bodyLen]), bodyLen), n-bodyLen)
+	if n := utf8.RuneCountInString(text); n > bodyLen {
+		return fmt.Sprintf("%s (%d more characters)", quoted(string([]rune(text)[:bodyLen]), bodyLen), n-bodyLen)
 	}
-	return "text: " + quoted(body, bodyLen)
+	return quoted(text, bodyLen)
 }
 
 // sum binds a whole text, of which a question shows the start.

@@ -114,10 +114,12 @@ type applySuggestionsIn struct {
 
 func applySuggestions() definition {
 	return tool[applySuggestionsIn, model.SuggestionsApply]{
-		sp: spec{Name: "apply_suggestions", Kind: Ship,
+		sp: spec{Name: "apply_suggestions", Asks: "before it commits the suggestions", Kind: Ship,
 			Description: "Apply suggestions from a merge request's diff comments: GitLab commits them, in one commit as the " +
 				"signed-in account, to the source branch. The default branch and a protected source branch are refused " +
-				"[blocked], and every id must be on this merge request. Suggestions already applied are reported unchanged. " +
+				"[blocked], and so is a suggestion whose text holds hidden or bidirectional characters; every id must be on " +
+				"this merge request. list_discussions shows each suggestion's exact text. Suggestions already applied are " +
+				"reported unchanged. " +
 				"GitLab refuses one whose lines changed since, and every one right after a push until it has caught up, so " +
 				"try again shortly then. Never repeated after a lost answer: the result then says what a read found. The " +
 				"result gives the branch's new head." + shipNote + visibleNote},

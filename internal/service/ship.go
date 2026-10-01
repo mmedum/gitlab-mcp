@@ -840,30 +840,69 @@ func (s *Service) CancelAutoMerge(ctx context.Context, raw string, iid int64) (m
 		return out, nil
 	}
 	res, err := s.client.CancelAutoMerge(ctx, t.p, iid)
+	// The read settles every answer: GitLab's 201 says nothing by its
+	// status, and a failed answer may follow a cancel that landed.
 	after, readErr := s.client.GetMergeRequest(ctx, t.p, iid)
-	var e *gapi.Error
+	if readErr != nil {
+		return cancelUnread(t, mr, setBy, res, err)
+	}
+	return cancelRead(t, after, setBy, res, err)
+}
+
+// cancelUnread says what a cancel did when the merge request could not
+// be read afterwards: only GitLab's answer tells.
+func cancelUnread(t target, before *gitlab.MergeRequest, setBy string, res *gitlab.ServiceResult, err error) (model.AutoMergeCancel, error) {
 	switch {
-	case err != nil && readErr == nil && errors.As(err, &e) && e.Status == 401:
+	case err != nil:
+		return model.AutoMergeCancel{}, err
+	case res.Status == "success":
+		out := autoMergeCancel(t, before, setBy, "canceled")
+		out.AutoMerge = false
+		out.Notes = []string{"GitLab canceled the auto-merge; reading the merge request afterwards failed, so its state is as read before."}
+		return out, nil
+	case res.Status == "error":
+		return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassConflict, "GitLab did not cancel the auto-merge: %q", res.Message)
+	}
+	return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the cancel with status %q, neither success nor "+
+		"error, and reading the merge request afterwards failed, so whether it canceled is unknown: read it with get_merge_request",
+		res.Status)
+}
+
+// cancelRead says what a cancel did from GitLab's answer and the merge
+// request read afterwards.
+func cancelRead(t target, after *gitlab.MergeRequest, setBy string, res *gitlab.ServiceResult, err error) (model.AutoMergeCancel, error) {
+	gone := !autoMergeSet(after)
+	var e *gapi.Error
+	failed := errors.As(err, &e)
+	switch {
+	case err != nil && gone:
+		out := autoMergeCancel(t, after, setBy, "canceled")
+		if after.State != "opened" {
+			out.Outcome = "unchanged"
+		}
+		out.Notes = []string{fmt.Sprintf("GitLab answered with an error, but a read afterwards shows no auto-merge set and the merge "+
+			"request %s: this call or another canceled it, or it merged.", after.State)}
+		return out, nil
+	case failed && e.Status == 401:
 		// GitLab answers 401 to an account that may neither merge it nor
 		// wrote it; the read just made shows the token is fine.
 		return model.AutoMergeCancel{}, gapi.Wrap(gapi.ClassForbidden, err, "GitLab refused to cancel the auto-merge, and it is "+
 			"still set: only someone who may merge the merge request, or its author, can cancel it")
+	case failed && (e.Class == gapi.ClassAmbiguousOutcome || e.Class == gapi.ClassUnavailable):
+		return model.AutoMergeCancel{}, gapi.Wrap(e.Class, err, "%s. A read afterwards shows the auto-merge still set; "+
+			"canceling again is safe", e.Message)
 	case err != nil:
 		return model.AutoMergeCancel{}, err
-	case readErr != nil && res.Status == "success":
-		out := autoMergeCancel(t, mr, setBy, "canceled")
-		out.AutoMerge = false
-		out.Notes = []string{"GitLab canceled the auto-merge; reading the merge request afterwards failed, so its state is as read before."}
-		return out, nil
-	case readErr != nil:
-		return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassConflict, "GitLab did not cancel the auto-merge: %q", res.Message)
 	case res.Status == "success":
 		out := autoMergeCancel(t, after, setBy, "canceled")
-		if after.MergeWhenPipelineSucceeds {
+		if !gone {
 			out.Notes = []string{"GitLab canceled the auto-merge, but a read afterwards shows one set again: someone set it since."}
 		}
 		return out, nil
-	case !autoMergeSet(after):
+	case res.Status != "error":
+		return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the cancel with status %q, neither success "+
+			"nor error, so what it did is unknown; a read afterwards shows auto-merge set: %t", res.Status, !gone)
+	case gone:
 		out := autoMergeCancel(t, after, setBy, "unchanged")
 		out.Notes = []string{fmt.Sprintf("GitLab answered %q, and a read shows no auto-merge set now: it merged or was "+
 			"canceled in the meantime.", res.Message)}
@@ -921,9 +960,12 @@ type located struct {
 // comments to its source branch, as the account, in one commit. GitLab
 // finds a suggestion by its id alone, so each is first found on this
 // merge request. The source branch is held to create_commit's rule
-// (§4.4): never the default branch or a protected one. GitLab answers
-// with the suggestions as they were before the commit and without it, so
-// the result is read back.
+// (§4.4): never the default branch or a protected one. The text is
+// someone else's and is committed under the account's name, so a text
+// with characters a reader would not see is refused, and the person is
+// asked with the text before it is sent (§4.12). GitLab answers with the
+// suggestions as they were before the commit and without it, so the
+// result is read back.
 func (s *Service) ApplySuggestions(ctx context.Context, in SuggestionsApplication) (model.SuggestionsApply, error) {
 	if err := in.check(); err != nil {
 		return model.SuggestionsApply{}, err
@@ -940,12 +982,13 @@ func (s *Service) ApplySuggestions(ctx context.Context, in SuggestionsApplicatio
 		return model.SuggestionsApply{}, gapi.Errf(gapi.ClassConflict, "the merge request is %s, and GitLab applies suggestions only "+
 			"on an open one; nothing was sent", mr.State)
 	}
-	src, branch, err := s.suggestionBranch(ctx, t, mr)
-	if err != nil {
-		return model.SuggestionsApply{}, err
-	}
-	found, err := s.suggestionsOn(ctx, t.p, in.IID, in.IDs)
-	if err != nil {
+	var src target
+	var branch *gitlab.Branch
+	var found map[int64]located
+	if err := parallel(
+		func() (err error) { src, branch, err = s.suggestionBranch(ctx, t, mr); return err },
+		func() (err error) { found, err = s.suggestionsOn(ctx, t.p, in.IID, in.IDs); return err },
+	); err != nil {
 		return model.SuggestionsApply{}, err
 	}
 	out := model.SuggestionsApply{Outcome: "applied", Write: model.Write{Target: src.ref}, IID: in.IID, SourceProject: src.project.PathWithNamespace,
@@ -965,11 +1008,25 @@ func (s *Service) ApplySuggestions(ctx context.Context, in SuggestionsApplicatio
 		return model.SuggestionsApply{}, gapi.Errf(gapi.ClassConflict, "already applied: %s. GitLab refuses to apply a suggestion "+
 			"twice; pass only the others. Nothing was sent", joinIDs(applied))
 	}
+	asked := make([]render.AskedSuggestion, 0, len(in.IDs))
+	for _, id := range in.IDs {
+		l := found[id]
+		if bad := render.Invisible(l.sg.ToContent); len(bad) > 0 {
+			return model.SuggestionsApply{}, gapi.Errf(gapi.ClassBlocked, "suggestion %d would commit characters a reader does not "+
+				"see (%s), which can make code read otherwise than it runs; nothing was sent. Its text, with them written out, is "+
+				"in list_discussions", id, runeNames(bad))
+		}
+		asked = append(asked, render.AskedSuggestion{ID: id, Path: l.path, FromLine: l.sg.FromLine, ToLine: l.sg.ToLine,
+			To: l.sg.ToContent})
+	}
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun = "dry_run", true
 		out.WouldSend = preview("PUT", "commit the suggestions to the source branch", names(field{"ids", len(in.IDs) > 1},
 			field{"commit_message", in.CommitMessage != ""}))
 		return out, nil
+	}
+	if err := ask(ctx, render.AskApplySuggestions(t.ref.Project.Path, in.IID, mr.SourceBranch, branch.Commit.ID, asked)); err != nil {
+		return model.SuggestionsApply{}, err
 	}
 	if len(in.IDs) == 1 {
 		_, err = s.client.ApplySuggestion(ctx, in.IDs[0], in.CommitMessage)
@@ -977,29 +1034,56 @@ func (s *Service) ApplySuggestions(ctx context.Context, in SuggestionsApplicatio
 		_, err = s.client.ApplySuggestions(ctx, in.IDs, in.CommitMessage)
 	}
 	if err != nil {
-		return model.SuggestionsApply{}, s.applyFailed(ctx, t, src, mr, in.IDs, branch.Commit.ID, err)
+		return model.SuggestionsApply{}, s.applyFailed(ctx, t, src, mr, in, branch.Commit.ID, err)
 	}
 	return s.readApplied(ctx, t, src, mr, in.IDs, out)
 }
 
-// suggestionsOn finds each id among the merge request's diff comments.
+// runeNames names characters as U+202E, comma-separated.
+func runeNames(rs []rune) string {
+	parts := make([]string, len(rs))
+	for i, r := range rs {
+		parts[i] = fmt.Sprintf("U+%04X", r)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// suggestionsOn finds each id among the merge request's diff comments,
+// reading threads until every id is found.
 func (s *Service) suggestionsOn(ctx context.Context, p gapi.Project, iid int64, ids []int64) (map[int64]located, error) {
-	all, complete, err := s.discussions(ctx, p, iid, true)
+	found := map[int64]located{}
+	collect := func(rows []gitlab.Discussion) bool {
+		for _, d := range rows {
+			for _, n := range d.Notes {
+				for _, sg := range n.Suggestions {
+					l := located{sg: sg, note: n.ID}
+					if n.Position != nil {
+						l.path = n.Position.NewPath
+					}
+					found[sg.ID] = l
+				}
+			}
+		}
+		for _, id := range ids {
+			if _, ok := found[id]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+	seen := 0
+	all, complete, err := readPagesUntil(maxDiscussionPages, func(opts gapi.ListOptions) ([]gitlab.Discussion, gapi.Page, error) {
+		return s.client.ListMergeRequestDiscussions(ctx, p, iid, opts)
+	}, func(rows []gitlab.Discussion) bool {
+		done := collect(rows[seen:])
+		seen = len(rows)
+		return done
+	})
 	if err != nil {
 		return nil, err
 	}
-	found := map[int64]located{}
-	for _, d := range all {
-		for _, n := range d.Notes {
-			for _, sg := range n.Suggestions {
-				l := located{sg: sg, note: n.ID}
-				if n.Position != nil {
-					l.path = n.Position.NewPath
-				}
-				found[sg.ID] = l
-			}
-		}
-	}
+	// The last page read is not offered to done.
+	collect(all[seen:])
 	for _, id := range ids {
 		if _, ok := found[id]; ok {
 			continue
@@ -1034,10 +1118,9 @@ func (s *Service) suggestionBranch(ctx context.Context, t target, mr *gitlab.Mer
 			"it; nothing was sent")
 	case err != nil:
 		return target{}, nil, err
-	case branch.Default || mr.SourceBranch == src.project.DefaultBranch || branch.Protected:
-		return target{}, nil, gapi.Errf(gapi.ClassBlocked, "the source branch is the default branch or a protected one, which "+
-			"takes code only through a merge request, so this server does not commit to it; nothing was sent. Apply the "+
-			"suggestions in GitLab, or commit the change to a new branch with create_commit")
+	}
+	if err := s.guardBranch(ctx, src, mr.SourceBranch, branch); err != nil {
+		return target{}, nil, err
 	}
 	return src, branch, nil
 }
@@ -1047,36 +1130,40 @@ func (s *Service) suggestionBranch(ctx context.Context, t target, mr *gitlab.Mer
 // push, until GitLab has moved the comments to the new head.
 var fileChanged = regexp.MustCompile(`A file has been changed\.`)
 
-// applyFailed says what a failed apply did. A lost answer is settled by
-// reading the suggestions and the branch, never by applying again (§4.5).
-func (s *Service) applyFailed(ctx context.Context, t, src target, mr *gitlab.MergeRequest, ids []int64, before string, err error) error {
+// applyFailed says what a failed apply did, by the class the client
+// gave the failure. A lost answer is settled by reading the suggestions
+// and the branch, never by applying again (§4.5).
+func (s *Service) applyFailed(ctx context.Context, t, src target, mr *gitlab.MergeRequest, in SuggestionsApplication, before string,
+	err error) error {
 	var e *gapi.Error
 	if !errors.As(err, &e) {
 		return err
 	}
 	switch {
 	case e.Class == gapi.ClassAmbiguousOutcome:
-		return s.settleApply(ctx, t, src, mr, ids, before, err)
+		return s.settleApply(ctx, t, src, mr, in, before, err)
 	case e.Class == gapi.ClassConflict && fileChanged.MatchString(e.Message):
 		return gapi.Wrap(gapi.ClassConflict, err, "%s. GitLab refuses a suggestion whose comment was made on an older head "+
 			"than the branch's. Right after a push it refuses every one until it has moved the comments to the new head, so "+
 			"try again shortly; if it still refuses, read list_discussions again", e.Message)
-	case e.Status == 403:
-		return gapi.Wrap(gapi.ClassForbidden, err, "GitLab refused to apply the suggestions, and nothing was committed: the "+
-			"account may not push to the source branch, which a protected branch or a fork that does not allow commits from "+
-			"the target project's members causes")
-	case e.Status == 404:
-		return gapi.Wrap(gapi.ClassNotFound, err, "GitLab found no such suggestion, and nothing was committed: an edit to its "+
-			"comment gives it a new id. Read list_discussions again")
+	case e.Class == gapi.ClassForbidden:
+		return gapi.Wrap(gapi.ClassForbidden, err, "%s. Nothing was committed: GitLab applies a suggestion only for an account "+
+			"that may push to the source branch, which a protected branch or a fork that does not allow commits from the target "+
+			"project's members prevents", e.Message)
+	case e.Class == gapi.ClassNotFound:
+		return gapi.Wrap(gapi.ClassNotFound, err, "%s. Nothing was committed: an edit to a comment gives its suggestions new "+
+			"ids, so read list_discussions again", e.Message)
 	}
 	return err
 }
 
-// settleApply settles a lost apply: GitLab marks the suggestions applied
-// in the request that commits them, so all applied means it landed, and
-// none applied with the head unmoved means it did not.
-func (s *Service) settleApply(ctx context.Context, t, src target, mr *gitlab.MergeRequest, ids []int64, before string, err error) error {
-	found, readErr := s.suggestionsOn(ctx, t.p, mr.IID, ids)
+// settleApply settles a lost apply. GitLab marks the suggestions applied
+// in the request that commits them, so all applied means they landed,
+// by this call or another. Anything else read right after the failure
+// is no proof: GitLab may still be committing.
+func (s *Service) settleApply(ctx context.Context, t, src target, mr *gitlab.MergeRequest, in SuggestionsApplication, before string,
+	err error) error {
+	found, readErr := s.suggestionsOn(ctx, t.p, mr.IID, in.IDs)
 	var head *gitlab.Branch
 	if readErr == nil {
 		head, readErr = s.client.GetBranch(ctx, src.p, mr.SourceBranch)
@@ -1086,21 +1173,38 @@ func (s *Service) settleApply(ctx context.Context, t, src target, mr *gitlab.Mer
 			"it is unknown: %s", settledUnknown)
 	}
 	n := 0
-	for _, id := range ids {
+	for _, id := range in.IDs {
 		if found[id].sg.Applied {
 			n++
 		}
 	}
-	switch {
-	case n == len(ids):
-		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the apply, but a read shows every suggestion "+
-			"applied; the source branch's head is %s. %s", head.Commit.ID, settledLanded)
-	case n == 0 && head.Commit.ID == before:
-		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the apply, and a read shows none applied and the "+
-			"branch where it was. %s", settledNotLanded)
+	if n < len(in.IDs) {
+		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the apply, and a read right after shows %d of %d "+
+			"applied with the branch's head at %s; GitLab may still be committing, so it is unknown: read list_discussions in a "+
+			"moment, and apply none it shows applied", n, len(in.IDs), head.Commit.ID)
 	}
-	return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the apply, and a read shows %d of %d applied with the "+
-		"branch's head at %s, so it is unknown: %s", n, len(ids), head.Commit.ID, settledUnknown)
+	if s.madeByThisCall(ctx, head.Commit, before, in.CommitMessage) {
+		return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the apply, but a read shows every suggestion "+
+			"applied, and the source branch's head %s is one commit on from where it was, by this account. %s", head.Commit.ID,
+			settledLanded)
+	}
+	return gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the apply, but a read shows every suggestion applied, "+
+		"by this call or another: a reviewer may have applied them in GitLab meanwhile. The source branch's head is %s. %s",
+		head.Commit.ID, settledLanded)
+}
+
+// madeByThisCall reports whether head is the commit an apply makes: one
+// commit on from before, by the account, with the message asked for when
+// it has no placeholder GitLab fills.
+func (s *Service) madeByThisCall(ctx context.Context, head gitlab.Commit, before, message string) bool {
+	if len(head.ParentIDs) != 1 || head.ParentIDs[0] != before {
+		return false
+	}
+	if message != "" && !strings.Contains(message, "%{") && !sameText(head.Message, message) {
+		return false
+	}
+	me, err := s.me(ctx)
+	return err == nil && head.AuthorName == me.Name
 }
 
 // readApplied reads back what an apply did: the suggestions' applied
@@ -1136,7 +1240,7 @@ func appliedSuggestions(ids []int64, found map[int64]located) []model.AppliedSug
 	for _, id := range ids {
 		l := found[id]
 		out = append(out, model.AppliedSuggestion{ID: id, NoteID: l.note, FilePath: l.path, FromLine: l.sg.FromLine,
-			ToLine: l.sg.ToLine, Applied: l.sg.Applied})
+			ToLine: l.sg.ToLine, Applied: l.sg.Applied, SuggestionText: suggestionText(l.sg)})
 	}
 	return out
 }

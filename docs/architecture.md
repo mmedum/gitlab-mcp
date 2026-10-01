@@ -432,7 +432,7 @@ time and the signed-in user:
 | a to-do added for oneself | the account's pending to-dos it added on the item, created since shortly before the call |
 | an emoji reaction | the account's reactions on the item or comment before and after: one that is new is the add's |
 | a snippet change that creates, deletes or moves a file | the snippet's files and `updated_at` |
-| suggestions applied | each suggestion's `applied` on the merge request's diff comments, and the source branch's head: all applied is applied; none, with the head where it was, is not |
+| suggestions applied | each suggestion's `applied` on the merge request's diff comments, and the source branch's head: all applied is applied, by this call when the head is one commit on by the account, by this call or another otherwise; anything else read right after the failure is unknown, since GitLab may still be committing |
 
 Found means **created**, and the result carries it. Not found means
 **not created**, and the result says so without creating it. Anything
@@ -607,13 +607,16 @@ rather than reporting success.
 Registration decides what the server can do (§4.3), and `confirm:
 true` is an argument the model writes, which a persuaded model writes
 too. So when the client can ask, the server asks the person itself,
-through MCP form elicitation, before fifteen writes: `merge_merge_request`,
-`approve_merge_request`, `play_job`, `create_release`, `create_tag`,
+through MCP form elicitation, before sixteen writes: `merge_merge_request`,
+`approve_merge_request`, `apply_suggestions`, `play_job`, `create_release`, `create_tag`,
 `run_pipeline` on the default branch or a protected branch or tag,
 `run_merge_request_pipeline` when both its branches are protected,
 `update_issue` when it makes a confidential issue public, and the seven
 deletes of the Destructive kind. The set is the core the maintainer
 chose on 2026-09-29 (§14): the writes that ship, publish or destroy.
+`apply_suggestions` joined it on 2026-10-01, the maintainer's call
+after a security review: what it commits was written by someone other
+than the person or the model, unlike `create_commit`'s text.
 Retrying, cancelling, rebasing, moving and commenting do not ask, since
 questions asked often are answered without reading (§18 row 94).
 
@@ -641,9 +644,7 @@ questions asked often are answered without reading (§18 row 94).
    `[blocked]` instead.
 4. **A dry run never asks.** Nor does a pipeline on a ref no rule
    protects, or an issue update that keeps it confidential. Nor does
-   `apply_suggestions`, which commits only where `create_commit` would,
-   and a commit there asks nothing; nor `cancel_auto_merge`, which
-   stops a merge and ships nothing. `run_pipeline`
+   `cancel_auto_merge`, which stops a merge and ships nothing. `run_pipeline`
    reads the ref and asks when GitLab marks it the default branch or
    protected. A `refs/heads/` or `refs/tags/` ref is read as the branch
    or tag it names, as GitLab reads it, and a ref that is neither is
@@ -1069,7 +1070,12 @@ the head `sha` reviewed and refuses a protected source branch. A draft on a line
 `line_code` GitLab computed for it.
 
 `list_discussions` names the suggestion blocks of each diff comment
-with their ids, lines and whether GitLab has them applied.
+with their ids, lines and whether GitLab has them applied, and shows
+each one's exact text, the lines it replaces and what it commits, each
+hidden or bidirectional character written out as `<U+202E>`, inside the
+untrusted boundary and cut at 2,000 characters. The comment's body shows
+the same text as Markdown, hidden characters dropped (§4.1), so the
+body alone would hide a Trojan Source edit.
 `apply_suggestions` (Ship) commits suggestions, one or several in one
 commit, to the merge request's source branch as the account, through
 `PUT /suggestions/:id/apply` or `/suggestions/batch_apply`. GitLab finds
@@ -1078,21 +1084,35 @@ request's own comments; an edit to a comment gives its suggestions new
 ids, so an id stands for the text it was read with and carries its own
 witness. A default or protected source branch is refused (§4.4), and so
 is a fork outside `GITLAB_MCP_WRITE_NAMESPACES` (§4.7), since the
-commit lands in the fork. GitLab's 400 names why a suggestion does not
+commit lands in the fork. A suggestion whose text holds a hidden,
+bidirectional or other invisible character is refused `[blocked]`,
+naming them. Then the person is asked (§4.12): the question names the
+project, the merge request, the source branch and its head, and quotes
+each suggestion's text, five at most with the rest counted; the head
+and every whole text are bound. GitLab's 400 names why a suggestion does not
 apply: applied already, its lines changed, the merge request closed.
 Right after a push it refuses every one with "A file has been changed."
 until it has moved the comments to the new head, and the result says to
 try again shortly. The answer gives neither the commit nor an `applied`
 that reflects it, so the suggestions and the branch's head are read
 back. A lost answer is settled by the same read (§4.5): GitLab refuses
-an applied suggestion, so the PUT is never sent twice (§18 row 108).
+an applied suggestion, so the PUT is never sent twice. Every one read
+applied is a landing, by this call when the head is one commit on from
+the head read before, by the account; otherwise a reviewer may have
+applied them in GitLab meanwhile, and the result says so. Anything less
+read right after a failure is unknown, since GitLab may still be
+committing (§18 row 108).
 
 `cancel_auto_merge` (Ship) stops a merge request set to merge when its
 pipeline succeeds. GitLab answers 201 whether it canceled or not, with
 the result in the body, so the tool reads `status`, then the merge
-request. Without an auto-merge it sends nothing. Someone who may merge
-the merge request, or its author, can cancel; GitLab answers anyone
-else 401, which is `[forbidden]` here (§18 row 107).
+request. Without an auto-merge it sends nothing. The read afterwards
+settles every answer: a failure behind which no auto-merge is set is
+reported canceled (or unchanged, when the merge request merged), and a
+status that is neither `success` nor `error` is `[unexpected]`, never
+unchanged. Someone who may merge the merge request, or its author, can
+cancel; GitLab answers anyone else 401, which is `[forbidden]` here
+(§18 row 107).
 
 ### 7.4 Where an inline comment lands
 
@@ -1729,6 +1749,7 @@ gated. It covers gitlab.com, the only instance.
 | REST v4 only, no escape hatch | this design | §4.10, §8a |
 | Unregistered, not registered-and-refusing, for gated tools | this design | §17b |
 | Release pipeline in phase 0 | this design | §12 |
+| The person asked before applying review suggestions | maintainer, 2026-10-01 | §4.12: the committed text is someone else's, under the person's name |
 | The person asked before a merge, an approval, a manual job, a release, a tag, a pipeline on a protected ref, publishing a confidential issue and every delete; the empty form; `GITLAB_MCP_REQUIRE_PROMPT` | maintainer, 2026-09-29 | §4.12; a client that declares elicitation and answers with nobody there cannot make these writes, which is why the release is a major one |
 
 ## 15. What must be verified live
@@ -2647,4 +2668,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 107 | A merge request's changes between two versions are the repository compare from the older version's head to the newer's, straight, in the target project | At v19.4.1-ee: `lib/api/merge_request_diffs.rb` L12-57 (`authenticate!`; the listing is `merge_request_diffs.order_id_desc`, offset pages; a version's route has no pagination and returns `raw_diffs(limits: false)` with every commit); `app/models/merge_request.rb` L57-58 (the association is `regular` diffs only); `app/models/merge_request_diff.rb` L66-80 (states), L425-453 (base and start can be null, head falls back to the last commit), L714, L1015-1070 and L1136-1147 (heads kept around in the target project); `lib/gitlab/git/diff_collection.rb` L118-126 (`real_size` is `N` or `N+`); `app/controllers/projects/merge_requests/diffs_controller.rb` L167-204 and `app/facades/merge_requests/merge_request_diff_comparison.rb` L10-17 (the page's comparison is `CompareService.new(target_project, newer.head_commit_sha).execute(target_project, older.head_commit_sha, straight: true)`); `lib/api/repositories.rb` L297-331 (the same `CompareService` call with `from`, `to` and `straight`) | **Confirmed (tier 1).** There is no REST route comparing versions; `compare?from=<older head>&to=<newer head>&straight=true` on the target project is the call GitLab's own page makes, so it shows what the page shows. The default `straight=false` would compare from the merge base and is wrong here. After a rebase the straight diff carries what the rebase brought in from the target branch; GitLab offers no range-diff, so the tool says so and flags a moved merge base. A version's own route is not read for diffs: it is unpaged, and a cleaned-up old version (`without_files`) returns no diffs although its heads are still kept (inferred from code, not live-tested) (§7.3) |
 | 108 | Each reviewer's review state is readable on Free and only from the reviewers route | At v19.4.1-ee: `lib/api/merge_requests.rb` L526-542 (`find_merge_request_with_access`, then `Kaminari.paginate_array(merge_request.merge_request_reviewers)` and `paginate`: offset pages with an exact `X-Total`); `app/models/merge_request.rb` L135 (the association has no order); `lib/api/entities/merge_request_reviewer.rb` (`user`, `state`, `created_at`); `app/models/concerns/merge_request_reviewer_state.rb` (the enum, defined in CE: `unreviewed`, `reviewed`, `requested_changes`, `approved`, `unapproved`, `review_started`); `lib/api/entities/merge_request_basic.rb` L47 (`reviewers` is plain `UserBasic`) | **Confirmed (tier 1).** The merge request itself carries no review state, so `get_merge_request` reads the route alongside its other reads, one page of 100, best effort as the approvals are, and says when GitLab has more. The order is the database's, unspecified, so the page is shown as GitLab gives it. `user.state` is the account's state, not the review's, and is not shown. How states move, as `app/services/merge_requests/update_reviewer_state_service.rb`, `app/services/draft_notes/create_service.rb` `after_execute`, `approval_service.rb`, `remove_approval_service.rb` and EE `merge_requests/base_service.rb` `delete_approvals` show it, and as the test instance models it: a user's first draft sets `review_started`; submitting `reviewed`, `approved` or `requested_changes` makes anyone but the author a reviewer; an `approved` reviewer moves only to `requested_changes` or `unapproved`; approving and unapproving set those states; a push resets approvers to `unapproved` only under the Premium `reset_approvals_on_push` (§7.2) |
 | 109 | Canceling an auto-merge answers as the OpenAPI file publishes it | At v19.4.1-ee: `lib/api/merge_requests.rb` L930-948; `app/services/auto_merge_service.rb` L54-60; `app/services/auto_merge/base_service.rb` L36-46 and L114-140; `app/services/auto_merge/merge_when_checks_pass_service.rb` L26-31; `app/models/merge_request.rb` L1797-1799 and L2096-2099; `lib/api/entities/merge_request_basic.rb` L10-12 and L65; `lib/api/helpers.rb` L613 | **Refuted (tier 1).** The route returns the service's result and presents nothing, so GitLab renders that hash under POST's 201: `{"status":"success"}` when it canceled, and `{"status":"error","message":"Can't cancel the automatic merge","http_status":406}` when no auto-merge was set or saving failed. The 406 the file lists, and the merge request it publishes as the body, never come. A cancel clears `merge_when_pipeline_succeeds` and `merge_user`, saves, so `updated_at` moves, adds a system note and fires the merge request hook. `merge_when_pipeline_succeeds` is GitLab's `auto_merge_enabled` for every strategy, so it says whether one is set. Someone who may merge into the target branch, or the author, may cancel; anyone else gets 401 from `unauthorized!`, which here is a role and not a token. A second cancel changes nothing and answers the error body, so the call repeats. `cancel_auto_merge` reads the merge request first and sends nothing without an auto-merge, reads `status` in the body, and reads the merge request again for the result. The body's shape is read from the code; the live run checks it |
-| 110 | Applying a suggestion answers as the OpenAPI file publishes it, and a lost answer can be settled | At v19.4.1-ee: `lib/api/suggestions.rb` L10-54 and L57-84; `app/policies/suggestion_policy.rb`; `lib/gitlab/user_access.rb` L72-77; `app/services/suggestions/apply_service.rb` L11-66 and `ee/app/services/ee/suggestions/apply_service.rb`; `lib/gitlab/suggestions/suggestion_set.rb` L70-119; `lib/gitlab/suggestions/commit_message.rb`; `app/models/suggestion.rb` L48-62; `lib/api/entities/note.rb` L37-39 and `lib/api/entities/suggestion.rb`; `app/services/notes/update_service.rb` L112-123 | **Refined (tier 1).** Both routes answer 200 with the suggestions as the file publishes them, but they are the objects read before the commit, so `applied` can still be false, and the commit's sha is in no field. GitLab looks a suggestion up by id alone, with no project in the path; batch_apply answers 404 when an id is missing or given twice. An account that may not push to the source branch, a protected one or a fork without collaboration, gets 403 before anything is done. Every other refusal is 400 with the reason, the first failing check winning: the file gone, another branch, applied already, the merge request merged or closed, the source branch deleted, lines changed since, the same content, and "A file has been changed." when the comment's `head_sha` is not the branch's head, which holds for every suggestion right after a push until GitLab moves the comments, so a later try can pass. Lines that overlap in a batch are refused. The commit is `Files::MultiService` as the account on the source branch, with the project's message or a default, and `%{…}` placeholders filled in a custom message too. The suggestions are marked applied in the same request, so a second apply is 400 and never commits twice. An edit to a comment deletes its suggestions and creates new ones, so an id stands for the text it was read with. Only a merge request's diff notes carry `suggestions`, on the discussions and notes routes. `apply_suggestions` finds every id on the merge request first, refuses the default and protected source branches as `create_commit` does, sends the PUT once, reads the suggestions and the branch back, and settles a lost answer by the same read |
+| 110 | Applying a suggestion answers as the OpenAPI file publishes it, and a lost answer can be settled | At v19.4.1-ee: `lib/api/suggestions.rb` L10-54 and L57-84; `app/policies/suggestion_policy.rb`; `lib/gitlab/user_access.rb` L72-77; `app/services/suggestions/apply_service.rb` L11-66 and `ee/app/services/ee/suggestions/apply_service.rb`; `lib/gitlab/suggestions/suggestion_set.rb` L70-119; `lib/gitlab/suggestions/commit_message.rb`; `app/models/suggestion.rb` L48-62; `lib/api/entities/note.rb` L37-39 and `lib/api/entities/suggestion.rb`; `app/services/notes/update_service.rb` L112-123 | **Refined (tier 1).** Both routes answer 200 with the suggestions as the file publishes them, but they are the objects read before the commit, so `applied` can still be false, and the commit's sha is in no field. GitLab looks a suggestion up by id alone, with no project in the path; batch_apply answers 404 when an id is missing or given twice. An account that may not push to the source branch, a protected one or a fork without collaboration, gets 403 before anything is done. Every other refusal is 400 with the reason, the first failing check winning: the file gone, another branch, applied already, the merge request merged or closed, the source branch deleted, lines changed since, the same content, and "A file has been changed." when the comment's `head_sha` is not the branch's head, which holds for every suggestion right after a push until GitLab moves the comments, so a later try can pass. Lines that overlap in a batch are refused. The commit is `Files::MultiService` as the account on the source branch, with the project's message or a default, and `%{…}` placeholders filled in a custom message too. The suggestions are marked applied in the same request, so a second apply is 400 and never commits twice. An edit to a comment deletes its suggestions and creates new ones, so an id stands for the text it was read with. Only a merge request's diff notes carry `suggestions`, on the discussions and notes routes. `to_content` is committed byte for byte, while the comment's body reaches a reader as Markdown with hidden characters dropped. `apply_suggestions` finds every id on the merge request first, refuses the default and protected source branches as `create_commit` does, refuses a text with invisible characters, asks the person with each text, sends the PUT once, reads the suggestions and the branch back, and settles a lost answer by the same read, calling anything short of every suggestion applied unknown, since `Files::MultiService` may still be committing when the answer is lost |

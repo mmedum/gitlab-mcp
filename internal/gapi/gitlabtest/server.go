@@ -94,6 +94,9 @@ type Server struct {
 	nextCommit      int64
 	// nextSuggestionID is the id AddSuggestion gives next; zero before the first.
 	nextSuggestionID int64
+	// collaboration is, by merge request id, whether a fork's merge
+	// request lets the target project's developers push to its branch.
+	collaboration map[int64]bool
 
 	// reviewerStates is the reviewer state each user last submitted with
 	// a review, by project, merge request and user.

@@ -57,7 +57,7 @@ func AutoMergeCancel(w model.AutoMergeCancel, _ Boundary) string {
 }
 
 // SuggestionsApply renders apply_suggestions.
-func SuggestionsApply(w model.SuggestionsApply, _ Boundary) string {
+func SuggestionsApply(w model.SuggestionsApply, bd Boundary) string {
 	var b strings.Builder
 	head := fmt.Sprintf("No suggestion on merge request !%d was applied.", w.IID)
 	if w.Outcome == "applied" {
@@ -72,6 +72,13 @@ func SuggestionsApply(w model.SuggestionsApply, _ Boundary) string {
 	for _, sg := range w.Suggestions {
 		fmt.Fprintf(&b, "\n- suggestion %d in comment %d, %s %s: applied %s", sg.ID, sg.NoteID, Ident(sg.FilePath),
 			lineRange(sg.FromLine, sg.ToLine), yesNo(sg.Applied))
+	}
+	if len(w.Suggestions) > 0 {
+		b.WriteString("\n" + bd.Notice())
+	}
+	for _, sg := range w.Suggestions {
+		suggestionBlocks(&b, bd, Origin{Kind: "suggestion", Project: w.Target.Project.Path, Item: fmt.Sprintf("!%d", w.IID)}, sg.ID,
+			sg.SuggestionText)
 	}
 	return b.String()
 }

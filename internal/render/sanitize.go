@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -81,6 +82,42 @@ func Code(s string) (string, int) {
 		out.WriteRune(r)
 	}
 	return out.String(), n
+}
+
+// SuggestionLen caps each text of a suggestion a result shows.
+const SuggestionLen = 2000
+
+// SuggestionText prepares a suggestion's two texts as Code prepares
+// code, each cut at SuggestionLen characters: what a reader sees is what
+// applying it commits.
+func SuggestionText(from, to string) (fromShown, toShown string, cut bool, hidden int) {
+	one := func(s string) string {
+		s, n := Code(s)
+		hidden += n
+		if r := []rune(s); len(r) > SuggestionLen {
+			cut = true
+			return string(r[:SuggestionLen])
+		}
+		return s
+	}
+	return one(from), one(to), cut, hidden
+}
+
+// Invisible lists the characters of s a reader would not see, each once,
+// in order: hidden and bidirectional ones, characters drawn as blank
+// space, and controls other than tab, line feed and carriage return.
+func Invisible(s string) []rune {
+	var out []rune
+	for _, r := range strings.ToValidUTF8(s, "\uFFFD") {
+		switch {
+		case r == '\t' || r == '\n' || r == '\r':
+		case hidden(r), control(r), r == 0x2800, r == 0x3164, r == 0xFFA0:
+			if !slices.Contains(out, r) {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
 }
 
 // Line prepares a one-line field someone else wrote, such as a title:

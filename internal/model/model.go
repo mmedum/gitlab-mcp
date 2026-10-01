@@ -455,6 +455,16 @@ type NoteSuggestion struct {
 	ToLine    int   `json:"to_line" jsonschema:"The last line it replaces"`
 	Appliable bool  `json:"appliable" jsonschema:"GitLab's cached view of whether it can be applied; applying checks again"`
 	Applied   bool  `json:"applied"`
+	SuggestionText
+}
+
+// SuggestionText is a suggestion's exact text: the lines it replaces and
+// what it puts in their place, which is what applying it commits.
+type SuggestionText struct {
+	UntrustedFromContent string `json:"untrusted_from_content" jsonschema:"The lines it replaces, exactly, with each hidden or bidirectional character written out as <U+202E>"`
+	UntrustedToContent   string `json:"untrusted_to_content" jsonschema:"What applying it commits in their place, exactly, with each hidden or bidirectional character written out as <U+202E>; apply_suggestions refuses a suggestion that has any"`
+	ContentCut           bool   `json:"content_cut" jsonschema:"True when either text is longer than shown"`
+	HiddenCharacters     int    `json:"hidden_characters" jsonschema:"How many hidden or bidirectional characters the two texts hold, each written out"`
 }
 
 // ItemEvents is list_item_events' result: GitLab's resource events of
@@ -1470,6 +1480,7 @@ type AppliedSuggestion struct {
 	FromLine int    `json:"from_line"`
 	ToLine   int    `json:"to_line"`
 	Applied  bool   `json:"applied" jsonschema:"Whether GitLab records it applied"`
+	SuggestionText
 }
 
 // PipelineWrite is run_pipeline's, retry_pipeline's and cancel_pipeline's

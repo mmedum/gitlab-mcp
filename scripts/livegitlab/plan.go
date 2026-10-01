@@ -667,6 +667,10 @@ func planShip(s scratch) []step {
 			expectError: true, why: "an id given twice"},
 		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_third}}"},
 			"commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}", "dry_run": true}},
+		// The question quotes each text; declined, nothing is committed,
+		// and accepted, the batch lands.
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_third}}"}},
+			declines: true, expectError: true, why: "the person declines the question"},
 		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_third}}"},
 			"commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}"}},
 		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}"}}},

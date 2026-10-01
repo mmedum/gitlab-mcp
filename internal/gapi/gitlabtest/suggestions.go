@@ -3,6 +3,7 @@ package gitlabtest
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
@@ -70,7 +71,14 @@ func (s *Server) AddSuggestion(projectPath string, iid int64, author, path strin
 	if mr == nil {
 		return 0, 0, false
 	}
-	lines := splitLines(p.trees[mr.SourceBranch][path])
+	src := p
+	if mr.SourceProjectID != p.ID {
+		src = s.projectByID(mr.SourceProjectID)
+	}
+	if src == nil || len(src.commits[mr.SourceBranch]) == 0 {
+		return 0, 0, false
+	}
+	lines := splitLines(src.trees[mr.SourceBranch][path])
 	if from < 1 || to < from || to > len(lines) {
 		return 0, 0, false
 	}
@@ -86,7 +94,7 @@ func (s *Server) AddSuggestion(projectPath string, iid int64, author, path strin
 	note := gitlab.Note{ID: s.nextNoteID, Type: &typ, Body: fmt.Sprintf("Suggested change:\n```suggestion:-%d+0\n%s```\n", to-from,
 		replacement), Author: s.user(author), CreatedAt: now, UpdatedAt: now, NoteableID: mr.ID, NoteableType: "MergeRequest",
 		NoteableIID: &iidCopy, Resolvable: true, Suggestions: []gitlab.Suggestion{sg},
-		Position: &gitlab.Position{BaseSHA: mr.DiffRefs.BaseSHA, StartSHA: mr.DiffRefs.StartSHA, HeadSHA: mr.SHA,
+		Position: &gitlab.Position{BaseSHA: mr.DiffRefs.BaseSHA, StartSHA: mr.DiffRefs.StartSHA, HeadSHA: src.commits[mr.SourceBranch][0].ID,
 			PositionType: "text", OldPath: path, NewPath: path, NewLine: intPtr(to)}}
 	s.nextNoteID++
 	key := "mr:" + itoa(iid)
@@ -155,11 +163,7 @@ func (s *Server) applySuggestions(w http.ResponseWriter, user string, found []su
 	branch := first.mr.SourceBranch
 	for _, at := range found {
 		// SuggestionPolicy: the user may push to the source branch.
-		need := developerAccess
-		if src != nil && protectedName(src, branch) {
-			need = maintainerAccess
-		}
-		if src == nil || s.accessLevel(src, user) < need {
+		if src == nil || !s.canPushTo(src, first.p, first.mr, branch, user) {
 			message(w, http.StatusForbidden, "403 Forbidden")
 			return
 		}
@@ -198,10 +202,19 @@ func (s *Server) applySuggestions(w http.ResponseWriter, user string, found []su
 		actions = append(actions, commitAction{Action: "update", FilePath: path})
 	}
 	if msg == "" {
-		msg = "Apply %{suggestions_count} suggestion(s) to %{files_count} file(s)"
+		msg = "Apply %{suggestions_count} suggestion(s) to %{files_count} file(s)\n\n%{co_authored_by}"
+	}
+	// The co-author trailers are the suggestions' authors but the user.
+	var coAuthors []string
+	for _, at := range found {
+		a := at.note.Author
+		trailer := fmt.Sprintf("Co-authored-by: %s <%s@example.com>", a.Name, a.Username)
+		if a.Username != user && !slices.Contains(coAuthors, trailer) {
+			coAuthors = append(coAuthors, trailer)
+		}
 	}
 	msg = strings.NewReplacer("%{suggestions_count}", strconv.Itoa(len(found)), "%{files_count}", strconv.Itoa(len(paths)),
-		"%{branch_name}", branch, "%{username}", user, "%{co_authored_by}", "").Replace(msg)
+		"%{branch_name}", branch, "%{username}", user, "%{co_authored_by}", strings.Join(coAuthors, "\n")).Replace(msg)
 	// GitLab answers with the suggestions it read before the commit.
 	answer := make([]gitlab.Suggestion, 0, len(found))
 	for _, at := range found {
@@ -216,6 +229,41 @@ func (s *Server) applySuggestions(w http.ResponseWriter, user string, found []su
 		return
 	}
 	writeJSON(w, http.StatusOK, answer[0])
+}
+
+// canPushTo is Gitlab::UserAccess#can_push_to_branch?: a developer of
+// the branch's project, a maintainer for a protected branch; or, for a
+// fork's merge request that allows collaboration, a developer of the
+// target project, on a branch no rule protects.
+func (s *Server) canPushTo(src, target *project, mr *gitlab.MergeRequest, branch, user string) bool {
+	need := developerAccess
+	if protectedName(src, branch) {
+		need = maintainerAccess
+	}
+	if s.accessLevel(src, user) >= need {
+		return true
+	}
+	return src != target && s.collaboration[mr.ID] && !protectedName(src, branch) && s.accessLevel(target, user) >= developerAccess
+}
+
+// SetAllowCollaboration lets the target project's developers push to a
+// fork merge request's source branch, as its author allows.
+func (s *Server) SetAllowCollaboration(projectPath string, iid int64, on bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	mr := findMR(p, itoa(iid))
+	if mr == nil {
+		return false
+	}
+	if s.collaboration == nil {
+		s.collaboration = map[int64]bool{}
+	}
+	s.collaboration[mr.ID] = on
+	return true
 }
 
 // suggestionProblem is GitLab's reason one suggestion cannot apply now,
@@ -273,6 +321,20 @@ func (s *Server) Suggestion(id int64) (gitlab.Suggestion, bool) {
 		return gitlab.Suggestion{}, false
 	}
 	return *at.suggestion, true
+}
+
+// ApplySuggestionAs applies a suggestion as user does in GitLab's page,
+// with GitLab's default message; it reports whether it did.
+func (s *Server) ApplySuggestionAs(user string, id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.findSuggestion(id)
+	if !ok {
+		return false
+	}
+	w := httptest.NewRecorder()
+	s.applySuggestions(w, user, []suggestionAt{at}, "", false)
+	return w.Code == http.StatusOK
 }
 
 // ------------------------------------------------------------ auto-merge

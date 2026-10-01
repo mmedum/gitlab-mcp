@@ -558,6 +558,10 @@ func Discussions(d model.Discussions, bd Boundary) string {
 					parts[i] = fmt.Sprintf("%d (%s, %s)", sg.ID, lineRange(sg.FromLine, sg.ToLine), state)
 				}
 				fmt.Fprintf(&b, "\nSuggestions in comment %d, for apply_suggestions: %s.", n.ID, strings.Join(parts, "; "))
+				for _, sg := range n.Suggestions {
+					suggestionBlocks(&b, bd, Origin{Kind: "suggestion", Project: d.Project.Path, Item: item, Author: n.Author.Username},
+						sg.ID, sg.SuggestionText)
+				}
 			}
 			// A comment shown whole and clean needs no budget line.
 			if n.Budget.ContinueOffset != nil || n.Budget.Offset > 0 || n.Budget.HiddenRemoved > 0 {
@@ -825,4 +829,16 @@ func article(word string) string {
 		return "An"
 	}
 	return "A"
+}
+
+// suggestionBlocks shows a suggestion's exact text: the lines it replaces
+// and what applying it commits, each in its own boundary.
+func suggestionBlocks(b *strings.Builder, bd Boundary, o Origin, id int64, t model.SuggestionText) {
+	fmt.Fprintf(b, "\nSuggestion %d replaces:\n%s\nwith:\n%s", id, bd.Block(o, t.UntrustedFromContent), bd.Block(o, t.UntrustedToContent))
+	if t.HiddenCharacters > 0 {
+		fmt.Fprintf(b, "\nIt holds %d hidden or bidirectional characters, each written out as <U+…>.", t.HiddenCharacters)
+	}
+	if t.ContentCut {
+		fmt.Fprintf(b, "\nIts text is cut at %d characters.", SuggestionLen)
+	}
 }

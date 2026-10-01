@@ -172,6 +172,9 @@ func classifyStatus(call Call, name string, repeatable bool, status int, h http.
 		// lines changed, the merge request closed (lib/gitlab/suggestions/
 		// suggestion_set.rb), or a commit the branch refused.
 		return a.fail(ClassConflict, "GitLab did not apply the suggestions, and nothing was committed: %s", a.detail)
+	case status == http.StatusNotFound && call.Name == "apply_suggestions" && a.env.message != "":
+		// GitLab names which: the suggestion, or one of several.
+		return a.fail(ClassNotFound, "GitLab found no such suggestion: %s", a.detail)
 	case status == http.StatusTooManyRequests:
 		return a.rateLimited()
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:

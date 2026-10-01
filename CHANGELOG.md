@@ -21,7 +21,7 @@ lifted verbatim.
 - `get_issue` and `get_merge_request` show the item's thumbsup and thumbsdown counts.
 - `list_mr_versions` lists a merge request's diff versions, newest first, and `compare_mr_versions` shows the commits and diffs between two of them, or since one, as GitLab's version comparison does; after a rebase the diff includes what the target branch gained, and the result says when the merge base moved.
 - `get_merge_request` shows each reviewer's review state, such as `reviewed` or `requested_changes`: the first 100, and says when GitLab has more.
-- `apply_suggestions` (Ship) commits suggestions from a merge request's diff comments to its source branch in one commit, refuses a default or protected source branch, is never repeated after a lost answer, and reads back the branch's new head; `list_discussions` names each diff comment's suggestions with their ids.
+- `apply_suggestions` (Ship) commits suggestions from a merge request's diff comments to its source branch in one commit, refuses a default or protected source branch and text with hidden or bidirectional characters, asks you with each suggestion's text, is never repeated after a lost answer, and reads back the branch's new head; `list_discussions` names each diff comment's suggestions with their ids and exact text.
 - `cancel_auto_merge` (Ship) stops a merge request merging when its pipeline succeeds, sends nothing when no auto-merge is set, and reads whether it canceled from GitLab's answer body, since the status is 201 either way.
 
 ### Changed
