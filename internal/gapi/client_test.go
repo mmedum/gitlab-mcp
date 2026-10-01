@@ -674,6 +674,37 @@ func TestServerErrorsRetriedForGetNeverForCreate(t *testing.T) {
 	}
 }
 
+// A DELETE repeated after an attempt that may have landed finds nothing
+// when the first one deleted it, so its 404 is ambiguous, not not_found.
+// After a 429, or on the first attempt, a 404 is not_found.
+func TestRepeatedDeleteAnswering404IsAmbiguous(t *testing.T) {
+	del := Call{Method: "DELETE", Path: "projects/{}/labels/{}", Args: []string{"2001", "5"}, Name: "delete_label"}
+	notFound := gitlabtest.Fault{Method: "DELETE", Path: "/projects/2001/labels/5", Status: 404, Body: `{"message":"404 Label Not Found"}`}
+	cases := []struct {
+		name     string
+		faults   []gitlabtest.Fault
+		class    Class
+		requests int
+	}{
+		{"after a 503", []gitlabtest.Fault{{Method: "DELETE", Path: "/projects/2001/labels/5", Status: 503, Body: "{}"}, notFound},
+			ClassAmbiguousOutcome, 2},
+		{"after a 429", []gitlabtest.Fault{gitlabtest.Application429("/projects/2001/labels/5", 1, 1), notFound}, ClassNotFound, 2},
+		{"on the first attempt", []gitlabtest.Fault{notFound}, ClassNotFound, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t, gitlabtest.Options{})
+			for _, fault := range c.faults {
+				f.srv.Inject(fault)
+			}
+			wantClass(t, f.client.Do(context.Background(), del, nil), c.class)
+			if n := len(f.srv.Requests()); n != c.requests {
+				t.Errorf("requests = %d, want %d", n, c.requests)
+			}
+		})
+	}
+}
+
 // Once is for a PUT or DELETE the method would repeat; on a POST or
 // beside Repeatable it contradicts itself and is refused unsent.
 func TestOnceContradictionsAreRefused(t *testing.T) {

@@ -414,6 +414,9 @@ read. Merging it is Ship.
 acting — a 429 — and never on a timeout, a cancellation, a reset
 connection or a 5xx after the request was written. A create canceled or
 timed out once it may have been written is `[ambiguous_outcome]`.
+A delete repeated after an attempt that may have landed, whose repeat
+answers 404, is `[ambiguous_outcome]` too: the first attempt may have
+deleted it, and the tools that delete read back to settle it.
 
 On an ambiguous failure the tool returns `[ambiguous_outcome]` having
 already done the read that settles it, each against the call's start
@@ -2359,6 +2362,13 @@ the release chain (`audit/security-reviews/v1.0.0.md`). It found:
 | Snippet file names reached an error message as written | Made plain, as paths are |
 | A manual registry publish could send a prerelease | `server-json` publishes `X.Y.Z` only |
 | `update_label` and `update_milestone` said empty clears a field; §17.7 reads it as absent | The descriptions no longer say so; clearing was deferred (§17a), then added after 1.0 as `clear_*` inputs |
+
+**Test pass, 2026-10-01.** A fast pass over retry safety, logs, the
+leak gate and fixtures found:
+
+| Found | Fixed |
+|---|---|
+| A delete repeated after a 5xx or a lost answer reported the repeat's 404 as `[not_found]`; `delete_review_comment` said the draft was not yours | `[ambiguous_outcome]`; a delete read back as gone is reported deleted (§4.5) |
 
 ### Closing a phase
 

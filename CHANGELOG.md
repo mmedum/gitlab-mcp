@@ -33,6 +33,7 @@ lifted verbatim.
 ### Fixed
 
 - `add_review_comment` refuses a second draft reply in a thread as `[conflict]`, naming your draft there, since GitLab keeps one per person per thread; it was `[invalid]` with GitLab's validation message.
+- A delete repeated after a lost answer or a 5xx, whose repeat found nothing, is `[ambiguous_outcome]`, not `[not_found]`; `delete_review_comment` said the draft was not yours when an earlier attempt had deleted it.
 - `submit_review` refuses a review whose drafts hold a quick-action line, which GitLab would run on publishing; a draft written in GitLab's web view could hold one.
 
 ## [2.1.0] - 2026-10-01

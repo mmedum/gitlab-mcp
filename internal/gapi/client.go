@@ -487,6 +487,13 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 		}
 
 		v := c.decide(ctx, p.call, p.name, p.repeatable, res, sendErr)
+		if resent && p.call.Method == http.MethodDelete && v.err != nil && v.err.Class == ClassNotFound {
+			// An earlier attempt may have deleted it, so the repeat's 404
+			// does not show it was never there.
+			v = verdict{err: &Error{Class: ClassAmbiguousOutcome, Status: status, err: v.err,
+				Message: fmt.Sprintf("GitLab did not confirm whether %s took effect: an earlier attempt may have deleted it, "+
+					"and the repeat found nothing. Read before doing anything again", p.name)}}
+		}
 		logAttempt(v.outcome())
 		if v.reauth && !reauthorized {
 			reauthorized = true
