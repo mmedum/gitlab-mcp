@@ -1505,6 +1505,36 @@ func TestSubmitReviewRefusesDraftsWithQuickActions(t *testing.T) {
 	}
 }
 
+// GitLab keeps one draft reply per person per thread: a second is
+// refused before anything is sent, naming the one there, and GitLab's own
+// refusal, for one that arrived after the read, says the same.
+func TestOneDraftReplyPerThread(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	threadID := h.gl.Discussions(alpha, "mr", 1)[0].ID
+	args := map[string]any{"project": alpha, "iid": 1, "body": "Another thought.", "discussion_id": threadID}
+	sent := writesSent(h)
+	for _, dry := range []bool{true, false} {
+		args["dry_run"] = dry
+		text := h.fails("add_review_comment", args, "conflict")
+		if !strings.Contains(text, "draft 80002 replying") || !strings.Contains(text, "update_review_comment") {
+			t.Errorf("refusal: %s", text)
+		}
+	}
+	if writesSent(h) != sent {
+		t.Error("the draft was sent")
+	}
+
+	delete(args, "dry_run")
+	h.ok("delete_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/merge_requests/1/draft_notes", Pass: true, Before: func() {
+		h.gl.AddDraft(alpha, 1, gitlabtest.DefaultUser, gitlab.DraftNote{Note: "Written in the web view.", DiscussionID: &threadID})
+	}})
+	text := h.fails("add_review_comment", args, "conflict")
+	if !strings.Contains(text, "a draft reply in this thread") {
+		t.Errorf("refusal: %s", text)
+	}
+}
+
 // GitLab deletes a draft whose comment does not save and answers 204 all
 // the same: the read afterwards finds no comment, and the text comes back.
 func TestALostDraftIsReportedLost(t *testing.T) {

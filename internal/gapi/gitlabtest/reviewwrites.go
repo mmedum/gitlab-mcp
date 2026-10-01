@@ -337,6 +337,14 @@ func (s *Server) createDraft(w http.ResponseWriter, r *http.Request, p *project,
 			message(w, http.StatusNotFound, "404 Discussion Not Found")
 			return
 		}
+		// DraftNote validates author_id unique per merge request and
+		// discussion: one draft reply per person per thread.
+		if slices.ContainsFunc(p.drafts[mr.IID], func(x gitlab.DraftNote) bool {
+			return x.AuthorID == d.AuthorID && x.DiscussionID != nil && *x.DiscussionID == id
+		}) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"message": map[string]any{"author_id": []string{"has already been taken"}}})
+			return
+		}
 		d.DiscussionID = &id
 	}
 	if c, ok := b.str("commit_id"); ok && c != "" {
@@ -493,6 +501,19 @@ func (s *Server) SetDraftPosition(projectPath string, iid, id int64, pos *gitlab
 		}
 	}
 	return false
+}
+
+// AddDraft plants a draft by user, as one written in GitLab's web view.
+func (s *Server) AddDraft(projectPath string, iid int64, user string, d gitlab.DraftNote) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return 0, false
+	}
+	d.ID, d.AuthorID = s.nextDraft(), s.user(user).ID
+	p.drafts[iid] = append(p.drafts[iid], d)
+	return d.ID, true
 }
 
 // EditDraft changes a draft's text, as its author would in GitLab.

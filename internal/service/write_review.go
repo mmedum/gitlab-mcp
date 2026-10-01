@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -337,19 +338,34 @@ func (s *Service) AddReviewComment(ctx context.Context, in ReviewComment) (model
 			return model.CommentWrite{}, err
 		}
 	}
+	// The drafts already there: GitLab keeps one draft reply per person
+	// per thread, and a lost create is settled by a new draft with this
+	// body rather than an older one that says the same.
+	var existing []gitlab.DraftNote
+	if in.DiscussionID != "" || !gapi.IsDryRun(ctx) {
+		if existing, err = s.client.ListDraftNotes(ctx, t.p, in.IID); err != nil {
+			return model.CommentWrite{}, err
+		}
+	}
+	if in.DiscussionID != "" {
+		if i := slices.IndexFunc(existing, func(d gitlab.DraftNote) bool {
+			return d.DiscussionID != nil && *d.DiscussionID == in.DiscussionID
+		}); i >= 0 {
+			return model.CommentWrite{}, draftReplyTaken(existing[i].ID)
+		}
+	}
 	if gapi.IsDryRun(ctx) {
 		out := model.CommentWrite{Outcome: "dry_run", Kind: "draft", DiscussionID: in.DiscussionID, Write: model.Write{DryRun: true, Target: t.ref,
 			WouldSend: preview("POST", "add a draft review comment", fieldsOf(body))}}
 		out.Position, out.LineRange = wouldLand(body.Position)
 		return out, nil
 	}
-	// The drafts already there, so a lost create is settled by a new one
-	// with this body rather than an older draft that says the same.
-	existing, err := s.client.ListDraftNotes(ctx, t.p, in.IID)
-	if err != nil {
-		return model.CommentWrite{}, err
-	}
 	draft, err := s.client.CreateDraftNote(ctx, t.p, in.IID, body)
+	var e *gapi.Error
+	if errors.As(err, &e) && e.Status == http.StatusBadRequest && draftReplyTakenAnswer.MatchString(e.Message) {
+		// Another draft reply in the thread arrived after the read.
+		return model.CommentWrite{}, draftReplyTaken(0)
+	}
 	if err != nil {
 		return model.CommentWrite{}, settle(err, "draft review comment", func() (string, error) {
 			return s.findDraft(ctx, t.p, in.IID, in.Body, existing)
@@ -365,6 +381,23 @@ func (s *Service) AddReviewComment(ctx context.Context, in ReviewComment) (model
 	}
 	out.Position, out.LineRange = landed(draft.Position)
 	return out, nil
+}
+
+// draftReplyTakenAnswer is GitLab refusing a second draft reply by one
+// person in one thread: DraftNote validates author_id unique per merge
+// request and discussion.
+var draftReplyTakenAnswer = regexp.MustCompile(`author_id\W+has already been taken`)
+
+// draftReplyTaken refuses a draft reply in a thread the account already
+// has one in; id is that draft's, 0 when unknown.
+func draftReplyTaken(id int64) error {
+	which := "a draft reply"
+	if id != 0 {
+		which = fmt.Sprintf("draft %d replying", id)
+	}
+	return gapi.Errf(gapi.ClassConflict, "you already have %s in this thread, and GitLab keeps one draft reply per person per "+
+		"thread; nothing was sent. update_review_comment changes that draft, publish_review_comment publishes it, and "+
+		"delete_review_comment removes it", which)
 }
 
 // findDraft settles an ambiguous draft: drafts are only ever the

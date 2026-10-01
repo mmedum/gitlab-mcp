@@ -207,7 +207,8 @@ func addReviewComment() definition {
 			Description: "Add a draft review comment to a merge request: only you see it until submit_review publishes all your " +
 				"drafts at once. It can be on the merge request, a reply in a thread, or on a line of the diff (file, line, side, " +
 				"optionally end_line); the server computes the position from the diff and reports it. list_review_comments lists " +
-				"your drafts and delete_review_comment removes one. A quick-action line in the body refuses the call unless " +
+				"your drafts and delete_review_comment removes one. GitLab keeps one draft reply per person per thread, so a " +
+				"second is refused [conflict]. A quick-action line in the body refuses the call unless " +
 				"escape_commands is true, because GitLab runs it when the review is published."},
 		run: func(ctx context.Context, svc *service.Service, in addReviewCommentIn) (model.CommentWrite, error) {
 			return svc.AddReviewComment(ctx, service.ReviewComment{Project: string(in.Project), IID: in.IID, Body: in.Body,

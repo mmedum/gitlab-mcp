@@ -32,6 +32,7 @@ lifted verbatim.
 
 ### Fixed
 
+- `add_review_comment` refuses a second draft reply in a thread as `[conflict]`, naming your draft there, since GitLab keeps one per person per thread; it was `[invalid]` with GitLab's validation message.
 - `submit_review` refuses a review whose drafts hold a quick-action line, which GitLab would run on publishing; a draft written in GitLab's web view could hold one.
 
 ## [2.1.0] - 2026-10-01

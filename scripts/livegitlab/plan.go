@@ -362,7 +362,7 @@ func phase2(s scratch) []step {
 		{tool: "resolve_discussion", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue,
 			"discussion_id": "{{issue_new_thread}}", "reopen": true}},
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "body": "A general thread.",
-			"thread": true}},
+			"thread": true}, save: map[string]string{"mr_thread2": "discussion_id"}},
 
 		// A review: drafts, one deleted, then submitted.
 		{tool: "add_review_comment", args: map[string]any{"project": p, "iid": s.MR, "body": "A draft on a range.", "file": s.File,
@@ -394,10 +394,14 @@ func phase2(s scratch) []step {
 		{tool: "publish_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}"}},
 		{tool: "publish_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}"},
 			expectError: true, why: "a draft already published is gone"},
+		// GitLab keeps one draft reply per person per thread, and mr_thread
+		// has one.
+		{tool: "add_review_comment", args: map[string]any{"project": p, "iid": s.MR, "body": "A second draft reply.",
+			"discussion_id": "{{mr_thread}}"}, expectError: true, why: "a second draft reply in one thread"},
 		// A reply that does not resolve its thread reopens it when published.
 		{tool: "add_review_comment", args: map[string]any{"project": p, "iid": s.MR, "body": "A draft reply that reopens.",
-			"discussion_id": "{{mr_thread}}"}, save: map[string]string{"reply_draft": "note_id"}},
-		{tool: "resolve_discussion", args: map[string]any{"project": p, "iid": s.MR, "discussion_id": "{{mr_thread}}"}},
+			"discussion_id": "{{mr_thread2}}"}, save: map[string]string{"reply_draft": "note_id"}},
+		{tool: "resolve_discussion", args: map[string]any{"project": p, "iid": s.MR, "discussion_id": "{{mr_thread2}}"}},
 		{tool: "publish_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{reply_draft}}"}},
 		{tool: "submit_review", args: map[string]any{"project": p, "iid": s.MR, "reviewer_state": "approved"},
 			expectError: true, why: "an approving review without GITLAB_MCP_ENABLE_SHIP"},
