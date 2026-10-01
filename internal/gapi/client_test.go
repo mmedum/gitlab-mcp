@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -676,7 +678,7 @@ func TestServerErrorsRetriedForGetNeverForCreate(t *testing.T) {
 
 // A DELETE repeated after an attempt that may have landed finds nothing
 // when the first one deleted it, so its 404 is ambiguous, not not_found.
-// After a 429, or on the first attempt, a 404 is not_found.
+// After a 429, on the first attempt, or for a GET, a 404 is not_found.
 func TestRepeatedDeleteAnswering404IsAmbiguous(t *testing.T) {
 	del := Call{Method: "DELETE", Path: "projects/{}/labels/{}", Args: []string{"2001", "5"}, Name: "delete_label"}
 	notFound := gitlabtest.Fault{Method: "DELETE", Path: "/projects/2001/labels/5", Status: 404, Body: `{"message":"404 Label Not Found"}`}
@@ -688,8 +690,12 @@ func TestRepeatedDeleteAnswering404IsAmbiguous(t *testing.T) {
 	}{
 		{"after a 503", []gitlabtest.Fault{{Method: "DELETE", Path: "/projects/2001/labels/5", Status: 503, Body: "{}"}, notFound},
 			ClassAmbiguousOutcome, 2},
+		{"after a 500", []gitlabtest.Fault{{Method: "DELETE", Path: "/projects/2001/labels/5", Status: 500, Body: "{}"}, notFound},
+			ClassAmbiguousOutcome, 2},
 		{"after a 429", []gitlabtest.Fault{gitlabtest.Application429("/projects/2001/labels/5", 1, 1), notFound}, ClassNotFound, 2},
 		{"on the first attempt", []gitlabtest.Fault{notFound}, ClassNotFound, 1},
+		{"a GET after a 503", []gitlabtest.Fault{{Method: "GET", Path: "/projects/2001/labels/5", Status: 503, Body: "{}"},
+			{Method: "GET", Path: "/projects/2001/labels/5", Status: 404, Body: `{"message":"404 Label Not Found"}`}}, ClassNotFound, 2},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -697,7 +703,12 @@ func TestRepeatedDeleteAnswering404IsAmbiguous(t *testing.T) {
 			for _, fault := range c.faults {
 				f.srv.Inject(fault)
 			}
-			wantClass(t, f.client.Do(context.Background(), del, nil), c.class)
+			call := del
+			call.Method = c.faults[0].Method
+			if call.Method == "" {
+				call.Method = "DELETE"
+			}
+			wantClass(t, f.client.Do(context.Background(), call, nil), c.class)
 			if n := len(f.srv.Requests()); n != c.requests {
 				t.Errorf("requests = %d, want %d", n, c.requests)
 			}
@@ -1117,6 +1128,57 @@ func TestTransportErrorsCarryNoHostName(t *testing.T) {
 			if strings.Contains(e.Error(), leak) {
 				t.Errorf("%s: %q carries %q", name, e.Error(), leak)
 			}
+		}
+	}
+}
+
+// countFail fails every request with err and counts them.
+type countFail struct {
+	err error
+	n   *atomic.Int32
+}
+
+func (f countFail) RoundTrip(*http.Request) (*http.Response, error) { f.n.Add(1); return nil, f.err }
+
+// A create whose connection failed at the dial reached nothing and is
+// repeated; one that failed after it may have landed and is sent once.
+func TestCreateRepeatedOnlyAfterAFailedDial(t *testing.T) {
+	for name, c := range map[string]struct {
+		cause    error
+		class    Class
+		requests int32
+	}{
+		"dial refused":     {&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}, ClassUnavailable, 4},
+		"reset on read":    {&net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset by peer")}, ClassAmbiguousOutcome, 1},
+		"reset on write":   {&net.OpError{Op: "write", Net: "tcp", Err: errors.New("broken pipe")}, ClassAmbiguousOutcome, 1},
+		"answer cut short": {io.ErrUnexpectedEOF, ClassAmbiguousOutcome, 1},
+	} {
+		n := &atomic.Int32{}
+		cl, err := New(Options{Instance: mustInstance(t, "https://gitlab.example.com"), Tokens: StaticToken("t"),
+			HTTPClient: &http.Client{Transport: countFail{c.cause, n}}, Sleep: (&sleeps{}).sleep})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = cl.Do(context.Background(), Call{Method: "POST", Path: "projects/{}/issues", Args: []string{"2001"},
+			Body: map[string]string{"title": "x"}, Name: "create_issue"}, nil)
+		if got := wantClass(t, err, c.class); got.Class == ClassAmbiguousOutcome && strings.Contains(got.Message, "retry") {
+			t.Errorf("%s: an ambiguous create invites a retry: %q", name, got.Message)
+		}
+		if got := n.Load(); got != c.requests {
+			t.Errorf("%s: requests = %d, want %d", name, got, c.requests)
+		}
+	}
+}
+
+// A URL in free text is cut wherever it starts, its query included.
+func TestUnclassifiedErrorsCarryNoURL(t *testing.T) {
+	for _, text := range []string{
+		"https://gitlab.example.com/api/v4/search?search=canary failed",
+		"Get http://gitlab.example.com/api/v4/projects?search=canary: refused",
+		"from http://a.example/x then https://b.example/y?q=canary end",
+	} {
+		if got := AsError(errors.New(text)).Error(); strings.Contains(got, "canary") || strings.Contains(got, "example") {
+			t.Errorf("AsError(%q) = %q, want no URL", text, got)
 		}
 	}
 }
