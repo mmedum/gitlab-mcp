@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -358,10 +359,13 @@ func quotedList(ss []string) string {
 	return strings.Join(out, ", ")
 }
 
-// breakBareDomains breaks the last dot of each bare domain bareShape
-// finds, except in an address, on either side of its @: jane.ai@
-// example.com is an address a question means to show, and a client
-// links it as mail at most.
+// breakBareDomains breaks every dot of each bare domain bareShape finds,
+// so no part of it is left for a linkifier: evil.com.uk broken at its last
+// dot alone leaves evil.com. A domain in an address is left whole, on
+// either side of its @: jane.ai@example.com is an address a question means
+// to show, and a client links it as mail at most. Before an @ that makes
+// no address, as in evil.com@, the domain is broken, since a linkifier
+// links it.
 func breakBareDomains(s string) string {
 	ms := bareShape.FindAllStringSubmatchIndex(s, -1)
 	if len(ms) == 0 {
@@ -370,15 +374,67 @@ func breakBareDomains(s string) string {
 	var b strings.Builder
 	last := 0
 	for _, m := range ms {
-		if (m[0] > 0 && s[m[0]-1] == '@') || s[m[1]-1] == '@' {
+		if (m[0] > 0 && s[m[0]-1] == '@') || (s[m[1]-1] == '@' && isAddress(s, m[1]-1)) {
 			continue
 		}
-		b.WriteString(s[last:m[2]])
-		b.WriteString("[.]")
+		b.WriteString(s[last:m[0]])
+		b.WriteString(strings.ReplaceAll(s[m[0]:m[3]], ".", "[.]"))
 		last = m[3]
 	}
 	b.WriteString(s[last:])
 	return b.String()
+}
+
+// isAddress reports whether linkify-it reads an email address around the
+// @ at s[at]: a name of at most 64 characters, at the start or after a
+// space, a control, <, >, ｜, " or (; then a host of two to five labels
+// that ends where linkify-it ends one.
+func isAddress(s string, at int) bool {
+	start := at
+	for start > 0 && (s[start-1] == '.' || strings.IndexByte(mailNameChars, s[start-1]) >= 0) {
+		start--
+	}
+	if at-start > 64 || !mailName.MatchString(s[start:at]) {
+		return false
+	}
+	if start > 0 {
+		r, _ := utf8.DecodeLastRuneInString(s[:start])
+		if !unicode.In(r, unicode.Z, unicode.Cc) && !strings.ContainsRune("<>\uff5c\"(", r) {
+			return false
+		}
+	}
+	h := mailHost.FindStringIndex(s[at+1:])
+	return h != nil && hostEnds(s, at+1+h[1])
+}
+
+// hostEnds reports whether linkify-it ends a host before s[i]: at the end,
+// or before a space, punctuation, a control, <, > or ｜, but not before a
+// hyphen, an underscore, a port, or a dot that a label follows.
+func hostEnds(s string, i int) bool {
+	if i == len(s) {
+		return true
+	}
+	r, n := utf8.DecodeRuneInString(s[i:])
+	if !isZPCc(r) && !strings.ContainsRune("<>\uff5c", r) {
+		return false
+	}
+	rest := s[i+n:]
+	switch r {
+	case '-', '_':
+		return false
+	case ':':
+		return rest == "" || rest[0] < '0' || rest[0] > '9'
+	case '.':
+		next, _ := utf8.DecodeRuneInString(rest)
+		return rest == "" || (next != '-' && isZPCc(next))
+	}
+	return true
+}
+
+// isZPCc is a space, punctuation or a control, as linkify-it's classes
+// read them.
+func isZPCc(r rune) bool {
+	return unicode.In(r, unicode.Z, unicode.P, unicode.Cc)
 }
 
 // quoted is text from GitLab or from a call's arguments, shown in a
@@ -388,9 +444,10 @@ func breakBareDomains(s string) string {
 // no emphasis, link, HTML or entity — and plain text shows as it is. It
 // is made one line; every backtick, grave or acute mark and quote mark
 // a reader could take for one becomes a plain single quote, so it
-// cannot close its span or seem to; and a URL scheme, a mailto:, a
-// leading "www.", a bare domain followed by a path, and a bare domain a
-// fuzzy linkifier would link are broken so no client draws a link. It is cut at max runes. Text with nothing to show
+// cannot close its span or seem to; and a URL scheme, a mailto:, every
+// "//", a leading "www.", a bare domain followed by a path, and a bare
+// domain a fuzzy linkifier would link are broken so no client draws a
+// link. It is cut at max runes. Text with nothing to show
 // is said in words, since an empty span is two backticks Markdown shows
 // as they are: "empty" when it is blank, and "invisible characters
 // only" when it is not.
@@ -401,6 +458,9 @@ func quoted(s string, max int) string {
 	s = strings.Join(strings.Fields(blankMarks.Replace(s)), " ")
 	s = quoteMarks.Replace(s)
 	s = linkShape.ReplaceAllString(s, "${1}[:]//")
+	// "//" opens a protocol-relative link whatever follows, and a broken
+	// scheme leaves one.
+	s = strings.ReplaceAll(s, "//", "/[/]")
 	s = mailtoShape.ReplaceAllString(s, "${1}[:]")
 	s = wwwShape.ReplaceAllString(s, "${1}[.]")
 	s = pathShape.ReplaceAllString(s, "${1}[.]${2}${3}")
@@ -462,4 +522,18 @@ const (
 	domainSep   = `\s\p{Z}\p{P}\p{Cc}<>\x{ff5c}`
 	domainLabel = `(?:[^` + domainSep + `]|-)+`
 	domain      = domainLabel + `(?:\.` + domainLabel + `)*`
+	// mailNameChars are the characters of an address's name, besides
+	// the dots between them.
+	mailNameChars = "-!#$%&'*+/=?^_`{|}~abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	// A host label as linkify-it reads one in an address: punycode, or
+	// characters with hyphens only between them; the last has no hyphen.
+	mailLabel     = `(?:xn--[a-z0-9-]{1,59}|[^` + domainSep + `](?:(?:[^` + domainSep + `]|-){0,61}[^` + domainSep + `])?)`
+	mailLastLabel = `(?:xn--[a-z0-9-]{1,59}|[^` + domainSep + `]{1,63})`
+)
+
+var (
+	// mailName is a whole name linkify-it takes before an address's @.
+	mailName = regexp.MustCompile("^[" + regexp.QuoteMeta(mailNameChars) + `](?:\.?[` + regexp.QuoteMeta(mailNameChars) + "])*$")
+	// mailHost is the start of a host linkify-it takes after an @.
+	mailHost = regexp.MustCompile(`(?i)^(?:` + mailLabel + `\.){1,4}` + mailLastLabel)
 )

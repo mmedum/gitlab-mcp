@@ -18,18 +18,18 @@ func TestQuotedIsOneInertLine(t *testing.T) {
 		{"close` the span", span("close' the span")},
 		{"\u02cbgrave\u02cb \uff40wide\uff40 \u1fefvaria\u1fef", span("'grave' 'wide' 'varia'")},
 		{"\u00b4acute\u00b4 \u02caup\u02ca \u02f4mid\u02f4 \u1ffdoxia\u1ffd \u0384tonos\u0384", span("'acute' 'up' 'mid' 'oxia' 'tonos'")},
-		{"see https://evil.example.com/a and HTTP://x.example", span("see https[:]//evil.example[.]com/a and HTTP[:]//x.example")},
+		{"see https://evil.example.com/a and HTTP://x.example", span("see https[:]/[/]evil.example[.]com/a and HTTP[:]/[/]x.example")},
 		{"visit www.evil.example today", span("visit www[.]evil.example today")},
 		{"go to evil.example.com/login now", span("go to evil.example[.]com/login now")},
 		// A link right after punctuation or another link is broken too:
 		// the shapes anchored in 2.0.0 consumed the separator and missed these.
-		{"see .https://evil.example and -https://evil.example", span("see .https[:]//evil.example and -https[:]//evil.example")},
+		{"see .https://evil.example and -https://evil.example", span("see .https[:]/[/]evil.example and -https[:]/[/]evil.example")},
 		{"x.example/y.example/z", span("x[.]example/y[.]example/z")},
 		{"www.www.evil.example mailto:mailto:someone@example.com", span("www[.]www[.]evil.example mailto[:]mailto[:]someone@example.com")},
 		{"see bu\u0308cher.example/a", span("see bu\u0308cher[.]example/a")},
 		// A bare domain is broken where a fuzzy linkifier would link it,
 		// and a file name or an address is not.
-		{"visit evil.com or sub.evil.io, then evil.co.uk.", span("visit evil[.]com or sub.evil[.]io, then evil.co[.]uk.")},
+		{"visit evil.com or sub.evil.io, then evil.co.uk.", span("visit evil[.]com or sub[.]evil[.]io, then evil[.]co[.]uk.")},
 		{"report.pdf and write to someone@example.com", span("report.pdf and write to someone@example.com")},
 		{"jane.ai@example.com and sales.team.eu@example.com", span("jane.ai@example.com and sales.team.eu@example.com")},
 		{"pay$.com and evil\u263a.com", span("pay$[.]com and evil\u263a[.]com")},
@@ -37,7 +37,7 @@ func TestQuotedIsOneInertLine(t *testing.T) {
 		{"\u201cclose\u201d \u2018it\u2019 \uff02now\uff02 \u00abhere\u00bb", span("'close' 'it' 'now' 'here'")},
 		{"zero\u200bwidth \u202ereversed\u0007bell \U000E0041tag", span("zerowidth reversed bell tag")},
 		{"pad\u2800\u2800\u2800ded", span("pad ded")},
-		{"a_https://evil.example/x and x_evil.example/login", span("a_https[:]//evil[.]example/x and x_evil[.]example/login")},
+		{"a_https://evil.example/x and x_evil.example/login", span("a_https[:]/[/]evil[.]example/x and x_evil[.]example/login")},
 		{"\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/\u043f\u0443\u0442\u044c", span("\u043f\u0440\u0438\u043c\u0435\u0440[.]\u0440\u0444/\u043f\u0443\u0442\u044c")},
 		{"see www.evil.example and mailto:a@b.example", span("see www[.]evil.example and mailto[:]a@b.example")},
 		{" \t", "empty"},
@@ -46,6 +46,42 @@ func TestQuotedIsOneInertLine(t *testing.T) {
 		// Markdown stays literal inside the span; only the backtick is folded.
 		{"*Approved* by [IT](x) <b>now</b> &#x202e; \\_ ~~x~~", span("*Approved* by [IT](x) <b>now</b> &#x202e; \\_ ~~x~~")},
 		{strings.Repeat("a", 200), span(strings.Repeat("a", 120) + "…")},
+	} {
+		if got := quoted(tc.in, 120); got != tc.want {
+			t.Errorf("quoted(%q) = %s; want %s", tc.in, got, tc.want)
+		}
+	}
+}
+
+// No part of a quoted value is left that linkify-it, the markdown-it
+// linkifier, links with fuzzyLink on (6.1.0, read 2026-10-01). Each row
+// names the rule of linkify-it it guards; every output here was checked
+// unlinked against it.
+func TestQuotedLeavesNothingALinkifierLinks(t *testing.T) {
+	span := func(s string) string { return "`" + s + "`" }
+	for _, tc := range []struct{ in, want string }{
+		// A fuzzy link is a host whose last label is a TLD, ending before
+		// any punctuation, a bracket included: evil.com[.]uk still links
+		// evil.com. Every dot of the host is broken.
+		{"evil.com.uk", span("evil[.]com[.]uk")},
+		{"visit evil.com.zz now", span("visit evil[.]com[.]zz now")},
+		{"a.b.c.d.example.com", span("a[.]b[.]c[.]d[.]example[.]com")},
+		// An address is linked as mail only when its name stands at the
+		// start or after a space and a host of two labels or more follows
+		// the @, ending before neither a hyphen nor a dot and a label.
+		// Otherwise the domain before the @ is a fuzzy link.
+		{"evil.com@a.example and x@example.com", span("evil.com@a.example and x@example.com")},
+		{"evil.com@", span("evil[.]com@")},
+		{"evil.com@x", span("evil[.]com@x")},
+		{"x,evil.com@a.example", span("x,evil[.]com@a.example")},
+		{"evil.com@a.example-", span("evil[.]com@a.example-")},
+		// "//" starts a protocol-relative link, with no TLD check, unless
+		// a colon or a slash stands right before it. A broken scheme
+		// leaves one, so every "//" is broken.
+		{"https://evil.example", span("https[:]/[/]evil.example")},
+		{"ftp://x.app", span("ftp[:]/[/]x.app")},
+		{"//evil.app and //localhost", span("/[/]evil.app and /[/]localhost")},
+		{"//evil.app/path", span("/[/]evil[.]app/path")},
 	} {
 		if got := quoted(tc.in, 120); got != tc.want {
 			t.Errorf("quoted(%q) = %s; want %s", tc.in, got, tc.want)
