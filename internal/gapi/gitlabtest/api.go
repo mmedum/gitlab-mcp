@@ -140,7 +140,16 @@ func (s *Server) serveProject(w http.ResponseWriter, r *http.Request, p *project
 
 func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, user, iid string, rest []string) {
 	iss := findIssue(p, iid)
-	if iss == nil || !s.readable(p, iss, user) {
+	if iss == nil {
+		message(w, http.StatusNotFound, "404 Issue Not Found")
+		return
+	}
+	// The reaction routes find it with find_by! and answer 404 when it
+	// may not be read.
+	if s.serveAwards(w, r, p, issueTarget(iss), s.readable(p, iss, user), user, rest) {
+		return
+	}
+	if !s.readable(p, iss, user) {
 		message(w, http.StatusNotFound, "404 Issue Not Found")
 		return
 	}
@@ -164,7 +173,6 @@ func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, 
 		}
 	case get && match(rest, "notes", "*"):
 		s.getNote(w, p, issueTarget(iss), rest[1])
-	case s.serveAwards(w, r, p, issueTarget(iss), true, user, rest):
 	case s.serveIssueWrite(w, r, p, iss, user, rest):
 	default:
 		routeNotFound(w)

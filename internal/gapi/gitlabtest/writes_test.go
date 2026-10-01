@@ -1040,7 +1040,7 @@ func TestTimeTrackingDurations(t *testing.T) {
 // Participants are subscribed until they unsubscribe, as GitLab's
 // participant declarations make them: a merge request's reviewers, a
 // system note's author, whoever the description mentions, and whoever
-// reacted on the item.
+// reacted on the item or on a comment on it.
 func TestParticipantsAreSubscribed(t *testing.T) {
 	s, _ := frozen(t)
 	dave := s.TokenFor("dave", "api")
@@ -1061,7 +1061,8 @@ func TestParticipantsAreSubscribed(t *testing.T) {
 	p.levels["dave"], p.members["dave"] = 30, true // to be let subscribe to a merge request
 	s.mu.Unlock()
 	s.React(ProjectAlpha, "issue", 9, 0, "dave", "tada")
-	for _, path := range []string{"merge_requests/2", "issues/2", "issues/4", "issues/9"} {
+	s.React(ProjectAlpha, "issue", 13, firstNoteID+12*4+2, "dave", "tada") // on carol's comment
+	for _, path := range []string{"merge_requests/2", "issues/2", "issues/4", "issues/9", "issues/13"} {
 		if got := subscribe(path); got != http.StatusNotModified {
 			t.Errorf("%s: %d, want 304", path, got)
 		}
@@ -1110,7 +1111,7 @@ func TestReactionRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+alice)
-	req.Header.Set("If-Unmodified-Since", "2026-09-26T11:59:59Z")
+	req.Header.Set("If-Unmodified-Since", "Sat, 26 Sep 2026 11:59:59 GMT")
 	if resp, err = noRedirect.Do(req); err != nil || resp.StatusCode != http.StatusPreconditionFailed {
 		t.Errorf("a reaction made after If-Unmodified-Since: %v %v", resp, err)
 	} else {
@@ -1121,6 +1122,31 @@ func TestReactionRoutes(t *testing.T) {
 	if iss, _ := s.Issue(ProjectAlpha, 2); iss.Upvotes != 0 || len(s.Reactions(ProjectAlpha, "issue", 2, 0)) != 0 {
 		t.Errorf("after the remove: %d upvotes, %v", iss.Upvotes, s.Reactions(ProjectAlpha, "issue", 2, 0))
 	}
+	// An issue dave may not read is found, and its reactions are not;
+	// his own reaction there he may still remove, which reads nothing.
+	dave := s.TokenFor("dave", "api")
+	s.React(ProjectAlpha, "issue", 6, 0, "dave", "tada")
+	awards := s.Reactions(ProjectAlpha, "issue", 6, 0)
+	resp, body = send(t, s, http.MethodGet, "/projects/2001/issues/6/award_emoji", dave, nil)
+	wantError(t, "confidential", resp, body, 404, "message", "404 Award Emoji Not Found")
+	resp, body = send(t, s, http.MethodDelete, "/projects/2001/issues/6/award_emoji/"+itoa(firstAwardID+2), dave, nil)
+	wantStatus(t, "remove on an unreadable issue", resp, body, http.StatusNoContent)
+	if len(awards) != 1 || len(s.Reactions(ProjectAlpha, "issue", 6, 0)) != 0 {
+		t.Errorf("reactions on issue 6: %v, then %v", awards, s.Reactions(ProjectAlpha, "issue", 6, 0))
+	}
+	// A locked discussion takes no reaction from one who is not a member;
+	// an internal comment none from one below Planner.
+	s.LockDiscussion(ProjectAlpha, "issue", 7)
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/issues/7/award_emoji", dave, obj{"name": "tada"})
+	wantError(t, "locked", resp, body, 404, "message", "404 Award Emoji Not Found")
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/issues/7/award_emoji", alice, obj{"name": "tada"})
+	wantStatus(t, "locked, as a member", resp, body, http.StatusCreated)
+	note := firstNoteID + 7*4 + 2 // carol's comment on issue 8
+	s.MakeInternal(ProjectAlpha, "issue", 8, int64(note))
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/issues/8/notes/"+itoa(int64(note))+"/award_emoji", dave, obj{"name": "tada"})
+	wantError(t, "internal", resp, body, 404, "message", "404 Award Emoji Not Found")
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/issues/8/notes/"+itoa(int64(note))+"/award_emoji", alice, obj{"name": "tada"})
+	wantStatus(t, "internal, as a Maintainer", resp, body, http.StatusCreated)
 	// A merge request dave may not read is not found, not forbidden.
 	s.SetMergeRequestsAccess(ProjectAlpha, "private")
 	resp, body = send(t, s, http.MethodPost, "/projects/2001/merge_requests/1/award_emoji", s.TokenFor("dave", "api"), obj{"name": "tada"})

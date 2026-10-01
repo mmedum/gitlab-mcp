@@ -1331,8 +1331,8 @@ type ReactionWrite struct {
 	Type    string `json:"type" jsonschema:"issue or merge_request"`
 	IID     int64  `json:"iid"`
 	NoteID  int64  `json:"note_id" jsonschema:"The comment reacted on; 0 for the issue or merge request itself"`
-	Emoji   string `json:"emoji" jsonschema:"The emoji's name; GitLab's own after an add, which may differ from the one given: +1 is thumbsup"`
-	Reacted bool   `json:"reacted" jsonschema:"Whether your reaction with this emoji is there after the call; in a dry run, as read now"`
+	Emoji   string `json:"emoji" jsonschema:"The emoji's name as GitLab stores it when a read or its answer showed it, which may differ from the one given: +1 is thumbsup"`
+	Reacted *bool  `json:"reacted" jsonschema:"Whether your reaction with this emoji is there after the call; in a dry run, as read now. Null when unknown: past 1,000 reactions, a read cannot find yours"`
 }
 
 // TodoWrite is add_todo's result.

@@ -75,6 +75,8 @@ type project struct {
 	mrs         []*gitlab.MergeRequest
 	approvals   map[int64]*gitlab.Approvals
 	discussions map[string][]gitlab.Discussion // "issue:12", "mr:3"
+	// locked is the items whose discussion is locked, by the same key.
+	locked map[string]bool
 
 	// trees maps a branch to its files. A commit sha addresses the tree
 	// of the branch it heads.

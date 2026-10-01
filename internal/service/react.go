@@ -13,11 +13,13 @@ import (
 
 // The signed-in account's own emoji reactions on an issue, a merge
 // request or a comment on either (§7.2, §18 row 106). GitLab answers
-// every refused reaction with 404, one already there included, so the
-// reactions are read first and an add or a remove that would change
-// nothing is reported unchanged without a write. An add is never
-// repeated; a lost answer is settled by reading. A remove takes the
-// reaction's id from that read. The item's project is held to the write
+// every refused reaction with 404, one already there included, and words
+// the reason in the account's language, so the reactions are read first
+// and again after a refusal: an add or a remove that would change nothing
+// is reported unchanged without a write, and no answer's text is read.
+// An add is never repeated; a lost answer is settled by the account's
+// reactions before and after. A remove takes the reaction's id from the
+// read and reads that id back. The item's project is held to the write
 // allow-list. register has already held type to its enum and iid and
 // note_id to at least 1.
 
@@ -37,9 +39,10 @@ var emojiShape = regexp.MustCompile(`^[a-z0-9_+-]{1,100}$`)
 var emojiAliases = map[string]string{"+1": "thumbsup", "-1": "thumbsdown"}
 
 // reactionRefused is what GitLab's 404 to a reaction may mean.
-const reactionRefused = "GitLab answers not found when it does not know the emoji, when the comment is one GitLab wrote " +
-	"itself, and when you may not react there. Custom emoji exist only in projects in a group, defined on the group or " +
-	"a parent group"
+const reactionRefused = "GitLab answers not found when it does not know the emoji, when you already reacted with it under " +
+	"another of its names, when the comment is one GitLab wrote itself, and when you may not react there, such as on a " +
+	"locked discussion of a project you are not a member of. Custom emoji exist only in projects in a group, defined on " +
+	"the group or a parent group"
 
 // emojiName reads an emoji's name as a caller may write it, :tada: or
 // tada, and maps a known alias to GitLab's name.
@@ -75,22 +78,30 @@ func (s *Service) React(ctx context.Context, in Reaction) (model.ReactionWrite, 
 	if err != nil {
 		return model.ReactionWrite{}, err
 	}
-	t, err := s.writeTarget(ctx, in.Project)
-	if err != nil {
+	var t target
+	var me *gitlab.User
+	if err := parallel(
+		func() (err error) { t, err = s.writeTarget(ctx, in.Project); return err },
+		func() (err error) { me, err = s.me(ctx); return err },
+	); err != nil {
 		return model.ReactionWrite{}, err
 	}
-	a := gapi.Awardable{MergeRequest: in.Type == "merge_request", IID: in.IID, NoteID: in.NoteID}
+	r := reacting{s: s, t: t, a: gapi.Awardable{MergeRequest: in.Type == "merge_request", IID: in.IID, NoteID: in.NoteID}, me: me.ID}
 	out := model.ReactionWrite{Outcome: "unchanged", Write: model.Write{Target: t.ref}, Type: in.Type, IID: in.IID,
 		NoteID: in.NoteID, Emoji: name}
-	mine, err := s.myAwards(ctx, t.p, a, name)
+	before, err := r.read(ctx)
 	if err != nil {
 		return model.ReactionWrite{}, err
 	}
-	out.Reacted = mine.find(name) != nil
-	if in.Remove {
-		return s.unreact(ctx, t, a, mine, out)
+	found := before.find(name)
+	out.Reacted = before.has(found)
+	if found != nil {
+		out.Emoji = found.Name
 	}
-	if out.Reacted {
+	if in.Remove {
+		return r.remove(ctx, before, found, out)
+	}
+	if found != nil {
 		out.Notes = []string{"You already reacted with " + name + " there, so nothing was sent."}
 		return out, nil
 	}
@@ -98,94 +109,124 @@ func (s *Service) React(ctx context.Context, in Reaction) (model.ReactionWrite, 
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("POST", "react with "+name, []string{"name"})
 		return out, nil
 	}
-	award, err := s.client.CreateAward(ctx, t.p, a, name)
+	award, err := s.client.CreateAward(ctx, t.p, r.a, name)
 	switch {
 	case err == nil:
-		out.Outcome, out.Emoji, out.Reacted = "added", award.Name, true
-		return out, nil
-	case gapi.IsClass(err, gapi.ClassConflict):
-		// Added since the read, or under an alias of a name the read had.
-		out.Reacted = true
-		out.Notes = []string{"GitLab reports you already reacted with " + name + " there; it made no change."}
+		out.Outcome, out.Emoji, out.Reacted = "added", award.Name, boolp(true)
 		return out, nil
 	case gapi.IsClass(err, gapi.ClassAmbiguousOutcome):
-		now, readErr := s.myAwards(ctx, t.p, a, name)
-		if readErr == nil && now.find(name) != nil {
-			out.Outcome, out.Reacted = "added", true
-			out.Notes = []string{"GitLab's answer was lost, and a read shows your " + name + " reaction there."}
-			return out, nil
-		}
-		return model.ReactionWrite{}, settle(err, "reaction", func() (string, error) { return "", readErr })
+		return r.settleAdd(ctx, before, out, err)
 	case gapi.IsClass(err, gapi.ClassNotFound):
-		return model.ReactionWrite{}, s.reactionRefused(ctx, t.p, a, err)
+		return r.refused(ctx, out, err)
 	}
 	return model.ReactionWrite{}, err
 }
 
-// unreact removes the account's reaction found by the read, by its id.
-func (s *Service) unreact(ctx context.Context, t target, a gapi.Awardable, mine awards, out model.ReactionWrite) (model.ReactionWrite, error) {
-	award := mine.find(out.Emoji)
+// reacting is one react call: where it goes and whose reactions are
+// the caller's.
+type reacting struct {
+	s  *Service
+	t  target
+	a  gapi.Awardable
+	me int64
+}
+
+// settleAdd settles an add whose answer was lost by the account's
+// reactions before and after: a new one is the add's. Either read
+// falling short of the whole list leaves it unknown.
+func (r reacting) settleAdd(ctx context.Context, before awards, out model.ReactionWrite, err error) (model.ReactionWrite, error) {
+	after, readErr := r.read(ctx)
+	if readErr == nil && (!before.complete || !after.complete) {
+		readErr = gapi.Errf(gapi.ClassUnsupported, "there are more than %d reactions there", maxAwardPages*gapi.MaxPerPage)
+	}
+	if readErr == nil {
+		if added := after.newSince(before); added != nil {
+			out.Outcome, out.Emoji, out.Reacted = "added", added.Name, boolp(true)
+			out.Notes = []string{"GitLab's answer was lost, and a read shows your new " + added.Name + " reaction there."}
+			return out, nil
+		}
+	}
+	return model.ReactionWrite{}, settle(err, "reaction", func() (string, error) { return "", readErr })
+}
+
+// refused reads the reactions again after GitLab's 404 to an add: the
+// reaction there is unchanged, whatever the answer said. Otherwise
+// GitLab's reason stands, with what it may mean, and a comment GitLab
+// wrote itself is named when a read shows it is one.
+func (r reacting) refused(ctx context.Context, out model.ReactionWrite, err error) (model.ReactionWrite, error) {
+	now, readErr := r.read(ctx)
+	if readErr == nil {
+		if found := now.find(out.Emoji); found != nil {
+			out.Emoji, out.Reacted = found.Name, boolp(true)
+			out.Notes = []string{"GitLab refused the add, and a read shows your " + found.Name + " reaction there; it made no change."}
+			return out, nil
+		}
+	}
+	msg := gapi.AsError(err).Message
+	if r.a.NoteID != 0 {
+		get := r.s.client.GetIssueNote
+		if r.a.MergeRequest {
+			get = r.s.client.GetMergeRequestNote
+		}
+		if note, noteErr := get(ctx, r.t.p, r.a.IID, r.a.NoteID); noteErr == nil && note.System {
+			return model.ReactionWrite{}, gapi.Wrap(gapi.ClassInvalid, err,
+				"%s. That comment is a note GitLab wrote to record an event, which takes no reactions", msg)
+		}
+	}
+	yours := ""
+	if readErr == nil && len(now.rows) > 0 {
+		yours = " Your reactions there: " + strings.Join(now.names(), ", ") + "."
+	}
+	return model.ReactionWrite{}, gapi.Wrap(gapi.ClassNotFound, err, "%s. %s.%s", msg, reactionRefused, yours)
+}
+
+// remove removes the account's reaction the read found, by its id, and
+// reads that id back.
+func (r reacting) remove(ctx context.Context, before awards, award *gitlab.AwardEmoji, out model.ReactionWrite) (model.ReactionWrite, error) {
 	if award == nil {
-		if !mine.complete {
+		if !before.complete {
 			return model.ReactionWrite{}, gapi.Errf(gapi.ClassUnsupported, "there are more than %d reactions there and yours with %s "+
 				"was not among them; GitLab cannot list one account's reactions alone, so nothing was sent", maxAwardPages*gapi.MaxPerPage, out.Emoji)
 		}
 		note := "You have no " + out.Emoji + " reaction there, so nothing was sent."
-		if len(mine.names) > 0 {
-			note += " Yours there: " + strings.Join(mine.names, ", ") + ". GitLab keeps a reaction under its own name, " +
+		if len(before.rows) > 0 {
+			note += " Yours there: " + strings.Join(before.names(), ", ") + ". GitLab keeps a reaction under its own name, " +
 				"which may differ from an alias you gave."
 		}
 		out.Notes = []string{note}
 		return out, nil
 	}
 	if gapi.IsDryRun(ctx) {
-		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "remove your "+out.Emoji+" reaction", nil)
+		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "remove your "+award.Name+" reaction", nil)
 		return out, nil
 	}
-	err := s.client.DeleteAward(ctx, t.p, a, award.ID)
-	if err != nil && !gapi.IsClass(err, gapi.ClassNotFound) {
-		return model.ReactionWrite{}, err
-	}
-	now, readErr := s.myAwards(ctx, t.p, a, out.Emoji)
+	err := r.s.client.DeleteAward(ctx, r.t.p, r.a, award.ID)
+	_, readErr := r.s.client.GetAward(ctx, r.t.p, r.a, award.ID)
 	switch {
-	case readErr != nil && err != nil:
+	case gapi.IsClass(readErr, gapi.ClassNotFound):
+		out.Outcome, out.Reacted = "removed", boolp(false)
+		if err != nil {
+			out.Notes = []string{"GitLab did not confirm the removal, and a read shows the reaction gone: this call, or its " +
+				"repeat, removed it."}
+		}
+		return out, nil
+	case readErr == nil && err != nil:
 		return model.ReactionWrite{}, err
-	case readErr != nil:
-		out.Outcome, out.Reacted = "removed", false
-		out.Notes = []string{"GitLab accepted the removal; reading the reactions afterwards failed, so it is not confirmed."}
-		return out, nil //nolint:nilerr // the removal was accepted; a failed read afterwards is said, not a failed call
-	case now.find(out.Emoji) != nil:
+	case readErr == nil:
 		// GitLab answers 204 even when its service refuses the removal.
-		return model.ReactionWrite{}, gapi.Errf(gapi.ClassUnexpected, "GitLab accepted the removal, but your %s reaction is still there", out.Emoji)
+		return model.ReactionWrite{}, gapi.Errf(gapi.ClassUnexpected, "GitLab accepted the removal, but your %s reaction is still there", award.Name)
+	case err != nil:
+		return model.ReactionWrite{}, gapi.Wrap(gapi.ClassAmbiguousOutcome, err, "GitLab did not confirm the removal, and reading "+
+			"the reaction back failed too, so whether it is gone is unknown: %s", settledUnknown)
 	}
-	out.Outcome, out.Reacted = "removed", false
-	if err != nil {
-		out.Notes = []string{"GitLab answered the removal with not found, and a read afterwards finds no " + out.Emoji +
-			" reaction of yours: it is gone, whether this call or another removed it."}
-	}
+	out.Outcome, out.Reacted = "removed", boolp(false)
+	out.Notes = []string{"GitLab accepted the removal; reading the reaction back failed, so it is not confirmed."}
 	return out, nil
-}
-
-// reactionRefused explains GitLab's 404 to a reaction. A comment GitLab
-// wrote itself is named when a read shows it is one.
-func (s *Service) reactionRefused(ctx context.Context, p gapi.Project, a gapi.Awardable, err error) error {
-	msg := gapi.AsError(err).Message
-	if a.NoteID != 0 {
-		get := s.client.GetIssueNote
-		if a.MergeRequest {
-			get = s.client.GetMergeRequestNote
-		}
-		if note, readErr := get(ctx, p, a.IID, a.NoteID); readErr == nil && note.System {
-			return gapi.Wrap(gapi.ClassInvalid, err, "%s. That comment is a note GitLab wrote to record an event, which takes no reactions", msg)
-		}
-	}
-	return gapi.Wrap(gapi.ClassNotFound, err, "%s. %s", msg, reactionRefused)
 }
 
 // awards is the account's own reactions on one item, as read.
 type awards struct {
 	rows     []gitlab.AwardEmoji
-	names    []string
 	complete bool // the read reached the end of the list
 }
 
@@ -196,28 +237,48 @@ func (m awards) find(name string) *gitlab.AwardEmoji {
 	return nil
 }
 
-// myAwards reads the account's reactions on a, stopping early once the
-// one named is found.
-func (s *Service) myAwards(ctx context.Context, p gapi.Project, a gapi.Awardable, name string) (awards, error) {
-	me, err := s.me(ctx)
-	if err != nil {
-		return awards{}, err
+// has is whether the reaction found is there: unknown when it was not
+// found in a read that fell short of the whole list.
+func (m awards) has(found *gitlab.AwardEmoji) *bool {
+	if found == nil && !m.complete {
+		return nil
 	}
-	mine := func(row gitlab.AwardEmoji) bool { return row.User.ID == me.ID }
-	rows, complete, err := readPagesUntil(maxAwardPages, func(o gapi.ListOptions) ([]gitlab.AwardEmoji, gapi.Page, error) {
-		return s.client.ListAwards(ctx, p, a, o)
-	}, func(rows []gitlab.AwardEmoji) bool {
-		return slices.ContainsFunc(rows, func(row gitlab.AwardEmoji) bool { return mine(row) && row.Name == name })
+	return boolp(found != nil)
+}
+
+func (m awards) names() []string {
+	out := make([]string, len(m.rows))
+	for i, row := range m.rows {
+		out[i] = row.Name
+	}
+	return out
+}
+
+// newSince is a reaction in m that before did not have.
+func (m awards) newSince(before awards) *gitlab.AwardEmoji {
+	for i, row := range m.rows {
+		if !slices.ContainsFunc(before.rows, func(b gitlab.AwardEmoji) bool { return b.ID == row.ID }) {
+			return &m.rows[i]
+		}
+	}
+	return nil
+}
+
+// read reads the account's reactions, up to maxAwardPages of the list.
+func (r reacting) read(ctx context.Context) (awards, error) {
+	rows, complete, err := readPages(maxAwardPages, func(o gapi.ListOptions) ([]gitlab.AwardEmoji, gapi.Page, error) {
+		return r.s.client.ListAwards(ctx, r.t.p, r.a, o)
 	})
 	if err != nil {
 		return awards{}, err
 	}
 	out := awards{complete: complete}
 	for _, row := range rows {
-		if mine(row) {
+		if row.User.ID == r.me {
 			out.rows = append(out.rows, row)
-			out.names = append(out.names, row.Name)
 		}
 	}
 	return out, nil
 }
+
+func boolp(v bool) *bool { return &v }

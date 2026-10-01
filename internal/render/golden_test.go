@@ -25,6 +25,7 @@ var (
 
 func intp(n int) *int       { return &n }
 func strp(s string) *string { return &s }
+func boolp(b bool) *bool    { return &b }
 func tp(t time.Time) *time.Time {
 	return &t
 }
@@ -297,8 +298,11 @@ func TestGoldensPhase2(t *testing.T) {
 			Write: model.Write{DryRun: true, Target: public, Notes: []string{"There is no estimate, so resetting it is left out."},
 				WouldSend: &model.Preview{Method: "POST", Operation: "subtract 30m of spent time", Fields: []string{"duration"}}}}, bd),
 		"reaction_comment": ReactionWrite(model.ReactionWrite{Outcome: "added", Type: "merge_request", IID: 3, NoteID: 50001,
-			Emoji: "thumbsup", Reacted: true, Write: model.Write{Target: public}}, bd),
-		"reaction_unchanged": ReactionWrite(model.ReactionWrite{Outcome: "unchanged", Type: "issue", IID: 12, Emoji: "tada",
+			Emoji: "thumbsup", Reacted: boolp(true), Write: model.Write{Target: public}}, bd),
+		"reaction_unknown": ReactionWrite(model.ReactionWrite{Outcome: "dry_run", Type: "issue", IID: 12, Emoji: "tada",
+			Write: model.Write{DryRun: true, Target: public, WouldSend: &model.Preview{Method: "POST", Operation: "react with tada",
+				Fields: []string{"name"}}}}, bd),
+		"reaction_unchanged": ReactionWrite(model.ReactionWrite{Outcome: "unchanged", Type: "issue", IID: 12, Emoji: "tada", Reacted: boolp(false),
 			Write: model.Write{Target: public, Notes: []string{"You have no tada reaction there, so nothing was sent."}}}, bd),
 		"issue_dry_run": IssueWrite(model.IssueWrite{Outcome: "dry_run", Write: model.Write{DryRun: true, Target: public,
 			WouldSend: &model.Preview{Method: "POST", Operation: "create an issue", Fields: []string{"title", "labels"}}}}, bd),

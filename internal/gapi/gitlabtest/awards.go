@@ -10,12 +10,18 @@ import (
 )
 
 // Emoji reactions on an issue, a merge request or a comment on one, as
-// lib/api/award_emoji.rb serves them at v19.4.1-ee. The list is oldest
-// first. Every refused POST is 404 with the reason folded into the
-// message: an unknown name, a reaction already there, a system note, an
-// item the user may not read. A name is normalized first, so +1 is kept
-// as thumbsup. DELETE removes only the user's own reaction, 401 for
-// another's, and honors If-Unmodified-Since. A reaction moves a
+// lib/api/award_emoji.rb serves them at v19.4.1-ee. The item is found
+// whether or not the user may read it; GET and POST then answer 404
+// "Award Emoji Not Found" to one who may not, and DELETE checks only the
+// reaction's owner. The list is oldest first. Every refused POST is 404
+// with the reason folded into the message: an unknown name, a reaction
+// already there, a system note, or the award_emoji ability missing, as
+// on a locked discussion for a non-member (IssuablePolicy) or an
+// internal note for one below Planner (NotePolicy). A name is normalized
+// first, so +1 is kept as thumbsup. DELETE removes only the user's own
+// reaction, 401 for another's, and honors If-Unmodified-Since. A
+// reaction is a participation in the item, on a comment too
+// (Awardable's participant :award_emoji). A reaction moves a
 // comment's updated_at (Note#bump_updated_at) and leaves an issue's or a
 // merge request's alone, whose upvotes and downvotes count thumbsup and
 // thumbsdown. A reaction on the item, or on a comment outside a thread,
@@ -62,25 +68,18 @@ func (s *Server) serveAwards(w http.ResponseWriter, r *http.Request, p *project,
 			message(w, http.StatusNotFound, "404 Not found")
 			return true
 		}
-		noteID = p.discussions[t.key()][di].Notes[ni].ID
+		n := p.discussions[t.key()][di].Notes[ni]
+		noteID = n.ID
+		// Note#issuable_ability_name: an internal note needs read_internal_note.
+		readable = readable && (!n.Internal || s.accessLevel(p, user) >= plannerAccess)
 		rest = rest[2:]
 	case len(rest) >= 1 && rest[0] == "award_emoji":
 	default:
 		return false
 	}
 	switch {
-	case r.Method == http.MethodGet && len(rest) == 1:
-		if !readable {
-			message(w, http.StatusNotFound, "404 Award Emoji Not Found")
-			return true
-		}
-		var rows []map[string]any
-		for _, a := range s.awards {
-			if a.project == p.ID && a.item == t.key() && a.noteID == noteID {
-				rows = append(rows, s.awardJSON(a, t))
-			}
-		}
-		writePage(s, w, r, rows)
+	case r.Method == http.MethodGet && len(rest) <= 2:
+		s.readAwards(w, r, p, t, noteID, readable, rest[1:])
 	case r.Method == http.MethodPost && len(rest) == 1:
 		s.addAward(w, r, p, t, noteID, readable, user)
 	case r.Method == http.MethodDelete && len(rest) == 2:
@@ -91,12 +90,38 @@ func (s *Server) serveAwards(w http.ResponseWriter, r *http.Request, p *project,
 	return true
 }
 
+// readAwards is the list, or one reaction when id names it.
+func (s *Server) readAwards(w http.ResponseWriter, r *http.Request, p *project, t target, noteID int64, readable bool, id []string) {
+	if !readable {
+		message(w, http.StatusNotFound, "404 Award Emoji Not Found")
+		return
+	}
+	var rows []map[string]any
+	for _, a := range s.awards {
+		if a.project != p.ID || a.item != t.key() || a.noteID != noteID {
+			continue
+		}
+		if len(id) == 1 && itoa(a.id) == id[0] {
+			writeJSON(w, http.StatusOK, s.awardJSON(a, t))
+			return
+		}
+		rows = append(rows, s.awardJSON(a, t))
+	}
+	if len(id) == 1 {
+		message(w, http.StatusNotFound, "404 Not found")
+		return
+	}
+	writePage(s, w, r, rows)
+}
+
 func (s *Server) addAward(w http.ResponseWriter, r *http.Request, p *project, t target, noteID int64, readable bool, user string) {
 	b, ok := readBody(w, r)
 	if !ok || !b.require(w, "name") {
 		return
 	}
-	if !readable {
+	// IssuablePolicy prevents award_emoji on a locked discussion for one
+	// who is not a member.
+	if !readable || p.locked[t.key()] && !p.members[user] {
 		message(w, http.StatusNotFound, "404 Award Emoji Not Found")
 		return
 	}
@@ -145,7 +170,7 @@ func (s *Server) removeAward(w http.ResponseWriter, r *http.Request, p *project,
 		message(w, http.StatusUnauthorized, "401 Unauthorized")
 		return
 	}
-	if since, err := time.Parse(time.RFC3339Nano, r.Header.Get("If-Unmodified-Since")); err == nil && a.created.After(since) {
+	if since, ok := unmodifiedSince(r); ok && a.created.After(since) {
 		message(w, http.StatusPreconditionFailed, "412 Precondition Failed")
 		return
 	}
@@ -191,12 +216,51 @@ func (s *Server) individual(p *project, t target, noteID int64) bool {
 	return di >= 0 && p.discussions[t.key()][di].IndividualNote
 }
 
-// reacted reports whether user reacted on the item itself, which makes
-// them a participant.
+// reacted reports whether user reacted on the item or on a comment on
+// it, which makes them a participant.
 func (s *Server) reacted(p *project, t target, user string) bool {
 	return slices.ContainsFunc(s.awards, func(a award) bool {
-		return a.project == p.ID && a.item == t.key() && a.noteID == 0 && a.user == user
+		return a.project == p.ID && a.item == t.key() && a.user == user
 	})
+}
+
+// LockDiscussion locks an item's discussion, as discussion_locked does.
+func (s *Server) LockDiscussion(projectPath, kind string, iid int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	t, ok := s.findTarget(p, kind, iid)
+	if !ok {
+		return false
+	}
+	if p.locked == nil {
+		p.locked = map[string]bool{}
+	}
+	p.locked[t.key()] = true
+	return true
+}
+
+// MakeInternal marks a comment internal: only Planner and up read it.
+func (s *Server) MakeInternal(projectPath, kind string, iid, noteID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	t, ok := s.findTarget(p, kind, iid)
+	if !ok {
+		return false
+	}
+	di, ni := findNote(p, t, itoa(noteID))
+	if di < 0 {
+		return false
+	}
+	p.discussions[t.key()][di].Notes[ni].Internal = true
+	return true
 }
 
 // awardJSON is Entities::AwardEmoji.

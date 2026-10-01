@@ -114,11 +114,6 @@ var staleFile = regexp.MustCompile(`(?i)has changed since you started editing it
 // or a file a commit would create. GitLab answers 400, not 409.
 var alreadyExists = regexp.MustCompile(`(?i)already exists`)
 
-// awardTaken is a reaction refused because the account already reacted
-// with that emoji. GitLab answers it, like every refused reaction, with
-// 404 (lib/api/award_emoji.rb).
-var awardTaken = regexp.MustCompile(`(?i)has already been taken`)
-
 // jobState is a job refused for the state it is in: GitLab answers
 // "403 Forbidden - Job is not retryable" and "400 Bad request - Unplayable
 // Job" (lib/api/ci/jobs.rb, lib/api/helpers.rb), which asks the caller to
@@ -188,12 +183,10 @@ func classifyStatus(call Call, name string, repeatable bool, status int, h http.
 }
 
 // awardRefused: GitLab answers every refused reaction with 404 and its
-// reason, so the reason decides. One already there is a conflict; the
-// rest keep GitLab's words, which the service explains.
+// reason in the account's language (lib/api/award_emoji.rb L96-106,
+// lib/api/helpers.rb L92), so the reason is kept whole and never read;
+// the service reads the reactions to tell one already there.
 func (a answer) awardRefused() verdict {
-	if awardTaken.MatchString(a.env.message) {
-		return a.fail(ClassConflict, "you already reacted with that emoji. GitLab said: %s", a.detail)
-	}
 	return a.fail(ClassNotFound, "GitLab refused the reaction. GitLab said: %s", a.detail)
 }
 

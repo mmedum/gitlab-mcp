@@ -327,9 +327,12 @@ func ReactionWrite(w model.ReactionWrite, _ Boundary) string {
 		head = "Removed your " + emoji + " reaction from " + on + "."
 	}
 	writeHead(&b, head, w.Write)
-	if w.Reacted {
+	switch {
+	case w.Reacted == nil:
+		fmt.Fprintf(&b, "\nWhether your %s reaction is there is unknown: there are too many reactions to read.", emoji)
+	case *w.Reacted:
 		fmt.Fprintf(&b, "\nYour %s reaction is there.", emoji)
-	} else {
+	default:
 		fmt.Fprintf(&b, "\nYou have no %s reaction there.", emoji)
 	}
 	return b.String()

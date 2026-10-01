@@ -1587,18 +1587,79 @@ func TestReactionsGitLabRefuses(t *testing.T) {
 	}
 	h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 999, "emoji": "tada"}, "not_found")
 	h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": 1, "emoji": "tada"}, "not_found")
-	// thumbs_up is an alias this server does not know: the read finds no
-	// thumbs_up, and GitLab's "already taken" says it is there.
+	// thumbs_up is an alias this server does not know, and no read can
+	// tell it is thumbsup: GitLab's refusal stands, naming yours.
 	h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "emoji": "thumbsup"})
-	_, out := h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "emoji": "thumbs_up"})
-	if get(out, "outcome") != "unchanged" || get(out, "reacted") != true {
-		t.Errorf("already there under an alias: %v", out)
+	text = h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "emoji": "thumbs_up"}, "not_found")
+	if !strings.Contains(text, "under another of its names") || !strings.Contains(text, "Your reactions there: thumbsup.") {
+		t.Errorf("already there under an alias: %s", text)
+	}
+	// A locked discussion takes no reaction from one who is not a member.
+	h.gl.LockDiscussion(alpha, "issue", 2)
+	dave := newHarness(t, harnessOptions{over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
+	text = dave.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 2, "emoji": "tada"}, "not_found")
+	if !strings.Contains(text, "locked discussion") {
+		t.Errorf("locked: %s", text)
 	}
 	// A merge request dave may not read is not found, as GitLab's
 	// reaction routes answer.
 	h = newHarness(t, harnessOptions{token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
 	h.gl.SetMergeRequestsAccess(alpha, "private")
 	h.fails("react", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "emoji": "tada"}, "not_found")
+}
+
+// GitLab words its refusal in the account's language; a reaction a read
+// finds there is unchanged whatever the words.
+func TestARefusedAddIsReadNotParsed(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/3/award_emoji", AfterApply: true,
+		Status: http.StatusNotFound, Body: `{"message":"404 Award Emoji Name ya está en uso Not Found"}`})
+	text, out := h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket"})
+	if get(out, "outcome") != "unchanged" || get(out, "reacted") != true || !strings.Contains(text, "GitLab refused the add, and a read shows") {
+		t.Errorf("result %v\n%s", out, text)
+	}
+}
+
+// Past 1,000 reactions a read cannot say whether yours is there, and a
+// lost add stays unknown.
+func TestManyReactionsLeaveYoursUnknown(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	for range 1001 {
+		h.gl.React(alpha, "issue", 3, 0, "bob", "eyes")
+	}
+	_, out := h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "tada", "dry_run": true})
+	if get(out, "reacted") != nil {
+		t.Errorf("reacted = %v, want null", get(out, "reacted"))
+	}
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/issues/3/award_emoji", AfterApply: true,
+		Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	text := h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "tada"}, "ambiguous_outcome")
+	if !strings.Contains(text, "so it is unknown") {
+		t.Errorf("lost add: %s", text)
+	}
+}
+
+// One react call reads who you are once, and a remove reads its
+// reaction back by id rather than listing them all again.
+func TestReactReadsLittle(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket"})
+	h.gl.ResetRequests()
+	h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket", "remove": true})
+	users, lists, byID := 0, 0, 0
+	for _, r := range h.gl.Requests() {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.EscapedPath, "/user"):
+			users++
+		case r.Method == http.MethodGet && strings.HasSuffix(r.EscapedPath, "/award_emoji"):
+			lists++
+		case r.Method == http.MethodGet && strings.Contains(r.EscapedPath, "/award_emoji/"):
+			byID++
+		}
+	}
+	if users != 1 || lists != 1 || byID != 1 {
+		t.Errorf("GET /user %d, lists %d, reads by id %d; want 1 each", users, lists, byID)
+	}
 }
 
 // An add whose answer was lost is never sent again; a read settles it.
@@ -1620,13 +1681,35 @@ func TestALostReactionIsSettledByReading(t *testing.T) {
 		t.Errorf("not landed: %s", text)
 	}
 
+	// An alias GitLab keeps under another name is settled by the new
+	// reaction, not by the name given.
+	h = newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: path, AfterApply: true, Status: http.StatusBadGateway,
+		Body: `{"message":"502 Bad Gateway"}`})
+	if _, out = h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "thumbs_up"}); get(out, "outcome") != "added" ||
+		get(out, "emoji") != "thumbsup" {
+		t.Errorf("lost add of an alias: %v", out)
+	}
+
 	h = newHarness(t, harnessOptions{})
 	h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket"})
 	h.gl.Inject(gitlabtest.Fault{Method: http.MethodDelete, Path: path + "/", AfterApply: true, Status: http.StatusBadGateway,
 		Body: `{"message":"502 Bad Gateway"}`})
 	text, out = h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket", "remove": true})
-	if get(out, "outcome") != "removed" || !strings.Contains(text, "whether this call or another removed it") {
+	if get(out, "outcome") != "removed" || !strings.Contains(text, "this call, or its repeat, removed it") {
 		t.Errorf("lost remove: %v\n%s", out, text)
+	}
+
+	// A remove GitLab never confirmed, and a read back that fails too, is
+	// unknown, not a failure of the call.
+	h = newHarness(t, harnessOptions{})
+	h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket"})
+	for _, m := range []string{http.MethodDelete, http.MethodGet} {
+		h.gl.Inject(gitlabtest.Fault{Method: m, Path: path + "/", Times: 10, Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	}
+	text = h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket", "remove": true}, "ambiguous_outcome")
+	if !strings.Contains(text, "whether it is gone is unknown") {
+		t.Errorf("unconfirmed remove: %s", text)
 	}
 }
 
