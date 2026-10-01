@@ -501,7 +501,11 @@ func phase2(s scratch) []step {
 		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "+1"}},
 		{tool: "get_issue", args: map[string]any{"project": p, "iid": s.Issue}},
 		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": ":thumbsup:"}},
-		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "thumbs_up"}},
+		// Another name of a reaction already there: GitLab refuses it, in the
+		// account's language, and its alias table cannot be read back, so
+		// GitLab's own reason is passed on.
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "thumbs_up"},
+			expectError: true, why: "an alias of a reaction already there, which GitLab refuses with 404"},
 		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "no_such_emoji_here"},
 			expectError: true, why: "an emoji GitLab does not know, which it answers with 404"},
 		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "thumbsup", "remove": true, "dry_run": true}},
