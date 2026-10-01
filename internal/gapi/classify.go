@@ -270,6 +270,9 @@ func (a answer) serverError() verdict {
 	if !a.repeatable {
 		return a.fail(ClassAmbiguousOutcome, ambiguousText+" (status %d)", a.name, a.status)
 	}
+	if a.status == http.StatusInternalServerError && a.call.ServerErrorFinal != "" {
+		return a.fail(ClassUnavailable, "GitLab failed on %s (status %d)", a.name, a.status)
+	}
 	v := a.fail(ClassUnavailable, "GitLab failed on %s (status %d); retry shortly", a.name, a.status)
 	v.after = parseRetryAfter(a.h.Get("Retry-After"), time.Now())
 	v.retry = v.after <= maxRetryAfter

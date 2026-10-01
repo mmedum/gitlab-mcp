@@ -30,6 +30,10 @@ lifted verbatim.
 
 - Commit lists (`list_commits`, `list_mr_commits`, `compare_refs`), `get_commit` and `get_blame` show git author and committer names inside the untrusted-content markers, as titles and messages are, and a straight `compare_refs` is named `from..to`.
 
+### Fixed
+
+- `submit_review` refuses a review whose drafts hold a quick-action line, which GitLab would run on publishing; a draft written in GitLab's web view could hold one.
+
 ## [2.1.0] - 2026-10-01
 
 ### Added

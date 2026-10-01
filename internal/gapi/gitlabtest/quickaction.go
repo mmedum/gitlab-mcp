@@ -37,7 +37,8 @@ func extract(body string) ([]command, string) {
 	var cmds []command
 	var kept []string
 	fenced := false
-	for line := range strings.SplitSeq(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+	// GitLab drops every carriage return before it parses a body.
+	for line := range strings.SplitSeq(strings.ReplaceAll(body, "\r", ""), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			fenced = !fenced
 		}

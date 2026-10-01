@@ -273,8 +273,8 @@ func publishReviewComment() definition {
 	return tool[publishReviewCommentIn, model.DraftPublish]{
 		sp: spec{Name: "publish_review_comment", Kind: Write, Bucket: gapi.BucketNotes,
 			Description: "Publish one of your own draft review comments now, on its own, as the thread or reply it was drafted " +
-				"as; submit_review publishes all of them at once. A reply drafted to resolve its thread resolves it, and one " +
-				"that was not reopens a resolved thread, as GitLab does. A draft with a quick-action line is refused. GitLab " +
+				"as; submit_review publishes all of them at once. A reply drafted to resolve its thread resolves it when your " +
+				"role may, and any other reply reopens a resolved thread, as GitLab does. A draft with a quick-action line is refused. GitLab " +
 				"does not say what it created, so the server reads the threads afterwards and reports the comment; if GitLab " +
 				"deleted the draft without saving it, the outcome is lost and the result gives the text back. Never repeated " +
 				"after a lost answer." + visibleNote},
@@ -302,7 +302,8 @@ func submitReview() definition {
 				"reviewer state. reviewer_state approved approves the merge request, which other people's merge rules count, " +
 				"so it is refused unless the server was started with GITLAB_MCP_ENABLE_SHIP=true. The result counts what was " +
 				"published and what is still pending, read afterwards. A quick-action line in the summary refuses the call " +
-				"unless escape_commands is true." + visibleNote},
+				"unless escape_commands is true, and one in any of your drafts refuses it too, since GitLab runs it on " +
+				"publishing." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in submitReviewIn) (model.ReviewSubmit, error) {
 			return svc.SubmitReview(ctx, service.Review{Project: string(in.Project), IID: in.IID, Summary: in.Summary,
 				ReviewerState: in.ReviewerState})

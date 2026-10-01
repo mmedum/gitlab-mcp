@@ -182,7 +182,8 @@ replace it with a `read_api` one.
   `update_review_comment` and `publish_review_comment` act only on your
   own drafts, which are the only ones GitLab shows you. Publishing a
   draft written elsewhere that holds a quick-action line is refused,
-  since GitLab runs it on publishing.
+  since GitLab runs it on publishing; so is a `submit_review` that would
+  publish one.
 - **Deletes are narrow.** `delete_branch` refuses the default branch,
   every protected branch, and one GitLab does not count merged unless
   you pass `unmerged: true`, and needs the head `sha` you read.

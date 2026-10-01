@@ -648,6 +648,10 @@ func TestServerErrorsRetriedForGetNeverForCreate(t *testing.T) {
 			gitlabtest.Fault{Path: "/projects/2001/issues/1/notes", Status: 503, Body: "{}"}, "", 2},
 		{"PUT recovers", Call{Method: "PUT", Path: "projects/{}", Args: []string{"2001"}, Name: "update"},
 			gitlabtest.Fault{Path: "/projects/2001", Method: "PUT", Status: 502, Times: 1, Body: "{}"}, ClassUnsupported, 2},
+		{"PUT whose 500 is final", Call{Method: "PUT", Path: "projects/{}", Args: []string{"2001"}, ServerErrorFinal: "test", Name: "update"},
+			gitlabtest.Fault{Path: "/projects/2001", Method: "PUT", Status: 500, Times: 4, Body: "{}"}, ClassUnavailable, 1},
+		{"PUT whose 500 is final repeats a 502", Call{Method: "PUT", Path: "projects/{}", Args: []string{"2001"}, ServerErrorFinal: "test", Name: "update"},
+			gitlabtest.Fault{Path: "/projects/2001", Method: "PUT", Status: 502, Times: 1, Body: "{}"}, ClassUnsupported, 2},
 		{"PUT sent once is ambiguous", Call{Method: "PUT", Path: "projects/{}", Args: []string{"2001"}, Once: "test", Name: "update"},
 			gitlabtest.Fault{Path: "/projects/2001", Method: "PUT", Status: 502, Times: 1, Body: "{}"}, ClassAmbiguousOutcome, 1},
 	}

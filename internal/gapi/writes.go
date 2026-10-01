@@ -215,7 +215,8 @@ type DraftUpdate struct {
 func (c *Client) UpdateDraftNote(ctx context.Context, p Project, iid, draft int64, in DraftUpdate) (*gitlab.DraftNote, error) {
 	var out gitlab.DraftNote
 	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/merge_requests/{}/draft_notes/{}",
-		Args: []string{p.segment(), idArg(iid), idArg(draft)}, Body: in, Name: "update_review_comment"}, &out)
+		Args: []string{p.segment(), idArg(iid), idArg(draft)}, Body: in,
+		ServerErrorFinal: "GitLab answers 500 for a draft it will not save", Name: "update_review_comment"}, &out)
 	return &out, err
 }
 

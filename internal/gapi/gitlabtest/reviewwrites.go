@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
@@ -373,11 +372,14 @@ func (s *Server) ownDraft(p *project, mr *gitlab.MergeRequest, user, id string) 
 	})
 }
 
-// maxNoteChars is description_and_note_max_size's default.
-const maxNoteChars = 1_000_000
+// maxNoteBytes is description_and_note_max_size's default, which
+// DraftNote validates against the note's bytesize.
+const maxNoteBytes = 1_000_000
 
-// updateDraft is PUT …/draft_notes/:id: note is required, and the
-// position is written as sent, so one left out is cleared. A draft the
+// updateDraft is PUT …/draft_notes/:id: note is required, and GitLab
+// runs update!(note:, position:), so a position left out is cleared and
+// one sent is stored as sent, not checked against the diff; its line
+// code stays the one computed when the draft was made. A draft the
 // model refuses to save is a 500, as update! raises unrescued.
 func (s *Server) updateDraft(w http.ResponseWriter, r *http.Request, p *project, mr *gitlab.MergeRequest, user, id string) {
 	b, ok := readBody(w, r)
@@ -398,22 +400,17 @@ func (s *Server) updateDraft(w http.ResponseWriter, r *http.Request, p *project,
 	if !ok {
 		return
 	}
-	var code *string
-	if pos != nil {
-		c, ok := s.checkPosition(w, p, mr, pos)
-		if !ok {
-			return
-		}
-		if c != "" {
-			code = &c
-		}
+	// Grape's positional params require these when a position is sent.
+	if pos != nil && (pos.BaseSHA == "" || pos.StartSHA == "" || pos.HeadSHA == "" || pos.PositionType == "") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "position is missing a required field"})
+		return
 	}
-	if utf8.RuneCountInString(note) > maxNoteChars {
+	if len(note) > maxNoteBytes {
 		message(w, http.StatusInternalServerError, "500 Internal Server Error")
 		return
 	}
 	d := &p.drafts[mr.IID][i]
-	d.Note, d.Position, d.LineCode = note, pos, code
+	d.Note, d.Position = note, pos
 	writeJSON(w, http.StatusOK, withExtra(*d, map[string]any{"merge_request_id": mr.ID}))
 }
 
@@ -463,6 +460,39 @@ func (s *Server) DropDraft(projectPath string, iid, id int64) bool {
 	n := len(p.drafts[iid])
 	p.drafts[iid] = slices.DeleteFunc(p.drafts[iid], func(d gitlab.DraftNote) bool { return d.ID == id })
 	return len(p.drafts[iid]) < n
+}
+
+// Reply plants a reply by user in a merge request's thread, as content
+// someone wrote. It runs no quick action.
+func (s *Server) Reply(projectPath string, iid int64, discussionID, user, body string) (gitlab.Note, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return gitlab.Note{}, false
+	}
+	mr := findMR(p, itoa(iid))
+	if mr == nil || findDiscussion(p, mrTarget(mr).key(), discussionID) < 0 {
+		return gitlab.Note{}, false
+	}
+	return s.reply(p, mrTarget(mr), user, discussionID, body), true
+}
+
+// SetDraftPosition replaces a draft's position, as GitLab may hold one.
+func (s *Server) SetDraftPosition(projectPath string, iid, id int64, pos *gitlab.Position) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	for i := range p.drafts[iid] {
+		if p.drafts[iid][i].ID == id {
+			p.drafts[iid][i].Position = pos
+			return true
+		}
+	}
+	return false
 }
 
 // EditDraft changes a draft's text, as its author would in GitLab.
