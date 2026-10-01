@@ -19,6 +19,12 @@ lifted verbatim.
 
 - `react` adds or removes your emoji reaction on an issue, a merge request or a comment on one, and says when you already reacted, or had no such reaction; an add is never repeated after a lost answer.
 - `get_issue` and `get_merge_request` show the item's thumbsup and thumbsdown counts.
+- `list_mr_versions` lists a merge request's diff versions, newest first, and `compare_mr_versions` shows the commits and diffs between two of them, or since one, as GitLab's version comparison does; after a rebase the diff includes what the target branch gained, and the result says when the merge base moved.
+- `get_merge_request` shows each reviewer's review state, such as `reviewed` or `requested_changes`: the first 100, and says when GitLab has more.
+
+### Changed
+
+- Commit lists (`list_commits`, `list_mr_commits`, `compare_refs`), `get_commit` and `get_blame` show git author and committer names inside the untrusted-content markers, as titles and messages are, and a straight `compare_refs` is named `from..to`.
 
 ## [2.1.0] - 2026-10-01
 

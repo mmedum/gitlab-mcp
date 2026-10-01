@@ -413,6 +413,7 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	}
 	fmt.Fprintf(&b, "Author @%s; assignees %s; reviewers %s; labels %s.\n", Ident(mr.Author.Username),
 		users(mr.Assignees), users(mr.Reviewers), idents(mr.Labels))
+	b.WriteString(reviewerStates(mr.ReviewerStates) + "\n")
 	fmt.Fprintf(&b, "Created %s; updated %s", when(mr.CreatedAt), when(mr.UpdatedAt))
 	if mr.MergedAt != nil {
 		fmt.Fprintf(&b, "; merged %s", when(*mr.MergedAt))
@@ -439,6 +440,29 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 		b.WriteString("\n" + linkedItems("Related issues", mr.RelatedIssues, bd))
 	}
 	return b.String()
+}
+
+// reviewerStates is one line: each reviewer and where their review
+// stands.
+func reviewerStates(r *model.ReviewerStates) string {
+	if r == nil {
+		return "Review states: could not be read."
+	}
+	if len(r.Reviewers) == 0 {
+		return "Review states: no reviewers."
+	}
+	states := make([]string, len(r.Reviewers))
+	for i, x := range r.Reviewers {
+		states[i] = fmt.Sprintf("@%s %s", Ident(x.User.Username), Ident(x.State))
+	}
+	line := "Review states: " + strings.Join(states, ", ")
+	switch {
+	case r.More && r.Total != nil:
+		line += fmt.Sprintf("; %d shown of %d, the rest not shown", len(r.Reviewers), *r.Total)
+	case r.More:
+		line += "; GitLab has more, not shown"
+	}
+	return line + "."
 }
 
 // linkedItems renders one list of linked items under heading. Each title
@@ -707,10 +731,12 @@ func Commits(l model.Commits, bd Boundary) string {
 func Commit(c model.Commit, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Commit %s in %s\n", Ident(c.ID), projectLine(c.Project))
-	fmt.Fprintf(&b, "%s\nAuthored by %s at %s; committed by %s at %s; parents %s.\n", Ident(c.WebURL), person(c.AuthorName),
-		when(c.AuthoredAt), person(c.CommitterName), when(c.CommittedAt), idents(c.ParentIDs))
+	b.WriteString(Ident(c.WebURL) + "\n" + bd.Notice() + "\n")
+	// Anyone can write a commit's author and committer names, so they are
+	// inside the boundary with the message.
+	fmt.Fprintf(&b, "Authored by %s at %s; committed by %s at %s; parents %s.\n", bd.Inline(person(c.AuthorName)),
+		when(c.AuthoredAt), bd.Inline(person(c.CommitterName)), when(c.CommittedAt), idents(c.ParentIDs))
 	fmt.Fprintf(&b, "%d lines added, %d removed.\n", c.Additions, c.Deletions)
-	b.WriteString(bd.Notice() + "\n")
 	o := Origin{Kind: "commit_message", Project: c.Project.Path, Item: c.ShortID, Author: ""}
 	b.WriteString(bd.Block(o, c.UntrustedMessage) + "\n")
 	b.WriteString(budgetLineFor("Message", "message_offset", c.MessageBudget))

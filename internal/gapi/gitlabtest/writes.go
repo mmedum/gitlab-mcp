@@ -508,11 +508,12 @@ func (s *Server) createMR(w http.ResponseWriter, r *http.Request, p *project, us
 // refreshMR points a merge request at its branches' heads and recomputes
 // its diff from their trees, as GitLab does on a push to either.
 func (s *Server) refreshMR(p *project, mr *gitlab.MergeRequest) {
-	base, head := p.commits[mr.TargetBranch][0].ID, p.commits[mr.SourceBranch][0].ID
+	start, head := p.commits[mr.TargetBranch][0].ID, p.commits[mr.SourceBranch][0].ID
 	mr.SHA = head
-	mr.DiffRefs = &gitlab.DiffRefs{BaseSHA: base, StartSHA: base, HeadSHA: head}
+	mr.DiffRefs = &gitlab.DiffRefs{BaseSHA: mergeBase(p, start, head), StartSHA: start, HeadSHA: head}
 	p.mrDiffs[mr.IID] = treeDiffs(p.trees[mr.TargetBranch], p.trees[mr.SourceBranch])
 	mr.ChangesCount = strconv.Itoa(len(p.mrDiffs[mr.IID]))
+	s.addVersion(p, mr, s.opts.Now().UTC())
 }
 
 // setMR applies a body's fields to a merge request. The draft state

@@ -139,7 +139,7 @@ func Blame(bl model.Blame, bd Boundary) string {
 	fmt.Fprintf(&b, "Blame of %s at %s in %s\n", Ident(bl.Path), Ident(bl.Ref), projectLine(bl.Project))
 	b.WriteString(bd.Notice())
 	for _, r := range bl.Ranges {
-		fmt.Fprintf(&b, "\n\nLines %d to %d: %s by %s, %s: %s\n", r.StartLine, r.EndLine, Ident(shortSHA(r.CommitSHA)), person(r.Author),
+		fmt.Fprintf(&b, "\n\nLines %d to %d: %s by %s, %s: %s\n", r.StartLine, r.EndLine, Ident(shortSHA(r.CommitSHA)), bd.Inline(person(r.Author)),
 			when(r.AuthoredAt), bd.Inline(r.UntrustedSummary))
 		b.WriteString(bd.Block(Origin{Kind: "file", Project: bl.Project.Path, Item: bl.Path + "@" + bl.Ref}, r.UntrustedLines))
 	}

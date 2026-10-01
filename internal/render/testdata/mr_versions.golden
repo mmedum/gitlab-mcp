@@ -1,0 +1,5 @@
+Diff versions of !3 in example-group/alpha (project id 2001), newest first
+2 versions shown; the listing is complete (total 2).
+- version 120003, 2026-01-06T11:00:00Z: overflow; head 2222222222222222222222222222222222222222, base 0000000000000000000000000000000000000000; files changed 1000+
+- version 120001, 2026-01-05T09:00:00Z: empty; head 1111111111111111111111111111111111111111, base (none)
+compare_mr_versions shows what changed between two versions, or since one.

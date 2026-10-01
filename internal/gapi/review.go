@@ -26,6 +26,15 @@ func (c *Client) ListMergeRequestCommits(ctx context.Context, p Project, iid int
 	return out, page, err
 }
 
+// ListMergeRequestVersions lists a merge request's diff versions, newest
+// first.
+func (c *Client) ListMergeRequestVersions(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.MergeRequestVersion, Page, error) {
+	var out []gitlab.MergeRequestVersion
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/versions",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_mr_versions"}, opts, &out)
+	return out, page, err
+}
+
 // ListDraftNotes lists the signed-in account's unpublished review
 // comments on a merge request. GitLab returns them all, unpaged.
 func (c *Client) ListDraftNotes(ctx context.Context, p Project, iid int64) ([]gitlab.DraftNote, error) {

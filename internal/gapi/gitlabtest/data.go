@@ -92,7 +92,19 @@ type project struct {
 	// Review: each merge request's diffs, and the default user's drafts.
 	mrDiffs map[int64][]gitlab.Diff
 	drafts  map[int64][]gitlab.DraftNote
-	tags    []gitlab.Tag
+	// mrVersions is each merge request's diff versions, newest first.
+	mrVersions map[int64][]gitlab.MergeRequestVersion
+	// snapshots is the tree at each commit the instance knows one for;
+	// a branch's head reads its branch's tree.
+	snapshots map[string]map[string]string
+	// resetApprovalsOnPush removes approvals on a push to the source
+	// branch, a Premium project setting.
+	resetApprovalsOnPush bool
+	// keptAround is the history of each version's head, which GitLab
+	// keeps reachable after a rebase or a force push drops it from the
+	// branch.
+	keptAround map[string][]gitlab.Commit
+	tags       []gitlab.Tag
 	// protectedTags are the project's protected-tag rules.
 	protectedTags []gitlab.ProtectedTag
 
@@ -169,6 +181,7 @@ func (s *Server) generate() {
 	s.nextProjectID = firstProjectID
 	s.nextIssueID = firstIssueID
 	s.nextMRID = firstMRID
+	s.nextVersionID = firstVersionID
 	s.nextNoteID = firstNoteID
 	s.nextEventID = firstItemEventID
 
@@ -216,6 +229,9 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		fileCommits: map[string]map[string]string{},
 		mrDiffs:     map[int64][]gitlab.Diff{},
 		drafts:      map[int64][]gitlab.DraftNote{},
+		mrVersions:  map[int64][]gitlab.MergeRequestVersion{},
+		snapshots:   map[string]map[string]string{},
+		keptAround:  map[string][]gitlab.Commit{},
 		jobs:        map[int64][]gitlab.Job{},
 		mrPipelines: map[int64]int64{},
 		bridges:     map[int64][]gitlab.Bridge{},
@@ -321,6 +337,7 @@ func (s *Server) fillAlpha(p *project) {
 		p.approvals[mr.IID] = &gitlab.Approvals{Approved: i%2 == 0, UserCanApprove: true}
 		if i%2 == 0 {
 			p.approvals[mr.IID].ApprovedBy = []gitlab.Approver{{User: s.user("carol")}}
+			s.updateReviewerState(p, mr, "carol", "approved")
 		}
 	}
 	s.fillCI(p)
@@ -370,11 +387,12 @@ func (s *Server) addMR(p *project, title, source, target, author, baseSHA, headS
 		WebURL: fmt.Sprintf("%s/-/merge_requests/%d", p.WebURL, iid),
 		References: gitlab.References{Short: fmt.Sprintf("!%d", iid), Relative: fmt.Sprintf("!%d", iid),
 			Full: fmt.Sprintf("%s!%d", p.PathWithNamespace, iid)},
-		DiffRefs:     &gitlab.DiffRefs{BaseSHA: baseSHA, HeadSHA: headSHA, StartSHA: baseSHA},
+		DiffRefs:     &gitlab.DiffRefs{BaseSHA: mergeBase(p, baseSHA, headSHA), HeadSHA: headSHA, StartSHA: baseSHA},
 		HeadPipeline: &gitlab.PipelineBasic{ID: 60000 + iid, IID: iid, SHA: headSHA, Ref: source, Status: "success"},
 	}
 	s.nextMRID++
 	p.mrs = append(p.mrs, mr)
+	s.addVersion(p, mr, created)
 	return mr
 }
 
@@ -431,6 +449,7 @@ func (s *Server) addCommits(p *project, branch string, n int, files map[string]s
 	}
 	p.commits[branch] = list
 	p.trees[branch] = files
+	p.snapshots[list[0].ID] = files
 }
 
 func (s *Server) commit(p *project, title, author string, when time.Time, parent string) gitlab.Commit {
@@ -463,6 +482,7 @@ func (s *Server) branchFrom(p *project, from, branch string, files map[string]st
 		Diff: "@@ -0,0 +1,3 @@\n+package main\n+\n+// generated\n"}}
 	p.commits[branch] = append([]gitlab.Commit{c}, p.commits[from]...)
 	p.trees[branch] = files
+	p.snapshots[c.ID] = files
 }
 
 func (s *Server) addBranch(p *project, name string, isDefault, protected bool) {

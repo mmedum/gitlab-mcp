@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 
@@ -96,7 +97,7 @@ func TestListMRCommits(t *testing.T) {
 	if get(out, "listing", "total") != float64(1) || get(out, "commits", 0, "untrusted_title") != "Add login stub" {
 		t.Errorf("commits = %v", get(out, "commits"))
 	}
-	if !strings.Contains(text, "by Bob Example") {
+	if !strings.Contains(text, ">>>Bob Example<<<") {
 		t.Errorf("text:\n%s", text)
 	}
 }
@@ -173,8 +174,11 @@ func TestCompareRefs(t *testing.T) {
 		t.Errorf("text:\n%s", text)
 	}
 	// The lightweight tag is main's head.
-	_, same := h.ok("compare_refs", map[string]any{"project": gitlabtest.ProjectAlpha, "from": gitlabtest.TagPlain, "to": "main",
+	sameText, same := h.ok("compare_refs", map[string]any{"project": gitlabtest.ProjectAlpha, "from": gitlabtest.TagPlain, "to": "main",
 		"straight": true})
+	if !strings.Contains(sameText, "Compare v0.9..main in") {
+		t.Errorf("a straight compare is not shown as from..to:\n%s", sameText)
+	}
 	if get(same, "same_ref") != true || get(same, "commits_total") != float64(0) || get(same, "straight") != true {
 		t.Errorf("same ref = %v", same)
 	}
@@ -307,4 +311,205 @@ func TestGetMRDiffContinuesACutDiff(t *testing.T) {
 	}
 	h.fails("get_mr_diff", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "diff_offset": body.Len() + 1}, "invalid")
 	h.fails("get_mr_diff", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "file_offset": 2, "diff_offset": 5}, "invalid")
+}
+
+// pushToLogin commits to feature/login, the source branch of every merge
+// request of ProjectAlpha, which gives each a new diff version.
+func pushToLogin(h *harness) string {
+	h.t.Helper()
+	_, out := h.ok("create_commit", map[string]any{"project": gitlabtest.ProjectAlpha, "branch": "feature/login",
+		"message": "Address review", "actions": []map[string]any{{"action": "create", "file_path": "src/review.go",
+			"content": "package main\n"}}})
+	return get(out, "sha").(string)
+}
+
+func TestListMRVersions(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, mr := h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	_, out := h.ok("list_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	first := get(out, "versions", 0).(map[string]any)
+	if first["id"] != float64(120001) || first["state"] != "collected" || first["changes_count"] != "1" ||
+		first["head_commit_sha"] != get(mr, "sha") || first["base_commit_sha"] != get(mr, "diff_refs", "base_sha") {
+		t.Errorf("first version = %v", first)
+	}
+	head := pushToLogin(h)
+	text, out := h.ok("list_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	if get(out, "listing", "total") != float64(2) || get(out, "versions", 0, "id") != float64(120004) ||
+		get(out, "versions", 0, "head_commit_sha") != head || get(out, "versions", 1, "id") != float64(120001) {
+		t.Errorf("versions after a push = %v", get(out, "versions"))
+	}
+	if !strings.Contains(text, "- version 120004, ") || !strings.Contains(text, "compare_mr_versions") {
+		t.Errorf("text:\n%s", text)
+	}
+	_, page := h.ok("list_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "max": 1})
+	tok, _ := get(page, "listing", "next_page_token").(string)
+	_, rest := h.ok("list_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "max": 1, "page_token": tok})
+	if get(rest, "versions", 0, "id") != float64(120001) || get(rest, "listing", "complete") != true {
+		t.Errorf("second page = %v", rest)
+	}
+	h.fails("list_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 99}, "not_found")
+}
+
+// compare_mr_versions compares the older version's head with the newer's
+// in the target project, straight, as GitLab's version comparison does.
+func TestCompareMRVersions(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, mr := h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	old := get(mr, "sha").(string)
+	head := pushToLogin(h)
+	h.gl.ResetRequests()
+	text, out := h.ok("compare_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "from_version": 120001})
+	if get(out, "from_version", "id") != float64(120001) || get(out, "to_version", "id") != float64(120004) ||
+		get(out, "from") != old || get(out, "to") != head || get(out, "straight") != true || get(out, "base_moved") != false {
+		t.Errorf("versions compared = %v", out)
+	}
+	if get(out, "commits_total") != float64(1) || get(out, "commits", 0, "untrusted_title") != "Address review" ||
+		len(get(out, "files").([]any)) != 1 || get(out, "files", 0, "new_path") != "src/review.go" {
+		t.Errorf("changes = commits %v, files %v", get(out, "commits"), get(out, "files"))
+	}
+	// Straight is A..B; the author's name is someone else's text, inside
+	// the boundary.
+	if !strings.Contains(text, "Changes in !1 from version 120001 to version 120004") || strings.Contains(text, "merge base moved") ||
+		!strings.Contains(text, "Compared "+old+".."+head+" directly") || !strings.Contains(text, ">>>Alice Example<<<") {
+		t.Errorf("text:\n%s", text)
+	}
+	want := fmt.Sprintf("/api/v4/projects/%d/repository/compare from=%s&straight=true&to=%s", alphaID, old, head)
+	var compares []string
+	for _, r := range h.gl.Requests() {
+		if strings.HasSuffix(r.EscapedPath, "/repository/compare") {
+			compares = append(compares, r.EscapedPath+" "+r.RawQuery)
+		}
+	}
+	if len(compares) != 1 || compares[0] != want {
+		t.Errorf("compare requests = %v, want [%s]", compares, want)
+	}
+
+	_, named := h.ok("compare_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "from_version": 120001,
+		"to_version": 120004})
+	if get(named, "to") != head {
+		t.Errorf("to_version 120004 compared to %v, want %s", get(named, "to"), head)
+	}
+	for _, c := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"no from_version", map[string]any{}},
+		{"the same version twice", map[string]any{"from_version": 120004, "to_version": 120004}},
+		{"from the newest version", map[string]any{"from_version": 120004}},
+		{"from newer than to", map[string]any{"from_version": 120004, "to_version": 120001}},
+		{"another merge request's version", map[string]any{"from_version": 120002}},
+		{"an unknown to_version", map[string]any{"from_version": 120001, "to_version": 999}},
+	} {
+		c.args["project"], c.args["iid"] = gitlabtest.ProjectAlpha, 1
+		t.Log(c.name)
+		h.fails("compare_mr_versions", c.args, "invalid")
+	}
+	// The refusal names the argument that is wrong.
+	refused := h.fails("compare_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "from_version": 120001,
+		"to_version": -1}, "invalid")
+	if !strings.Contains(refused, "to_version is") {
+		t.Errorf("a negative to_version: %s", refused)
+	}
+}
+
+// After a rebase the versions have different merge bases. Compared
+// straight, the diff is what changed between the two heads: what the
+// rebase brought in from the target branch, and not the author's change
+// that both versions carry. From the merge base, the author's change
+// would come again.
+func TestCompareMRVersionsAfterRebase(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, mr := h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	old := get(mr, "sha").(string)
+	if _, ok := h.gl.PushFile(gitlabtest.ProjectAlpha, "main", "docs/upstream.md", "Upstream.\n"); !ok {
+		t.Fatal("no push to main")
+	}
+	h.gl.Rebase(gitlabtest.ProjectAlpha, 1)
+	text, out := h.ok("compare_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "from_version": 120001})
+	if get(out, "base_moved") != true || fmt.Sprint(paths(out)) != "[docs/upstream.md]" {
+		t.Errorf("rebased versions: base_moved %v, files %v", get(out, "base_moved"), paths(out))
+	}
+	if !strings.Contains(text, "The merge base moved between these versions") {
+		t.Errorf("text:\n%s", text)
+	}
+	_, fromBase := h.ok("compare_refs", map[string]any{"project": gitlabtest.ProjectAlpha, "from": old, "to": get(out, "to")})
+	if fmt.Sprint(paths(fromBase)) != "[docs/upstream.md src/login.go]" {
+		t.Errorf("from the merge base: files %v", paths(fromBase))
+	}
+}
+
+// A push to the target branch moves no merge base by itself: the next
+// version's base is where the source branch left it.
+func TestCompareMRVersionsAfterATargetPush(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.PushFile(gitlabtest.ProjectAlpha, "main", "docs/upstream.md", "Upstream.\n")
+	pushToLogin(h)
+	text, out := h.ok("compare_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "from_version": 120001})
+	if get(out, "base_moved") != false || get(out, "from_version", "base_commit_sha") != get(out, "to_version", "base_commit_sha") ||
+		get(out, "from_version", "start_commit_sha") == get(out, "to_version", "start_commit_sha") {
+		t.Errorf("after a target push: base_moved %v, from %v, to %v", get(out, "base_moved"), get(out, "from_version"),
+			get(out, "to_version"))
+	}
+	if fmt.Sprint(paths(out)) != "[src/review.go]" || strings.Contains(text, "merge base moved") {
+		t.Errorf("files %v\n%s", paths(out), text)
+	}
+}
+
+// What a version lacks is said rather than guessed: a missing merge base
+// leaves base_moved unknown, and a base that moved under the same head
+// is no change to show.
+func TestCompareMRVersionsWithoutABase(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, commits := h.ok("list_commits", map[string]any{"project": gitlabtest.ProjectAlpha, "max": 3})
+	_, mr := h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	head := get(mr, "sha")
+	older := get(commits, "commits", 1, "id")
+	path := fmt.Sprintf("/projects/%d/merge_requests/1/versions", alphaID)
+	version := func(id int, head, base any) string {
+		return fmt.Sprintf(`{"id":%d,"head_commit_sha":%q,"base_commit_sha":%s,"created_at":"2026-01-06T09:00:00Z",`+
+			`"state":"collected","real_size":"1"}`, id, head, base)
+	}
+	for _, c := range []struct {
+		name, body string
+		moved      any
+		says       string
+	}{
+		{"no base", "[" + version(120011, head, `"`+older.(string)+`"`) + "," + version(120010, older, "null") + "]", nil,
+			"whether it moved is unknown"},
+		{"same head", "[" + version(120011, head, `"`+older.(string)+`"`) + "," + version(120010, head, `"`+head.(string)+`"`) + "]",
+			true, "Only the merge base moved"},
+	} {
+		h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: path, Status: http.StatusOK, Body: c.body,
+			Header: http.Header{"Content-Type": {"application/json"}, "X-Total": {"2"}}})
+		text, out := h.ok("compare_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "from_version": 120010})
+		if get(out, "base_moved") != c.moved || !strings.Contains(text, c.says) {
+			t.Errorf("%s: base_moved %v\n%s", c.name, get(out, "base_moved"), text)
+		}
+	}
+}
+
+// A cut comparison is continued against the same newer version, so a
+// push between the calls cannot change what is compared.
+func TestCompareMRVersionsContinuesAgainstTheSameVersion(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.ok("create_commit", map[string]any{"project": gitlabtest.ProjectAlpha, "branch": "feature/login",
+		"message": "A large change", "actions": []map[string]any{{"action": "create", "file_path": "big.txt",
+			"content": strings.Repeat("a line of text\n", 4000)}}})
+	text, out := h.ok("compare_mr_versions", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "from_version": 120001})
+	if get(out, "files", 0, "continue_diff_offset") == nil ||
+		!strings.Contains(text, "pass from_version=120001 and to_version=120004 with the offsets") {
+		t.Errorf("a cut diff: %v\n%s", get(out, "files", 0, "continue_diff_offset"), text[len(text)-400:])
+	}
+}
+
+func paths(out map[string]any) []string {
+	var ps []string
+	for _, f := range get(out, "files").([]any) {
+		ps = append(ps, f.(map[string]any)["new_path"].(string))
+	}
+	for _, f := range get(out, "files_not_shown").([]any) {
+		ps = append(ps, f.(map[string]any)["new_path"].(string))
+	}
+	sort.Strings(ps)
+	return ps
 }

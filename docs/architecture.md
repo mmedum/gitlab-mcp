@@ -383,12 +383,12 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, fifty-eight tools, stays under the 64-tool point where one
+default surface, sixty tools, stays under the 64-tool point where one
 client starts regrouping tools. A read joins the default when it answers a
 question a default tool acts on: `list_boards` did, beside `list_labels`
 and `list_milestones`, since a board's columns are read with
 `search_issues` (maintainer, 2026-09-30). With Ship and Destructive both
-on, the surface is seventy-one tools, past the 64-tool point; both flags
+on, the surface is seventy-three tools, past the 64-tool point; both flags
 are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
@@ -911,8 +911,12 @@ it. Project-scoped code search works on every edition.
 boundary, state, labels, assignees, milestone, dates, links, and a
 discussion summary (count, unresolved count, last activity). A merge
 request adds source and target branches, `diff_refs`, head `sha`,
-`detailed_merge_status`, draft state, the head pipeline's status and
-the approval state. `get_issue` also lists the merge requests related
+`detailed_merge_status`, draft state, the head pipeline's status,
+the approval state and each reviewer's review state (`unreviewed`,
+`review_started`, `reviewed`, `requested_changes`, `approved`,
+`unapproved`). The review states are GitLab's first page of 100, in
+GitLab's order, read at once with the rest and best effort as the
+approval state is; the result says when GitLab has more. `get_issue` also lists the merge requests related
 to the issue and those that close it when merged; `get_merge_request`
 the issues it closes and those it mentions, an external tracker's by
 its id when the id is shaped like one (anything else is left to the
@@ -1020,6 +1024,24 @@ by `file_offset` reads from the page of diffs that holds that file, so
 each page is read about once. One diff larger than the whole budget is
 cut and continued by `diff_offset`, as `get_commit` and `compare_refs`
 continue theirs. `list_mr_commits` lists commits.
+
+`list_mr_versions` lists the diff versions GitLab makes on each push,
+newest first, with each one's head, merge base, state and size.
+`compare_mr_versions` shows what changed between two of them, or since
+one to the newest, so a second review reads only what was pushed after
+the first. GitLab has no route for it. Its web page compares the
+repository from the older version's head to the newer's, straight
+(`A..B`, not from their merge base), so a squash or a rebase between
+versions does not hide the change; the tool calls the same compare in
+the target project, where GitLab keeps both heads, and bounds it as
+`compare_refs` does. After a rebase the diff also carries what the
+target branch gained in between, as GitLab's page shows it; the result
+says when the merge base moved, and that it is unknown when a version
+has no base. A cut result is continued with `to_version` set to the
+version it compared to, so a push between calls moves nothing. The
+result names the comparison `A..B`; its `web_url` is GitLab's compare
+page, which compares from the merge base unless told otherwise. A version's own route is not read: it
+returns every file's diff in one unpaged answer (§18 row 107).
 
 Commenting has two paths, both taking a body (§4.2) and an optional diff
 location (§6.2):
@@ -1239,9 +1261,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Ninety-four tools. With the default toolsets: fifty-eight by default,
-thirty-seven in read-only mode, seventy-one with Ship and Destructive
-both enabled. Every toolset and flag on registers all ninety-four.
+Ninety-six tools. With the default toolsets: sixty by default,
+thirty-nine in read-only mode, seventy-three with Ship and Destructive
+both enabled. Every toolset and flag on registers all ninety-six.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people:
 every write but `add_todo`, `subscribe` and `mark_todos_done`, whose
@@ -1270,10 +1292,12 @@ Destructive kinds, as a signal and not a control.
 | `link_issues` | Write | default | `GET`/`POST …/issues/:iid/links` |
 | `unlink_issues` | Write | default | `DELETE …/issues/:iid/links/:id` |
 | `search_merge_requests` | Read | default | `GET /merge_requests`, `/projects/:id/merge_requests` |
-| `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals`, `/closes_issues`, `/related_issues` |
+| `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals`, `/reviewers`, `/closes_issues`, `/related_issues` |
 | `list_mr_files` | Read | default | `GET …/merge_requests/:iid/diffs` |
 | `get_mr_diff` | Read | default | `GET …/merge_requests/:iid/diffs` |
 | `list_mr_commits` | Read | default | `GET …/merge_requests/:iid/commits` |
+| `list_mr_versions` | Read | default | `GET …/merge_requests/:iid/versions` |
+| `compare_mr_versions` | Read | default | `GET …/merge_requests/:iid/versions`, `GET /projects/:id/repository/compare` with `straight=true` |
 | `create_merge_request` | Write | default | `POST /projects/:id/merge_requests` |
 | `update_merge_request` | Write | default | `PUT …/merge_requests/:iid` |
 | `track_time` | Write | default | `POST …/issues|merge_requests/:iid/time_estimate`, `/reset_time_estimate`, `/add_spent_time`, `/reset_spent_time` |
@@ -2584,3 +2608,5 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 104 | GitLab's merge request pipeline create answers as the OpenAPI file publishes it, and a lost answer can be settled | `lib/api/merge_requests.rb` L138-141 and L740-800, `app/services/merge_requests/create_pipeline_service.rb`, `ee/app/services/ee/merge_requests/create_pipeline_service.rb`, `app/models/ci/pipeline.rb` `protected_ref?`, `protected_for_merge_request?` and `merge_request_event_first`, `app/models/merge_request.rb` `ref_path`, `merge_ref_path` and `source_branch_ref`, `app/models/project.rb` `protected_for?`, `app/finders/ci/pipelines_for_merge_request_finder.rb`, `app/models/concerns/enums/ci/pipeline.rb`, `app/services/merge_requests/mergeability_check_service.rb`, `lib/gitlab/user_access.rb`, `lib/gitlab/ci/pipeline/chain/validate/abilities.rb`, `lib/api/helpers.rb` `not_allowed!` and `render_validation_error!`, and `ee/app/models/ee/project_ci_cd_setting.rb` at v19.4.1-ee | **Refuted (tier 1).** A created pipeline answers 200, not the 201 the file publishes. The create runs with `allow_duplicate: true`, so every call makes a new pipeline. A merge request with no commits answers 405; a pipeline not saved answers 400 with its errors, and so does an account that may not create pipelines or run one on the branch (`Insufficient permissions to create a new pipeline`), with no 403. EE tries merged results first where `merge_pipelines` is licensed (Premium) and on, on `refs/merge-requests/N/merge` at a merge commit, and falls back to detached on `refs/merge-requests/N/head` when the branches do not merge cleanly. A same-project account that may not push to the source branch is sent to a pipeline on the branch itself, which the ability check then refuses with 400 (`can_run_pipeline_on_branch?` is `can_update_branch?`), so a create answers with one of the two merge request refs. `async` answers 202 with no body, so it is not offered. A fork's pipeline runs in the target or the fork by a setting only maintainers see (§17.14). Protected variables reach a merge request pipeline only on a merge request ref, in the same project, with both branches protected, the project's `protect_merge_request_pipelines` on and the account able to push to both, which is the rule `run_merge_request_pipeline` asks by (§4.12). The merge request's pipelines list its own first, newest first, with no user; GitLab also starts merge request pipelines under the account's name when it pushes or opens the merge request. So the settle reads the project's pipelines by ref, source, user and `created_after`, newest id first, and takes only one newer than the project's newest pipeline read before the create |
 | 105 | A question's quoted value draws no link once its scheme, `www.`, a domain before a path and a bare domain's last dot are broken | linkify-it 6.1.0 from npm, `build/index.mjs` (`get_fuzzy_link_search`, `get_host_terminator`, `get_fuzzy_mail_host`, `get_mail_name_validator`, the `//` schema and the default TLDs), and markdown-it 15.0.2 `dist/markdown-it.mjs`, which builds its linkifier with `new LinkifyIt()`; each output run through both with fuzzyLink on, 2026-10-01 | **Refuted (tier 1).** markdown-it leaves a code span unlinked, but a client that draws the question as plain text through a fuzzy linkifier still found three links, a finding of the 2.1.0 pre-release review. A fuzzy host ends at any punctuation, a bracket included, so `evil.com[.]uk` links `evil.com`. `//` opens a protocol-relative link with no TLD check unless a colon or a slash stands right before it, so `https[:]//evil.dev` links `//evil.dev`. An email address wins over a fuzzy link only when its name, at most 64 characters, stands at the start or after a space, a control, `<`, `>`, `｜`, `"` or `(`, and two to five host labels follow the `@` and end there; otherwise `evil.com@` links `evil.com`. A question now breaks every `//` and every dot of a bare domain, and keeps a domain before an `@` whole only where linkify-it reads an address, as `isAddress` mirrors (§4.12) |
 | 106 | Adding an emoji reaction that is already there is a conflict GitLab reports, and a reaction leaves the witnesses alone | At v19.4.1-ee: `lib/api/award_emoji.rb` L51-60 (the list, `can_read_awardable?` or 404), L96-106 (the POST: `not_found!` unless the account may read and award, and `not_found!("Award Emoji #{service[:message]}")` for every service failure) and L121-129 (the DELETE: `find` or 404, `unauthorized!` unless the award is the account's or it is an admin, `destroy_conditionally!`); `lib/api/helpers.rb` L92 and `lib/api/api.rb` L152-153 (messages in the account's `preferred_language`); `lib/api/helpers/award_emoji.rb` L19-32; `app/services/award_emojis/base_service.rb` L77-79 (`normalize_name`); `app/services/award_emojis/add_service.rb` (`user_can_award?`, `emoji_awardable?`, `TodoService#new_award_emoji`); `app/models/award_emoji.rb` L14 (no `touch:`), L23 (unique per user, awardable type and id), L39-40 and L88-91 (`expire_cache` calls `bump_updated_at`); `app/models/note.rb` L545 (`emoji_awardable?` is `!system?`) and L592-605 (`bump_updated_at`, the only definition in `app` and `ee/app`); `app/models/issue.rb` L860-863 (`update_column`); `app/policies/issuable_policy.rb` L48-52 (a locked discussion, for a non-member); `app/policies/note_policy.rb` L82-88 and `app/models/note.rb` L778-780 (an internal note needs `read_internal_note`, Planner and up); `app/models/concerns/awardable.rb` L11 (`participant :award_emoji`); `app/validators/gitlab/emoji_name_validator.rb`; `app/models/custom_emoji.rb` L4 and L20-25; `lib/api/entities/issue_basic.rb` L34-35 and `merge_request_basic.rb` L37-41; tanuki_emoji 0.13.0, as `Gemfile.lock` pins it: `lib/tanuki_emoji/character.rb` L12 and L32-34, `vendor/gemojione/index-3.3.0.json` (`:+1:` and `:-1:`) | **Refuted (tier 1).** No route answers 409: a reaction already there, an unknown name, a system note and an item the account may not react to all answer 404, the reason folded into the message (`Name has already been taken`, `Name is not a valid emoji name`, `Awardable cannot add emoji reactions`), translated into the account's preferred language. The OpenAPI file publishes 201, 400 and 404 for the POST and no 412 for the DELETE, which `destroy_conditionally!` can answer. So `react` reads the account's reactions first and sends nothing when the state asked for holds, and after a 404 reads them again rather than the message: one there is unchanged. A name is an alpha code, `[_+\-a-z0-9]+`, which GitLab takes with or without colons and keeps under its emoji's name, `+1` as `thumbsup`; a custom emoji, `[a-z0-9_-]+` of at most 36, is valid only when the project's namespace is a group that, or a parent of which, defines it. Any signed-in user who can read the item may react, Guest and up or on a public or internal project, and to their own item too, except on a locked discussion when not a member or on an internal note below Planner; there is no rate limit. A reaction, on the item or a comment, makes its author a participant. Only one's own reaction can be removed (401 otherwise), and `react` removes by the id its read found. A reaction on a comment moves the comment's `updated_at` through `bump_updated_at`; on an issue or a merge request it moves nothing a read shows but `upvotes` and `downvotes`, which count thumbsup and thumbsdown only. GitLab answers a DELETE 204 even when its service refuses as the reaction's owner, which `react` catches by reading afterwards (inferred from `destroy_service.rb` L98-101). A reaction on the item, or on a comment outside a thread, marks the account's pending to-dos on the item done |
+| 107 | A merge request's changes between two versions are the repository compare from the older version's head to the newer's, straight, in the target project | At v19.4.1-ee: `lib/api/merge_request_diffs.rb` L12-57 (`authenticate!`; the listing is `merge_request_diffs.order_id_desc`, offset pages; a version's route has no pagination and returns `raw_diffs(limits: false)` with every commit); `app/models/merge_request.rb` L57-58 (the association is `regular` diffs only); `app/models/merge_request_diff.rb` L66-80 (states), L425-453 (base and start can be null, head falls back to the last commit), L714, L1015-1070 and L1136-1147 (heads kept around in the target project); `lib/gitlab/git/diff_collection.rb` L118-126 (`real_size` is `N` or `N+`); `app/controllers/projects/merge_requests/diffs_controller.rb` L167-204 and `app/facades/merge_requests/merge_request_diff_comparison.rb` L10-17 (the page's comparison is `CompareService.new(target_project, newer.head_commit_sha).execute(target_project, older.head_commit_sha, straight: true)`); `lib/api/repositories.rb` L297-331 (the same `CompareService` call with `from`, `to` and `straight`) | **Confirmed (tier 1).** There is no REST route comparing versions; `compare?from=<older head>&to=<newer head>&straight=true` on the target project is the call GitLab's own page makes, so it shows what the page shows. The default `straight=false` would compare from the merge base and is wrong here. After a rebase the straight diff carries what the rebase brought in from the target branch; GitLab offers no range-diff, so the tool says so and flags a moved merge base. A version's own route is not read for diffs: it is unpaged, and a cleaned-up old version (`without_files`) returns no diffs although its heads are still kept (inferred from code, not live-tested) (§7.3) |
+| 108 | Each reviewer's review state is readable on Free and only from the reviewers route | At v19.4.1-ee: `lib/api/merge_requests.rb` L526-542 (`find_merge_request_with_access`, then `Kaminari.paginate_array(merge_request.merge_request_reviewers)` and `paginate`: offset pages with an exact `X-Total`); `app/models/merge_request.rb` L135 (the association has no order); `lib/api/entities/merge_request_reviewer.rb` (`user`, `state`, `created_at`); `app/models/concerns/merge_request_reviewer_state.rb` (the enum, defined in CE: `unreviewed`, `reviewed`, `requested_changes`, `approved`, `unapproved`, `review_started`); `lib/api/entities/merge_request_basic.rb` L47 (`reviewers` is plain `UserBasic`) | **Confirmed (tier 1).** The merge request itself carries no review state, so `get_merge_request` reads the route alongside its other reads, one page of 100, best effort as the approvals are, and says when GitLab has more. The order is the database's, unspecified, so the page is shown as GitLab gives it. `user.state` is the account's state, not the review's, and is not shown. How states move, as `app/services/merge_requests/update_reviewer_state_service.rb`, `app/services/draft_notes/create_service.rb` `after_execute`, `approval_service.rb`, `remove_approval_service.rb` and EE `merge_requests/base_service.rb` `delete_approvals` show it, and as the test instance models it: a user's first draft sets `review_started`; submitting `reviewed`, `approved` or `requested_changes` makes anyone but the author a reviewer; an `approved` reviewer moves only to `requested_changes` or `unapproved`; approving and unapproving set those states; a push resets approvers to `unapproved` only under the Premium `reset_approvals_on_push` (§7.2) |

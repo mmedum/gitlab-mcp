@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -542,8 +543,10 @@ func TestUpdateMergeRequest(t *testing.T) {
 	wantStatus(t, "update", resp, body, 200)
 	mr, _ := s.MergeRequest(ProjectAlpha, 2)
 	rel, _ := s.BranchHead(ProjectAlpha, "release/1.0")
+	main, _ := s.BranchHead(ProjectAlpha, "main")
 	if !mr.Draft || mr.Reviewers[0].Username != "bob" || !slices.Equal(mr.Labels, []string{"docs"}) || !mr.ForceRemoveSourceBranch ||
-		mr.State != "closed" || mr.ClosedAt == nil || mr.TargetBranch != "release/1.0" || mr.DiffRefs.BaseSHA != rel.ID ||
+		mr.State != "closed" || mr.ClosedAt == nil || mr.TargetBranch != "release/1.0" || mr.DiffRefs.StartSHA != rel.ID ||
+		mr.DiffRefs.BaseSHA != main.ID ||
 		!mr.UpdatedAt.After(before.UpdatedAt) {
 		t.Errorf("updated = %+v", mr)
 	}
@@ -1303,5 +1306,102 @@ func TestMergeRequestPipelineKind(t *testing.T) {
 		if body["ref"] != c.ref || body["source"] != "merge_request_event" {
 			t.Errorf("%s: %v", c.name, body)
 		}
+	}
+}
+
+// Reviewer states move as MergeRequests::UpdateReviewerStateService
+// moves them. Merge request 1 is bob's, and carol reviews it and has
+// approved it.
+func TestReviewerStatesFollowGitLab(t *testing.T) {
+	s := New(t, Options{})
+	carol, dave, bob := s.TokenFor("carol", "api"), s.TokenFor("dave", "api"), s.TokenFor("bob", "api")
+	drafts := "/projects/2001/merge_requests/1/draft_notes"
+	state := func(user string) string { return s.ReviewerState(ProjectAlpha, 1, user) }
+	reviewers := func() []string {
+		mr, _ := s.MergeRequest(ProjectAlpha, 1)
+		var out []string
+		for _, u := range mr.Reviewers {
+			out = append(out, u.Username)
+		}
+		return out
+	}
+
+	// An approval holds against a review started; taking it back does not.
+	resp, body := send(t, s, "POST", drafts, carol, obj{"note": "First."})
+	wantStatus(t, "draft", resp, body, 201)
+	if state("carol") != "approved" {
+		t.Errorf("a draft over an approval: %q, want approved", state("carol"))
+	}
+	resp, body = send(t, s, "POST", "/projects/2001/merge_requests/1/unapprove", carol, nil)
+	wantStatus(t, "unapprove", resp, body, 201)
+	if state("carol") != "unapproved" {
+		t.Errorf("after unapproving: %q", state("carol"))
+	}
+	for _, d := range s.Drafts(ProjectAlpha, 1) {
+		if d.AuthorID == 1003 {
+			send(t, s, "DELETE", drafts+"/"+strconv.FormatInt(d.ID, 10), carol, nil)
+		}
+	}
+
+	// A reviewer's first draft starts the review.
+	resp, body = send(t, s, "POST", drafts, carol, obj{"note": "First."})
+	wantStatus(t, "draft", resp, body, 201)
+	if state("carol") != "review_started" {
+		t.Errorf("after carol's first draft: %q, want review_started", state("carol"))
+	}
+	// A draft by someone who is not a reviewer changes nothing.
+	resp, body = send(t, s, "POST", drafts, dave, obj{"note": "Drive-by."})
+	wantStatus(t, "dave's draft", resp, body, 201)
+	if state("dave") != "" || len(reviewers()) != 1 {
+		t.Errorf("dave's draft made him %q, reviewers %v", state("dave"), reviewers())
+	}
+
+	// Submitting a review makes anyone but the author a reviewer.
+	resp, _ = send(t, s, "POST", drafts+"/bulk_publish", dave, obj{"reviewer_state": "reviewed"})
+	if resp.StatusCode != 204 || state("dave") != "reviewed" || strings.Join(reviewers(), ",") != "carol,dave" {
+		t.Errorf("dave's review: %d, %q, reviewers %v", resp.StatusCode, state("dave"), reviewers())
+	}
+	resp, _ = send(t, s, "POST", drafts+"/bulk_publish", bob, obj{"reviewer_state": "reviewed"})
+	if resp.StatusCode != 204 || state("bob") != "" || strings.Join(reviewers(), ",") != "carol,dave" {
+		t.Errorf("the author's review: %d, %q, reviewers %v", resp.StatusCode, state("bob"), reviewers())
+	}
+
+	// An approval holds against reviewed; requested changes replace it.
+	resp, body = send(t, s, "POST", "/projects/2001/merge_requests/1/approve", carol, nil)
+	wantStatus(t, "approve", resp, body, 201)
+	if state("carol") != "approved" {
+		t.Errorf("after approving: %q", state("carol"))
+	}
+	send(t, s, "POST", drafts+"/bulk_publish", carol, obj{"reviewer_state": "reviewed"})
+	if state("carol") != "approved" {
+		t.Errorf("reviewed over approved: %q, want approved", state("carol"))
+	}
+	send(t, s, "POST", drafts+"/bulk_publish", carol, obj{"reviewer_state": "requested_changes"})
+	if state("carol") != "requested_changes" {
+		t.Errorf("requested changes over approved: %q", state("carol"))
+	}
+}
+
+// A push resets approvals and approvers' states only where the project
+// says so (reset_approvals_on_push).
+func TestPushResetsApprovalsOnlyWhenTheProjectSaysSo(t *testing.T) {
+	s := New(t, Options{})
+	carol := s.TokenFor("carol", "api")
+	approvedBy := func() int {
+		a, _ := s.Approvals(ProjectAlpha, 1, "carol")
+		return len(a.ApprovedBy)
+	}
+	send(t, s, "POST", "/projects/2001/merge_requests/1/approve", carol, nil)
+	before := approvedBy()
+	s.PushTo(ProjectAlpha, "feature/login")
+	if s.ReviewerState(ProjectAlpha, 1, "carol") != "approved" || approvedBy() != before {
+		t.Errorf("a push without the setting: %q, %d approvals, want approved, %d", s.ReviewerState(ProjectAlpha, 1, "carol"),
+			approvedBy(), before)
+	}
+	s.SetResetApprovalsOnPush(ProjectAlpha, true)
+	s.PushTo(ProjectAlpha, "feature/login")
+	if s.ReviewerState(ProjectAlpha, 1, "carol") != "unapproved" || approvedBy() != 0 {
+		t.Errorf("a push with the setting: %q, %d approvals, want unapproved, 0", s.ReviewerState(ProjectAlpha, 1, "carol"),
+			approvedBy())
 	}
 }

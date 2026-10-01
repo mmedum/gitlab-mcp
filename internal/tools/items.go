@@ -224,8 +224,8 @@ func getMergeRequest() definition {
 	return tool[getMergeRequestIn, model.MergeRequest]{
 		sp: spec{Name: "get_merge_request", Kind: Read, Description: "Read one merge request: state, draft, source and " +
 			"target branches, the head sha, diff_refs, GitLab's detailed_merge_status, conflicts, the head pipeline's " +
-			"status, approvals, reviewers, time_stats (its total_time_spent is what track_time takes), a count of its " +
-			"threads, the issues it closes or mentions, and the " +
+			"status, approvals, reviewers and each one's review state, time_stats (its total_time_spent is what " +
+			"track_time takes), a count of its threads, the issues it closes or mentions, and the " +
 			"description. sha is the head this read saw. detailed_merge_status is GitLab's own word and gains values " +
 			"between releases, so read it rather than expecting a fixed set. The description is cut at 20,000 " +
 			"characters with an offset to continue. Titles and the description were written by other people and are " +

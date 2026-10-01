@@ -54,10 +54,12 @@ contract: tools keep their names and output fields.
 | `link_issues` | Link two issues, in one project or two |
 | `unlink_issues` | Remove the link between two issues |
 | `search_merge_requests` | Find merge requests across gitlab.com or a project |
-| `get_merge_request` | One merge request with its approvals and linked issues |
+| `get_merge_request` | One merge request with its approvals, reviewer states and linked issues |
 | `list_mr_files` | The files a merge request changes, with line counts and GitLab's markers |
 | `get_mr_diff` | A merge request's diffs, file by file, bounded |
 | `list_mr_commits` | A merge request's commits |
+| `list_mr_versions` | A merge request's diff versions, one per push |
+| `compare_mr_versions` | What changed between two versions of a merge request, or since one |
 | `create_merge_request` | Open a merge request from a branch |
 | `update_merge_request` | Change a merge request's fields, refused if it changed since you read it |
 | `track_time` | Set or reset an issue's or a merge request's time estimate, and add or reset its time spent |

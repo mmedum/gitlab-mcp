@@ -197,6 +197,10 @@ func TestGetBlame(t *testing.T) {
 		!strings.Contains(text, "UNTRUSTED") {
 		t.Fatalf("blame: %v\n%s", out, text)
 	}
+	// A commit's author name is anyone's to write: it is inside the boundary.
+	if !strings.Contains(text, " by <<<") {
+		t.Errorf("the author is outside the boundary:\n%s", text)
+	}
 	_, part := h.ok("get_blame", map[string]any{"project": alpha, "path": "README.md", "start_line": 2, "end_line": 3})
 	if get(part, "ranges", 0, "start_line") != float64(2) {
 		t.Errorf("from line 2: %v", part)

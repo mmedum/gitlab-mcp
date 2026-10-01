@@ -217,6 +217,25 @@ func TestSavedValuesFillLaterSteps(t *testing.T) {
 	}
 }
 
+// A step that waits on background work goes on once the value it
+// watches differs from the one saved, and not before.
+func TestWaitForSeesTheValueMove(t *testing.T) {
+	w := waitFor{path: "versions.0.id", saved: "v1"}
+	saved := map[string]any{"v1": float64(120001)}
+	for _, c := range []struct {
+		result string
+		want   bool
+	}{
+		{`{"versions": [{"id": 120001}]}`, false},
+		{`{"versions": []}`, false},
+		{`{"versions": [{"id": 120002}, {"id": 120001}]}`, true},
+	} {
+		if got := w.moved(json.RawMessage(c.result), saved); got != c.want {
+			t.Errorf("moved(%s) = %v, want %v", c.result, got, c.want)
+		}
+	}
+}
+
 func TestIdsAResultCarriesAreMasked(t *testing.T) {
 	red := redact.NewRedactor(false)
 	learnIDs(red, json.RawMessage(`{"note_id": 123456, "iid": 12, "items": [{"id": 95001}], "additions": 5000}`))

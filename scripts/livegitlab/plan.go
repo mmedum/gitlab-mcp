@@ -92,6 +92,25 @@ type step struct {
 	// declines answers the step's question to the person with decline
 	// rather than accept; the step expects the refusal that follows.
 	declines bool
+	// until resends the step first, until a value of its result moves:
+	// work GitLab finishes in the background, after the answer.
+	until *waitFor
+}
+
+// waitFor is a value at path, in a step's result, that must come to
+// differ from the one an earlier step saved under saved. The step is
+// sent every every, for at most within; a value that never moves fails
+// the step.
+type waitFor struct {
+	path, saved   string
+	every, within time.Duration
+}
+
+// moved reports whether the result's value at the path differs from the
+// saved one.
+func (w waitFor) moved(structured json.RawMessage, saved map[string]any) bool {
+	v, ok := valueAt(structured, w.path)
+	return ok && v != saved[w.saved]
 }
 
 // plan is every tool, every option at least once, against the scratch
@@ -417,6 +436,26 @@ func phase2(s scratch) []step {
 		{tool: "update_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}", "updated_at": "{{mr_at2}}", "state": "close",
 			"clear_milestone": true, "add_assignees": me, "add_reviewers": me}, save: map[string]string{"mr_at3": "updated_at"}},
 		{tool: "update_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}", "updated_at": "{{mr_at3}}", "state": "reopen"}},
+
+		// A push after the merge request opened gives it a second diff
+		// version, and the changes since the first are that push alone.
+		// The run's account is a reviewer again, so get_merge_request below
+		// shows its review state.
+		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}"}, save: map[string]string{"mr_v1": "versions.0.id"}},
+		{tool: "create_commit", args: map[string]any{"project": p, "branch": branch, "message": "A change after review",
+			"actions": []any{create("written/after-review.txt", "after review\n")}}},
+		// GitLab makes the version in the background after the push.
+		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "max": 1},
+			until: &waitFor{path: "versions.0.id", saved: "mr_v1", every: 5 * time.Second, within: time.Minute},
+			save:  map[string]string{"mr_v2": "versions.0.id"}},
+		// Paged on its own: a paged step saves again from the page it
+		// follows to, which holds an older version.
+		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "max": 1}, paged: true},
+		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v1}}"}},
+		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v1}}",
+			"to_version": "{{mr_v2}}", "commit_offset": 1, "file_offset": 0, "diff_offset": 5}},
+		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v2}}"},
+			expectError: true, why: "the newest version: nothing was pushed after it"},
 
 		// Time tracking, every option on the issue and the merge request,
 		// from the witnesses a read gives: updated_at, and the total spent,
@@ -955,7 +994,7 @@ var rules = map[string]rule{
 
 func init() {
 	for _, tool := range []string{"get_project", "get_issue", "list_discussions", "get_merge_request", "list_mr_files",
-		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
+		"get_mr_diff", "list_mr_commits", "list_mr_versions", "compare_mr_versions", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "get_test_report",
 		"lint_ci", "list_item_events", "list_boards", "list_todos", "add_todo", "subscribe", "react", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",
@@ -1057,30 +1096,35 @@ func save(paths map[string]string, structured json.RawMessage, saved map[string]
 	if len(paths) == 0 {
 		return
 	}
-	var root any
-	if json.Unmarshal(structured, &root) != nil {
-		return
-	}
 	for name, path := range paths {
-		v := root
-		for seg := range strings.SplitSeq(path, ".") {
-			switch x := v.(type) {
-			case map[string]any:
-				v = x[seg]
-			case []any:
-				if i, err := strconv.Atoi(seg); err == nil && i < len(x) {
-					v = x[i]
-				} else {
-					v = nil
-				}
-			default:
-				v = nil
-			}
-		}
-		if v != nil {
+		if v, ok := valueAt(structured, path); ok {
 			saved[name] = v
 		}
 	}
+}
+
+// valueAt is the value at a dotted path in a result, false when there is
+// none.
+func valueAt(structured json.RawMessage, path string) (any, bool) {
+	var v any
+	if json.Unmarshal(structured, &v) != nil {
+		return nil, false
+	}
+	for seg := range strings.SplitSeq(path, ".") {
+		switch x := v.(type) {
+		case map[string]any:
+			v = x[seg]
+		case []any:
+			if i, err := strconv.Atoi(seg); err == nil && i < len(x) {
+				v = x[i]
+			} else {
+				v = nil
+			}
+		default:
+			v = nil
+		}
+	}
+	return v, v != nil
 }
 
 // learnIDs registers every numeric id of 1,000 or more a result carries

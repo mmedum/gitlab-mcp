@@ -251,6 +251,9 @@ func drive(sess *mcpstdio.Session, person *scriptedPerson, steps []step, s scrat
 			p.Sayf("\n=== %s ===\n!! not sent: %s was never saved by an earlier step", st.tool, missing)
 			continue
 		}
+		if st.until != nil && !waitUntil(sess, st, args, saved, p) {
+			unexpected++
+		}
 		for {
 			p.Sayf("\n=== %s %s ===", st.tool, mcpstdio.Encode(args))
 			if st.why != "" && !st.anyOutcome {
@@ -291,6 +294,24 @@ func drive(sess *mcpstdio.Session, person *scriptedPerson, steps []step, s scrat
 		}
 	}
 	return unexpected, nil
+}
+
+// waitUntil sends a step until its until value moves, unprinted, and
+// says so when it never does.
+func waitUntil(sess *mcpstdio.Session, st step, args, saved map[string]any, p *redact.Printer) bool {
+	w := *st.until
+	deadline := time.Now().Add(w.within)
+	for {
+		res, err := sess.CallTool(st.tool, args)
+		if err == nil && !res.IsError && w.moved(res.Structured, saved) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			p.Sayf("\n=== %s ===\n!! %s did not move from the value saved as %s within %v", st.tool, w.path, w.saved, w.within)
+			return false
+		}
+		time.Sleep(w.every)
+	}
 }
 
 // scriptedPerson answers the questions the server puts to the person,
