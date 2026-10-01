@@ -285,7 +285,7 @@ GET /projects/{id}/merge_requests/{merge_request_iid}/approval_state	written-off
 POST /projects/{id}/merge_requests/{merge_request_iid}/approvals	written-off	1	deprecated: changes approval configuration, governance (§8a)
 PUT /projects/{id}/merge_requests/{merge_request_iid}/reset_approvals	written-off	1	resetting approvals: governance, bot-only in GitLab (§8a)
 * /projects/{id}/merge_requests/{merge_request_iid}/approval_rules*	written-off	5	merge request approval rules: governance configuration, Premium (§8a)
-POST /projects/{id}/merge_requests/{merge_request_iid}/cancel_merge_when_pipeline_succeeds	gated	1	Client.CancelAutoMerge: cancel_auto_merge, Ship; GitLab answers 201 either way and the body says whether it canceled (§18 row 107)
+POST /projects/{id}/merge_requests/{merge_request_iid}/cancel_merge_when_pipeline_succeeds	gated	1	Client.CancelAutoMerge: cancel_auto_merge, Ship; GitLab answers 201 either way and the body says whether it canceled (§18 row 109)
 GET /projects/{id}/merge_requests/{merge_request_iid}/closes_issues	used	1	Client.ListMergeRequestClosesIssues: get_merge_request shows the issues a merge closes
 GET /projects/{id}/merge_requests/{merge_request_iid}/related_issues	used	1	Client.ListMergeRequestRelatedIssues: get_merge_request shows the issues related to it
 GET /projects/{id}/merge_requests/{merge_request_iid}/participants	deferred	1	participants; get_merge_request may add it (§17a)

@@ -1101,7 +1101,7 @@ applied is a landing, by this call when the head is one commit on from
 the head read before, by the account; otherwise a reviewer may have
 applied them in GitLab meanwhile, and the result says so. Anything less
 read right after a failure is unknown, since GitLab may still be
-committing (§18 row 108).
+committing (§18 row 110).
 
 `cancel_auto_merge` (Ship) stops a merge request set to merge when its
 pipeline succeeds. GitLab answers 201 whether it canceled or not, with
@@ -1117,7 +1117,7 @@ auto-merge is set is reported canceled (or as merging or merged), and a
 status that is neither `success` nor `error` is `[unexpected]`, never
 unchanged. Someone who may merge the merge request, or its author, can
 cancel; GitLab answers anyone else 401, which is `[forbidden]` here
-(§18 row 107).
+(§18 row 109).
 
 ### 7.4 Where an inline comment lands
 

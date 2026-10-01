@@ -814,7 +814,7 @@ func autoMergeSet(mr *gitlab.MergeRequest) bool {
 
 // CancelAutoMerge stops a merge request from merging when its pipeline
 // succeeds. GitLab answers 201 whether or not it canceled, with the
-// outcome in the body (§18 row 107), so the body and a read afterwards
+// outcome in the body (§18 row 109), so the body and a read afterwards
 // say what happened. Nothing is sent when no auto-merge is set.
 func (s *Service) CancelAutoMerge(ctx context.Context, raw string, iid int64) (model.AutoMergeCancel, error) {
 	t, err := s.writeTarget(ctx, raw)
@@ -879,7 +879,7 @@ func cancelRead(t target, after *gitlab.MergeRequest, setBy string, res *gitlab.
 	failed := errors.As(err, &e)
 	if !failed || e.Status != 401 {
 		// GitLab cancels an auto-merge whose merge has already begun, and
-		// answers success, but the merge goes on (§18 row 107).
+		// answers success, but the merge goes on (§18 row 109).
 		if out, done := mergingOrMerged(t, after, setBy, true); done {
 			return out, nil
 		}
