@@ -644,12 +644,14 @@ questions asked often are answered without reading (§18 row 94).
    stands in a code span, between backticks, on one line: hidden and
    control characters removed; backticks, grave and acute marks, and
    quote marks made a plain single quote; a URL scheme, `mailto:`,
-   `www.` and a bare domain followed by a path broken so no client draws
-   a link; cut at 120 characters, a comment at 300 with the count of the
-   rest. A client that draws the question as Markdown shows a code span
-   literally, and a blank line between lines keeps them apart (§18 row
-   95). A closing line says text in backticks or code style is not the
-   server's.
+   every `//`, `www.` and a bare domain followed by a path broken so no
+   client draws a link; every dot broken in a bare domain that
+   linkify-it 6.1.0 links with fuzzyLink on, except in an email address
+   it reads as one, which a client links as mail at most; cut at 120
+   characters, a comment at 300 with the count of the rest. A client
+   that draws the question as Markdown shows a code span literally, and
+   a blank line between lines keeps them apart (§18 row 95). A closing
+   line says text in backticks or code style is not the server's.
 6. **One handler on every protocol.** The handler returns the question
    as an input request, the multi-round-trip pattern of 2026-07-28.
    Before that revision the SDK asks with `elicitation/create` and calls
