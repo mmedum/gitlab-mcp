@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-01
+
 ### Added
 
 - `get_issue` lists the merge requests related to the issue and those that close it, `get_merge_request` the issues it closes and mentions, and `get_commit` the merge requests that contain the commit: the first 20 of each, as GitLab returns them.
@@ -121,7 +123,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/mmedum/gitlab-mcp/releases/tag/v1.1.0
 [1.0.0]: https://github.com/mmedum/gitlab-mcp/releases/tag/v1.0.0
