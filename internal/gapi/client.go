@@ -486,10 +486,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 			continue
 		}
 
-		v := c.decide(ctx, p.call, p.name, p.repeatable, res, sendErr)
-		if resent {
-			v = repeatedDelete(p, v)
-		}
+		v := repeatedDelete(p, resent, c.decide(ctx, p.call, p.name, p.repeatable, res, sendErr))
 		logAttempt(v.outcome())
 		if v.reauth && !reauthorized {
 			reauthorized = true
@@ -530,10 +527,11 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 	return nil, last.err
 }
 
-// repeatedDelete reads a repeated DELETE's 404: an earlier attempt may
-// have deleted it, so the 404 does not show it was never there.
-func repeatedDelete(p *prepared, v verdict) verdict {
-	if p.call.Method != http.MethodDelete || v.err == nil || v.err.Class != ClassNotFound {
+// repeatedDelete reads a DELETE's 404 after an attempt that may have
+// landed: that attempt may have deleted it, so the 404 does not show it
+// was never there.
+func repeatedDelete(p *prepared, resent bool, v verdict) verdict {
+	if !resent || p.call.Method != http.MethodDelete || v.err == nil || v.err.Class != ClassNotFound {
 		return v
 	}
 	return verdict{err: &Error{Class: ClassAmbiguousOutcome, Status: v.err.Status, err: v.err,
