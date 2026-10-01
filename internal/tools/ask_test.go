@@ -95,6 +95,13 @@ var askCases = map[string]askCase{
 		setup: func(*harness) map[string]any { return map[string]any{"project": alpha, "ref": "main"} },
 		shows: []string{"run a pipeline on `main`", "the project's default branch"},
 	},
+	"run_merge_request_pipeline": {
+		setup: func(h *harness) map[string]any {
+			return map[string]any{"project": alpha, "iid": releaseMR(h, "main")}
+		},
+		shows: []string{"run a pipeline for merge request !", "source branch `release/1.0`: protected",
+			"target branch `main`: the project's default branch", "protected variables"},
+	},
 	"create_release": {
 		setup: func(*harness) map[string]any {
 			return map[string]any{"project": alpha, "tag_name": "v9.9.9", "ref": "main"}
@@ -335,6 +342,8 @@ func TestNothingIsAskedThatWouldNotBeWritten(t *testing.T) {
 		h := askingHarness(t, protocol, p, harnessOptions{})
 		p.then(accepts)
 		h.ok("run_pipeline", map[string]any{"project": alpha, "ref": "feature/login"})
+		h.ok("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": 1})
+		h.ok("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": releaseMR(h, "feature/login")})
 		h.ok("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": issueWitness(h, 2), "confidential": true})
 		h.fails("play_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed}, "conflict")
 		if n := len(p.asked()); n != 0 {
@@ -530,6 +539,37 @@ func TestADeclineIsRefusedBeforeAnythingRuns(t *testing.T) {
 		InputResponses: mcp.InputResponseMap{askKey: &mcp.ElicitResult{Action: "decline"}}})
 	if text := textOf(res); !res.IsError || !strings.Contains(text, "not confirmed by the person") || len(h.gl.Requests()) != 0 {
 		t.Fatalf("%s; %d requests", text, len(h.gl.Requests()))
+	}
+}
+
+// releaseMR opens a merge request from the protected release/1.0 into
+// target and returns its number.
+func releaseMR(h *harness, target string) any {
+	h.t.Helper()
+	_, out := h.ok("create_merge_request", map[string]any{"project": alpha, "source_branch": "release/1.0", "target_branch": target,
+		"title": "Release into " + target})
+	return get(out, "iid")
+}
+
+// A push while the question is out is refused, not run: the person
+// approved the head the question named, and the answer is bound to it.
+func TestAMergeRequestPipelineIsRefusedWhenTheHeadMovesAfterTheQuestion(t *testing.T) {
+	for _, protocol := range protocols {
+		p := &answerer{answer: accepts}
+		h := askingHarness(t, protocol, p, harnessOptions{})
+		iid := releaseMR(h, "main")
+		p.then(func() (*mcp.ElicitResult, error) {
+			h.gl.PushTo(alpha, "release/1.0")
+			return &mcp.ElicitResult{Action: "accept"}, nil
+		})
+		h.gl.ResetRequests()
+		if text := h.fails("run_merge_request_pipeline", map[string]any{"project": alpha, "iid": iid}, "blocked"); !strings.Contains(text,
+			"changed after the person was asked") {
+			t.Errorf("%s: %s", protocol, text)
+		}
+		if n := writesSent(h); n != 0 {
+			t.Errorf("%s: %d writes sent", protocol, n)
+		}
 	}
 }
 

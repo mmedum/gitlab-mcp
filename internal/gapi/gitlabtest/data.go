@@ -96,10 +96,17 @@ type project struct {
 	// CI: pipelines newest last, their jobs, each job's stored log, and
 	// the CI configuration per branch.
 	pipelines []*gitlab.PipelineDetail
-	jobs      map[int64][]gitlab.Job
-	bridges   map[int64][]gitlab.Bridge
-	traces    map[int64]string
-	ciConfig  map[string]string
+	// mrPipelines maps a merge request pipeline to its merge request's
+	// iid; mergePipelines is the project's merged results setting.
+	mrPipelines    map[int64]int64
+	mergePipelines bool
+	// autoMRPipelines starts a merge request pipeline when one opens and
+	// on each push to its source branch.
+	autoMRPipelines bool
+	jobs            map[int64][]gitlab.Job
+	bridges         map[int64][]gitlab.Bridge
+	traces          map[int64]string
+	ciConfig        map[string]string
 	// junit holds each job's JUnit report by job id, and suiteErrors the
 	// jobs whose report GitLab could not parse.
 	junit       map[int64][]gitlab.TestCase
@@ -207,6 +214,7 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		mrDiffs:     map[int64][]gitlab.Diff{},
 		drafts:      map[int64][]gitlab.DraftNote{},
 		jobs:        map[int64][]gitlab.Job{},
+		mrPipelines: map[int64]int64{},
 		bridges:     map[int64][]gitlab.Bridge{},
 		traces:      map[int64]string{},
 		ciConfig:    map[string]string{},

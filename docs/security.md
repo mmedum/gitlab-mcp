@@ -100,7 +100,8 @@ confidential issue public: without the flag the call is `[blocked]`.
 still be called by a model a comment has persuaded, and `confirm: true`
 is an argument the model writes. So when the client supports MCP
 elicitation, the server asks you itself before a merge, an approval, a
-manual job, a release, a new tag, a pipeline on a protected ref,
+manual job, a release, a new tag, a pipeline on a protected ref or for
+a merge request between two protected branches,
 publishing a confidential issue and every delete. Text from GitLab in
 the question stands in backticks or code style, on one line, with no
 link drawn. Only an accept writes. The answer is bound to the call it
@@ -192,6 +193,10 @@ replace it with a `read_api` one.
   inputs on `retry_job` and `play_job` are named the same way. GitLab
   refuses a name a job's inputs do not include; a job that declares no
   inputs ignores them.
+- **A fork's code is not run by the server.** `run_merge_request_pipeline`
+  refuses a merge request from a fork: GitLab may run the fork's code in
+  your project, with its variables and runners, and GitLab's own advice
+  is to review that code first. Run it from GitLab once you have.
 - **A moved issue is seen by no one new.** `move_issue` needs both
   projects in `GITLAB_MCP_WRITE_NAMESPACES` when it is set, and refuses
   a move to a project more people can see than the one the issue is in.

@@ -653,7 +653,9 @@ func seedBoards(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Red
 // pipeline listing has more than one page at little cost. A trigger job
 // starts a child pipeline that fails, so get_pipeline has one to name. The passing
 // and the manual job declare an input, and the input slow adds a job that
-// keeps its log open for spike O.
+// keeps its log open for spike O. A merge request from an mrpipe- branch
+// gets merge request pipelines, the passing job alone, for
+// run_merge_request_pipeline; no other merge request does.
 func ciConfig(s scratch) string {
 	token := "glpat-" + "EXAMPLE" + strings.Repeat("0", 20)
 	return `spec:
@@ -666,6 +668,7 @@ func ciConfig(s scratch) string {
 workflow:
   rules:
     - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^mrpipe-/
 
 default:
   image: alpine:3.20

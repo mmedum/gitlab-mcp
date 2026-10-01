@@ -64,24 +64,25 @@ func TestQuestionsAreInertMarkdown(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	yes, open := true, 3
 	qs := map[string]Question{
-		"merge_merge_request":   AskMerge(x, 1, x, x, x, sha, false, &yes, &yes),
-		"approve_merge_request": AskApprove(x, 2, x, sha),
-		"play_job":              AskPlayJob(x, 3, x, x, 4, []string{x}, []string{x}),
-		"run_pipeline":          AskRunPipeline(x, x, ProtectedTag, []string{x}, []string{x}),
-		"create_release":        AskCreateRelease(x, x, x, x, false, 2),
-		"create_tag":            AskCreateTag(x, x, x),
-		"update_issue":          AskPublishIssue(x, 5, x),
-		"delete_branch":         AskDeleteBranch(x, x, sha, false),
-		"delete_tag":            AskDeleteTag(x, x, sha, true),
-		"delete_label":          AskDeleteLabel(x, x, &open),
-		"delete_milestone":      AskDeleteMilestone(x, x),
-		"delete_wiki_page":      AskDeleteWikiPage(x, x, x),
-		"delete_comment":        AskDeleteComment(x, "merge_request", 6, x, x),
-		"delete_snippet":        AskDeleteSnippet(x, 7, x, []string{x, x}),
+		"merge_merge_request":        AskMerge(x, 1, x, x, x, sha, false, &yes, &yes),
+		"approve_merge_request":      AskApprove(x, 2, x, sha),
+		"play_job":                   AskPlayJob(x, 3, x, x, 4, []string{x}, []string{x}),
+		"run_pipeline":               AskRunPipeline(x, x, ProtectedTag, []string{x}, []string{x}),
+		"run_merge_request_pipeline": AskRunMergeRequestPipeline(x, 8, x, x, x, sha, ProtectedBranch, UnknownRef),
+		"create_release":             AskCreateRelease(x, x, x, x, false, 2),
+		"create_tag":                 AskCreateTag(x, x, x),
+		"update_issue":               AskPublishIssue(x, 5, x),
+		"delete_branch":              AskDeleteBranch(x, x, sha, false),
+		"delete_tag":                 AskDeleteTag(x, x, sha, true),
+		"delete_label":               AskDeleteLabel(x, x, &open),
+		"delete_milestone":           AskDeleteMilestone(x, x),
+		"delete_wiki_page":           AskDeleteWikiPage(x, x, x),
+		"delete_comment":             AskDeleteComment(x, "merge_request", 6, x, x),
+		"delete_snippet":             AskDeleteSnippet(x, 7, x, []string{x, x}),
 	}
 	// Every hostile value reaches its own span.
 	wantSpans := map[string]int{"merge_merge_request": 4, "approve_merge_request": 2, "play_job": 5, "run_pipeline": 4,
-		"create_release": 4, "create_tag": 3, "update_issue": 2, "delete_branch": 2, "delete_tag": 2, "delete_label": 2,
+		"run_merge_request_pipeline": 4, "create_release": 4, "create_tag": 3, "update_issue": 2, "delete_branch": 2, "delete_tag": 2, "delete_label": 2,
 		"delete_milestone": 2, "delete_wiki_page": 3, "delete_comment": 3, "delete_snippet": 4}
 	for name, q := range qs {
 		if !strings.HasPrefix(q.Text, name+": ") {

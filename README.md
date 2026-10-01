@@ -99,6 +99,7 @@ contract: tools keep their names and output fields.
 | `rebase_merge_request` | Rebase a merge request's source branch, from the head you reviewed (Ship) |
 | `move_issue` | Move an issue to another project, never to one more people can see (Ship) |
 | `run_pipeline` | Run a pipeline for a ref, with variables whose values are never shown (Ship) |
+| `run_merge_request_pipeline` | Run a merge request's pipeline, merged results or detached as GitLab picks; not for a fork's merge request (Ship) |
 | `retry_pipeline` | Retry a pipeline's failed and canceled jobs (Ship) |
 | `retry_job` | Run a finished job again, with inputs (Ship) |
 | `play_job` | Start a manual job, with variables and inputs (Ship) |
@@ -221,7 +222,7 @@ scope cannot separate any of it:
 
 When your MCP client supports elicitation, the server also asks you
 before it merges, approves, runs a manual job or a pipeline on a
-protected ref, publishes a release or a tag, makes a confidential issue
+protected ref or for a merge request between protected branches, publishes a release or a tag, makes a confidential issue
 public, or deletes anything. Only your accept writes.
 
 - **No quick actions.** GitLab runs `/merge`, `/close` and the rest from

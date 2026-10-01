@@ -1378,6 +1378,23 @@ type PipelineWrite struct {
 	Inputs       []string `json:"inputs" jsonschema:"The names of the inputs sent; their values are never shown"`
 }
 
+// MergeRequestPipelineWrite is run_merge_request_pipeline's result.
+type MergeRequestPipelineWrite struct {
+	Outcome string `json:"outcome" jsonschema:"created or dry_run"`
+	Write
+	IID          int64  `json:"iid" jsonschema:"The merge request's number"`
+	SourceBranch string `json:"source_branch"`
+	TargetBranch string `json:"target_branch"`
+	PipelineID   int64  `json:"pipeline_id"`
+	PipelineIID  int64  `json:"pipeline_iid" jsonschema:"The pipeline's number in its project, shown as #12"`
+	Kind         string `json:"kind" jsonschema:"merged_results (the source merged into the target, on refs/merge-requests/N/merge) or detached (the source branch's head, on refs/merge-requests/N/head); empty for a dry run"`
+	Status       string `json:"status"`
+	Ref          string `json:"ref"`
+	SHA          string `json:"sha" jsonschema:"The commit the pipeline runs: for merged results, a merge commit GitLab made, not the source branch's head"`
+	Source       string `json:"source"`
+	WebURL       string `json:"web_url"`
+}
+
 // JobWrite is retry_job's and play_job's result.
 type JobWrite struct {
 	Outcome string `json:"outcome" jsonschema:"retried, played or dry_run"`

@@ -17,6 +17,24 @@ import (
 
 // ------------------------------------------------------------ merging
 
+// serveMRShip routes a merge request's Ship calls.
+func (s *Server) serveMRShip(w http.ResponseWriter, r *http.Request, p *project, mr *gitlab.MergeRequest, user string, rest []string) bool {
+	post := r.Method == http.MethodPost
+	switch {
+	case r.Method == http.MethodPut && match(rest, "merge"):
+		s.merge(w, r, p, mr, user)
+	case post && match(rest, "approve"):
+		s.approve(w, r, p, mr, user)
+	case post && match(rest, "unapprove"):
+		s.unapprove(w, p, mr, user)
+	case post && match(rest, "pipelines"):
+		s.createMRPipeline(w, p, mr, user)
+	default:
+		return false
+	}
+	return true
+}
+
 // merge is PUT …/merge: 409 for a sha that is not the head, 405 for a
 // merge request GitLab will not merge now, and the merge otherwise.
 func (s *Server) merge(w http.ResponseWriter, r *http.Request, p *project, mr *gitlab.MergeRequest, user string) {
@@ -185,6 +203,108 @@ func (s *Server) createPipeline(w http.ResponseWriter, r *http.Request, p *proje
 	p.jobs[pl.ID] = append(p.jobs[pl.ID], gitlab.Job{ID: s.nextJobID(), Name: "build", Stage: "build", Status: "pending", Ref: ref,
 		CreatedAt: now, WebURL: p.WebURL + "/-/jobs/new", Pipeline: gitlab.JobPipe{ID: pl.ID}})
 	writeJSON(w, http.StatusCreated, pl)
+}
+
+// createMRPipeline is POST …/merge_requests/:iid/pipelines
+// (lib/api/merge_requests.rb, MergeRequests::CreatePipelineService and
+// its EE override): 405 for a merge request with no commits; 400 for an
+// account below developer, and for one that may not push to a protected
+// source branch, which GitLab's fallback to the branch refuses in turn.
+// Otherwise 200 with the pipeline startMRPipeline makes.
+func (s *Server) createMRPipeline(w http.ResponseWriter, p *project, mr *gitlab.MergeRequest, user string) {
+	if noCommits(mr) {
+		message(w, http.StatusMethodNotAllowed, "405 Method Not Allowed")
+		return
+	}
+	refused := func(why string) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"message": map[string]any{"base": []string{why}}})
+	}
+	if p.levels[user] < 30 {
+		refused("Insufficient permissions to create a new pipeline")
+		return
+	}
+	if protectedName(p, mr.SourceBranch) && p.levels[user] < 40 {
+		refused(fmt.Sprintf("You do not have sufficient permission to run a pipeline on '%s'. Please select a different branch or "+
+			"contact your administrator for assistance.", mr.SourceBranch))
+		return
+	}
+	writeJSON(w, http.StatusOK, s.startMRPipeline(p, mr, user))
+}
+
+func noCommits(mr *gitlab.MergeRequest) bool {
+	return mr.DiffRefs == nil || mr.SHA == mr.DiffRefs.BaseSHA
+}
+
+// startMRPipeline starts a merge request pipeline under user's name: merged
+// results where the project has them on and the branches merge cleanly
+// (EE create_merged_result_pipeline_for, MergeabilityCheckService), a
+// detached one on the head ref else, as for a target branch gone.
+func (s *Server) startMRPipeline(p *project, mr *gitlab.MergeRequest, user string) *gitlab.PipelineDetail {
+	ref, sha := fmt.Sprintf("refs/merge-requests/%d/head", mr.IID), mr.SHA
+	if target := p.commits[mr.TargetBranch]; p.mergePipelines && !mr.HasConflicts && len(target) > 0 {
+		ref, sha = fmt.Sprintf("refs/merge-requests/%d/merge", mr.IID), fakeSHA("merge", mr.SHA, target[0].ID)
+	}
+	now := s.opts.Now().UTC()
+	pl := s.addPipeline(p, s.nextPipelineID(p), sha, ref, "created", "merge_request_event", now)
+	u := s.user(user)
+	pl.User, pl.StartedAt, pl.FinishedAt, pl.Duration, pl.QueuedDuration = &u, nil, nil, nil, nil
+	pl.UpdatedAt = now
+	pl.DetailedStatus = &gitlab.PipelineDetailStatus{Text: "created", Label: "created", Group: "created"}
+	p.mrPipelines[pl.ID] = mr.IID
+	return pl
+}
+
+// autoMRPipeline starts the pipeline GitLab starts by itself when a
+// merge request opens or its source branch is pushed to, where the
+// project's CI configuration gives merge requests pipelines.
+func (s *Server) autoMRPipeline(p *project, mr *gitlab.MergeRequest, user string) {
+	if p.autoMRPipelines && !noCommits(mr) {
+		s.startMRPipeline(p, mr, user)
+	}
+}
+
+// SetAutoMRPipelines makes a project's CI give merge requests pipelines
+// of their own, which GitLab starts when one opens and on each push to
+// its source branch, as the live run's workflow rule does.
+func (s *Server) SetAutoMRPipelines(projectPath string, on bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	p.autoMRPipelines = on
+	return true
+}
+
+// SetMRSourceProject makes a merge request come from another project,
+// as one from a fork does.
+func (s *Server) SetMRSourceProject(projectPath string, iid int64, sourcePath string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, source := s.projectByPath(projectPath), s.projectByPath(sourcePath)
+	if p == nil || source == nil {
+		return false
+	}
+	mr := findMR(p, itoa(iid))
+	if mr == nil {
+		return false
+	}
+	mr.SourceProjectID = source.ID
+	return true
+}
+
+// SetMergePipelines turns merged results pipelines on or off for a
+// project, as its setting on a Premium tier does.
+func (s *Server) SetMergePipelines(projectPath string, on bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	p.mergePipelines = on
+	return true
 }
 
 // retryPipeline is POST …/retry: each failed or canceled job gets a new
@@ -448,6 +568,7 @@ func (s *Server) PushTo(projectPath, branch string) (string, bool) {
 	for _, mr := range p.mrs {
 		if mr.SourceBranch == branch && mr.State == "opened" {
 			s.refreshMR(p, mr)
+			s.autoMRPipeline(p, mr, "bob")
 		}
 	}
 	return c.ID, true
