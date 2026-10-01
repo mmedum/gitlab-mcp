@@ -4,7 +4,7 @@ Range: `v2.0.0` to `main` after PR #26, the seven features merged since
 the release. Each was reviewed on its own branch before it merged, on
 2026-09-29 and 2026-09-30; `/code-review high` covered correctness and
 a security pass covered this file's questions. `run_merge_request_pipeline`
-(#18) is not merged and is reviewed with it.
+(#18) merged a day later and is reviewed here too.
 
 **Result: no open finding at confidence 8 or above.** Every finding
 below was fixed before its pull request merged.
@@ -48,7 +48,7 @@ below was fixed before its pull request merged.
   project snippet around the write allow-list; `delete_snippet` is
   Destructive, needs `confirm: true` and asks the person, the question
   binding the title and every file name.
-- **`run_merge_request_pipeline`** (#18, not merged): no finding with a
+- **`run_merge_request_pipeline`** (#18): no finding with a
   concrete path. It is Ship; a merge request from a fork is refused
   before anything is sent; it asks the person whenever both branches
   may be protected, the condition under which GitLab exposes protected

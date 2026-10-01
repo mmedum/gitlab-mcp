@@ -3,7 +3,7 @@
 **Status: 2.0.0, 2026-09-29: phases 0 to 7 — the person now confirms
 what ships or deletes (§4.12) — `update_comment`, and the sign-in no
 longer refreshed before the server serves. The module path is `/v2`. §17.10 stands and
-§17.11 waits. Main carries eight unreleased tools on top of 2.0.0, and
+§17.11 waits. Main carries nine unreleased tools on top of 2.0.0, and
 the linked items in three reads (§16).** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
@@ -386,7 +386,7 @@ client starts regrouping tools. A read joins the default when it answers a
 question a default tool acts on: `list_boards` did, beside `list_labels`
 and `list_milestones`, since a board's columns are read with
 `search_issues` (maintainer, 2026-09-30). With Ship and Destructive both
-on, the surface is sixty-nine tools, past the 64-tool point; both flags
+on, the surface is seventy tools, past the 64-tool point; both flags
 are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
@@ -1953,13 +1953,14 @@ sometimes kept per server; the third was clean, with seventeen
 questions, each quoting only the run's own text, and the declined
 delete writing nothing. Reviews in §16a. Owed: nothing.*
 
-**After 2.0.0 — seven features, one pull request each.** Built on
-parallel branches and merged as pull requests #20 to #26: linked items
-in `get_issue`, `get_merge_request` and `get_commit` (#12),
-`get_test_report` (#13), `list_item_events` (#14), `list_boards` (#19),
-`track_time` (#15), `subscribe` and `add_todo` (#17), and
-`update_snippet` and `delete_snippet` (#16). Each was checked against
-GitLab's source first (§18 rows 97–103).
+**After 2.0.0 — eight features, one pull request each.** Built on
+parallel branches and merged as pull requests #20 to #26 and the one
+for #18: linked items in `get_issue`, `get_merge_request` and
+`get_commit` (#12), `get_test_report` (#13), `list_item_events` (#14),
+`list_boards` (#19), `track_time` (#15), `subscribe` and `add_todo`
+(#17), `update_snippet` and `delete_snippet` (#16), and
+`run_merge_request_pipeline` (#18). Each was checked against GitLab's
+source first (§18 rows 97–104).
 
 *Built 2026-09-29 and 2026-09-30. Each feature had `/code-review high`
 and a security review, with the findings fixed (§16a), and a live run on
@@ -1967,9 +1968,10 @@ gitlab.com whose transcript was read. Two live runs refuted the source:
 adding or resetting spent time leaves `updated_at` alone, so
 `track_time` takes `total_time_spent` as a second witness (§18 row 101);
 a snippet's `updated_at` moves after the answer, so `update_snippet`
-hands on no witness after a commit (§18 row 103). Owed:
-`run_merge_request_pipeline` (#18) is not merged; it waits for the
-scratch group's CI minutes to reset.*
+hands on no witness after a commit (§18 row 103).
+`run_merge_request_pipeline` (#18) waited a day for its live run: the
+runs spent the scratch group's CI minutes, and every job failed
+`ci_quota_exceeded` until they reset on 2026-10-01. Nothing is owed.*
 
 ### 16a. Found by review, and fixed
 
@@ -2242,6 +2244,7 @@ fixed in its "Tighten … after review" commit:
 | `track_time` (#15) | A call repeated after it landed was refused `[stale]`; a failure did not say what had landed. Values that already hold read as unchanged first, and a failure names what landed and gives the `updated_at` to use |
 | `subscribe`, `add_todo` (#17) | `add_todo` repeated after a lost answer, on a check GitLab runs with no lock or unique index. Never repeated: a lost answer is `[ambiguous_outcome]`, settled by reading the account's to-dos; a 304 is read only through `DoAnswered`; both set `openWorldHint` false |
 | `update_snippet`, `delete_snippet` (#16) | An internal or public snippet could be written, publishing what was written; a PUT that creates, deletes or moves a file repeated; "unchanged" was read from `updated_at` alone. Private snippets only, such a PUT is sent once (`Call.Once`) and settled by reading, and the result says when `updated_at` did not move |
+| `run_merge_request_pipeline` (#18) | A lost create was settled by any merge request pipeline the account started since shortly before, which GitLab also starts on a push or a merge request opening; five candidates read, then "calling again is safe"; a `source_branch` kind GitLab never answers. The newest pipeline id is read before the POST and only a newer one counts, found by one filtered read with no cap; a moved head is refused after the question, and a pipeline at another sha is named; `kind` is `merged_results` or `detached` |
 
 ## 17. Open decisions
 

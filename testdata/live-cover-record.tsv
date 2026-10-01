@@ -1,5 +1,5 @@
 # Written by scripts/livegitlab at the end of a run; do not edit.
-# run of 2026-09-30 against a gitlab.com instance
+# run of 2026-10-01 against a gitlab.com instance
 # Columns: tool.option (tool.* for the call itself), times sent.
 add_comment.*	13
 add_comment.body	13
@@ -54,17 +54,17 @@ compare_refs.from	3
 compare_refs.project	3
 compare_refs.straight	1
 compare_refs.to	3
-create_branch.*	7
-create_branch.branch	7
+create_branch.*	8
+create_branch.branch	8
 create_branch.dry_run	1
-create_branch.project	7
-create_branch.ref	6
-create_commit.*	10
-create_commit.actions	10
-create_commit.branch	10
+create_branch.project	8
+create_branch.ref	7
+create_commit.*	11
+create_commit.actions	11
+create_commit.branch	11
 create_commit.dry_run	1
-create_commit.message	10
-create_commit.project	10
+create_commit.message	11
+create_commit.project	11
 create_commit.start_branch	2
 create_issue.*	6
 create_issue.assignees	1
@@ -84,7 +84,7 @@ create_label.dry_run	1
 create_label.name	2
 create_label.priority	1
 create_label.project	2
-create_merge_request.*	4
+create_merge_request.*	6
 create_merge_request.assignees	1
 create_merge_request.description	1
 create_merge_request.draft	1
@@ -92,13 +92,13 @@ create_merge_request.dry_run	1
 create_merge_request.escape_commands	1
 create_merge_request.labels	1
 create_merge_request.milestone	1
-create_merge_request.project	4
+create_merge_request.project	6
 create_merge_request.remove_source_branch	1
 create_merge_request.reviewers	1
-create_merge_request.source_branch	4
+create_merge_request.source_branch	6
 create_merge_request.squash	1
-create_merge_request.target_branch	1
-create_merge_request.title	4
+create_merge_request.target_branch	2
+create_merge_request.title	6
 create_milestone.*	2
 create_milestone.description	1
 create_milestone.dry_run	1
@@ -472,6 +472,10 @@ revert_commit.branch	2
 revert_commit.commit	2
 revert_commit.dry_run	1
 revert_commit.project	2
+run_merge_request_pipeline.*	3
+run_merge_request_pipeline.dry_run	1
+run_merge_request_pipeline.iid	3
+run_merge_request_pipeline.project	3
 run_pipeline.*	2
 run_pipeline.dry_run	1
 run_pipeline.inputs	1
