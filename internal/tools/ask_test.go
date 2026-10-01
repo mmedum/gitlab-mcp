@@ -80,6 +80,14 @@ var askCases = map[string]askCase{
 		},
 		shows: []string{"merge merge request !1 in `" + alpha + "`?", "at head ", "squashes its commits"},
 	},
+	"apply_suggestions": {
+		setup: func(h *harness) map[string]any {
+			_, id := suggest(h, 1, 3, 3, "// login signs a user in.\n")
+			return map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}
+		},
+		shows: []string{"commit 1 suggestion(s) from merge request !1 in `" + alpha + "` to its source branch `feature/login`",
+			"puts in `/[/] login signs a user in.`", "Someone else wrote this text"},
+	},
 	"approve_merge_request": {
 		setup: func(h *harness) map[string]any { return map[string]any{"project": alpha, "iid": 2, "sha": mrSHA(h, 2)} },
 		shows: []string{"approve merge request !2", "counts toward the project's merge rules"},

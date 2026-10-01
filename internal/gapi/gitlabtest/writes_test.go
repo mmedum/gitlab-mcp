@@ -1405,3 +1405,36 @@ func TestPushResetsApprovalsOnlyWhenTheProjectSaysSo(t *testing.T) {
 			approvedBy())
 	}
 }
+
+// A fork's merge request that allows collaboration lets the target
+// project's developers apply its suggestions; without it they get 403.
+func TestSuggestionOnAForkNeedsCollaboration(t *testing.T) {
+	s := New(t, Options{})
+	alice, bob := s.Token(), s.TokenFor("bob", "api")
+	beta := s.ProjectID(ProjectBeta)
+	resp, body := send(t, s, "POST", "/projects/"+itoa(beta)+"/repository/branches", alice, obj{"branch": "feature/login", "ref": "main"})
+	wantStatus(t, "branch", resp, body, 201)
+	login, _ := s.FileAt(ProjectAlpha, "feature/login", "src/login.go")
+	resp, body = send(t, s, "POST", "/projects/"+itoa(beta)+"/repository/commits", alice, obj{"branch": "feature/login",
+		"commit_message": "Add login", "actions": []obj{{"action": "create", "file_path": "src/login.go", "content": login}}})
+	wantStatus(t, "commit", resp, body, 201)
+	s.SetMRSourceProject(ProjectAlpha, 1, ProjectBeta)
+	_, id, ok := s.AddSuggestion(ProjectAlpha, 1, "carol", "src/login.go", 3, 3, "// fixed\n")
+	if !ok {
+		t.Fatal("no suggestion")
+	}
+	path := "/suggestions/" + itoa(id) + "/apply"
+	resp, body = send(t, s, "PUT", path, bob, nil)
+	wantStatus(t, "without collaboration", resp, body, 403)
+
+	s.SetAllowCollaboration(ProjectAlpha, 1, true)
+	resp, body = send(t, s, "PUT", path, bob, nil)
+	wantStatus(t, "with collaboration", resp, body, 200)
+	if got, _ := s.FileAt(ProjectBeta, "feature/login", "src/login.go"); got != "package main\n\n// fixed\nfunc login() {}\n" {
+		t.Errorf("the fork's file = %q", got)
+	}
+	head, _ := s.BranchHead(ProjectBeta, "feature/login")
+	if head.Message != "Apply 1 suggestion(s) to 1 file(s)\n\nCo-authored-by: Carol Example <carol@example.com>" || head.AuthorName != "Bob Example" {
+		t.Errorf("commit %q by %s", head.Message, head.AuthorName)
+	}
+}

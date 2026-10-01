@@ -90,7 +90,7 @@ Every tool has one kind, and the kind decides whether it is registered:
 |---|---|---|
 | Read | every GET | always |
 | Write | issues and their links, comments, reviews, branches, commits, cherry-picks and reverts to unprotected branches, merge requests, todos, wiki, snippets, labels, milestones, unprotected tags | unless `GITLAB_MCP_READ_ONLY=true` |
-| Ship | merge, approve, unapprove, rebase, run, retry, play and cancel CI, create a release, move an issue to another project | only with `GITLAB_MCP_ENABLE_SHIP=true` |
+| Ship | merge, cancel an auto-merge, approve, unapprove, rebase, apply review suggestions, run, retry, play and cancel CI, create a release, move an issue to another project | only with `GITLAB_MCP_ENABLE_SHIP=true` |
 | Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
 
 A review that would approve counts as Ship, and so does making a
@@ -99,8 +99,8 @@ confidential issue public: without the flag the call is `[blocked]`.
 **The person confirms what ships or deletes.** A registered tool can
 still be called by a model a comment has persuaded, and `confirm: true`
 is an argument the model writes. So when the client supports MCP
-elicitation, the server asks you itself before a merge, an approval, a
-manual job, a release, a new tag, a pipeline on a protected ref or for
+elicitation, the server asks you itself before a merge, an approval,
+applying review suggestions, a manual job, a release, a new tag, a pipeline on a protected ref or for
 a merge request between two protected branches,
 publishing a confidential issue and every delete. Text from GitLab in
 the question stands in backticks or code style, on one line, with no
@@ -150,13 +150,19 @@ replace it with a `read_api` one.
 - **Code reaches a protected branch only through a merge request.**
   `create_commit` refuses the project's default branch and every
   protected branch, and `create_branch` refuses a name a protected-branch
-  rule covers, read at call time.
+  rule covers, read at call time. `apply_suggestions` refuses a merge
+  request whose source branch is the default or a protected one,
+  applies only suggestions on the merge request you name, and refuses
+  one whose text holds hidden or bidirectional characters, which can
+  make code read otherwise than it runs. `list_discussions` shows each
+  suggestion's exact text with such characters written out, and you are
+  asked with the text before anything is committed under your name.
 - **`lint_ci` sends nothing GitLab would fetch.** Configuration you pass
   to it may not use `include:`, since GitLab fetches what an include
   names while linting.
 - **A create is never retried.** Notes, issues, merge requests, commits,
   pipelines, releases, spent time and to-dos are POSTs GitLab does not
-  deduplicate. When the
+  deduplicate, and applying suggestions commits. When the
   outcome is unclear the result is `[ambiguous_outcome]`, and the server
   has already read to settle it; it never creates again to find out.
 - **A write carries a witness.** An update names the version it read

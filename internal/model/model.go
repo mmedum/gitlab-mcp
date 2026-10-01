@@ -443,6 +443,28 @@ type Note struct {
 	Internal      bool      `json:"internal"`
 	UntrustedBody string    `json:"untrusted_body"`
 	Budget        Budget    `json:"body_budget"`
+	// Suggestions are a merge request diff comment's suggestion blocks;
+	// their text is in the body.
+	Suggestions []NoteSuggestion `json:"suggestions" jsonschema:"The suggestion blocks of a diff comment on a merge request, in the order the body gives them; apply_suggestions takes their ids. Empty for any other comment"`
+}
+
+// NoteSuggestion is one suggestion block of a comment.
+type NoteSuggestion struct {
+	ID        int64 `json:"id" jsonschema:"The suggestion's id, for apply_suggestions; editing the comment gives its suggestions new ids"`
+	FromLine  int   `json:"from_line" jsonschema:"The first line it replaces, in the file at the comment's head"`
+	ToLine    int   `json:"to_line" jsonschema:"The last line it replaces"`
+	Appliable bool  `json:"appliable" jsonschema:"GitLab's cached view of whether it can be applied; applying checks again"`
+	Applied   bool  `json:"applied"`
+	SuggestionText
+}
+
+// SuggestionText is a suggestion's exact text: the lines it replaces and
+// what it puts in their place, which is what applying it commits.
+type SuggestionText struct {
+	UntrustedFromContent string `json:"untrusted_from_content" jsonschema:"The lines it replaces, exactly, with each hidden or bidirectional character written out as <U+202E>"`
+	UntrustedToContent   string `json:"untrusted_to_content" jsonschema:"What applying it commits in their place, exactly, with each hidden or bidirectional character written out as <U+202E>; apply_suggestions refuses a suggestion that has any"`
+	ContentCut           bool   `json:"content_cut" jsonschema:"True when either text is longer than shown"`
+	HiddenCharacters     int    `json:"hidden_characters" jsonschema:"How many hidden or bidirectional characters the two texts hold, each written out"`
 }
 
 // ItemEvents is list_item_events' result: GitLab's resource events of
@@ -1424,6 +1446,41 @@ type ApprovalWrite struct {
 	Approved      bool     `json:"approved" jsonschema:"Whether the merge request's approval rules are met"`
 	ApprovedBy    []string `json:"approved_by" jsonschema:"Usernames"`
 	ApprovalsLeft *int     `json:"approvals_left" jsonschema:"Approvals still required; null where the tier has no approval rules"`
+}
+
+// AutoMergeCancel is cancel_auto_merge's result.
+type AutoMergeCancel struct {
+	Outcome string `json:"outcome" jsonschema:"canceled (open, and no longer set to merge), merging (GitLab is merging it: a cancel does not stop a merge in progress, so read it again with get_merge_request), merged (it merged; any cancel came too late), unchanged (no auto-merge was set) or dry_run"`
+	Write
+	IID       int64     `json:"iid"`
+	WebURL    string    `json:"web_url"`
+	State     string    `json:"state" jsonschema:"The merge request's state, read after the call"`
+	SetBy     string    `json:"set_by" jsonschema:"Username of who set the auto-merge, as read before the call; empty when none was set"`
+	AutoMerge bool      `json:"auto_merge" jsonschema:"Whether it is set to merge when its pipeline succeeds, read after the call"`
+	UpdatedAt time.Time `json:"updated_at" jsonschema:"The merge request's updated_at, read after the call: the witness for update_merge_request"`
+}
+
+// SuggestionsApply is apply_suggestions' result.
+type SuggestionsApply struct {
+	Outcome string `json:"outcome" jsonschema:"applied, unchanged (every one was already applied; nothing was sent) or dry_run"`
+	Write
+	IID           int64               `json:"iid"`
+	SourceProject string              `json:"source_project" jsonschema:"The project the commit went to: the merge request's own, or the fork its source branch is in"`
+	SourceBranch  string              `json:"source_branch"`
+	HeadBefore    string              `json:"head_before" jsonschema:"The source branch's head read before the call"`
+	Head          string              `json:"head" jsonschema:"The source branch's head read after the call: the commit GitLab made, unless someone pushed since; empty for a dry run"`
+	Suggestions   []AppliedSuggestion `json:"suggestions" jsonschema:"The suggestions asked for, as read after the call"`
+}
+
+// AppliedSuggestion is one suggestion apply_suggestions was given.
+type AppliedSuggestion struct {
+	ID       int64  `json:"id"`
+	NoteID   int64  `json:"note_id" jsonschema:"The comment it is in"`
+	FilePath string `json:"file_path"`
+	FromLine int    `json:"from_line"`
+	ToLine   int    `json:"to_line"`
+	Applied  bool   `json:"applied" jsonschema:"Whether GitLab records it applied"`
+	SuggestionText
 }
 
 // PipelineWrite is run_pipeline's, retry_pipeline's and cancel_pipeline's

@@ -356,6 +356,37 @@ type Note struct {
 	ResolvedBy   *UserBasic `json:"resolved_by"`
 	ResolvedAt   *time.Time `json:"resolved_at"`
 	Position     *Position  `json:"position"`
+	// Suggestions are the suggestion blocks of a diff note on a merge
+	// request; GitLab sends the key for no other note
+	// (lib/api/entities/note.rb).
+	Suggestions []Suggestion `json:"suggestions,omitempty"`
+}
+
+// Suggestion is one suggestion block of a diff note
+// (lib/api/entities/suggestion.rb). Editing the note replaces its
+// suggestions with new ones under new ids, so an id stands for the
+// content it was read with.
+type Suggestion struct {
+	ID       int64 `json:"id"`
+	FromLine int   `json:"from_line"`
+	ToLine   int   `json:"to_line"`
+	// Appliable is GitLab's cached check, which applying repeats live.
+	Appliable   bool   `json:"appliable"`
+	Applied     bool   `json:"applied"`
+	FromContent string `json:"from_content"`
+	ToContent   string `json:"to_content"`
+}
+
+// ServiceResult is the body of POST
+// …/merge_requests/:iid/cancel_merge_when_pipeline_succeeds: the
+// service's result rendered as it is, under 201 whether it succeeded or
+// not (lib/api/merge_requests.rb, app/services/auto_merge_service.rb).
+type ServiceResult struct {
+	Status  string `json:"status"` // success or error
+	Message string `json:"message"`
+	// HTTPStatus is the status the service meant, which GitLab does not
+	// send as the response's: 406 when no auto-merge was set.
+	HTTPStatus int `json:"http_status"`
 }
 
 // Position is where a diff note sits.

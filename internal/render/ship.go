@@ -37,6 +37,65 @@ func MergeWrite(w model.MergeWrite, _ Boundary) string {
 	return b.String()
 }
 
+// AutoMergeCancel renders cancel_auto_merge.
+func AutoMergeCancel(w model.AutoMergeCancel, _ Boundary) string {
+	var b strings.Builder
+	head := fmt.Sprintf("Merge request !%d's auto-merge was not changed.", w.IID)
+	switch w.Outcome {
+	case "canceled":
+		head = fmt.Sprintf("Canceled the auto-merge of merge request !%d: it no longer merges when its pipeline succeeds.", w.IID)
+	case "merging":
+		head = fmt.Sprintf("GitLab is merging merge request !%d; its auto-merge may not have been stopped.", w.IID)
+	case "merged":
+		head = fmt.Sprintf("Merge request !%d has merged; its auto-merge was not stopped.", w.IID)
+	}
+	writeHead(&b, head, w.Write)
+	fmt.Fprintf(&b, "\n%s; %s; set to merge automatically: %s", Ident(w.WebURL), Ident(w.State), yesNo(w.AutoMerge))
+	if w.SetBy != "" {
+		fmt.Fprintf(&b, "; it had been set by @%s", Ident(w.SetBy))
+	}
+	b.WriteString(".")
+	if !w.DryRun {
+		witnessLine(&b, &w.UpdatedAt, "update_merge_request")
+	}
+	return b.String()
+}
+
+// SuggestionsApply renders apply_suggestions.
+func SuggestionsApply(w model.SuggestionsApply, bd Boundary) string {
+	var b strings.Builder
+	head := fmt.Sprintf("No suggestion on merge request !%d was applied.", w.IID)
+	if w.Outcome == "applied" {
+		head = fmt.Sprintf("Applied %d suggestion(s) of merge request !%d in one commit to its source branch.", len(w.Suggestions), w.IID)
+	}
+	writeHead(&b, head, w.Write)
+	fmt.Fprintf(&b, "\nSource branch %s in %s: head %s before", Ident(w.SourceBranch), Ident(w.SourceProject), Ident(w.HeadBefore))
+	if w.Head != "" {
+		fmt.Fprintf(&b, ", %s after", Ident(w.Head))
+	}
+	b.WriteString(".")
+	for _, sg := range w.Suggestions {
+		fmt.Fprintf(&b, "\n- suggestion %d in comment %d, %s %s: applied %s", sg.ID, sg.NoteID, Ident(sg.FilePath),
+			lineRange(sg.FromLine, sg.ToLine), yesNo(sg.Applied))
+	}
+	if len(w.Suggestions) > 0 {
+		b.WriteString("\n" + bd.Notice())
+	}
+	for _, sg := range w.Suggestions {
+		suggestionBlocks(&b, bd, Origin{Kind: "suggestion", Project: w.Target.Project.Path, Item: fmt.Sprintf("!%d", w.IID)}, sg.ID,
+			sg.SuggestionText)
+	}
+	return b.String()
+}
+
+// lineRange names lines from to to, "line 3" or "lines 3-5".
+func lineRange(from, to int) string {
+	if from == to {
+		return fmt.Sprintf("line %d", from)
+	}
+	return fmt.Sprintf("lines %d-%d", from, to)
+}
+
 // ApprovalWrite renders approve_merge_request and
 // unapprove_merge_request.
 func ApprovalWrite(w model.ApprovalWrite, _ Boundary) string {

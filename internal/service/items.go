@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
@@ -405,6 +406,9 @@ func (s *Service) ListDiscussions(ctx context.Context, q DiscussionQuery) (model
 		cost := 0
 		for _, n := range t.Notes {
 			cost += n.Budget.ShownChars
+			for _, sg := range n.Suggestions {
+				cost += utf8.RuneCountInString(sg.UntrustedFromContent) + utf8.RuneCountInString(sg.UntrustedToContent)
+			}
 		}
 		if len(out.Threads) > 0 && used+cost > render.DiscussionBudget {
 			next = start + i
@@ -475,7 +479,25 @@ func (s *Service) note(n gitlab.Note, offset, budget int) (model.Note, error) {
 		return model.Note{}, err
 	}
 	return model.Note{ID: n.ID, Author: user(n.Author), CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt, System: n.System,
-		Internal: n.Internal, UntrustedBody: body, Budget: b}, nil
+		Internal: n.Internal, UntrustedBody: body, Budget: b, Suggestions: noteSuggestions(n)}, nil
+}
+
+// noteSuggestions are a comment's suggestion blocks with their exact
+// text: the body shows them only as Markdown, hidden characters dropped.
+func noteSuggestions(n gitlab.Note) []model.NoteSuggestion {
+	out := make([]model.NoteSuggestion, 0, len(n.Suggestions))
+	for _, sg := range n.Suggestions {
+		out = append(out, model.NoteSuggestion{ID: sg.ID, FromLine: sg.FromLine, ToLine: sg.ToLine, Appliable: sg.Appliable,
+			Applied: sg.Applied, SuggestionText: suggestionText(sg)})
+	}
+	return out
+}
+
+// suggestionText is a suggestion's exact text, hidden characters written
+// out, as a result shows it.
+func suggestionText(sg gitlab.Suggestion) model.SuggestionText {
+	from, to, cut, hidden := render.SuggestionText(sg.FromContent, sg.ToContent)
+	return model.SuggestionText{UntrustedFromContent: from, UntrustedToContent: to, ContentCut: cut, HiddenCharacters: hidden}
 }
 
 // oneNote answers a read of one comment from an offset.

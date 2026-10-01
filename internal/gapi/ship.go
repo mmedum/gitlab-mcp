@@ -34,6 +34,53 @@ func (c *Client) MergeMergeRequest(ctx context.Context, p Project, iid int64, in
 	return &out, err
 }
 
+// CancelAutoMerge cancels a merge request's auto-merge. GitLab answers
+// 201 with its service's result as the body, an error included, so the
+// caller reads Status (lib/api/merge_requests.rb). A second cancel
+// changes nothing.
+func (c *Client) CancelAutoMerge(ctx context.Context, p Project, iid int64) (*gitlab.ServiceResult, error) {
+	var out gitlab.ServiceResult
+	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/cancel_merge_when_pipeline_succeeds",
+		Args: []string{p.segment(), idArg(iid)}, Repeatable: "canceling an auto-merge twice leaves it canceled",
+		Name: "cancel_auto_merge"}, &out)
+	return &out, err
+}
+
+// suggestionBody is PUT /suggestions/:id/apply's request.
+type suggestionBody struct {
+	CommitMessage string `json:"commit_message,omitempty"`
+}
+
+// suggestionsBody is PUT /suggestions/batch_apply's request.
+type suggestionsBody struct {
+	IDs           []int64 `json:"ids"`
+	CommitMessage string  `json:"commit_message,omitempty"`
+}
+
+// suggestionsOnce is why an apply is not sent twice: it commits, and
+// GitLab refuses a second apply of the same suggestion with 400, so a
+// repeat after a lost answer would read as a failure.
+const suggestionsOnce = "an applied suggestion is refused the second time"
+
+// ApplySuggestion commits one suggestion to its merge request's source
+// branch as the account. GitLab answers with the suggestion as it read
+// it before the commit, so applied may still be false.
+func (c *Client) ApplySuggestion(ctx context.Context, id int64, message string) (*gitlab.Suggestion, error) {
+	var out gitlab.Suggestion
+	err := c.Do(ctx, Call{Method: "PUT", Path: "suggestions/{}/apply", Args: []string{idArg(id)},
+		Body: suggestionBody{CommitMessage: message}, Once: suggestionsOnce, Name: "apply_suggestions"}, &out)
+	return &out, err
+}
+
+// ApplySuggestions commits several suggestions of one merge request in
+// one commit. GitLab answers 404 for an id given twice.
+func (c *Client) ApplySuggestions(ctx context.Context, ids []int64, message string) ([]gitlab.Suggestion, error) {
+	var out []gitlab.Suggestion
+	err := c.Do(ctx, Call{Method: "PUT", Path: "suggestions/batch_apply", Body: suggestionsBody{IDs: ids, CommitMessage: message},
+		Once: suggestionsOnce, Name: "apply_suggestions"}, &out)
+	return out, err
+}
+
 // approveBody is POST …/approve's request.
 type approveBody struct {
 	SHA string `json:"sha"`

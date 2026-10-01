@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,7 @@ func TestQuestionsAreInertMarkdown(t *testing.T) {
 	qs := map[string]Question{
 		"merge_merge_request":        AskMerge(x, 1, x, x, x, sha, false, &yes, &yes),
 		"approve_merge_request":      AskApprove(x, 2, x, sha),
+		"apply_suggestions":          AskApplySuggestions(x, 9, x, sha, []AskedSuggestion{{ID: 1, Path: x, FromLine: 2, ToLine: 3, To: x}}),
 		"play_job":                   AskPlayJob(x, 3, x, x, 4, []string{x}, []string{x}),
 		"run_pipeline":               AskRunPipeline(x, x, ProtectedTag, []string{x}, []string{x}),
 		"run_merge_request_pipeline": AskRunMergeRequestPipeline(x, 8, x, x, x, sha, ProtectedBranch, UnknownRef),
@@ -117,7 +119,7 @@ func TestQuestionsAreInertMarkdown(t *testing.T) {
 		"delete_snippet":             AskDeleteSnippet(x, 7, x, []string{x, x}),
 	}
 	// Every hostile value reaches its own span.
-	wantSpans := map[string]int{"merge_merge_request": 4, "approve_merge_request": 2, "play_job": 5, "run_pipeline": 4,
+	wantSpans := map[string]int{"merge_merge_request": 4, "approve_merge_request": 2, "apply_suggestions": 4, "play_job": 5, "run_pipeline": 4,
 		"run_merge_request_pipeline": 4, "create_release": 4, "create_tag": 3, "update_issue": 2, "delete_branch": 2, "delete_tag": 2, "delete_label": 2,
 		"delete_milestone": 2, "delete_wiki_page": 3, "delete_comment": 3, "delete_snippet": 4}
 	for name, q := range qs {
@@ -206,5 +208,27 @@ func TestAskBinds(t *testing.T) {
 	}
 	if AskDeleteLabel("p", "triage", &one).Bind == AskDeleteLabel("p", "renamed", &one).Bind {
 		t.Error("the label's name is not bound")
+	}
+}
+
+// A suggestions question shows five texts, each cut with a count of the
+// rest, counts the others, and binds every text whole.
+func TestAskApplySuggestionsShowsFiveAndBindsAll(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	var sgs []AskedSuggestion
+	for i := range 7 {
+		sgs = append(sgs, AskedSuggestion{ID: int64(i + 1), Path: "f", FromLine: 1, ToLine: 1, To: strings.Repeat("y", 310)})
+	}
+	q := AskApplySuggestions("p", 1, "b", sha, sgs)
+	if n := strings.Count(q.Text, "puts in "); n != 5 {
+		t.Errorf("%d texts shown:\n%s", n, q.Text)
+	}
+	if !strings.Contains(q.Text, "and 2 more suggestions, not shown here") || !strings.Contains(q.Text, "(10 more characters)") {
+		t.Errorf("text:\n%s", q.Text)
+	}
+	changed := slices.Clone(sgs)
+	changed[6].To += "z"
+	if AskApplySuggestions("p", 1, "b", sha, changed).Bind == q.Bind {
+		t.Error("a text the question does not show is not bound")
 	}
 }

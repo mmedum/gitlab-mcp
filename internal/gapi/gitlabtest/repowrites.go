@@ -345,6 +345,14 @@ func (s *Server) createCommit(w http.ResponseWriter, r *http.Request, p *project
 	if base == "" {
 		startBranch(p, branch, start)
 	}
+	c := s.writeCommit(p, branch, msg, user, actions, before, tree)
+	writeJSON(w, http.StatusCreated, c)
+}
+
+// writeCommit moves branch to a new commit by user whose tree is tree,
+// made by actions from before, and moves the open merge requests from
+// that branch, as a push does.
+func (s *Server) writeCommit(p *project, branch, msg, user string, actions []commitAction, before, tree map[string]string) gitlab.Commit {
 	files := pinFileCommits(p, branch)
 	parent := p.commits[branch][0]
 	s.nextCommit++
@@ -355,7 +363,7 @@ func (s *Server) createCommit(w http.ResponseWriter, r *http.Request, p *project
 	c := gitlab.Commit{ID: id, ShortID: id[:8], Title: title, Message: msg, AuthorName: u.Name, AuthorEmail: user + "@example.com",
 		AuthoredDate: now, CommitterName: u.Name, CommitterEmail: user + "@example.com", CommittedDate: now, CreatedAt: now,
 		ParentIDs: []string{parent.ID}, WebURL: p.WebURL + "/-/commit/" + id, Stats: &gitlab.CommitStats{}}
-	var diffs []gitlab.Diff
+	diffs := make([]gitlab.Diff, 0, len(actions))
 	for _, a := range actions {
 		oldPath := a.FilePath
 		if a.Action == "move" {
@@ -390,7 +398,7 @@ func (s *Server) createCommit(w http.ResponseWriter, r *http.Request, p *project
 			s.autoMRPipeline(p, mr, user)
 		}
 	}
-	writeJSON(w, http.StatusCreated, c)
+	return c
 }
 
 // applyAction applies one action to a working tree, or returns GitLab's
