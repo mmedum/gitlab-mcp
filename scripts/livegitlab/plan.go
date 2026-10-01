@@ -362,7 +362,7 @@ func phase2(s scratch) []step {
 		{tool: "resolve_discussion", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue,
 			"discussion_id": "{{issue_new_thread}}", "reopen": true}},
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "body": "A general thread.",
-			"thread": true}},
+			"thread": true}, save: map[string]string{"mr_thread2": "discussion_id"}},
 
 		// A review: drafts, one deleted, then submitted.
 		{tool: "add_review_comment", args: map[string]any{"project": p, "iid": s.MR, "body": "A draft on a range.", "file": s.File,
@@ -375,6 +375,34 @@ func phase2(s scratch) []step {
 			"escape_commands": true}, save: map[string]string{"draft": "note_id"}},
 		{tool: "delete_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{draft}}", "dry_run": true}},
 		{tool: "delete_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{draft}}"}},
+		// One draft edited on its line, then published on its own.
+		{tool: "add_review_comment", args: map[string]any{"project": p, "iid": s.MR, "body": "A draft to edit.", "file": s.File,
+			"line": 3, "side": "new"}, save: map[string]string{"edit_draft": "note_id", "edit_sha": "note_sha256"}},
+		{tool: "update_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}",
+			"note_sha256": "{{edit_sha}}", "body": "A draft the live run edited.", "dry_run": true}},
+		{tool: "update_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}",
+			"note_sha256": strings.Repeat("0", 64), "body": "Stale."}, expectError: true, why: "a witness of another text"},
+		{tool: "update_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}",
+			"note_sha256": "{{edit_sha}}", "body": "Done.\n\n/approve"},
+			expectError: true, why: "a quick-action line in the body, without escape_commands"},
+		{tool: "update_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}",
+			"note_sha256": "{{edit_sha}}", "body": "A draft the live run edited, still on its line.\n\n/approve stays text.",
+			"escape_commands": true}},
+		// Still on its line, with the new text and its new note_sha256.
+		{tool: "list_review_comments", args: map[string]any{"project": p, "iid": s.MR}},
+		{tool: "publish_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}", "dry_run": true}},
+		{tool: "publish_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}"}},
+		{tool: "publish_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{edit_draft}}"},
+			expectError: true, why: "a draft already published is gone"},
+		// GitLab keeps one draft reply per person per thread, and mr_thread
+		// has one.
+		{tool: "add_review_comment", args: map[string]any{"project": p, "iid": s.MR, "body": "A second draft reply.",
+			"discussion_id": "{{mr_thread}}"}, expectError: true, why: "a second draft reply in one thread"},
+		// A reply that does not resolve its thread reopens it when published.
+		{tool: "add_review_comment", args: map[string]any{"project": p, "iid": s.MR, "body": "A draft reply that reopens.",
+			"discussion_id": "{{mr_thread2}}"}, save: map[string]string{"reply_draft": "note_id"}},
+		{tool: "resolve_discussion", args: map[string]any{"project": p, "iid": s.MR, "discussion_id": "{{mr_thread2}}"}},
+		{tool: "publish_review_comment", args: map[string]any{"project": p, "iid": s.MR, "draft_id": "{{reply_draft}}"}},
 		{tool: "submit_review", args: map[string]any{"project": p, "iid": s.MR, "reviewer_state": "approved"},
 			expectError: true, why: "an approving review without GITLAB_MCP_ENABLE_SHIP"},
 		{tool: "submit_review", args: map[string]any{"project": p, "iid": s.MR, "summary": "Summary.", "dry_run": true}},
@@ -1047,7 +1075,7 @@ func init() {
 		"get_mr_diff", "list_mr_commits", "list_mr_versions", "compare_mr_versions", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "get_test_report",
 		"lint_ci", "list_item_events", "list_boards", "list_todos", "add_todo", "subscribe", "react", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
-		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",
+		"delete_review_comment", "update_review_comment", "publish_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",
 		"create_commit",
 		"merge_merge_request", "cancel_auto_merge", "approve_merge_request", "unapprove_merge_request", "apply_suggestions",
 		"run_pipeline", "run_merge_request_pipeline",

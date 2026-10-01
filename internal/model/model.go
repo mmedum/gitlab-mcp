@@ -687,6 +687,7 @@ type DraftNote struct {
 	DiscussionID      string        `json:"discussion_id" jsonschema:"The thread this draft replies to; empty for a new thread"`
 	ResolveDiscussion bool          `json:"resolve_discussion" jsonschema:"Publishing it resolves the thread it replies to"`
 	Position          *DiffPosition `json:"position" jsonschema:"Where an inline draft sits; null for a general one"`
+	NoteSHA256        string        `json:"note_sha256" jsonschema:"The SHA-256 of the draft's whole text as GitLab holds it; pass it to update_review_comment"`
 	UntrustedBody     string        `json:"untrusted_body"`
 	Budget            Budget        `json:"body_budget"`
 }
@@ -1281,6 +1282,7 @@ type CommentWrite struct {
 	LineRange    *LineSpan     `json:"line_range" jsonschema:"The lines a multi-line comment covers; null for one line"`
 	LineCode     string        `json:"line_code" jsonschema:"For a draft on a line, GitLab's code for that line, which its web view places the draft by; empty otherwise"`
 	UpdatedAt    *time.Time    `json:"updated_at" jsonschema:"Pass as updated_at to update_comment; null for a dry run and a draft"`
+	NoteSHA256   string        `json:"note_sha256" jsonschema:"For a draft, the SHA-256 of its text as GitLab stored it; pass it to update_review_comment. Empty otherwise"`
 }
 
 // CommentUpdate is update_comment's result.
@@ -1335,6 +1337,39 @@ type DraftDelete struct {
 	Write
 	DraftID   int64 `json:"draft_id"`
 	Remaining int   `json:"remaining" jsonschema:"Your drafts still on the merge request, read after the delete"`
+}
+
+// DraftUpdate is update_review_comment's result.
+type DraftUpdate struct {
+	Outcome string `json:"outcome" jsonschema:"updated, unchanged or dry_run"`
+	Write
+	IID          int64         `json:"iid"`
+	DraftID      int64         `json:"draft_id"`
+	DiscussionID string        `json:"discussion_id" jsonschema:"The thread the draft replies to; empty for one that starts a thread"`
+	Position     *DiffPosition `json:"position" jsonschema:"Where on the diff the draft sits, as read back; null for one not on a line"`
+	LineRange    *LineSpan     `json:"line_range" jsonschema:"The lines a multi-line draft covers; null for one line"`
+	NoteSHA256   string        `json:"note_sha256" jsonschema:"The SHA-256 of the draft's text as GitLab holds it now; pass it to the next update_review_comment"`
+	// BodyRemoved is set when the text was replaced.
+	BodyRemoved *Removed `json:"body_removed" jsonschema:"What replacing the text took out; null when it was not replaced"`
+}
+
+// DraftPublish is publish_review_comment's result.
+type DraftPublish struct {
+	Outcome string `json:"outcome" jsonschema:"published; lost when GitLab deleted the draft without saving a comment; or dry_run"`
+	Write
+	IID     int64 `json:"iid"`
+	DraftID int64 `json:"draft_id"`
+	// Kind is thread or reply.
+	Kind         string        `json:"kind" jsonschema:"thread (it starts one) or reply (it joins one)"`
+	NoteID       int64         `json:"note_id" jsonschema:"The published comment's id, found by reading the threads afterwards; 0 when lost or a dry run"`
+	DiscussionID string        `json:"discussion_id" jsonschema:"The thread the comment is in; for a new thread, empty when lost or a dry run"`
+	Position     *DiffPosition `json:"position" jsonschema:"Where on the diff the comment sits, as read back, or the draft's place on a dry run; null for one not on a line"`
+	LineRange    *LineSpan     `json:"line_range" jsonschema:"The lines a multi-line comment covers; null for one line"`
+	// ThreadResolved is the thread's state read after publishing.
+	ThreadResolved *bool      `json:"thread_resolved" jsonschema:"Whether the thread is resolved after publishing, as read back; null when lost or a dry run"`
+	UpdatedAt      *time.Time `json:"updated_at" jsonschema:"The comment's updated_at; pass it to update_comment. Null when lost or a dry run"`
+	// UntrustedBody is the draft's text, given back only when it was lost.
+	UntrustedBody string `json:"untrusted_body" jsonschema:"The draft's text, only when it was lost, so it can be added again; empty otherwise"`
 }
 
 // ReviewSubmit is submit_review's result.

@@ -138,6 +138,12 @@ func (s *Server) serveMRReview(w http.ResponseWriter, r *http.Request, p *projec
 		writePage(s, w, r, p.mrVersions[mr.IID])
 	case match(rest, "reviewers"):
 		writePage(s, w, r, s.reviewers(p, mr))
+	case match(rest, "draft_notes", "*"):
+		if i := s.ownDraft(p, mr, user, rest[1]); i >= 0 {
+			writeJSON(w, http.StatusOK, p.drafts[mr.IID][i])
+		} else {
+			message(w, http.StatusNotFound, "404 Not found")
+		}
 	case match(rest, "draft_notes"):
 		// Drafts are their author's alone.
 		var mine []gitlab.DraftNote

@@ -58,6 +58,7 @@ var plainInputs = map[string]string{
 		"only issue and merge request descriptions and notes are interpreted",
 	"sha":            "a commit SHA, compared with the head GitLab reports and sent as the witness; GitLab takes it as a ref, not Markdown",
 	"content_sha256": "the wiki witness, compared with a hash of a fresh read and never sent",
+	"note_sha256":    "the draft witness, compared with a hash of a fresh read and never sent",
 	"slug":           "addresses a wiki page in the request path; never sent as text",
 	"format":         "a closed value, markdown, rdoc, asciidoc or org, which GitLab takes as the page's markup and does not interpret",
 	"apply_suggestions.commit_message": "a commit message Suggestions::ApplyService hands to Files::MultiService, which writes it " +

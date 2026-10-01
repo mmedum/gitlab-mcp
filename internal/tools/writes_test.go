@@ -11,6 +11,7 @@ import (
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/config"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
 )
 
 // The write tools against the in-memory instance: what each sends, what
@@ -110,6 +111,8 @@ func TestDryRunsSendNothing(t *testing.T) {
 		{"add_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "body": "x", "file": "README.md", "line": 3, "side": "new"}},
 		{"add_review_comment", map[string]any{"project": alpha, "iid": 1, "body": "x"}},
 		{"submit_review", map[string]any{"project": alpha, "iid": 1, "summary": "x"}},
+		{"update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft, "body": "x", "note_sha256": hash(lineText)}},
+		{"publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft}},
 		{"create_merge_request", map[string]any{"project": alpha, "source_branch": "release/1.0", "title": "x"}},
 		{"update_merge_request", map[string]any{"project": alpha, "iid": 1, "updated_at": mrWitness(h, 1), "draft": true}},
 		{"create_branch", map[string]any{"project": alpha, "branch": "dry"}},
@@ -684,12 +687,13 @@ func TestACommentClearsYourTodo(t *testing.T) {
 	}
 }
 
-// Subscribing, adding a to-do and marking to-dos done are writes only the
-// account sees.
+// Subscribing, adding a to-do, marking to-dos done and editing a draft
+// are writes only the account sees.
 func TestOwnOnlyWritesAreNotOpenWorld(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	tools := listed(t, h)
-	for name, idempotent := range map[string]bool{"subscribe": true, "add_todo": false, "mark_todos_done": true} {
+	for name, idempotent := range map[string]bool{"subscribe": true, "add_todo": false, "mark_todos_done": true,
+		"update_review_comment": true} {
 		a := tools[name].Annotations
 		if a.OpenWorldHint == nil || *a.OpenWorldHint || a.IdempotentHint != idempotent {
 			t.Errorf("%s annotations = %+v", name, a)
@@ -814,6 +818,9 @@ func TestTheWriteAllowList(t *testing.T) {
 	h.fails("add_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "body": "x"}, "blocked")
 	h.fails("update_comment", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": 1, "body": "x",
 		"updated_at": "2026-01-01T00:00:00Z"}, "blocked")
+	h.fails("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft, "body": "x",
+		"note_sha256": hash(lineText)}, "blocked")
+	h.fails("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft}, "blocked")
 	if writesSent(h) != sent {
 		t.Fatal("a write outside the allow-list was sent")
 	}
@@ -1118,6 +1125,470 @@ func TestUpdateCommentReadsTheEditBack(t *testing.T) {
 			text, out := h.ok("update_comment", args)
 			if get(out, "outcome") != "updated" || !strings.Contains(text, "differences from what was sent") {
 				t.Errorf("result = %v\n%s", out, text)
+			}
+		})
+	}
+}
+
+// ------------------------------------------------- one draft at a time
+
+// The fixture's drafts on merge request 1: one on src/login.go new line
+// 3, and a reply that resolves the merge request's thread.
+const (
+	lineDraft  = 80001
+	replyDraft = 80002
+	lineText   = "Consider naming this loginUser."
+	replyText  = "Agreed; resolving."
+)
+
+// draftPuts counts the edits and publishes of drafts the instance received.
+func draftPuts(h *harness, suffix string) int {
+	n := 0
+	for _, r := range h.gl.Requests() {
+		if r.Method == http.MethodPut && strings.Contains(r.EscapedPath, "/draft_notes/") && strings.HasSuffix(r.EscapedPath, suffix) {
+			n++
+		}
+	}
+	return n
+}
+
+func draftOf(h *harness, iid, id int64) (gitlab.DraftNote, bool) {
+	for _, d := range h.gl.Drafts(alpha, iid) {
+		if d.ID == id {
+			return d, true
+		}
+	}
+	return gitlab.DraftNote{}, false
+}
+
+func TestUpdateReviewComment(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	args := func(id int, witness, body string) map[string]any {
+		return map[string]any{"project": alpha, "iid": 1, "draft_id": id, "note_sha256": witness, "body": body}
+	}
+	before := writesSent(h)
+	h.fails("update_review_comment", args(lineDraft, hash(lineText), "  "), "invalid")
+	h.fails("update_review_comment", args(lineDraft, "", "x"), "invalid")
+	h.fails("update_review_comment", args(lineDraft, hash("an older text"), "x"), "stale")
+	h.fails("update_review_comment", args(lineDraft, hash(lineText), "Fine.\n/approve"), "blocked")
+	_, out := h.ok("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft,
+		"note_sha256": hash(lineText), "body": "Rename it.", "dry_run": true})
+	if get(out, "outcome") != "dry_run" || fmt.Sprint(get(out, "would_send", "fields")) != "[note position]" ||
+		get(out, "position", "new_line") != float64(3) {
+		t.Errorf("dry run = %v", out)
+	}
+	if writesSent(h) != before {
+		t.Fatal("a refusal or a dry run wrote")
+	}
+
+	text, out := h.ok("update_review_comment", args(lineDraft, hash(lineText), "Rename it to loginUser.\nOr keep it."))
+	if get(out, "outcome") != "updated" || get(out, "note_sha256") != hash("Rename it to loginUser.\nOr keep it.") ||
+		get(out, "body_removed", "lines") != float64(1) || get(out, "position", "new_line") != float64(3) {
+		t.Errorf("update = %v", out)
+	}
+	if !strings.Contains(text, "Updated draft 80001 on !1.") || !strings.Contains(text, "pass it to update_review_comment") {
+		t.Errorf("text:\n%s", text)
+	}
+	// GitLab clears a position the edit leaves out; the draft keeps its line.
+	d, _ := draftOf(h, 1, lineDraft)
+	if d.Note != "Rename it to loginUser.\nOr keep it." || d.Position == nil || d.Position.NewLine == nil || *d.Position.NewLine != 3 ||
+		d.Position.NewPath != "src/login.go" {
+		t.Errorf("stored draft = %+v, position %+v", d, d.Position)
+	}
+	_, list := h.ok("list_review_comments", map[string]any{"project": alpha, "iid": 1})
+	for _, row := range get(list, "drafts").([]any) {
+		if get(row, "id") == float64(lineDraft) && get(row, "note_sha256") != get(out, "note_sha256") {
+			t.Errorf("list_review_comments gives %v, the edit %v", get(row, "note_sha256"), get(out, "note_sha256"))
+		}
+	}
+
+	// The old witness is stale now; the same text again sends nothing and
+	// reads as done, with either witness.
+	h.fails("update_review_comment", args(lineDraft, hash(lineText), "Again."), "stale")
+	sent := writesSent(h)
+	for _, w := range []string{hash(lineText), get(out, "note_sha256").(string)} {
+		_, again := h.ok("update_review_comment", args(lineDraft, w, "Rename it to loginUser.\nOr keep it."))
+		if get(again, "outcome") != "unchanged" || writesSent(h) != sent {
+			t.Errorf("same text with %s = %v", w, again)
+		}
+	}
+
+	// A reply stays in its thread, and a general draft gets no position.
+	_, out = h.ok("update_review_comment", args(replyDraft, hash(replyText), "Agreed."))
+	if get(out, "outcome") != "updated" || get(out, "discussion_id") == "" || get(out, "position") != nil {
+		t.Errorf("reply = %v", out)
+	}
+	if d, _ := draftOf(h, 1, replyDraft); d.DiscussionID == nil || d.Note != "Agreed." {
+		t.Errorf("stored reply = %+v", d)
+	}
+}
+
+// add_review_comment returns the witness update_review_comment needs.
+func TestAddReviewCommentGivesTheWitnessForAnEdit(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, added := h.ok("add_review_comment", map[string]any{"project": alpha, "iid": 1, "body": "Tpyo."})
+	if get(added, "note_sha256") != hash("Tpyo.") || !strings.Contains(text, "pass it to update_review_comment") {
+		t.Errorf("add = %v\n%s", added, text)
+	}
+	_, out := h.ok("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": get(added, "note_id"),
+		"note_sha256": get(added, "note_sha256"), "body": "Typo."})
+	if get(out, "outcome") != "updated" {
+		t.Errorf("update = %v", out)
+	}
+}
+
+func TestUpdateReviewCommentEscapesAQuickAction(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, out := h.ok("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft,
+		"note_sha256": hash(lineText), "body": "Fine.\n/approve", "escape_commands": true})
+	if get(out, "outcome") != "updated" || get(out, "escaped_commands", 0, "command") != "approve" {
+		t.Errorf("escaped = %v", out)
+	}
+	if d, _ := draftOf(h, 1, lineDraft); d.Note != "Fine.\n\\/approve" {
+		t.Errorf("stored %q", d.Note)
+	}
+}
+
+// Drafts are their author's alone: another person's is refused as one
+// that is not there, saying so, and nothing is sent.
+func TestReviewCommentsAreYourOwnDrafts(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	bob := newHarness(t, harnessOptions{over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("bob", "api") }})
+	_, out := bob.ok("add_review_comment", map[string]any{"project": alpha, "iid": 1, "body": "Bob's thought."})
+	id := get(out, "note_id")
+	sent := draftPuts(h, "")
+	text := h.fails("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": id,
+		"note_sha256": hash("Bob's thought."), "body": "Mine now."}, "not_found")
+	if !strings.Contains(text, "only your own drafts") {
+		t.Errorf("update: %s", text)
+	}
+	text = h.fails("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": id}, "not_found")
+	if !strings.Contains(text, "only your own drafts") {
+		t.Errorf("publish: %s", text)
+	}
+	if draftPuts(h, "") != sent {
+		t.Error("a write was sent for another person's draft")
+	}
+	if d, ok := draftOf(h, 1, int64(id.(float64))); !ok || d.Note != "Bob's thought." {
+		t.Errorf("bob's draft = %+v, %v", d, ok)
+	}
+}
+
+// GitLab answers 500 when it will not save a draft; the server reads the
+// draft and says what to fix.
+func TestUpdateReviewCommentGitLabWillNotSave(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPut, Path: fmt.Sprintf("/projects/2001/merge_requests/1/draft_notes/%d", lineDraft),
+		Status: http.StatusInternalServerError, Body: `{"message":"500 Internal Server Error"}`})
+	text := h.fails("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft,
+		"note_sha256": hash(lineText), "body": "Rename it."}, "invalid")
+	if !strings.Contains(text, "still reads as before") {
+		t.Errorf("refusal: %s", text)
+	}
+	// GitLab's 500 here comes again on every try, so it is not repeated.
+	if n := draftPuts(h, ""); n != 1 {
+		t.Errorf("the edit was sent %d times", n)
+	}
+	// A 500 whose edit landed after all reads as the edit.
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPut, Path: fmt.Sprintf("/projects/2001/merge_requests/1/draft_notes/%d", lineDraft),
+		AfterApply: true, Status: http.StatusInternalServerError, Body: `{"message":"500 Internal Server Error"}`})
+	_, out := h.ok("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft,
+		"note_sha256": hash(lineText), "body": "Rename it."})
+	if get(out, "outcome") != "updated" || get(out, "note_sha256") != hash("Rename it.") {
+		t.Errorf("landed = %v", out)
+	}
+}
+
+// An answer that took the text but dropped the draft's line is not an
+// edit that kept its place.
+func TestUpdateReviewCommentReadsThePositionBack(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPut, Path: fmt.Sprintf("/projects/2001/merge_requests/1/draft_notes/%d", lineDraft),
+		Status: http.StatusOK, Body: fmt.Sprintf(`{"id":%d,"note":"Rename it.","position":{}}`, lineDraft)})
+	text := h.fails("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft,
+		"note_sha256": hash(lineText), "body": "Rename it."}, "unexpected")
+	if !strings.Contains(text, "lost its place") {
+		t.Errorf("refusal: %s", text)
+	}
+}
+
+func TestPublishReviewComment(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	_, out := h.ok("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft, "dry_run": true})
+	if get(out, "outcome") != "dry_run" || get(out, "kind") != "thread" || get(out, "position", "new_line") != float64(3) ||
+		draftPuts(h, "/publish") != 0 {
+		t.Errorf("dry run = %v", out)
+	}
+	text, out := h.ok("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft})
+	if get(out, "outcome") != "published" || get(out, "kind") != "thread" || get(out, "position", "new_line") != float64(3) ||
+		get(out, "thread_resolved") != false || get(out, "updated_at") == nil {
+		t.Errorf("publish = %v", out)
+	}
+	if !strings.HasPrefix(text, "Published draft 80001 as comment ") {
+		t.Errorf("text:\n%s", text)
+	}
+	thread, note := noteIn(h, "merge_request", 1, get(out, "note_id").(float64))
+	if get(note, "untrusted_body") != lineText || get(thread, "id") != get(out, "discussion_id") {
+		t.Errorf("published note %v in %v", note, get(thread, "id"))
+	}
+	if _, ok := draftOf(h, 1, lineDraft); ok {
+		t.Error("the draft is still there")
+	}
+	if _, ok := draftOf(h, 1, replyDraft); !ok {
+		t.Error("the other draft was published too")
+	}
+	// The comment it became takes update_comment with the updated_at given.
+	_, edit := h.ok("update_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "note_id": get(out, "note_id"),
+		"updated_at": get(out, "updated_at"), "body": "Consider loginUser."})
+	if get(edit, "outcome") != "updated" {
+		t.Errorf("edit = %v", edit)
+	}
+}
+
+// A reply drafted to resolve its thread resolves it; one that was not
+// reopens it, as GitLab does, and both the dry run and the result say so.
+func TestPublishingAReplySetsItsThread(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	threadID := h.gl.Discussions(alpha, "mr", 1)[0].ID
+	_, out := h.ok("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft})
+	if get(out, "outcome") != "published" || get(out, "kind") != "reply" || get(out, "discussion_id") != threadID ||
+		get(out, "thread_resolved") != true {
+		t.Errorf("resolving reply = %v", out)
+	}
+	if n := h.gl.Discussions(alpha, "mr", 1)[0].Notes; n[len(n)-1].Body != replyText || !n[0].Resolved {
+		t.Errorf("thread after = %+v", n)
+	}
+
+	_, draft := h.ok("add_review_comment", map[string]any{"project": alpha, "iid": 1, "body": "One more thing.", "discussion_id": threadID})
+	args := map[string]any{"project": alpha, "iid": 1, "draft_id": get(draft, "note_id")}
+	text, _ := h.ok("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": get(draft, "note_id"), "dry_run": true})
+	if !strings.Contains(text, "publishing this reply reopens it") {
+		t.Errorf("dry run:\n%s", text)
+	}
+	text, out = h.ok("publish_review_comment", args)
+	if get(out, "thread_resolved") != false || !strings.Contains(text, "reopened the thread") {
+		t.Errorf("reopening reply = %v\n%s", out, text)
+	}
+	if n := h.gl.Discussions(alpha, "mr", 1)[0].Notes; n[0].Resolved {
+		t.Error("the thread is still resolved")
+	}
+}
+
+// A draft written elsewhere may hold a quick action, which GitLab would
+// run on publishing: it is refused, and nothing is sent.
+func TestPublishingADraftWithAQuickActionIsRefused(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.EditDraft(alpha, 1, lineDraft, "Looks good.\n/approve")
+	text := h.fails("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft}, "blocked")
+	if !strings.Contains(text, "line 2 /approve") || !strings.Contains(text, "escape_commands") {
+		t.Errorf("refusal: %s", text)
+	}
+	if draftPuts(h, "/publish") != 0 {
+		t.Error("the publish was sent")
+	}
+}
+
+// GitLab saves the comment and then deletes the draft, with no
+// transaction between: a draft still there does not rule the comment
+// out, and a search that cannot be finished leaves it unknown.
+func TestALostPublishWithTheDraftKept(t *testing.T) {
+	publish := fmt.Sprintf("/projects/2001/merge_requests/1/draft_notes/%d/publish", replyDraft)
+	h := newHarness(t, harnessOptions{})
+	threadID := h.gl.Discussions(alpha, "mr", 1)[0].ID
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPut, Path: publish, Status: http.StatusBadGateway, Body: `{"message":"failed"}`,
+		Before: func() { h.gl.Reply(alpha, 1, threadID, gitlabtest.DefaultUser, replyText) }})
+	text := h.fails("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft}, "ambiguous_outcome")
+	if !strings.Contains(text, "a read shows it was published: comment ") {
+		t.Errorf("verdict: %s", text)
+	}
+
+	h = newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPut, Path: publish, Status: http.StatusBadGateway, Body: `{"message":"failed"}`})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: "/projects/2001/merge_requests/1/discussions/", Skip: 1, Times: 10,
+		Status: http.StatusInternalServerError, Body: `{"message":"failed"}`})
+	text = h.fails("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft}, "ambiguous_outcome")
+	if !strings.Contains(text, "so it is unknown") {
+		t.Errorf("verdict: %s", text)
+	}
+}
+
+// The comment a draft became is newer than every note read before the
+// publish: an identical reply already in the thread is not it.
+func TestAnOlderSameReplyIsNotThePublishedOne(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	threadID := h.gl.Discussions(alpha, "mr", 1)[0].ID
+	h.gl.Reply(alpha, 1, threadID, gitlabtest.DefaultUser, replyText)
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPut, Path: fmt.Sprintf("/projects/2001/merge_requests/1/draft_notes/%d/publish", replyDraft),
+		Status: http.StatusNoContent, Before: func() { h.gl.DropDraft(alpha, 1, replyDraft) }})
+	_, out := h.ok("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft})
+	if get(out, "outcome") != "lost" {
+		t.Errorf("publish = %v", out)
+	}
+}
+
+// GitLab drops every carriage return from a published comment; the read
+// back compares the texts as it does.
+func TestAPublishedDraftIsFoundWithoutItsCarriageReturns(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.EditDraft(alpha, 1, lineDraft, "Line one.\rLine two.")
+	_, out := h.ok("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft})
+	if get(out, "outcome") != "published" {
+		t.Errorf("publish = %v", out)
+	}
+}
+
+// A reply drafted to resolve a resolved thread may still reopen it, when
+// the account may not resolve it, and the dry run says so.
+func TestAResolvingReplyMayReopen(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	threadID := h.gl.Discussions(alpha, "mr", 1)[0].ID
+	h.ok("resolve_discussion", map[string]any{"project": alpha, "iid": 1, "discussion_id": threadID})
+	text, _ := h.ok("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft, "dry_run": true})
+	if !strings.Contains(text, "may reopen it") {
+		t.Errorf("dry run:\n%s", text)
+	}
+}
+
+// A merge request that is not there is named as such, not as a draft
+// that is not yours.
+func TestADraftOnAMissingMergeRequest(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"update_review_comment", map[string]any{"project": alpha, "iid": 999, "draft_id": lineDraft, "note_sha256": hash(lineText), "body": "x"}},
+		{"publish_review_comment", map[string]any{"project": alpha, "iid": 999, "draft_id": lineDraft}},
+	} {
+		text := h.fails(c.tool, c.args, "not_found")
+		if strings.Contains(text, "only your own drafts") || !strings.Contains(text, "merge request") {
+			t.Errorf("%s: %s", c.tool, text)
+		}
+	}
+}
+
+// A draft not on the diff by diffPosition's rule, commits named but no
+// path, is sent no position, and its edit is not taken for one that
+// lost its place.
+func TestADraftWithNoPathKeepsNoPosition(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	mr, _ := h.gl.MergeRequest(alpha, 1)
+	h.gl.SetDraftPosition(alpha, 1, replyDraft, &gitlab.Position{BaseSHA: mr.DiffRefs.BaseSHA, StartSHA: mr.DiffRefs.StartSHA,
+		HeadSHA: mr.DiffRefs.HeadSHA, PositionType: "text"})
+	_, out := h.ok("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft,
+		"note_sha256": hash(replyText), "body": "Agreed.", "dry_run": true})
+	if fmt.Sprint(get(out, "would_send", "fields")) != "[note]" {
+		t.Errorf("dry run = %v", out)
+	}
+	_, out = h.ok("update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft,
+		"note_sha256": hash(replyText), "body": "Agreed."})
+	if get(out, "outcome") != "updated" {
+		t.Errorf("update = %v", out)
+	}
+}
+
+// submit_review publishes drafts written elsewhere too, and GitLab runs
+// their quick actions then: a review with one is refused, naming them.
+func TestSubmitReviewRefusesDraftsWithQuickActions(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.gl.EditDraft(alpha, 1, lineDraft, "Fine.\n/merge")
+	h.gl.EditDraft(alpha, 1, replyDraft, "/approve")
+	for _, dry := range []bool{true, false} {
+		text := h.fails("submit_review", map[string]any{"project": alpha, "iid": 1, "summary": "x", "dry_run": dry}, "blocked")
+		if !strings.Contains(text, "draft 80001: ") || !strings.Contains(text, "line 2 /merge") || !strings.Contains(text, "Drafts 80002") ||
+			!strings.Contains(text, "update_review_comment") {
+			t.Errorf("refusal: %s", text)
+		}
+	}
+	if len(h.gl.Drafts(alpha, 1)) != 2 || writesSent(h) != 0 {
+		t.Error("the review was published")
+	}
+}
+
+// GitLab keeps one draft reply per person per thread: a second is
+// refused before anything is sent, naming the one there, and GitLab's own
+// refusal, for one that arrived after the read, says the same.
+func TestOneDraftReplyPerThread(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	threadID := h.gl.Discussions(alpha, "mr", 1)[0].ID
+	args := map[string]any{"project": alpha, "iid": 1, "body": "Another thought.", "discussion_id": threadID}
+	sent := writesSent(h)
+	for _, dry := range []bool{true, false} {
+		args["dry_run"] = dry
+		text := h.fails("add_review_comment", args, "conflict")
+		if !strings.Contains(text, "draft 80002 replying") || !strings.Contains(text, "update_review_comment") {
+			t.Errorf("refusal: %s", text)
+		}
+	}
+	if writesSent(h) != sent {
+		t.Error("the draft was sent")
+	}
+
+	delete(args, "dry_run")
+	h.ok("delete_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/merge_requests/1/draft_notes", Pass: true, Before: func() {
+		h.gl.AddDraft(alpha, 1, gitlabtest.DefaultUser, gitlab.DraftNote{Note: "Written in the web view.", DiscussionID: &threadID})
+	}})
+	text := h.fails("add_review_comment", args, "conflict")
+	if !strings.Contains(text, "a draft reply in this thread") {
+		t.Errorf("refusal: %s", text)
+	}
+}
+
+// GitLab deletes a draft whose comment does not save and answers 204 all
+// the same: the read afterwards finds no comment, and the text comes back.
+func TestALostDraftIsReportedLost(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	threads := len(h.gl.Discussions(alpha, "mr", 1))
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPut, Path: fmt.Sprintf("/projects/2001/merge_requests/1/draft_notes/%d/publish", lineDraft),
+		Status: http.StatusNoContent, Before: func() { h.gl.DropDraft(alpha, 1, lineDraft) }})
+	text, out := h.ok("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft})
+	if get(out, "outcome") != "lost" || get(out, "note_id") != float64(0) || get(out, "untrusted_body") != lineText ||
+		get(out, "position") != nil {
+		t.Errorf("lost = %v", out)
+	}
+	if !strings.HasPrefix(text, "Draft 80001 was lost") || !strings.Contains(text, "<<<UNTRUSTED") {
+		t.Errorf("text:\n%s", text)
+	}
+	if len(h.gl.Discussions(alpha, "mr", 1)) != threads {
+		t.Error("a comment was made")
+	}
+}
+
+// A publish GitLab did not confirm is never sent again; a read settles it.
+func TestALostPublishIsSettledByReading(t *testing.T) {
+	path := func(id int) string { return fmt.Sprintf("/projects/2001/merge_requests/1/draft_notes/%d/publish", id) }
+	for _, c := range []struct {
+		name   string
+		fault  gitlabtest.Fault
+		before func(h *harness)
+		want   string
+	}{
+		{"landed", gitlabtest.Fault{AfterApply: true, Status: http.StatusBadGateway}, nil, "a read shows it was published: comment "},
+		{"not landed", gitlabtest.Fault{Status: http.StatusBadGateway}, nil, "still unpublished and no comment came of it. Nothing was repeated"},
+		{"refused with a 500", gitlabtest.Fault{Status: http.StatusInternalServerError}, nil, "status 500; draft 80001 is still unpublished"},
+		// A comment of the same text that is not a new thread on the
+		// draft's line is not the draft's.
+		{"gone, the same text elsewhere", gitlabtest.Fault{Status: http.StatusBadGateway}, func(h *harness) {
+			h.gl.Comment(alpha, "mr", 1, gitlabtest.DefaultUser, lineText)
+			h.gl.DropDraft(alpha, 1, lineDraft)
+		}, "is gone with no comment"},
+		{"gone", gitlabtest.Fault{Status: http.StatusBadGateway}, func(h *harness) { h.gl.DropDraft(alpha, 1, lineDraft) }, "is gone with no comment"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, harnessOptions{})
+			f := c.fault
+			f.Method, f.Path, f.Body = http.MethodPut, path(lineDraft), `{"message":"failed"}`
+			if c.before != nil {
+				f.Before = func() { c.before(h) }
+			}
+			h.gl.Inject(f)
+			text := h.fails("publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft}, "ambiguous_outcome")
+			if !strings.Contains(text, c.want) {
+				t.Errorf("verdict: %s", text)
+			}
+			if n := draftPuts(h, "/publish"); n != 1 {
+				t.Errorf("the publish was sent %d times", n)
 			}
 		})
 	}

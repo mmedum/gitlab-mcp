@@ -23,10 +23,17 @@ lifted verbatim.
 - `get_merge_request` shows each reviewer's review state, such as `reviewed` or `requested_changes`: the first 100, and says when GitLab has more.
 - `apply_suggestions` (Ship) commits suggestions from a merge request's diff comments to its source branch in one commit, refuses a default or protected source branch and text with hidden or bidirectional characters, asks you with each suggestion's text, is never repeated after a lost answer, and reads back the branch's new head; `list_discussions` names each diff comment's suggestions with their ids and exact text.
 - `cancel_auto_merge` (Ship) stops a merge request merging when its pipeline succeeds, sends nothing when no auto-merge is set, says when GitLab was already merging it or merged it, and reads whether it canceled from GitLab's answer body, since the status is 201 either way.
+- `update_review_comment` replaces the text of one of your own draft review comments, keeping its thread and its line, with the `note_sha256` witness that `list_review_comments` and `add_review_comment` now give.
+- `publish_review_comment` publishes one of your own drafts on its own and reports the comment it became, read from the threads afterwards, or says the draft was lost when GitLab deleted it without saving a comment; it is never repeated after a lost answer.
 
 ### Changed
 
 - Commit lists (`list_commits`, `list_mr_commits`, `compare_refs`), `get_commit` and `get_blame` show git author and committer names inside the untrusted-content markers, as titles and messages are, and a straight `compare_refs` is named `from..to`.
+
+### Fixed
+
+- `add_review_comment` refuses a second draft reply in a thread as `[conflict]`, naming your draft there, since GitLab keeps one per person per thread; it was `[invalid]` with GitLab's validation message.
+- `submit_review` refuses a review whose drafts hold a quick-action line, which GitLab would run on publishing; a draft written in GitLab's web view could hold one.
 
 ## [2.1.0] - 2026-10-01
 

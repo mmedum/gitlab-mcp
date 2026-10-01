@@ -81,6 +81,9 @@ PUT /projects/{id}/merge_requests/{noteable_id}/discussions/{discussion_id}	used
 POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	used	1	Client.CreateDraftNote: add_review_comment
 DELETE /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.DeleteDraftNote: delete_review_comment, own drafts only
 POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/bulk_publish	used	1	Client.PublishDraftNotes: submit_review; an approving review needs the Ship flag (§4.3)
+GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.GetDraftNote: update_review_comment and publish_review_comment read the draft first; 404 for one not the account's own
+PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.UpdateDraftNote: update_review_comment, own drafts only, the position sent back (§18 row 111)
+PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}/publish	used	1	Client.PublishDraftNote: publish_review_comment, own drafts only, sent once and read back (§18 row 111)
 POST /projects/{id}/merge_requests	used	1	Client.CreateMergeRequest: create_merge_request
 PUT /projects/{id}/merge_requests/{merge_request_iid}	used	1	Client.UpdateMergeRequest: update_merge_request, after the updated_at witness is checked (§4.6)
 POST /projects/{id}/repository/branches	used	1	Client.CreateBranch: create_branch
@@ -312,9 +315,6 @@ POST /projects/{id}/merge_requests/{merge_request_iid}/reset_spent_time	used	1	C
 POST /projects/{id}/merge_requests/{merge_request_iid}/reset_time_estimate	used	1	Client.ResetMergeRequestTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
 POST /projects/{id}/merge_requests/{merge_request_iid}/time_estimate	used	1	Client.SetMergeRequestTimeEstimate: track_time, after the updated_at witness is checked (§4.6)
 GET /projects/{id}/merge_requests/{merge_request_iid}/time_stats	written-off	1	get_merge_request carries the same four fields as time_stats, and track_time reads them there with the updated_at it needs
-GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	deferred	1	one draft; list_review_comments reads them all
-PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	deferred	1	editing a draft; delete and add again (§17a)
-PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}/publish	deferred	1	publishing one draft; submit_review publishes them together
 POST /projects/{id}/merge_requests/{subscribable_id}/subscribe	used	1	Client.SubscribeMergeRequest: subscribe; GitLab asks for the rights to update the merge request, 403 otherwise (§18 row 102)
 POST /projects/{id}/merge_requests/{subscribable_id}/unsubscribe	used	1	Client.UnsubscribeMergeRequest: subscribe with unsubscribe, the same rights (§18 row 102)
 GET /projects/{id}/merge_requests/{eventable_id}/resource_label_events	used	1	Client.ListMergeRequestLabelEvents: list_item_events, a merge request's label changes

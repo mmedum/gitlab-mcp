@@ -1438,3 +1438,37 @@ func TestSuggestionOnAForkNeedsCollaboration(t *testing.T) {
 		t.Errorf("commit %q by %s", head.Message, head.AuthorName)
 	}
 }
+
+// A draft's edit is update!(note:, position:): the position is stored as
+// sent, not checked against the diff, and left out it is cleared; the
+// note's limit is in bytes, and over it GitLab answers 500.
+func TestADraftEditWritesWhatItIsSent(t *testing.T) {
+	s := New(t, Options{})
+	tok := s.Token()
+	path := "/projects/2001/merge_requests/1/draft_notes/80001"
+	resp, body := send(t, s, "PUT", path, tok, obj{"note": "  "})
+	wantStatus(t, "blank note", resp, body, http.StatusBadRequest)
+	d := s.Drafts(ProjectAlpha, 1)
+	var refs obj
+	for _, x := range d {
+		if x.ID == 80001 && x.Position != nil {
+			refs = obj{"base_sha": x.Position.BaseSHA, "start_sha": x.Position.StartSHA, "head_sha": x.Position.HeadSHA}
+		}
+	}
+	far := obj{"position_type": "text", "new_path": "src/login.go", "new_line": 400}
+	for k, v := range refs {
+		far[k] = v
+	}
+	resp, body = send(t, s, "PUT", path, tok, obj{"note": "Moved.", "position": far})
+	wantStatus(t, "a line outside the diff", resp, body, http.StatusOK)
+	if pos, _ := body["position"].(obj); pos["new_line"] != float64(400) {
+		t.Errorf("position = %v", body["position"])
+	}
+	resp, body = send(t, s, "PUT", path, tok, obj{"note": strings.Repeat("é", 500_001)})
+	wantStatus(t, "a note over the limit in bytes", resp, body, http.StatusInternalServerError)
+	resp, body = send(t, s, "PUT", path, tok, obj{"note": "General now."})
+	wantStatus(t, "no position", resp, body, http.StatusOK)
+	if body["position"] != nil {
+		t.Errorf("position after an edit without one = %v", body["position"])
+	}
+}

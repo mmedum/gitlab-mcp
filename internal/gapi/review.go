@@ -44,6 +44,15 @@ func (c *Client) ListDraftNotes(ctx context.Context, p Project, iid int64) ([]gi
 	return out, err
 }
 
+// GetDraftNote reads one of the signed-in account's drafts. GitLab
+// answers 404 for a draft that is not the account's own.
+func (c *Client) GetDraftNote(ctx context.Context, p Project, iid, draft int64) (*gitlab.DraftNote, error) {
+	var out gitlab.DraftNote
+	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/draft_notes/{}",
+		Args: []string{p.segment(), idArg(iid), idArg(draft)}, Name: "get_draft_note"}, &out)
+	return &out, err
+}
+
 // Compare compares two refs. Without straight, GitLab compares from the
 // merge base, as a merge request would.
 func (c *Client) Compare(ctx context.Context, p Project, from, to string, straight bool) (*gitlab.Compare, error) {

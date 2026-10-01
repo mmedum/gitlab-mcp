@@ -220,6 +220,10 @@ func (s *Server) serveMRWrite(w http.ResponseWriter, r *http.Request, p *project
 		s.publishDrafts(w, r, p, mr, user)
 	case del && match(rest, "draft_notes", "*"):
 		s.deleteDraft(w, p, mr, user, rest[1])
+	case put && match(rest, "draft_notes", "*"):
+		s.updateDraft(w, r, p, mr, user, rest[1])
+	case put && match(rest, "draft_notes", "*", "publish"):
+		s.publishDraft(w, p, mr, user, rest[1])
 	default:
 		return s.serveMRShip(w, r, p, mr, user, rest) || s.serveNoteEdit(w, r, p, t, user, rest)
 	}

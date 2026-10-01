@@ -51,6 +51,12 @@ type Call struct {
 	// [ambiguous_outcome] as a create is. Empty means the method decides.
 	// A POST or a Repeatable call setting it is refused as [unexpected].
 	Once string
+	// ServerErrorFinal is the reason a 500 answer to this call would only
+	// come again, such as "GitLab answers 500 for a draft it will not
+	// save": the 500 is returned at once as [unavailable], not retried,
+	// for the caller to settle. A lost answer and other 5xx still repeat
+	// as the method decides. Empty means a 500 is transient.
+	ServerErrorFinal string
 	// ReadOnly is the reason a POST changes nothing, such as "linting
 	// creates nothing". Such a call may repeat and may run under a dry
 	// run, and `scripts/gates outcomes` asks it for no outcome. Empty

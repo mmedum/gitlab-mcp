@@ -123,6 +123,7 @@ func DraftNotes(d model.DraftNotes, bd Boundary) string {
 		if n.Budget.ContinueOffset != nil || n.Budget.HiddenRemoved > 0 {
 			b.WriteString("\n" + budgetLine(fmt.Sprintf("Draft %d", n.ID), n.Budget))
 		}
+		fmt.Fprintf(&b, "\nnote_sha256 %s, for update_review_comment.", n.NoteSHA256)
 	}
 	if len(d.NotShown) > 0 {
 		ids := make([]string, len(d.NotShown))

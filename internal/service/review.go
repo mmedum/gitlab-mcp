@@ -223,6 +223,7 @@ func (s *Service) ListReviewComments(ctx context.Context, raw string, iid int64,
 			dn.DiscussionID = *d.DiscussionID
 		}
 		dn.Position = diffPosition(d.Position)
+		dn.NoteSHA256 = contentHash(d.Note)
 		out.Drafts = append(out.Drafts, dn)
 	}
 	total := len(drafts)
