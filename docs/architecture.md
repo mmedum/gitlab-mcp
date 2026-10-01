@@ -495,7 +495,7 @@ removed, by the call or its repeat, while a failed read is unknown
   draft and refuses `[stale]` if it moved, with the same window open.
   The same text asked again reads as unchanged first. GitLab's PUT
   clears a position it is not sent, so the draft's own is sent back and
-  the answer is checked for it (§18 row 106). Publishing a draft
+  the answer is checked for it (§18 row 111). Publishing a draft
   carries no witness: the draft is read, refused if it holds a quick
   action, and then published, and a change made in that window is not
   caught.

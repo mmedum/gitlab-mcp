@@ -82,8 +82,8 @@ POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes	used	1	Client
 DELETE /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.DeleteDraftNote: delete_review_comment, own drafts only
 POST /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/bulk_publish	used	1	Client.PublishDraftNotes: submit_review; an approving review needs the Ship flag (§4.3)
 GET /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.GetDraftNote: update_review_comment and publish_review_comment read the draft first; 404 for one not the account's own
-PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.UpdateDraftNote: update_review_comment, own drafts only, the position sent back (§18 row 106)
-PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}/publish	used	1	Client.PublishDraftNote: publish_review_comment, own drafts only, sent once and read back (§18 row 106)
+PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}	used	1	Client.UpdateDraftNote: update_review_comment, own drafts only, the position sent back (§18 row 111)
+PUT /projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}/publish	used	1	Client.PublishDraftNote: publish_review_comment, own drafts only, sent once and read back (§18 row 111)
 POST /projects/{id}/merge_requests	used	1	Client.CreateMergeRequest: create_merge_request
 PUT /projects/{id}/merge_requests/{merge_request_iid}	used	1	Client.UpdateMergeRequest: update_merge_request, after the updated_at witness is checked (§4.6)
 POST /projects/{id}/repository/branches	used	1	Client.CreateBranch: create_branch
