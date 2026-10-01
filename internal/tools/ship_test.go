@@ -635,6 +635,55 @@ func TestCancelAutoMergeSettlesByReading(t *testing.T) {
 	}
 }
 
+// A cancel does not stop a merge GitLab has begun: GitLab cancels a
+// locked merge request's auto-merge and answers success, and merges it
+// all the same. Only an open merge request with the auto-merge off reads
+// as canceled.
+func TestCancelAutoMergeDuringAMerge(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	id := h.gl.ProjectID(alpha)
+	for _, iid := range []int64{1, 2, 3} {
+		h.gl.SetAutoMerge(alpha, iid, "alice")
+	}
+
+	// Locked before the call: nothing is sent, dry run or not.
+	h.gl.SetMRState(alpha, 1, "locked")
+	for _, dry := range []bool{true, false} {
+		text, out := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 1, "dry_run": dry})
+		if get(out, "outcome") != "merging" || cancelPosts(h) != 0 || !strings.Contains(text, "is merging merge request !1") {
+			t.Errorf("locked, dry run %v = %v, %d sent\n%s", dry, out, cancelPosts(h), text)
+		}
+	}
+
+	// Locked as the cancel arrives: GitLab answers success.
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/merge_requests/2/cancel", id), Pass: true,
+		Before: func() { h.gl.SetMRState(alpha, 2, "locked") }})
+	text, out := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2})
+	if get(out, "outcome") != "merging" || get(out, "state") != "locked" || strings.Contains(text, "no longer merges") ||
+		!strings.Contains(text, "GitLab answered the cancel, but the merge request is locked") {
+		t.Errorf("locked at the cancel = %v\n%s", out, text)
+	}
+	if mr, _ := h.gl.MergeRequest(alpha, 2); mr.MergeWhenPipelineSucceeds {
+		t.Error("GitLab cancels a locked merge request's auto-merge, and the instance did not")
+	}
+
+	// Merged right after the cancel answered.
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: fmt.Sprintf("/projects/%d/merge_requests/3/cancel", id), Pass: true,
+		Before: func() {
+			h.gl.SetMRState(alpha, 3, "locked")
+			h.gl.Inject(gitlabtest.Fault{Method: "GET", Path: fmt.Sprintf("/projects/%d/merge_requests/3", id), Pass: true,
+				Before: func() { h.gl.SetMRState(alpha, 3, "merged") }})
+		}})
+	text, out = h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 3})
+	if get(out, "outcome") != "merged" || !strings.Contains(text, "the cancel came too late") {
+		t.Errorf("merged after the cancel = %v\n%s", out, text)
+	}
+	_, again := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 3})
+	if get(again, "outcome") != "merged" || cancelPosts(h) != 2 {
+		t.Errorf("merged before the call = %v, %d sent", again, cancelPosts(h))
+	}
+}
+
 // Whoever may merge it, or its author, cancels; GitLab answers anyone
 // else 401, which is the account's role, not its token.
 func TestCancelAutoMergePermission(t *testing.T) {

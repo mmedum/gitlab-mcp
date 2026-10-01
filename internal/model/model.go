@@ -1450,7 +1450,7 @@ type ApprovalWrite struct {
 
 // AutoMergeCancel is cancel_auto_merge's result.
 type AutoMergeCancel struct {
-	Outcome string `json:"outcome" jsonschema:"canceled, unchanged (no auto-merge was set) or dry_run"`
+	Outcome string `json:"outcome" jsonschema:"canceled (open, and no longer set to merge), merging (GitLab is merging it: a cancel does not stop a merge in progress, so read it again with get_merge_request), merged (it merged; any cancel came too late), unchanged (no auto-merge was set) or dry_run"`
 	Write
 	IID       int64     `json:"iid"`
 	WebURL    string    `json:"web_url"`

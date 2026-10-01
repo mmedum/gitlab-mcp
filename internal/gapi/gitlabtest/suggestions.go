@@ -352,7 +352,10 @@ func (s *Server) cancelAutoMerge(w http.ResponseWriter, p *project, mr *gitlab.M
 		message(w, http.StatusUnauthorized, "401 Unauthorized")
 		return
 	}
-	if mr.State != "opened" || !mr.MergeWhenPipelineSucceeds {
+	// AutoMergeService#cancel checks the flag alone, so a merge already
+	// under way, locked, is canceled and answers success; MergeService
+	// goes on and merges it all the same.
+	if !mr.MergeWhenPipelineSucceeds {
 		writeJSON(w, http.StatusCreated, map[string]any{"status": "error", "message": "Can't cancel the automatic merge",
 			"http_status": 406})
 		return
@@ -360,6 +363,26 @@ func (s *Server) cancelAutoMerge(w http.ResponseWriter, p *project, mr *gitlab.M
 	mr.MergeWhenPipelineSucceeds, mr.MergeUser = false, nil
 	bump(&mr.UpdatedAt, s.opts.Now().UTC())
 	writeJSON(w, http.StatusCreated, map[string]any{"status": "success"})
+}
+
+// SetMRState puts a merge request in a state: locked, as while GitLab
+// merges it, or merged, which clears its auto-merge.
+func (s *Server) SetMRState(projectPath string, iid int64, state string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	mr := findMR(p, itoa(iid))
+	if mr == nil {
+		return false
+	}
+	mr.State = state
+	if state == "merged" {
+		mr.MergeWhenPipelineSucceeds = false
+	}
+	return true
 }
 
 // SetAutoMerge sets a merge request to merge when its pipeline succeeds,

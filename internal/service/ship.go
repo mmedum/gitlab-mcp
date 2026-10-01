@@ -825,6 +825,9 @@ func (s *Service) CancelAutoMerge(ctx context.Context, raw string, iid int64) (m
 	if err != nil {
 		return model.AutoMergeCancel{}, err
 	}
+	if out, done := mergingOrMerged(t, mr, "", false); done {
+		return out, nil
+	}
 	if !autoMergeSet(mr) {
 		out := autoMergeCancel(t, mr, "", "unchanged")
 		out.Notes = []string{"It was not set to merge automatically; nothing was sent."}
@@ -874,6 +877,13 @@ func cancelRead(t target, after *gitlab.MergeRequest, setBy string, res *gitlab.
 	gone := !autoMergeSet(after)
 	var e *gapi.Error
 	failed := errors.As(err, &e)
+	if !failed || e.Status != 401 {
+		// GitLab cancels an auto-merge whose merge has already begun, and
+		// answers success, but the merge goes on (§18 row 107).
+		if out, done := mergingOrMerged(t, after, setBy, true); done {
+			return out, nil
+		}
+	}
 	switch {
 	case err != nil && gone:
 		out := autoMergeCancel(t, after, setBy, "canceled")
@@ -910,6 +920,33 @@ func cancelRead(t target, after *gitlab.MergeRequest, setBy string, res *gitlab.
 	}
 	return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassConflict, "GitLab did not cancel the auto-merge, and it is still set: %q",
 		res.Message)
+}
+
+// mergingOrMerged is the result for a merge request GitLab is merging or
+// has merged, which a cancel does not change, by whether one was sent;
+// done is false otherwise.
+func mergingOrMerged(t target, mr *gitlab.MergeRequest, setBy string, sent bool) (model.AutoMergeCancel, bool) {
+	switch {
+	case mr.State == "locked" && sent:
+		out := autoMergeCancel(t, mr, setBy, "merging")
+		out.Notes = []string{"GitLab answered the cancel, but the merge request is locked: GitLab was already merging it, and a " +
+			"cancel does not stop a merge in progress. Read it again with get_merge_request."}
+		return out, true
+	case mr.State == "locked":
+		out := autoMergeCancel(t, mr, setBy, "merging")
+		out.Notes = []string{"GitLab is merging it now, and a cancel does not stop a merge in progress, so nothing was sent. " +
+			"Read it again with get_merge_request."}
+		return out, true
+	case mr.State == "merged" && sent:
+		out := autoMergeCancel(t, mr, setBy, "merged")
+		out.Notes = []string{"It merged: the cancel came too late."}
+		return out, true
+	case mr.State == "merged":
+		out := autoMergeCancel(t, mr, setBy, "merged")
+		out.Notes = []string{"It has merged; nothing was sent."}
+		return out, true
+	}
+	return model.AutoMergeCancel{}, false
 }
 
 func autoMergeCancel(t target, mr *gitlab.MergeRequest, setBy, outcome string) model.AutoMergeCancel {

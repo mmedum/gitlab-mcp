@@ -41,8 +41,13 @@ func MergeWrite(w model.MergeWrite, _ Boundary) string {
 func AutoMergeCancel(w model.AutoMergeCancel, _ Boundary) string {
 	var b strings.Builder
 	head := fmt.Sprintf("Merge request !%d's auto-merge was not changed.", w.IID)
-	if w.Outcome == "canceled" {
+	switch w.Outcome {
+	case "canceled":
 		head = fmt.Sprintf("Canceled the auto-merge of merge request !%d: it no longer merges when its pipeline succeeds.", w.IID)
+	case "merging":
+		head = fmt.Sprintf("GitLab is merging merge request !%d; its auto-merge may not have been stopped.", w.IID)
+	case "merged":
+		head = fmt.Sprintf("Merge request !%d has merged; its auto-merge was not stopped.", w.IID)
 	}
 	writeHead(&b, head, w.Write)
 	fmt.Fprintf(&b, "\n%s; %s; set to merge automatically: %s", Ident(w.WebURL), Ident(w.State), yesNo(w.AutoMerge))

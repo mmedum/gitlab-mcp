@@ -691,7 +691,13 @@ func planShip(s scratch) []step {
 		{tool: "merge_merge_request", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "sha": "{{mrpipe_sha}}", "auto_merge": true},
 			anyOutcome: true, why: "GitLab sets the auto-merge, or merges now when the pipeline has already passed"},
 		{tool: "cancel_auto_merge", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "dry_run": true}},
-		{tool: "cancel_auto_merge", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}},
+		// The pipeline may pass as the cancel arrives: GitLab then answers
+		// success and merges anyway. The driver checks no result field, so
+		// the tool holds that the outcome is canceled only for an open
+		// merge request with the auto-merge off, merging while locked and
+		// merged once merged; the transcript shows which.
+		{tool: "cancel_auto_merge", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}, anyOutcome: true,
+			why: "canceled while the pipeline runs, or merging or merged when it passed first; never canceled while locked or merged"},
 		{tool: "cancel_auto_merge", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}},
 
 		// CI: a pipeline run and canceled, the failed one retried, a job
