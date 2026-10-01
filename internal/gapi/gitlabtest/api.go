@@ -164,6 +164,7 @@ func (s *Server) serveIssue(w http.ResponseWriter, r *http.Request, p *project, 
 		}
 	case get && match(rest, "notes", "*"):
 		s.getNote(w, p, issueTarget(iss), rest[1])
+	case s.serveAwards(w, r, p, issueTarget(iss), true, user, rest):
 	case s.serveIssueWrite(w, r, p, iss, user, rest):
 	default:
 		routeNotFound(w)
@@ -174,6 +175,11 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 	mr := findMR(p, iid)
 	if mr == nil {
 		message(w, http.StatusNotFound, "404 Merge Request Not Found")
+		return
+	}
+	// The reaction routes find it with find_by! and answer 404 when it
+	// may not be read.
+	if s.serveAwards(w, r, p, mrTarget(mr), s.mrReadable(p, user), user, rest) {
 		return
 	}
 	if !s.mrReadable(p, user) {
@@ -193,21 +199,33 @@ func (s *Server) serveMR(w http.ResponseWriter, r *http.Request, p *project, use
 		s.linkedIssues(w, r, p, mr, user, false)
 	case get && len(rest) == 1 && itemEventKinds[rest[0]] != "" && rest[0] != "resource_weight_events":
 		s.serveItemEvents(w, r, p, "mr:"+iid, itemEventKinds[rest[0]], "MergeRequest", mr.ID, user)
-	case get && match(rest, "notes", "*"):
-		s.getNote(w, p, mrTarget(mr), rest[1])
-	case get && match(rest, "discussions"):
-		s.listDiscussions(w, r, p.discussions["mr:"+iid])
-	case get && match(rest, "discussions", "*"):
-		if i := findDiscussion(p, "mr:"+iid, rest[1]); i >= 0 {
-			writeJSON(w, http.StatusOK, p.discussions["mr:"+iid][i])
-		} else {
-			message(w, http.StatusNotFound, "404 Discussion Not Found")
-		}
+	case get && s.serveMRNotes(w, r, p, mr, rest):
 	case get && s.serveMRReview(w, r, p, mr, user, rest):
 	case s.serveMRWrite(w, r, p, mr, user, rest):
 	default:
 		routeNotFound(w)
 	}
+}
+
+// serveMRNotes serves a merge request's comments and threads; it
+// reports whether it answered.
+func (s *Server) serveMRNotes(w http.ResponseWriter, r *http.Request, p *project, mr *gitlab.MergeRequest, rest []string) bool {
+	key := "mr:" + itoa(mr.IID)
+	switch {
+	case match(rest, "notes", "*"):
+		s.getNote(w, p, mrTarget(mr), rest[1])
+	case match(rest, "discussions"):
+		s.listDiscussions(w, r, p.discussions[key])
+	case match(rest, "discussions", "*"):
+		if i := findDiscussion(p, key, rest[1]); i >= 0 {
+			writeJSON(w, http.StatusOK, p.discussions[key][i])
+		} else {
+			message(w, http.StatusNotFound, "404 Discussion Not Found")
+		}
+	default:
+		return false
+	}
+	return true
 }
 
 // serveRepository serves GETs under /repository/.

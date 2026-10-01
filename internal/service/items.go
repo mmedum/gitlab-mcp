@@ -83,6 +83,7 @@ func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset in
 		Milestone: milestone(is.Milestone), CreatedAt: is.CreatedAt, UpdatedAt: is.UpdatedAt, ClosedAt: is.ClosedAt,
 		UntrustedTitle: title, UntrustedDescription: desc, DescriptionBudget: budget, Discussions: summary,
 		RelatedMergeRequests: related, ClosingMergeRequests: closing, TimeStats: timeStats(is.TimeStats),
+		Upvotes: is.Upvotes, Downvotes: is.Downvotes,
 	}
 	if is.ClosedBy != nil {
 		u := user(*is.ClosedBy)
@@ -159,7 +160,7 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 		HasConflicts: mr.HasConflicts, ChangesCount: mr.ChangesCount, CreatedAt: mr.CreatedAt, UpdatedAt: mr.UpdatedAt,
 		MergedAt: mr.MergedAt, ClosedAt: mr.ClosedAt, UntrustedTitle: title, UntrustedDescription: desc,
 		DescriptionBudget: budget, Discussions: summary, ClosesIssues: closes, RelatedIssues: related,
-		TimeStats: timeStats(mr.TimeStats),
+		TimeStats: timeStats(mr.TimeStats), Upvotes: mr.Upvotes, Downvotes: mr.Downvotes,
 	}
 	if mr.MergeUser != nil {
 		u := user(*mr.MergeUser)

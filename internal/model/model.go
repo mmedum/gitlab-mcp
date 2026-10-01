@@ -262,6 +262,8 @@ type Issue struct {
 	RelatedMergeRequests *LinkedItems `json:"related_merge_requests" jsonschema:"Merge requests that mention the issue or that it mentions, the first 20. GitLab leaves out any the account cannot read. Null when they could not be read, and on a read with an offset, which does not read them again"`
 	ClosingMergeRequests *LinkedItems `json:"closing_merge_requests" jsonschema:"Merge requests that close the issue when merged, the first 20. GitLab lists only those in the issue's own project and leaves out any the account cannot read. Null when they could not be read, and on a read with an offset, which does not read them again"`
 	TimeStats            TimeStats    `json:"time_stats"`
+	Upvotes              int          `json:"upvotes" jsonschema:"How many reacted with thumbsup; GitLab counts no other emoji here"`
+	Downvotes            int          `json:"downvotes" jsonschema:"How many reacted with thumbsdown"`
 }
 
 // TimeStats is an issue's or a merge request's time tracking, as GitLab
@@ -344,6 +346,8 @@ type MergeRequest struct {
 	ClosesIssues  *LinkedItems `json:"closes_issues" jsonschema:"Issues GitLab closes when this merges, the first 20. GitLab leaves out confidential or unreadable issues and those in projects that do not close issues automatically. Null when they could not be read, and on a read with an offset, which does not read them again"`
 	RelatedIssues *LinkedItems `json:"related_issues" jsonschema:"Issues the title, description, comments or commits mention, the first 20. GitLab leaves out confidential or unreadable issues. Null when they could not be read, and on a read with an offset, which does not read them again"`
 	TimeStats     TimeStats    `json:"time_stats"`
+	Upvotes       int          `json:"upvotes" jsonschema:"How many reacted with thumbsup; GitLab counts no other emoji here"`
+	Downvotes     int          `json:"downvotes" jsonschema:"How many reacted with thumbsdown"`
 }
 
 // DiffRefs are the three SHAs a diff position is computed against.
@@ -1318,6 +1322,17 @@ type SubscriptionWrite struct {
 	IID        int64  `json:"iid"`
 	WebURL     string `json:"web_url"`
 	Subscribed bool   `json:"subscribed" jsonschema:"Whether you are subscribed after the call, as GitLab answered; in a dry run, as read now"`
+}
+
+// ReactionWrite is react's result.
+type ReactionWrite struct {
+	Outcome string `json:"outcome" jsonschema:"added, removed, unchanged (it already was so) or dry_run"`
+	Write
+	Type    string `json:"type" jsonschema:"issue or merge_request"`
+	IID     int64  `json:"iid"`
+	NoteID  int64  `json:"note_id" jsonschema:"The comment reacted on; 0 for the issue or merge request itself"`
+	Emoji   string `json:"emoji" jsonschema:"The emoji's name; GitLab's own after an add, which may differ from the one given: +1 is thumbsup"`
+	Reacted bool   `json:"reacted" jsonschema:"Whether your reaction with this emoji is there after the call; in a dry run, as read now"`
 }
 
 // TodoWrite is add_todo's result.

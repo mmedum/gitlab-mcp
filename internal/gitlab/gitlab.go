@@ -212,6 +212,17 @@ type ItemSubscription struct {
 	WebURL     string `json:"web_url"`
 }
 
+// AwardEmoji is one emoji reaction on an issue, a merge request or a
+// comment (Entities::AwardEmoji). Name is GitLab's canonical name, which
+// may differ from the one sent: +1 is stored as thumbsup.
+type AwardEmoji struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	User      UserBasic `json:"user"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // DiffRefs are the three SHAs a diff position is computed against.
 type DiffRefs struct {
 	BaseSHA  string `json:"base_sha"`
@@ -267,6 +278,8 @@ type MergeRequest struct {
 	// merged" setting; GitLab sends null when it was never set.
 	ForceRemoveSourceBranch bool           `json:"force_remove_source_branch"`
 	UserNotesCount          int            `json:"user_notes_count"`
+	Upvotes                 int            `json:"upvotes"`
+	Downvotes               int            `json:"downvotes"`
 	ChangesCount            string         `json:"changes_count"` // "12" or "1000+"
 	WebURL                  string         `json:"web_url"`
 	References              References     `json:"references"`

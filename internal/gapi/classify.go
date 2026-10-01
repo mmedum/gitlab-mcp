@@ -114,6 +114,11 @@ var staleFile = regexp.MustCompile(`(?i)has changed since you started editing it
 // or a file a commit would create. GitLab answers 400, not 409.
 var alreadyExists = regexp.MustCompile(`(?i)already exists`)
 
+// awardTaken is a reaction refused because the account already reacted
+// with that emoji. GitLab answers it, like every refused reaction, with
+// 404 (lib/api/award_emoji.rb).
+var awardTaken = regexp.MustCompile(`(?i)has already been taken`)
+
 // jobState is a job refused for the state it is in: GitLab answers
 // "403 Forbidden - Job is not retryable" and "400 Bad request - Unplayable
 // Job" (lib/api/ci/jobs.rb, lib/api/helpers.rb), which asks the caller to
@@ -165,6 +170,8 @@ func classifyStatus(call Call, name string, repeatable bool, status int, h http.
 		// A change that does not apply to the branch: the call was sound
 		// and the branch's state refused it.
 		return a.fail(ClassConflict, "GitLab could not apply the change to the branch: %s", a.detail)
+	case status == http.StatusNotFound && call.Method == http.MethodPost && call.Name == "react":
+		return a.awardRefused()
 	case status == http.StatusTooManyRequests:
 		return a.rateLimited()
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
@@ -178,6 +185,16 @@ func classifyStatus(call Call, name string, repeatable bool, status int, h http.
 	default:
 		return a.fail(ClassUnexpected, "GitLab answered %s with status %d: %s", name, status, a.detail)
 	}
+}
+
+// awardRefused: GitLab answers every refused reaction with 404 and its
+// reason, so the reason decides. One already there is a conflict; the
+// rest keep GitLab's words, which the service explains.
+func (a answer) awardRefused() verdict {
+	if awardTaken.MatchString(a.env.message) {
+		return a.fail(ClassConflict, "you already reacted with that emoji. GitLab said: %s", a.detail)
+	}
+	return a.fail(ClassNotFound, "GitLab refused the reaction. GitLab said: %s", a.detail)
 }
 
 // rateLimited: GitLab did not act, so any method may try again, after

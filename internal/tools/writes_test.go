@@ -1448,3 +1448,208 @@ func TestALostSpentTimeIsSettledByReading(t *testing.T) {
 		t.Errorf("merge request: %s", text)
 	}
 }
+
+// ------------------------------------------------------------ reactions
+
+// awardWrites counts the reaction POSTs and DELETEs sent.
+func awardWrites(h *harness) int {
+	n := 0
+	for _, r := range h.gl.Requests() {
+		if r.Method != http.MethodGet && strings.Contains(r.EscapedPath, "/award_emoji") {
+			n++
+		}
+	}
+	return n
+}
+
+// A reaction is added once and removed by its id; asking for the state
+// it is in sends nothing. The item's votes count thumbsup and thumbsdown.
+func TestReact(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	issue := func(extra map[string]any) map[string]any {
+		out := map[string]any{"project": alpha, "type": "issue", "iid": 1}
+		maps.Copy(out, extra)
+		return out
+	}
+	text, out := h.ok("react", issue(map[string]any{"emoji": "thumbsup"}))
+	if get(out, "outcome") != "added" || get(out, "emoji") != "thumbsup" || get(out, "reacted") != true ||
+		!strings.Contains(text, "Reacted with :thumbsup: on #1.") {
+		t.Errorf("add: %v\n%s", out, text)
+	}
+	if _, out = h.ok("get_issue", map[string]any{"project": alpha, "iid": 1}); get(out, "upvotes") != 1.0 || get(out, "downvotes") != 0.0 {
+		t.Errorf("votes after the add: %v %v", get(out, "upvotes"), get(out, "downvotes"))
+	}
+	sent := awardWrites(h)
+	// +1 is GitLab's alias of thumbsup.
+	for _, emoji := range []string{"thumbsup", "+1", ":thumbsup:"} {
+		_, out = h.ok("react", issue(map[string]any{"emoji": emoji}))
+		if get(out, "outcome") != "unchanged" || get(out, "reacted") != true || !strings.Contains(fmt.Sprint(get(out, "notes")), "already reacted") {
+			t.Errorf("again as %s: %v", emoji, out)
+		}
+	}
+	if awardWrites(h) != sent {
+		t.Errorf("an unchanged reaction sent %d writes", awardWrites(h)-sent)
+	}
+	_, out = h.ok("react", issue(map[string]any{"emoji": "tada", "dry_run": true}))
+	if get(out, "outcome") != "dry_run" || get(out, "would_send", "operation") != "react with tada" || get(out, "reacted") != false {
+		t.Errorf("dry run: %v", out)
+	}
+	if _, out = h.ok("react", issue(map[string]any{"emoji": ":tada:"})); get(out, "outcome") != "added" || get(out, "emoji") != "tada" {
+		t.Errorf("tada: %v", out)
+	}
+	// bob's reaction is his: alice's remove leaves it.
+	h.gl.React(alpha, "issue", 1, 0, "bob", "eyes")
+	_, out = h.ok("react", issue(map[string]any{"emoji": "tada", "remove": true, "dry_run": true}))
+	if get(out, "outcome") != "dry_run" || get(out, "would_send", "method") != "DELETE" || get(out, "reacted") != true {
+		t.Errorf("remove dry run: %v", out)
+	}
+	text, out = h.ok("react", issue(map[string]any{"emoji": "tada", "remove": true}))
+	if get(out, "outcome") != "removed" || get(out, "reacted") != false || !strings.Contains(text, "Removed your :tada: reaction from #1.") {
+		t.Errorf("remove: %v\n%s", out, text)
+	}
+	sent = awardWrites(h)
+	text, out = h.ok("react", issue(map[string]any{"emoji": "eyes", "remove": true}))
+	if get(out, "outcome") != "unchanged" || !strings.Contains(text, "You have no eyes reaction there") ||
+		!strings.Contains(text, "Yours there: thumbsup.") || awardWrites(h) != sent {
+		t.Errorf("remove one you never added: %v\n%s", out, text)
+	}
+	if _, out = h.ok("react", issue(map[string]any{"emoji": "+1", "remove": true})); get(out, "outcome") != "removed" {
+		t.Errorf("remove by alias: %v", out)
+	}
+	if got, want := h.gl.Reactions(alpha, "issue", 1, 0), []string{"bob:eyes"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("reactions left = %v, want %v", got, want)
+	}
+	// A merge request's votes, and its reactions, are its own.
+	if _, out = h.ok("react", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "emoji": "-1"}); get(out, "outcome") != "added" ||
+		get(out, "emoji") != "thumbsdown" {
+		t.Errorf("merge request: %v", out)
+	}
+	if _, out = h.ok("get_merge_request", map[string]any{"project": alpha, "iid": 1}); get(out, "downvotes") != 1.0 {
+		t.Errorf("merge request votes: %v", get(out, "downvotes"))
+	}
+	if a := listed(t, h)["react"].Annotations; a.OpenWorldHint == nil || !*a.OpenWorldHint || !a.IdempotentHint {
+		t.Errorf("annotations = %+v", a)
+	}
+}
+
+// A reaction on a comment is the comment's: it moves the comment's
+// updated_at, which update_comment compares, and not the issue's.
+func TestReactOnAComment(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	note := h.gl.Discussions(alpha, "issue", 2)[0].Notes[1] // alice's reply in a thread
+	before, _ := h.gl.Issue(alpha, 2)
+	args := map[string]any{"project": alpha, "type": "issue", "iid": 2, "note_id": note.ID, "emoji": "heart"}
+	text, out := h.ok("react", args)
+	if get(out, "outcome") != "added" || get(out, "note_id") != float64(note.ID) ||
+		!strings.Contains(text, fmt.Sprintf("Reacted with :heart: on comment %d on #2.", note.ID)) {
+		t.Errorf("comment: %v\n%s", out, text)
+	}
+	if got := h.gl.Reactions(alpha, "issue", 2, note.ID); fmt.Sprint(got) != "[alice:heart]" {
+		t.Errorf("comment reactions = %v", got)
+	}
+	if h.gl.Reactions(alpha, "issue", 2, 0) != nil {
+		t.Errorf("the issue got the comment's reaction: %v", h.gl.Reactions(alpha, "issue", 2, 0))
+	}
+	after, _ := h.gl.Issue(alpha, 2)
+	if moved := h.gl.Discussions(alpha, "issue", 2)[0].Notes[1].UpdatedAt; !moved.After(note.UpdatedAt) || !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Errorf("comment updated_at %v -> %v; issue %v -> %v", note.UpdatedAt, moved, before.UpdatedAt, after.UpdatedAt)
+	}
+	h.fails("update_comment", map[string]any{"project": alpha, "type": "issue", "iid": 2, "note_id": note.ID, "body": "Edited.",
+		"updated_at": note.UpdatedAt.Format("2006-01-02T15:04:05.000Z07:00")}, "stale")
+	if _, out = h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 2, "note_id": note.ID, "emoji": "heart",
+		"remove": true}); get(out, "outcome") != "removed" || len(h.gl.Reactions(alpha, "issue", 2, note.ID)) != 0 {
+		t.Errorf("remove from the comment: %v", out)
+	}
+}
+
+// GitLab refuses a reaction with 404 whatever the reason; the result
+// says what it may mean, and names a comment GitLab wrote itself.
+func TestReactionsGitLabRefuses(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	sent := awardWrites(h)
+	for _, emoji := range []string{"👍", "Thumbsup", "", "thumbs up"} {
+		text := h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "emoji": emoji}, "invalid")
+		if !strings.Contains(text, "not an emoji name") {
+			t.Errorf("%q: %s", emoji, text)
+		}
+	}
+	if awardWrites(h) != sent {
+		t.Error("a malformed name was sent")
+	}
+	text := h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "emoji": "no_such_emoji"}, "not_found")
+	if !strings.Contains(text, "Name is not a valid emoji name") || !strings.Contains(text, "when it does not know the emoji") {
+		t.Errorf("unknown emoji: %s", text)
+	}
+	system := h.gl.Discussions(alpha, "issue", 1)[2].Notes[0]
+	text = h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": system.ID, "emoji": "tada"}, "invalid")
+	if !system.System || !strings.Contains(text, "a note GitLab wrote to record an event") {
+		t.Errorf("system note: %s", text)
+	}
+	h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 999, "emoji": "tada"}, "not_found")
+	h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": 1, "emoji": "tada"}, "not_found")
+	// thumbs_up is an alias this server does not know: the read finds no
+	// thumbs_up, and GitLab's "already taken" says it is there.
+	h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "emoji": "thumbsup"})
+	_, out := h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "emoji": "thumbs_up"})
+	if get(out, "outcome") != "unchanged" || get(out, "reacted") != true {
+		t.Errorf("already there under an alias: %v", out)
+	}
+	// A merge request dave may not read is not found, as GitLab's
+	// reaction routes answer.
+	h = newHarness(t, harnessOptions{token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
+	h.gl.SetMergeRequestsAccess(alpha, "private")
+	h.fails("react", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "emoji": "tada"}, "not_found")
+}
+
+// An add whose answer was lost is never sent again; a read settles it.
+// A remove repeats, and the second answer's 404 is read as removed.
+func TestALostReactionIsSettledByReading(t *testing.T) {
+	path := "/projects/2001/issues/3/award_emoji"
+	h := newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: path, AfterApply: true, Status: http.StatusBadGateway,
+		Body: `{"message":"502 Bad Gateway"}`})
+	text, out := h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket"})
+	if get(out, "outcome") != "added" || !strings.Contains(text, "answer was lost, and a read shows") || awardWrites(h) != 1 {
+		t.Errorf("landed: %v\n%s\n%d sent", out, text, awardWrites(h))
+	}
+
+	h = newHarness(t, harnessOptions{})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: path, Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	text = h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket"}, "ambiguous_outcome")
+	if !strings.Contains(text, "a read shows it was not created") || awardWrites(h) != 1 || len(h.gl.Reactions(alpha, "issue", 3, 0)) != 0 {
+		t.Errorf("not landed: %s", text)
+	}
+
+	h = newHarness(t, harnessOptions{})
+	h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket"})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodDelete, Path: path + "/", AfterApply: true, Status: http.StatusBadGateway,
+		Body: `{"message":"502 Bad Gateway"}`})
+	text, out = h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket", "remove": true})
+	if get(out, "outcome") != "removed" || !strings.Contains(text, "whether this call or another removed it") {
+		t.Errorf("lost remove: %v\n%s", out, text)
+	}
+}
+
+// A reaction is held to the allow-list by the item's project.
+func TestReactionsAreHeldToTheAllowList(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: config.Config{WriteNamespaces: []string{gitlabtest.GroupSub}}})
+	sent := writesSent(h)
+	for _, dry := range []bool{false, true} {
+		h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 1, "emoji": "tada", "dry_run": dry}, "blocked")
+	}
+	if writesSent(h) != sent {
+		t.Error("a reaction outside the allow-list was sent")
+	}
+}
+
+// GitLab answers a removal 204 even when its service refused it; the
+// read afterwards says so.
+func TestARemovalGitLabDidNotMakeIsReported(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	h.ok("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket"})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodDelete, Path: "/projects/2001/issues/3/award_emoji/", Status: http.StatusNoContent})
+	text := h.fails("react", map[string]any{"project": alpha, "type": "issue", "iid": 3, "emoji": "rocket", "remove": true}, "unexpected")
+	if !strings.Contains(text, "your rocket reaction is still there") {
+		t.Errorf("result: %s", text)
+	}
+}

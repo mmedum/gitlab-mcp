@@ -311,6 +311,30 @@ func SubscriptionWrite(w model.SubscriptionWrite, _ Boundary) string {
 	return b.String()
 }
 
+// ReactionWrite renders react.
+func ReactionWrite(w model.ReactionWrite, _ Boundary) string {
+	var b strings.Builder
+	on := noteableItem(w.Type, w.IID)
+	if w.NoteID != 0 {
+		on = fmt.Sprintf("comment %d on %s", w.NoteID, on)
+	}
+	emoji := ":" + Ident(w.Emoji) + ":"
+	head := "Your reactions on " + on + " were not changed."
+	switch w.Outcome {
+	case "added":
+		head = "Reacted with " + emoji + " on " + on + "."
+	case "removed":
+		head = "Removed your " + emoji + " reaction from " + on + "."
+	}
+	writeHead(&b, head, w.Write)
+	if w.Reacted {
+		fmt.Fprintf(&b, "\nYour %s reaction is there.", emoji)
+	} else {
+		fmt.Fprintf(&b, "\nYou have no %s reaction there.", emoji)
+	}
+	return b.String()
+}
+
 // TodoWrite renders add_todo.
 func TodoWrite(w model.TodoWrite, _ Boundary) string {
 	var b strings.Builder

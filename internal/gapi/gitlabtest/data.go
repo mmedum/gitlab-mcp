@@ -43,6 +43,7 @@ const (
 	firstIssueID   = 30001
 	firstMRID      = 40001
 	firstNoteID    = 50001
+	firstAwardID   = 70000
 )
 
 // Users is the synthetic user list, in id order from 1001.

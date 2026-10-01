@@ -227,7 +227,7 @@ PUT /namespaces/{id}	written-off	1	namespace update: administration (§8a)
 * /keys*	written-off	2	finding a user by SSH key: credential lookup, out of scope (§8a)
 * /personal_access_tokens*	written-off	4	personal access tokens other than self: credential administration (§8a)
 
-# Issues (§8a): clone and reactions deferred to §17a; delete written off
+# Issues (§8a): clone deferred to §17a; delete written off
 DELETE /projects/{id}/issues/{issue_iid}	written-off	1	issue delete: Owner-only and permanent (§8a)
 POST /projects/{id}/issues/{issue_iid}/move	gated	1	Client.MoveIssue: move_issue, Ship (§17.13)
 POST /projects/{id}/issues/{issue_iid}/clone	deferred	1	cloning an issue (§17a)
@@ -237,8 +237,14 @@ GET /projects/{id}/issues/{issue_iid}/related_merge_requests	used	1	Client.ListI
 GET /projects/{id}/issues/{issue_iid}/participants	deferred	1	participants; get_issue may add it (§17a)
 POST /projects/{id}/issues/{issue_iid}/todo	used	1	Client.CreateIssueTodo: add_todo; GitLab answers 304 while a pending to-do you added is there; a create all the same, never repeated (§4.5, §18 row 102)
 GET /projects/{id}/issues/{issue_iid}/user_agent_detail	written-off	1	user agent details: an administrator's spam tooling (§8a)
-* /projects/{id}/issues/{issue_iid}/award_emoji*	deferred	4	emoji reactions on issues (§17a)
-* /projects/{id}/issues/{issue_iid}/notes/{note_id}/award_emoji*	deferred	4	emoji reactions on issue comments (§17a)
+GET /projects/{id}/issues/{issue_iid}/award_emoji	used	1	Client.ListAwards: react reads your reactions on the issue first, since GitLab refuses one already there with 404 (§18 row 106)
+POST /projects/{id}/issues/{issue_iid}/award_emoji	used	1	Client.CreateAward: react; every refusal is 404, and it is never repeated (§4.5, §18 row 106)
+DELETE /projects/{id}/issues/{issue_iid}/award_emoji/{award_id}	used	1	Client.DeleteAward: react with remove, by the id the read found; only your own
+GET /projects/{id}/issues/{issue_iid}/notes/{note_id}/award_emoji	used	1	Client.ListAwards: react reads your reactions on the comment first
+POST /projects/{id}/issues/{issue_iid}/notes/{note_id}/award_emoji	used	1	Client.CreateAward: react on a comment; it moves the comment's updated_at (§18 row 106)
+DELETE /projects/{id}/issues/{issue_iid}/notes/{note_id}/award_emoji/{award_id}	used	1	Client.DeleteAward: react with remove on a comment
+* /projects/{id}/issues/{issue_iid}/award_emoji*	deferred	1	one reaction by id; the listing carries it (§17a)
+* /projects/{id}/issues/{issue_iid}/notes/{note_id}/award_emoji*	deferred	1	one reaction by id; the listing carries it (§17a)
 GET /projects/{id}/issues/{issue_iid}/links	used	1	Client.ListIssueLinks: link_issues and unlink_issues find the link first
 POST /projects/{id}/issues/{issue_iid}/links	used	1	Client.CreateIssueLink: link_issues
 DELETE /projects/{id}/issues/{issue_iid}/links/{issue_link_id}	used	1	Client.DeleteIssueLink: unlink_issues
@@ -290,8 +296,14 @@ POST /projects/{id}/merge_requests/{merge_request_iid}/pipelines	gated	1	Client.
 GET /projects/{id}/merge_requests/{merge_request_iid}/blockees	deferred	1	merge request dependencies, Premium (§17a)
 * /projects/{id}/merge_requests/{merge_request_iid}/blocks*	deferred	4	merge request dependencies, Premium (§17a)
 * /projects/{id}/merge_requests/{merge_request_iid}/context_commits*	deferred	3	context commits (§17a)
-* /projects/{id}/merge_requests/{merge_request_iid}/award_emoji*	deferred	4	emoji reactions on merge requests (§17a)
-* /projects/{id}/merge_requests/{merge_request_iid}/notes/{note_id}/award_emoji*	deferred	4	emoji reactions on merge request comments (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/award_emoji	used	1	Client.ListAwards: react reads your reactions on the merge request first, since GitLab refuses one already there with 404 (§18 row 106)
+POST /projects/{id}/merge_requests/{merge_request_iid}/award_emoji	used	1	Client.CreateAward: react; every refusal is 404, and it is never repeated (§4.5, §18 row 106)
+DELETE /projects/{id}/merge_requests/{merge_request_iid}/award_emoji/{award_id}	used	1	Client.DeleteAward: react with remove, by the id the read found; only your own
+GET /projects/{id}/merge_requests/{merge_request_iid}/notes/{note_id}/award_emoji	used	1	Client.ListAwards: react reads your reactions on the comment first
+POST /projects/{id}/merge_requests/{merge_request_iid}/notes/{note_id}/award_emoji	used	1	Client.CreateAward: react on a comment; it moves the comment's updated_at (§18 row 106)
+DELETE /projects/{id}/merge_requests/{merge_request_iid}/notes/{note_id}/award_emoji/{award_id}	used	1	Client.DeleteAward: react with remove on a comment
+* /projects/{id}/merge_requests/{merge_request_iid}/award_emoji*	deferred	1	one reaction by id; the listing carries it (§17a)
+* /projects/{id}/merge_requests/{merge_request_iid}/notes/{note_id}/award_emoji*	deferred	1	one reaction by id; the listing carries it (§17a)
 * /projects/{id}/merge_requests/{merge_request_iid}/status_check*	written-off	3	external status checks: a CI integration's surface, Ultimate (§8a)
 POST /projects/{id}/merge_requests/{merge_request_iid}/suggested_reviewers	written-off	1	experiment lifecycle: not a stable API (§8a)
 POST /projects/{id}/merge_requests/{merge_request_iid}/todo	used	1	Client.CreateMergeRequestTodo: add_todo; GitLab answers 304 while a pending to-do you added is there; a create all the same, never repeated (§4.5, §18 row 102)

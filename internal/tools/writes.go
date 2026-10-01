@@ -500,3 +500,31 @@ func subscribe() definition {
 		text: render.SubscriptionWrite,
 	}
 }
+
+// ------------------------------------------------------------ reactions
+
+type reactIn struct {
+	Project idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	Type    string   `json:"type" jsonschema:"issue or merge_request"`
+	IID     int64    `json:"iid" jsonschema:"The number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	NoteID  int64    `json:"note_id,omitempty" jsonschema:"React on this comment, as list_discussions gave its id, rather than on the issue or merge request itself"`
+	Emoji   string   `json:"emoji" jsonschema:"The emoji's name, such as thumbsup, thumbsdown, tada, heart, eyes or rocket; +1 and -1 are thumbsup and thumbsdown. A custom emoji works only in a project in a group that defines it"`
+	Remove  bool     `json:"remove,omitempty" jsonschema:"Remove your reaction with this emoji instead of adding it"`
+	DryRun  bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent, and whether you reacted with it now, without writing anything"`
+}
+
+func react() definition {
+	return tool[reactIn, model.ReactionWrite]{
+		sp: spec{Name: "react", Kind: Write, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+			Description: "React with an emoji on an issue, a merge request or a comment on one (note_id), or remove your reaction " +
+				"with remove: true. Only your own reactions change. The result says unchanged when you already reacted with it, " +
+				"or had no such reaction to remove. GitLab refuses an emoji it does not know, a comment it wrote itself and an " +
+				"item you may not react to alike, as not found. A reaction on a comment moves the comment's updated_at, which " +
+				"update_comment and delete_comment compare; one on an issue or a merge request does not." + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in reactIn) (model.ReactionWrite, error) {
+			return svc.React(ctx, service.Reaction{Project: string(in.Project), Type: in.Type, IID: in.IID, NoteID: in.NoteID,
+				Emoji: in.Emoji, Remove: in.Remove})
+		},
+		text: render.ReactionWrite,
+	}
+}
