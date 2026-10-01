@@ -482,7 +482,7 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request, p *project, 
 		message(w, http.StatusForbidden, "403 Forbidden")
 		return
 	}
-	if since, err := time.Parse(time.RFC3339Nano, r.Header.Get("If-Unmodified-Since")); err == nil && n.UpdatedAt.After(since) {
+	if since, ok := unmodifiedSince(r); ok && n.UpdatedAt.After(since) {
 		message(w, http.StatusPreconditionFailed, "412 Precondition Failed")
 		return
 	}

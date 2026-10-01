@@ -15,6 +15,11 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `react` adds or removes your emoji reaction on an issue, a merge request or a comment on one, and says when you already reacted, or had no such reaction; an add is never repeated after a lost answer.
+- `get_issue` and `get_merge_request` show the item's thumbsup and thumbsdown counts.
+
 ## [2.1.0] - 2026-10-01
 
 ### Added

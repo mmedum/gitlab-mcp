@@ -491,6 +491,42 @@ func phase2(s scratch) []step {
 		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}"}, "dry_run": true}},
 		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}"}}},
 
+		// Reactions on the scratch issue, merge request and comments. One
+		// already there, or none to remove, sends nothing; thumbs_up is an
+		// alias GitLab keeps as thumbsup, which only its answer reveals.
+		// Every reaction added is removed, so the items end as they began.
+		// They come after the to-do steps: a reaction marks the account's
+		// pending to-dos on the item done.
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "thumbsup", "dry_run": true}},
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "+1"}},
+		{tool: "get_issue", args: map[string]any{"project": p, "iid": s.Issue}},
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": ":thumbsup:"}},
+		// Another name of a reaction already there: GitLab refuses it, in the
+		// account's language, and its alias table cannot be read back, so
+		// GitLab's own reason is passed on.
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "thumbs_up"},
+			expectError: true, why: "an alias of a reaction already there, which GitLab refuses with 404"},
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "no_such_emoji_here"},
+			expectError: true, why: "an emoji GitLab does not know, which it answers with 404"},
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "thumbsup", "remove": true, "dry_run": true}},
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "thumbsup", "remove": true}},
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "emoji": "thumbsup", "remove": true}},
+		{tool: "react", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "emoji": "rocket"}},
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": s.MR}},
+		{tool: "react", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "emoji": "rocket", "remove": true}},
+		{tool: "react", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "note_id": "{{mr_note}}", "emoji": "eyes"}},
+		{tool: "react", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR, "note_id": "{{mr_note}}", "emoji": "eyes",
+			"remove": true}},
+		// A reaction on a comment moves the comment's updated_at (§18 row 106).
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "A comment the live run reacts to."},
+			save: map[string]string{"react_note": "note_id", "react_note_at": "updated_at"}},
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{react_note}}", "emoji": "tada"}},
+		{tool: "update_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{react_note}}",
+			"updated_at": "{{react_note_at}}", "body": "Edited."}, expectError: true,
+			why: "the updated_at from before the reaction, which moved it"},
+		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{react_note}}", "emoji": "tada",
+			"remove": true}},
+
 		{tool: "lint_ci", args: map[string]any{"project": p, "content": "check:\n  script:\n    - echo live\n", "include_jobs": true}},
 		{tool: "lint_ci", args: map[string]any{"project": p, "content": "include:\n  - local: other.yml\n"}, expectError: true,
 			why: "supplied content with an include, which GitLab would fetch"},
@@ -921,7 +957,7 @@ func init() {
 	for _, tool := range []string{"get_project", "get_issue", "list_discussions", "get_merge_request", "list_mr_files",
 		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "get_test_report",
-		"lint_ci", "list_item_events", "list_boards", "list_todos", "add_todo", "subscribe", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
+		"lint_ci", "list_item_events", "list_boards", "list_todos", "add_todo", "subscribe", "react", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",
 		"create_commit",
 		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "run_merge_request_pipeline",

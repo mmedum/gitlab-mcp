@@ -78,6 +78,7 @@ var plainInputs = map[string]string{
 	"target_project":             "a project the server resolves to its id and sends as target_project_id; never sent as text",
 	"link_type":                  "a closed value, relates_to, blocks or is_blocked_by, which GitLab takes as the link's type",
 	"version":                    "the label witness, compared with a hash of a fresh read and never sent",
+	"react.emoji":                "an emoji name, checked against [a-z0-9_+-] before anything is sent; it holds no space or slash",
 	"commit":                     "a commit SHA in the request path, which GitLab takes as a ref, not Markdown",
 	"start_date":                 "a day, checked as YYYY-MM-DD and sent as a date",
 	"color":                      "a color, #RRGGBB or a CSS name, which GitLab validates as one",

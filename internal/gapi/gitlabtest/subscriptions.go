@@ -17,8 +17,8 @@ import (
 // the author, the assignees, a merge request's reviewers, every note's
 // author, system notes included, and everyone @-mentioned in the
 // description or a comment (the participant declarations of Issuable,
-// MergeRequest, Note and Mentionable). Emoji reactions, also
-// participants, are not modeled. A merge request's routes find it with
+// MergeRequest, Note and Mentionable), and everyone who reacted on the
+// item or on a comment on it (Awardable). A merge request's routes find it with
 // find_merge_request_with_access: 403 when it exists but the user may
 // not read it, and subscribing needs update_merge_request too, which a
 // Developer has, or its author or an assignee who can read it. A to-do
@@ -111,7 +111,8 @@ func (s *Server) subscribed(p *project, it notifiable, user string) bool {
 	if v, ok := s.subscriptions[subscriptionKey(p, it.t, user)]; ok {
 		return v
 	}
-	if it.author == user || has(it.assignees, user) || has(it.reviewers, user) || mentioned(it.description, user) {
+	if it.author == user || has(it.assignees, user) || has(it.reviewers, user) || mentioned(it.description, user) ||
+		s.reacted(p, it.t, user) {
 		return true
 	}
 	for _, d := range p.discussions[it.t.key()] {

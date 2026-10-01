@@ -93,6 +93,7 @@ contract: tools keep their names and output fields.
 | `mark_todos_done` | Mark your to-do items done |
 | `add_todo` | Add a to-do for yourself on an issue or a merge request |
 | `subscribe` | Subscribe to an issue's or a merge request's notifications, or unsubscribe |
+| `react` | Add or remove your emoji reaction on an issue, a merge request or a comment |
 | `merge_merge_request` | Merge at the head you reviewed, or when the pipeline succeeds (Ship) |
 | `approve_merge_request` | Approve at the head you reviewed (Ship) |
 | `unapprove_merge_request` | Withdraw your approval (Ship) |

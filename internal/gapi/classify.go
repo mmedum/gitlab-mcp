@@ -165,6 +165,8 @@ func classifyStatus(call Call, name string, repeatable bool, status int, h http.
 		// A change that does not apply to the branch: the call was sound
 		// and the branch's state refused it.
 		return a.fail(ClassConflict, "GitLab could not apply the change to the branch: %s", a.detail)
+	case status == http.StatusNotFound && call.Method == http.MethodPost && call.Name == "react":
+		return a.awardRefused()
 	case status == http.StatusTooManyRequests:
 		return a.rateLimited()
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
@@ -178,6 +180,14 @@ func classifyStatus(call Call, name string, repeatable bool, status int, h http.
 	default:
 		return a.fail(ClassUnexpected, "GitLab answered %s with status %d: %s", name, status, a.detail)
 	}
+}
+
+// awardRefused: GitLab answers every refused reaction with 404 and its
+// reason in the account's language (lib/api/award_emoji.rb L96-106,
+// lib/api/helpers.rb L92), so the reason is kept whole and never read;
+// the service reads the reactions to tell one already there.
+func (a answer) awardRefused() verdict {
+	return a.fail(ClassNotFound, "GitLab refused the reaction. GitLab said: %s", a.detail)
 }
 
 // rateLimited: GitLab did not act, so any method may try again, after

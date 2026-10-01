@@ -45,7 +45,7 @@ var toolPhrases = []phrase{
 		"list_todos"}, tail: "; a board's columns are read with search_issues."},
 	{lead: "Change issues and merge requests with ", tools: []string{"create_issue", "update_issue", "create_merge_request",
 		"update_merge_request", "track_time"}, tail: "; an update or time tracking needs the updated_at of your latest read."},
-	{lead: "Comment with ", tools: []string{"add_comment", "update_comment", "resolve_discussion"},
+	{lead: "Comment and react with ", tools: []string{"add_comment", "update_comment", "resolve_discussion", "react"},
 		tail: "; an edit keeps the comment in its thread and needs the updated_at of your read."},
 	{lead: "Relate issues with ", tools: []string{"link_issues", "unlink_issues"}, tail: "."},
 	{lead: "Review in drafts with ", tools: []string{"add_review_comment", "delete_review_comment", "submit_review"},

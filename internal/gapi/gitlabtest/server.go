@@ -107,6 +107,9 @@ type Server struct {
 	// project, item and user; an item nobody set one on falls back to
 	// taking part in it.
 	subscriptions map[string]bool
+	// awards are the emoji reactions, oldest first.
+	awards      []award
+	nextAwardID int64
 
 	faults   []*Fault
 	requests []Request

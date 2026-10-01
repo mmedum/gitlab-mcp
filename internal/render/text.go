@@ -354,6 +354,7 @@ func Issue(is model.Issue, bd Boundary) string {
 		fmt.Fprintf(&b, "Tasks: %d of %d done.\n", is.Tasks.Completed, is.Tasks.Count)
 	}
 	fmt.Fprintf(&b, "Time: %s.\n", timeLine(is.TimeStats))
+	fmt.Fprintf(&b, "Votes: %d thumbsup, %d thumbsdown.\n", is.Upvotes, is.Downvotes)
 	b.WriteString(discussionLine(is.Discussions) + "\n")
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Title: %s\n", bd.Inline(is.UntrustedTitle))
@@ -424,6 +425,7 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	}
 	b.WriteString(".\n")
 	fmt.Fprintf(&b, "Time: %s.\n", timeLine(mr.TimeStats))
+	fmt.Fprintf(&b, "Votes: %d thumbsup, %d thumbsdown.\n", mr.Upvotes, mr.Downvotes)
 	b.WriteString(discussionLine(mr.Discussions) + "\n")
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Title: %s\n", bd.Inline(mr.UntrustedTitle))

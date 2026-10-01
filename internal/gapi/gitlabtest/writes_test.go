@@ -1039,7 +1039,8 @@ func TestTimeTrackingDurations(t *testing.T) {
 
 // Participants are subscribed until they unsubscribe, as GitLab's
 // participant declarations make them: a merge request's reviewers, a
-// system note's author, and whoever the description mentions.
+// system note's author, whoever the description mentions, and whoever
+// reacted on the item or on a comment on it.
 func TestParticipantsAreSubscribed(t *testing.T) {
 	s, _ := frozen(t)
 	dave := s.TokenFor("dave", "api")
@@ -1059,7 +1060,9 @@ func TestParticipantsAreSubscribed(t *testing.T) {
 	ds[len(ds)-1].Notes[0].Author = s.user("dave") // the system note
 	p.levels["dave"], p.members["dave"] = 30, true // to be let subscribe to a merge request
 	s.mu.Unlock()
-	for _, path := range []string{"merge_requests/2", "issues/2", "issues/4"} {
+	s.React(ProjectAlpha, "issue", 9, 0, "dave", "tada")
+	s.React(ProjectAlpha, "issue", 13, firstNoteID+12*4+2, "dave", "tada") // on carol's comment
+	for _, path := range []string{"merge_requests/2", "issues/2", "issues/4", "issues/9", "issues/13"} {
 		if got := subscribe(path); got != http.StatusNotModified {
 			t.Errorf("%s: %d, want 304", path, got)
 		}
@@ -1078,6 +1081,76 @@ func TestClosingClearsYourTodos(t *testing.T) {
 	if got := s.TodoState(id); got != "done" {
 		t.Errorf("to-do after the close: %q", got)
 	}
+}
+
+// Reactions as lib/api/award_emoji.rb answers them: the name is kept as
+// GitLab's own, a second is refused 404, another's may not be removed
+// (401), and If-Unmodified-Since is honored. A reaction on the item
+// marks the user's pending to-dos on it done.
+func TestReactionRoutes(t *testing.T) {
+	s, _ := frozen(t)
+	alice, bob := s.Token(), s.TokenFor("bob", "api")
+	path := "/projects/2001/issues/2/award_emoji"
+	resp, body := send(t, s, http.MethodPost, "/projects/2001/issues/2/todo", alice, nil)
+	wantStatus(t, "todo", resp, body, http.StatusCreated)
+	todo := int64(body["id"].(float64))
+	resp, body = send(t, s, http.MethodPost, path, alice, obj{"name": "+1"})
+	wantStatus(t, "add", resp, body, http.StatusCreated)
+	if body["name"] != "thumbsup" || body["awardable_type"] != "Issue" || body["awardable_id"] != float64(30002) || s.TodoState(todo) != "done" {
+		t.Errorf("add = %v, to-do %s", body, s.TodoState(todo))
+	}
+	id := itoa(int64(body["id"].(float64)))
+	resp, body = send(t, s, http.MethodPost, path, alice, obj{"name": "thumbsup"})
+	wantError(t, "again", resp, body, 404, "message", "404 Award Emoji Name has already been taken Not Found")
+	resp, body = send(t, s, http.MethodPost, path, alice, obj{"name": "nope"})
+	wantError(t, "unknown", resp, body, 404, "message", "404 Award Emoji Name is not a valid emoji name Not Found")
+	resp, body = send(t, s, http.MethodDelete, path+"/"+id, bob, nil)
+	wantError(t, "another's", resp, body, 401, "message", "401 Unauthorized")
+	req, err := http.NewRequest(http.MethodDelete, s.URL+"/api/v4"+path+"/"+id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+alice)
+	req.Header.Set("If-Unmodified-Since", "Sat, 26 Sep 2026 11:59:59 GMT")
+	if resp, err = noRedirect.Do(req); err != nil || resp.StatusCode != http.StatusPreconditionFailed {
+		t.Errorf("a reaction made after If-Unmodified-Since: %v %v", resp, err)
+	} else {
+		_ = resp.Body.Close()
+	}
+	resp, body = send(t, s, http.MethodDelete, path+"/"+id, alice, nil)
+	wantStatus(t, "remove", resp, body, http.StatusNoContent)
+	if iss, _ := s.Issue(ProjectAlpha, 2); iss.Upvotes != 0 || len(s.Reactions(ProjectAlpha, "issue", 2, 0)) != 0 {
+		t.Errorf("after the remove: %d upvotes, %v", iss.Upvotes, s.Reactions(ProjectAlpha, "issue", 2, 0))
+	}
+	// An issue dave may not read is found, and its reactions are not;
+	// his own reaction there he may still remove, which reads nothing.
+	dave := s.TokenFor("dave", "api")
+	s.React(ProjectAlpha, "issue", 6, 0, "dave", "tada")
+	awards := s.Reactions(ProjectAlpha, "issue", 6, 0)
+	resp, body = send(t, s, http.MethodGet, "/projects/2001/issues/6/award_emoji", dave, nil)
+	wantError(t, "confidential", resp, body, 404, "message", "404 Award Emoji Not Found")
+	resp, body = send(t, s, http.MethodDelete, "/projects/2001/issues/6/award_emoji/"+itoa(firstAwardID+2), dave, nil)
+	wantStatus(t, "remove on an unreadable issue", resp, body, http.StatusNoContent)
+	if len(awards) != 1 || len(s.Reactions(ProjectAlpha, "issue", 6, 0)) != 0 {
+		t.Errorf("reactions on issue 6: %v, then %v", awards, s.Reactions(ProjectAlpha, "issue", 6, 0))
+	}
+	// A locked discussion takes no reaction from one who is not a member;
+	// an internal comment none from one below Planner.
+	s.LockDiscussion(ProjectAlpha, "issue", 7)
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/issues/7/award_emoji", dave, obj{"name": "tada"})
+	wantError(t, "locked", resp, body, 404, "message", "404 Award Emoji Not Found")
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/issues/7/award_emoji", alice, obj{"name": "tada"})
+	wantStatus(t, "locked, as a member", resp, body, http.StatusCreated)
+	note := firstNoteID + 7*4 + 2 // carol's comment on issue 8
+	s.MakeInternal(ProjectAlpha, "issue", 8, int64(note))
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/issues/8/notes/"+itoa(int64(note))+"/award_emoji", dave, obj{"name": "tada"})
+	wantError(t, "internal", resp, body, 404, "message", "404 Award Emoji Not Found")
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/issues/8/notes/"+itoa(int64(note))+"/award_emoji", alice, obj{"name": "tada"})
+	wantStatus(t, "internal, as a Maintainer", resp, body, http.StatusCreated)
+	// A merge request dave may not read is not found, not forbidden.
+	s.SetMergeRequestsAccess(ProjectAlpha, "private")
+	resp, body = send(t, s, http.MethodPost, "/projects/2001/merge_requests/1/award_emoji", s.TokenFor("dave", "api"), obj{"name": "tada"})
+	wantError(t, "unreadable", resp, body, 404, "message", "404 Award Emoji Not Found")
 }
 
 // Snippet PUT and DELETE, as lib/api/snippets.rb and project_snippets.rb
