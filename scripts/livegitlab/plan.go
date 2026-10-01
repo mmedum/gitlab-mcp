@@ -92,6 +92,25 @@ type step struct {
 	// declines answers the step's question to the person with decline
 	// rather than accept; the step expects the refusal that follows.
 	declines bool
+	// until resends the step first, until a value of its result moves:
+	// work GitLab finishes in the background, after the answer.
+	until *waitFor
+}
+
+// waitFor is a value at path, in a step's result, that must come to
+// differ from the one an earlier step saved under saved. The step is
+// sent every every, for at most within; a value that never moves fails
+// the step.
+type waitFor struct {
+	path, saved   string
+	every, within time.Duration
+}
+
+// moved reports whether the result's value at the path differs from the
+// saved one.
+func (w waitFor) moved(structured json.RawMessage, saved map[string]any) bool {
+	v, ok := valueAt(structured, w.path)
+	return ok && v != saved[w.saved]
 }
 
 // plan is every tool, every option at least once, against the scratch
@@ -426,8 +445,9 @@ func phase2(s scratch) []step {
 		{tool: "create_commit", args: map[string]any{"project": p, "branch": branch, "message": "A change after review",
 			"actions": []any{create("written/after-review.txt", "after review\n")}}},
 		// GitLab makes the version in the background after the push.
-		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "max": 1}, paged: true, pause: 10 * time.Second,
-			save: map[string]string{"mr_v2": "versions.0.id"}},
+		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "max": 1}, paged: true,
+			until: &waitFor{path: "versions.0.id", saved: "mr_v1", every: 5 * time.Second, within: time.Minute},
+			save:  map[string]string{"mr_v2": "versions.0.id"}},
 		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v1}}"}},
 		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v1}}",
 			"to_version": "{{mr_v2}}", "commit_offset": 1, "file_offset": 0, "diff_offset": 5}},
@@ -1073,30 +1093,35 @@ func save(paths map[string]string, structured json.RawMessage, saved map[string]
 	if len(paths) == 0 {
 		return
 	}
-	var root any
-	if json.Unmarshal(structured, &root) != nil {
-		return
-	}
 	for name, path := range paths {
-		v := root
-		for seg := range strings.SplitSeq(path, ".") {
-			switch x := v.(type) {
-			case map[string]any:
-				v = x[seg]
-			case []any:
-				if i, err := strconv.Atoi(seg); err == nil && i < len(x) {
-					v = x[i]
-				} else {
-					v = nil
-				}
-			default:
-				v = nil
-			}
-		}
-		if v != nil {
+		if v, ok := valueAt(structured, path); ok {
 			saved[name] = v
 		}
 	}
+}
+
+// valueAt is the value at a dotted path in a result, false when there is
+// none.
+func valueAt(structured json.RawMessage, path string) (any, bool) {
+	var v any
+	if json.Unmarshal(structured, &v) != nil {
+		return nil, false
+	}
+	for seg := range strings.SplitSeq(path, ".") {
+		switch x := v.(type) {
+		case map[string]any:
+			v = x[seg]
+		case []any:
+			if i, err := strconv.Atoi(seg); err == nil && i < len(x) {
+				v = x[i]
+			} else {
+				v = nil
+			}
+		default:
+			v = nil
+		}
+	}
+	return v, v != nil
 }
 
 // learnIDs registers every numeric id of 1,000 or more a result carries

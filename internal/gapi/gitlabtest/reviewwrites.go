@@ -350,6 +350,16 @@ func (s *Server) createDraft(w http.ResponseWriter, r *http.Request, p *project,
 	}
 	d.ID = s.nextDraft()
 	p.drafts[mr.IID] = append(p.drafts[mr.IID], d)
+	// A user's first draft starts their review.
+	mine := 0
+	for _, x := range p.drafts[mr.IID] {
+		if x.AuthorID == d.AuthorID {
+			mine++
+		}
+	}
+	if mine == 1 {
+		s.updateReviewerState(p, mr, user, "review_started")
+	}
 	writeJSON(w, http.StatusCreated, withExtra(d, map[string]any{"merge_request_id": mr.ID}))
 }
 
@@ -405,10 +415,7 @@ func (s *Server) publishDrafts(w http.ResponseWriter, r *http.Request, p *projec
 	}
 	s.resolveTodos(p, t.key(), user)
 	if state, ok := b.str("reviewer_state"); ok && state != "" {
-		if s.reviewerStates == nil {
-			s.reviewerStates = map[string]string{}
-		}
-		s.reviewerStates[reviewerKey(p.PathWithNamespace, mr.IID, user)] = state
+		s.updateReviewerState(p, mr, user, state)
 		if a := p.approvals[mr.IID]; state == "approved" && a != nil &&
 			!slices.ContainsFunc(a.ApprovedBy, func(x gitlab.Approver) bool { return x.User.Username == user }) {
 			a.ApprovedBy = append(a.ApprovedBy, gitlab.Approver{User: s.user(user)})

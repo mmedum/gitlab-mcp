@@ -726,8 +726,9 @@ type MRVersionChanges struct {
 	FromVersion MRVersion `json:"from_version"`
 	ToVersion   MRVersion `json:"to_version"`
 	// BaseMoved is a moved merge base: the diff then carries what the
-	// target branch gained in between.
-	BaseMoved bool `json:"base_moved" jsonschema:"The versions have different merge bases, as after a rebase: the diff then includes the target branch changes the rebase brought in, not only the author's"`
+	// target branch gained in between. It is null when either version
+	// has no base.
+	BaseMoved *bool `json:"base_moved" jsonschema:"The versions have different merge bases, as after a rebase: the diff then includes the target branch changes the rebase brought in, not only the author's. Null when either version has no merge base to compare"`
 	Compare
 }
 

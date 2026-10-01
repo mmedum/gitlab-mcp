@@ -689,8 +689,8 @@ func TestGetMergeRequestReviewerStates(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	text, out := h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
 	if get(out, "reviewer_states", "reviewers", 0, "user", "username") != "carol" ||
-		get(out, "reviewer_states", "reviewers", 0, "state") != "unreviewed" || get(out, "reviewer_states", "more") != false ||
-		get(out, "reviewer_states", "total") != float64(1) || !strings.Contains(text, "Review states: @carol unreviewed.") {
+		get(out, "reviewer_states", "reviewers", 0, "state") != "approved" || get(out, "reviewer_states", "more") != false ||
+		get(out, "reviewer_states", "total") != float64(1) || !strings.Contains(text, "Review states: @carol approved.") {
 		t.Errorf("reviewer states = %v", get(out, "reviewer_states"))
 	}
 	carol := newHarness(t, harnessOptions{over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("carol", "api") }})

@@ -442,8 +442,6 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	return b.String()
 }
 
-// linkedItems renders one list of linked items under heading. Each title
-// was written by someone else and is shown inside the boundary.
 // reviewerStates is one line: each reviewer and where their review
 // stands.
 func reviewerStates(r *model.ReviewerStates) string {
@@ -467,6 +465,8 @@ func reviewerStates(r *model.ReviewerStates) string {
 	return line + "."
 }
 
+// linkedItems renders one list of linked items under heading. Each title
+// was written by someone else and is shown inside the boundary.
 func linkedItems(heading string, l *model.LinkedItems, bd Boundary) string {
 	if l == nil {
 		return heading + ": could not be read."

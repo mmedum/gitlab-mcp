@@ -338,8 +338,12 @@ type MRVersionQuery struct {
 // does not hide the change. This does the same, in the target project,
 // where GitLab keeps both heads.
 func (s *Service) CompareMRVersions(ctx context.Context, q MRVersionQuery) (model.MRVersionChanges, error) {
-	if q.FromVersion <= 0 || q.ToVersion < 0 {
+	if q.FromVersion <= 0 {
 		return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid, "from_version is a version id, as list_mr_versions gives it")
+	}
+	if q.ToVersion < 0 {
+		return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid,
+			"to_version is a version id, as list_mr_versions gives it, or omitted for the newest")
 	}
 	p, ref, err := s.project(ctx, q.Project)
 	if err != nil {
@@ -404,9 +408,12 @@ func (s *Service) CompareMRVersions(ctx context.Context, q MRVersionQuery) (mode
 	if err != nil {
 		return model.MRVersionChanges{}, err
 	}
-	return model.MRVersionChanges{IID: q.IID, FromVersion: mrVersion(older), ToVersion: mrVersion(newer),
-		BaseMoved: older.BaseCommitSHA != "" && newer.BaseCommitSHA != "" && older.BaseCommitSHA != newer.BaseCommitSHA,
-		Compare:   changes}, nil
+	out := model.MRVersionChanges{IID: q.IID, FromVersion: mrVersion(older), ToVersion: mrVersion(newer), Compare: changes}
+	if older.BaseCommitSHA != "" && newer.BaseCommitSHA != "" {
+		moved := older.BaseCommitSHA != newer.BaseCommitSHA
+		out.BaseMoved = &moved
+	}
+	return out, nil
 }
 
 // ListTags lists a project's tags.

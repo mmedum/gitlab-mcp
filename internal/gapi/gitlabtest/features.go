@@ -378,6 +378,9 @@ func (s *Server) rebase(w http.ResponseWriter, r *http.Request, p *project, iid 
 		return
 	}
 	s.rebases++
+	if mr.State == "opened" {
+		s.rebaseMR(p, mr)
+	}
 	writeJSON(w, http.StatusAccepted, gitlab.RebaseState{})
 }
 

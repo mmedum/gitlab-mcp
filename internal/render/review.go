@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -74,7 +75,9 @@ func writeCommitRows(b *strings.Builder, rows []model.CommitRow, bd Boundary) {
 		b.WriteString("\n" + bd.Notice())
 	}
 	for _, c := range rows {
-		fmt.Fprintf(b, "\n- %s %s by %s", Ident(c.ID), when(c.CommittedAt), person(c.AuthorName))
+		// Anyone can write a commit's author name, so it is inside the
+		// boundary with the title.
+		fmt.Fprintf(b, "\n- %s %s by %s", Ident(c.ID), when(c.CommittedAt), bd.Inline(person(c.AuthorName)))
 		if c.Parents > 1 {
 			b.WriteString(", a merge")
 		}
@@ -134,11 +137,11 @@ func DraftNotes(d model.DraftNotes, bd Boundary) string {
 // Compare renders compare_refs.
 func Compare(c model.Compare, bd Boundary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Compare %s...%s in %s\n", Ident(c.From), Ident(c.To), projectLine(c.Project))
-	how := "from their merge base, as a merge request compares"
+	dots, how := "...", "from their merge base, as a merge request compares"
 	if c.Straight {
-		how = "directly"
+		dots, how = "..", "directly"
 	}
+	fmt.Fprintf(&b, "Compare %s%s%s in %s\n", Ident(c.From), dots, Ident(c.To), projectLine(c.Project))
 	fmt.Fprintf(&b, "%s; compared %s.", Ident(c.WebURL), how)
 	compareBody(&b, c, bd)
 	return b.String()
@@ -187,13 +190,24 @@ func MRVersionChanges(c model.MRVersionChanges, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Changes in %s from version %d to version %d, in %s\n", mrItem(c.IID), c.FromVersion.ID, c.ToVersion.ID,
 		projectLine(c.Project))
-	fmt.Fprintf(&b, "Compared %s...%s directly, as GitLab's version comparison does; %s.", Ident(c.From), Ident(c.To),
-		Ident(c.WebURL))
-	if c.BaseMoved {
+	fmt.Fprintf(&b, "Compared %s..%s directly, as GitLab's version comparison does. GitLab's compare page, which compares "+
+		"from the merge base unless told otherwise: %s.", Ident(c.From), Ident(c.To), Ident(c.WebURL))
+	switch {
+	case c.BaseMoved == nil:
+		b.WriteString("\nOne of the versions has no merge base, so whether it moved is unknown.")
+	case *c.BaseMoved && c.From == c.To:
+		b.WriteString("\nOnly the merge base moved between these versions; the head is the same, so there are no changes to show.")
+	case *c.BaseMoved:
 		b.WriteString("\nThe merge base moved between these versions, as after a rebase: the diff includes what the target " +
 			"branch gained in between, not only the author's changes.")
 	}
 	compareBody(&b, c.Compare, bd)
+	if c.NextCommitOffset != nil || c.NextFileOffset != nil || slices.ContainsFunc(c.Files, func(f model.FileDiff) bool {
+		return f.ContinueDiffOffset != nil
+	}) {
+		fmt.Fprintf(&b, "\nWhen continuing, pass from_version=%d and to_version=%d with the offsets, so a push meanwhile does "+
+			"not change what is compared.", c.FromVersion.ID, c.ToVersion.ID)
+	}
 	return b.String()
 }
 

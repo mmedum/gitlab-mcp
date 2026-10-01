@@ -62,6 +62,7 @@ func (s *Server) merge(w http.ResponseWriter, r *http.Request, p *project, mr *g
 	commit.ParentIDs = append(commit.ParentIDs, mr.SHA)
 	p.commits[mr.TargetBranch] = append([]gitlab.Commit{commit}, p.commits[mr.TargetBranch]...)
 	p.trees[mr.TargetBranch] = cloneTree(p.trees[mr.SourceBranch])
+	p.snapshots[commit.ID] = p.trees[mr.TargetBranch]
 	delete(p.fileCommits, mr.TargetBranch)
 	setBranch(p, mr.TargetBranch)
 	before := mrState(mr)
@@ -111,6 +112,7 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request, p *project, mr 
 	}
 	a.ApprovedBy = append(a.ApprovedBy, gitlab.Approver{User: s.user(user)})
 	a.Approved = true
+	s.updateReviewerState(p, mr, user, "approved")
 	writeJSON(w, http.StatusCreated, approvalsFor(a, user))
 }
 
@@ -123,6 +125,7 @@ func (s *Server) unapprove(w http.ResponseWriter, p *project, mr *gitlab.MergeRe
 	}
 	a.ApprovedBy = slices.DeleteFunc(a.ApprovedBy, func(ap gitlab.Approver) bool { return ap.User.Username == user })
 	a.Approved = len(a.ApprovedBy) > 0
+	s.updateReviewerState(p, mr, user, "unapproved")
 	writeJSON(w, http.StatusCreated, approvalsFor(a, user))
 }
 
@@ -564,10 +567,12 @@ func (s *Server) PushTo(projectPath, branch string) (string, bool) {
 	}
 	c := s.commit(p, "Pushed by someone else", "bob", s.opts.Now().UTC(), p.commits[branch][0].ID)
 	p.commits[branch] = append([]gitlab.Commit{c}, p.commits[branch]...)
+	p.snapshots[c.ID] = p.trees[branch]
 	setBranch(p, branch)
 	for _, mr := range p.mrs {
 		if mr.SourceBranch == branch && mr.State == "opened" {
 			s.refreshMR(p, mr)
+			s.resetOnPush(p, mr)
 			s.autoMRPipeline(p, mr, "bob")
 		}
 	}

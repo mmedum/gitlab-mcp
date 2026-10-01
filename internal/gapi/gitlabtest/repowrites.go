@@ -380,11 +380,13 @@ func (s *Server) createCommit(w http.ResponseWriter, r *http.Request, p *project
 	c.Stats.Total = c.Stats.Additions + c.Stats.Deletions
 	p.diffs[id] = diffs
 	p.trees[branch] = tree
+	p.snapshots[id] = tree
 	p.commits[branch] = append([]gitlab.Commit{c}, p.commits[branch]...)
 	setBranch(p, branch)
 	for _, mr := range p.mrs {
 		if mr.State == "opened" && mr.SourceBranch == branch {
 			s.refreshMR(p, mr)
+			s.resetOnPush(p, mr)
 			s.autoMRPipeline(p, mr, user)
 		}
 	}
