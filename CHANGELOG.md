@@ -24,7 +24,7 @@ lifted verbatim.
 
 ### Changed
 
-- Commit lists (`list_commits`, `list_mr_commits`, `compare_refs`) show each author's name inside the untrusted-content markers, as the title is, and a straight `compare_refs` is named `from..to`.
+- Commit lists (`list_commits`, `list_mr_commits`, `compare_refs`), `get_commit` and `get_blame` show git author and committer names inside the untrusted-content markers, as titles and messages are, and a straight `compare_refs` is named `from..to`.
 
 ## [2.1.0] - 2026-10-01
 

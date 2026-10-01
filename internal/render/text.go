@@ -731,10 +731,12 @@ func Commits(l model.Commits, bd Boundary) string {
 func Commit(c model.Commit, bd Boundary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Commit %s in %s\n", Ident(c.ID), projectLine(c.Project))
-	fmt.Fprintf(&b, "%s\nAuthored by %s at %s; committed by %s at %s; parents %s.\n", Ident(c.WebURL), person(c.AuthorName),
-		when(c.AuthoredAt), person(c.CommitterName), when(c.CommittedAt), idents(c.ParentIDs))
+	b.WriteString(Ident(c.WebURL) + "\n" + bd.Notice() + "\n")
+	// Anyone can write a commit's author and committer names, so they are
+	// inside the boundary with the message.
+	fmt.Fprintf(&b, "Authored by %s at %s; committed by %s at %s; parents %s.\n", bd.Inline(person(c.AuthorName)),
+		when(c.AuthoredAt), bd.Inline(person(c.CommitterName)), when(c.CommittedAt), idents(c.ParentIDs))
 	fmt.Fprintf(&b, "%d lines added, %d removed.\n", c.Additions, c.Deletions)
-	b.WriteString(bd.Notice() + "\n")
 	o := Origin{Kind: "commit_message", Project: c.Project.Path, Item: c.ShortID, Author: ""}
 	b.WriteString(bd.Block(o, c.UntrustedMessage) + "\n")
 	b.WriteString(budgetLineFor("Message", "message_offset", c.MessageBudget))

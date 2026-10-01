@@ -925,6 +925,11 @@ func TestGetCommitMergeRequests(t *testing.T) {
 	if !strings.Contains(text, "Merge requests in this project that contain it: 20 shown of 25; the rest are not shown.") {
 		t.Errorf("text:\n%s", text)
 	}
+	// Git names are anyone's to write, so both are inside the boundary.
+	if !strings.Contains(text, "Authored by <<<") || !strings.Contains(text, ">>>Bob Example<<</") ||
+		!strings.Contains(text, "; committed by <<<") {
+		t.Errorf("the commit's names are outside the boundary:\n%s", text)
+	}
 	_, main := h.ok("list_commits", map[string]any{"project": gitlabtest.ProjectAlpha, "max": 1})
 	_, out = h.ok("get_commit", map[string]any{"project": gitlabtest.ProjectAlpha, "sha": get(main, "commits", 0, "id")})
 	if n := len(get(out, "merge_requests", "items").([]any)); n != 0 || get(out, "merge_requests", "more") != false {
