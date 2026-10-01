@@ -60,6 +60,8 @@ var plainInputs = map[string]string{
 	"content_sha256": "the wiki witness, compared with a hash of a fresh read and never sent",
 	"slug":           "addresses a wiki page in the request path; never sent as text",
 	"format":         "a closed value, markdown, rdoc, asciidoc or org, which GitLab takes as the page's markup and does not interpret",
+	"apply_suggestions.commit_message": "a commit message Suggestions::ApplyService hands to Files::MultiService, which writes it " +
+		"into Git; it runs no quick action, as for create_commit (§18 row 108)",
 	"merge_merge_request.merge_commit_message": "a commit message MergeRequests::MergeService writes into Git; it runs no quick " +
 		"action (§18 row 67)",
 	"merge_merge_request.squash_commit_message": "a commit message MergeRequests::MergeService writes into Git; it runs no quick " +

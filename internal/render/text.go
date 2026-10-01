@@ -545,6 +545,20 @@ func Discussions(d model.Discussions, bd Boundary) string {
 			}
 			b.WriteString(":\n")
 			b.WriteString(bd.Block(Origin{Kind: "comment", Project: d.Project.Path, Item: item, Author: n.Author.Username}, n.UntrustedBody))
+			if len(n.Suggestions) > 0 {
+				parts := make([]string, len(n.Suggestions))
+				for i, sg := range n.Suggestions {
+					state := "not appliable now"
+					switch {
+					case sg.Applied:
+						state = "applied"
+					case sg.Appliable:
+						state = "appliable"
+					}
+					parts[i] = fmt.Sprintf("%d (%s, %s)", sg.ID, lineRange(sg.FromLine, sg.ToLine), state)
+				}
+				fmt.Fprintf(&b, "\nSuggestions in comment %d, for apply_suggestions: %s.", n.ID, strings.Join(parts, "; "))
+			}
 			// A comment shown whole and clean needs no budget line.
 			if n.Budget.ContinueOffset != nil || n.Budget.Offset > 0 || n.Budget.HiddenRemoved > 0 {
 				b.WriteString("\n" + budgetLineFor(fmt.Sprintf("Comment %d", n.ID), fmt.Sprintf("note_id=%d offset", n.ID), n.Budget))

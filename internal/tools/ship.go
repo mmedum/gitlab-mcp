@@ -85,6 +85,50 @@ func unapproveMergeRequest() definition {
 	}
 }
 
+type cancelAutoMergeIn struct {
+	Project idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	IID     int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	DryRun  bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without canceling anything"`
+}
+
+func cancelAutoMerge() definition {
+	return tool[cancelAutoMergeIn, model.AutoMergeCancel]{
+		sp: spec{Name: "cancel_auto_merge", Kind: Ship, Idempotent: true,
+			Description: "Stop a merge request from merging when its pipeline succeeds, as merge_merge_request with auto_merge " +
+				"set it to. Without an auto-merge it is reported unchanged and nothing is sent. Someone who may merge it, or " +
+				"its author, can cancel. The result is read back and gives the new updated_at." + shipNote + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in cancelAutoMergeIn) (model.AutoMergeCancel, error) {
+			return svc.CancelAutoMerge(ctx, string(in.Project), in.IID)
+		},
+		text: render.AutoMergeCancel,
+	}
+}
+
+type applySuggestionsIn struct {
+	Project       idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	IID           int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	IDs           []int64  `json:"ids" jsonschema:"The suggestions to apply, by the ids list_discussions gives each diff comment's suggestions; all go in one commit, and none may overlap another's lines"`
+	CommitMessage string   `json:"commit_message,omitempty" jsonschema:"The commit's message; the project's suggestion message or GitLab's default when omitted. GitLab fills in placeholders such as %{branch_name}, %{files_count}, %{suggestions_count}, %{username} and %{co_authored_by} in it"`
+	DryRun        bool     `json:"dry_run,omitempty" jsonschema:"Check the suggestions and the branch, and return what would be sent without committing"`
+}
+
+func applySuggestions() definition {
+	return tool[applySuggestionsIn, model.SuggestionsApply]{
+		sp: spec{Name: "apply_suggestions", Kind: Ship,
+			Description: "Apply suggestions from a merge request's diff comments: GitLab commits them, in one commit as the " +
+				"signed-in account, to the source branch. The default branch and a protected source branch are refused " +
+				"[blocked], and every id must be on this merge request. Suggestions already applied are reported unchanged. " +
+				"GitLab refuses one whose lines changed since, and every one right after a push until it has caught up, so " +
+				"try again shortly then. Never repeated after a lost answer: the result then says what a read found. The " +
+				"result gives the branch's new head." + shipNote + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in applySuggestionsIn) (model.SuggestionsApply, error) {
+			return svc.ApplySuggestions(ctx, service.SuggestionsApplication{Project: string(in.Project), IID: in.IID, IDs: in.IDs,
+				CommitMessage: in.CommitMessage})
+		},
+		text: render.SuggestionsApply,
+	}
+}
+
 // ------------------------------------------------------------------- CI
 
 type pipelineVariableIn struct {

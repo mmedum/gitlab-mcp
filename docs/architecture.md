@@ -360,7 +360,7 @@ Four kinds, decided in one `register` (`CLAUDE.md` rule 14):
 |---|---|---|
 | Read | every GET | always |
 | Write | issues, comments, reactions, reviews, branches, commits to unprotected branches, merge requests, todos, wiki, snippets | unless read-only |
-| Ship | merge, approve, unapprove, run, retry, play and cancel CI, create a release | `GITLAB_MCP_ENABLE_SHIP=true` |
+| Ship | merge, approve, unapprove, cancel an auto-merge, apply review suggestions, run, retry, play and cancel CI, create a release | `GITLAB_MCP_ENABLE_SHIP=true` |
 | Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, plus `confirm: true` per call |
 
 Ship is its own kind because it is where a persuaded call stops being a
@@ -397,7 +397,10 @@ are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 protected branch: one that exists by its own `protected` flag, one it
 would create by the protected-branch rules, read at call time, and
 refused when there are more rules than one read covers. It can create
-the branch it commits to (`start_branch`). `create_branch` refuses a
+the branch it commits to (`start_branch`). `apply_suggestions` refuses a
+merge request whose source branch is the default or a protected one in
+the same way, before anything is sent: GitLab would commit the
+suggestions there for an account that may push. `create_branch` refuses a
 name the rules cover in the same way, since a new protected branch at a
 ref of the caller's choosing is code in a protected branch no merge
 request showed (phase 2 security review). The merge request is the
@@ -429,6 +432,7 @@ time and the signed-in user:
 | a to-do added for oneself | the account's pending to-dos it added on the item, created since shortly before the call |
 | an emoji reaction | the account's reactions on the item or comment before and after: one that is new is the add's |
 | a snippet change that creates, deletes or moves a file | the snippet's files and `updated_at` |
+| suggestions applied | each suggestion's `applied` on the merge request's diff comments, and the source branch's head: all applied is applied; none, with the head where it was, is not |
 
 Found means **created**, and the result carries it. Not found means
 **not created**, and the result says so without creating it. Anything
@@ -636,7 +640,10 @@ questions asked often are answered without reading (§18 row 94).
    before. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses those writes as
    `[blocked]` instead.
 4. **A dry run never asks.** Nor does a pipeline on a ref no rule
-   protects, or an issue update that keeps it confidential. `run_pipeline`
+   protects, or an issue update that keeps it confidential. Nor does
+   `apply_suggestions`, which commits only where `create_commit` would,
+   and a commit there asks nothing; nor `cancel_auto_merge`, which
+   stops a merge and ships nothing. `run_pipeline`
    reads the ref and asks when GitLab marks it the default branch or
    protected. A `refs/heads/` or `refs/tags/` ref is read as the branch
    or tag it names, as GitLab reads it, and a ref that is neither is
@@ -1061,6 +1068,32 @@ or on an issue with `type: issue`. `rebase_merge_request` (Ship) takes
 the head `sha` reviewed and refuses a protected source branch. A draft on a line reports the
 `line_code` GitLab computed for it.
 
+`list_discussions` names the suggestion blocks of each diff comment
+with their ids, lines and whether GitLab has them applied.
+`apply_suggestions` (Ship) commits suggestions, one or several in one
+commit, to the merge request's source branch as the account, through
+`PUT /suggestions/:id/apply` or `/suggestions/batch_apply`. GitLab finds
+a suggestion by its id alone, so each id is first found among the merge
+request's own comments; an edit to a comment gives its suggestions new
+ids, so an id stands for the text it was read with and carries its own
+witness. A default or protected source branch is refused (§4.4), and so
+is a fork outside `GITLAB_MCP_WRITE_NAMESPACES` (§4.7), since the
+commit lands in the fork. GitLab's 400 names why a suggestion does not
+apply: applied already, its lines changed, the merge request closed.
+Right after a push it refuses every one with "A file has been changed."
+until it has moved the comments to the new head, and the result says to
+try again shortly. The answer gives neither the commit nor an `applied`
+that reflects it, so the suggestions and the branch's head are read
+back. A lost answer is settled by the same read (§4.5): GitLab refuses
+an applied suggestion, so the PUT is never sent twice (§18 row 108).
+
+`cancel_auto_merge` (Ship) stops a merge request set to merge when its
+pipeline succeeds. GitLab answers 201 whether it canceled or not, with
+the result in the body, so the tool reads `status`, then the merge
+request. Without an auto-merge it sends nothing. Someone who may merge
+the merge request, or its author, can cancel; GitLab answers anyone
+else 401, which is `[forbidden]` here (§18 row 107).
+
 ### 7.4 Where an inline comment lands
 
 The `diffpos` package builds GitLab's position from the model's `file`,
@@ -1261,9 +1294,9 @@ feature GitLab licenses is `[unsupported]` naming the likely tier, never
 
 ## 8. Tool surface
 
-Ninety-six tools. With the default toolsets: sixty by default,
-thirty-nine in read-only mode, seventy-three with Ship and Destructive
-both enabled. Every toolset and flag on registers all ninety-six.
+Ninety-eight tools. With the default toolsets: sixty by default,
+thirty-nine in read-only mode, seventy-five with Ship and Destructive
+both enabled. Every toolset and flag on registers all ninety-eight.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people:
 every write but `add_todo`, `subscribe` and `mark_todos_done`, whose
@@ -1335,8 +1368,10 @@ Destructive kinds, as a signal and not a control.
 | `subscribe` | Write | default | `POST …/issues|merge_requests/:iid/subscribe`, `/unsubscribe` |
 | `react` | Write | default | `GET`/`POST …/issues|merge_requests/:iid[/notes/:id]/award_emoji`, `GET`/`DELETE …/award_emoji/:id` (own reactions) |
 | `merge_merge_request` | Ship | default | `PUT …/merge_requests/:iid/merge` |
+| `cancel_auto_merge` | Ship | default | `POST …/merge_requests/:iid/cancel_merge_when_pipeline_succeeds` (reads the answer's `status`; nothing sent without an auto-merge) |
 | `approve_merge_request` | Ship | default | `POST …/merge_requests/:iid/approve` |
 | `unapprove_merge_request` | Ship | default | `POST …/merge_requests/:iid/unapprove` |
+| `apply_suggestions` | Ship | default | `PUT /suggestions/:id/apply`, `/suggestions/batch_apply` (refuses the default and protected source branches; never repeated) |
 | `rebase_merge_request` | Ship | default | `PUT …/merge_requests/:iid/rebase` (takes the head `sha`) |
 | `move_issue` | Ship | default | `POST …/issues/:iid/move` (never to a more visible project) |
 | `run_pipeline` | Ship | default | `POST …/pipeline` |
@@ -1426,7 +1461,8 @@ The groups below are the design's verdicts; the TSV is the record.
 | `/internal/*` and experimental routes | Written off: not public API, marked by path and lifecycle |
 | AI, editor and chat features; feature flags; topics; namespaces; badges; notification settings; the CI catalog; job-token scope; resource groups | Written off: product administration or features with no assistant task in a project |
 | issue boards | Read used: the project's boards, which carry their lists. One board or list by id, and every board and list write, deferred |
-| error tracking and alerts, Markdown rendering, templates, merge trains, suggestions, DORA and analytics | Deferred: suggestions are a Ship candidate; the rest have no tool in §8 yet (§17.11 for the Premium ones) |
+| suggestions | Gated: `apply_suggestions`, Ship |
+| error tracking and alerts, Markdown rendering, templates, merge trains, DORA and analytics | Deferred: no tool in §8 yet (§17.11 for the Premium ones) |
 | navigation reads no tool uses yet (`GET /groups`, `/users/{id}` and the like) | Deferred until a tool needs them |
 
 ### 8b. Field coverage
@@ -2610,3 +2646,5 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 106 | Adding an emoji reaction that is already there is a conflict GitLab reports, and a reaction leaves the witnesses alone | At v19.4.1-ee: `lib/api/award_emoji.rb` L51-60 (the list, `can_read_awardable?` or 404), L96-106 (the POST: `not_found!` unless the account may read and award, and `not_found!("Award Emoji #{service[:message]}")` for every service failure) and L121-129 (the DELETE: `find` or 404, `unauthorized!` unless the award is the account's or it is an admin, `destroy_conditionally!`); `lib/api/helpers.rb` L92 and `lib/api/api.rb` L152-153 (messages in the account's `preferred_language`); `lib/api/helpers/award_emoji.rb` L19-32; `app/services/award_emojis/base_service.rb` L77-79 (`normalize_name`); `app/services/award_emojis/add_service.rb` (`user_can_award?`, `emoji_awardable?`, `TodoService#new_award_emoji`); `app/models/award_emoji.rb` L14 (no `touch:`), L23 (unique per user, awardable type and id), L39-40 and L88-91 (`expire_cache` calls `bump_updated_at`); `app/models/note.rb` L545 (`emoji_awardable?` is `!system?`) and L592-605 (`bump_updated_at`, the only definition in `app` and `ee/app`); `app/models/issue.rb` L860-863 (`update_column`); `app/policies/issuable_policy.rb` L48-52 (a locked discussion, for a non-member); `app/policies/note_policy.rb` L82-88 and `app/models/note.rb` L778-780 (an internal note needs `read_internal_note`, Planner and up); `app/models/concerns/awardable.rb` L11 (`participant :award_emoji`); `app/validators/gitlab/emoji_name_validator.rb`; `app/models/custom_emoji.rb` L4 and L20-25; `lib/api/entities/issue_basic.rb` L34-35 and `merge_request_basic.rb` L37-41; tanuki_emoji 0.13.0, as `Gemfile.lock` pins it: `lib/tanuki_emoji/character.rb` L12 and L32-34, `vendor/gemojione/index-3.3.0.json` (`:+1:` and `:-1:`) | **Refuted (tier 1).** No route answers 409: a reaction already there, an unknown name, a system note and an item the account may not react to all answer 404, the reason folded into the message (`Name has already been taken`, `Name is not a valid emoji name`, `Awardable cannot add emoji reactions`), translated into the account's preferred language. The OpenAPI file publishes 201, 400 and 404 for the POST and no 412 for the DELETE, which `destroy_conditionally!` can answer. So `react` reads the account's reactions first and sends nothing when the state asked for holds, and after a 404 reads them again rather than the message: one there is unchanged. A name is an alpha code, `[_+\-a-z0-9]+`, which GitLab takes with or without colons and keeps under its emoji's name, `+1` as `thumbsup`; a custom emoji, `[a-z0-9_-]+` of at most 36, is valid only when the project's namespace is a group that, or a parent of which, defines it. Any signed-in user who can read the item may react, Guest and up or on a public or internal project, and to their own item too, except on a locked discussion when not a member or on an internal note below Planner; there is no rate limit. A reaction, on the item or a comment, makes its author a participant. Only one's own reaction can be removed (401 otherwise), and `react` removes by the id its read found. A reaction on a comment moves the comment's `updated_at` through `bump_updated_at`; on an issue or a merge request it moves nothing a read shows but `upvotes` and `downvotes`, which count thumbsup and thumbsdown only. GitLab answers a DELETE 204 even when its service refuses as the reaction's owner, which `react` catches by reading afterwards (inferred from `destroy_service.rb` L98-101). A reaction on the item, or on a comment outside a thread, marks the account's pending to-dos on the item done |
 | 107 | A merge request's changes between two versions are the repository compare from the older version's head to the newer's, straight, in the target project | At v19.4.1-ee: `lib/api/merge_request_diffs.rb` L12-57 (`authenticate!`; the listing is `merge_request_diffs.order_id_desc`, offset pages; a version's route has no pagination and returns `raw_diffs(limits: false)` with every commit); `app/models/merge_request.rb` L57-58 (the association is `regular` diffs only); `app/models/merge_request_diff.rb` L66-80 (states), L425-453 (base and start can be null, head falls back to the last commit), L714, L1015-1070 and L1136-1147 (heads kept around in the target project); `lib/gitlab/git/diff_collection.rb` L118-126 (`real_size` is `N` or `N+`); `app/controllers/projects/merge_requests/diffs_controller.rb` L167-204 and `app/facades/merge_requests/merge_request_diff_comparison.rb` L10-17 (the page's comparison is `CompareService.new(target_project, newer.head_commit_sha).execute(target_project, older.head_commit_sha, straight: true)`); `lib/api/repositories.rb` L297-331 (the same `CompareService` call with `from`, `to` and `straight`) | **Confirmed (tier 1).** There is no REST route comparing versions; `compare?from=<older head>&to=<newer head>&straight=true` on the target project is the call GitLab's own page makes, so it shows what the page shows. The default `straight=false` would compare from the merge base and is wrong here. After a rebase the straight diff carries what the rebase brought in from the target branch; GitLab offers no range-diff, so the tool says so and flags a moved merge base. A version's own route is not read for diffs: it is unpaged, and a cleaned-up old version (`without_files`) returns no diffs although its heads are still kept (inferred from code, not live-tested) (§7.3) |
 | 108 | Each reviewer's review state is readable on Free and only from the reviewers route | At v19.4.1-ee: `lib/api/merge_requests.rb` L526-542 (`find_merge_request_with_access`, then `Kaminari.paginate_array(merge_request.merge_request_reviewers)` and `paginate`: offset pages with an exact `X-Total`); `app/models/merge_request.rb` L135 (the association has no order); `lib/api/entities/merge_request_reviewer.rb` (`user`, `state`, `created_at`); `app/models/concerns/merge_request_reviewer_state.rb` (the enum, defined in CE: `unreviewed`, `reviewed`, `requested_changes`, `approved`, `unapproved`, `review_started`); `lib/api/entities/merge_request_basic.rb` L47 (`reviewers` is plain `UserBasic`) | **Confirmed (tier 1).** The merge request itself carries no review state, so `get_merge_request` reads the route alongside its other reads, one page of 100, best effort as the approvals are, and says when GitLab has more. The order is the database's, unspecified, so the page is shown as GitLab gives it. `user.state` is the account's state, not the review's, and is not shown. How states move, as `app/services/merge_requests/update_reviewer_state_service.rb`, `app/services/draft_notes/create_service.rb` `after_execute`, `approval_service.rb`, `remove_approval_service.rb` and EE `merge_requests/base_service.rb` `delete_approvals` show it, and as the test instance models it: a user's first draft sets `review_started`; submitting `reviewed`, `approved` or `requested_changes` makes anyone but the author a reviewer; an `approved` reviewer moves only to `requested_changes` or `unapproved`; approving and unapproving set those states; a push resets approvers to `unapproved` only under the Premium `reset_approvals_on_push` (§7.2) |
+| 109 | Canceling an auto-merge answers as the OpenAPI file publishes it | At v19.4.1-ee: `lib/api/merge_requests.rb` L930-948; `app/services/auto_merge_service.rb` L54-60; `app/services/auto_merge/base_service.rb` L36-46 and L114-140; `app/services/auto_merge/merge_when_checks_pass_service.rb` L26-31; `app/models/merge_request.rb` L1797-1799 and L2096-2099; `lib/api/entities/merge_request_basic.rb` L10-12 and L65; `lib/api/helpers.rb` L613 | **Refuted (tier 1).** The route returns the service's result and presents nothing, so GitLab renders that hash under POST's 201: `{"status":"success"}` when it canceled, and `{"status":"error","message":"Can't cancel the automatic merge","http_status":406}` when no auto-merge was set or saving failed. The 406 the file lists, and the merge request it publishes as the body, never come. A cancel clears `merge_when_pipeline_succeeds` and `merge_user`, saves, so `updated_at` moves, adds a system note and fires the merge request hook. `merge_when_pipeline_succeeds` is GitLab's `auto_merge_enabled` for every strategy, so it says whether one is set. Someone who may merge into the target branch, or the author, may cancel; anyone else gets 401 from `unauthorized!`, which here is a role and not a token. A second cancel changes nothing and answers the error body, so the call repeats. `cancel_auto_merge` reads the merge request first and sends nothing without an auto-merge, reads `status` in the body, and reads the merge request again for the result. The body's shape is read from the code; the live run checks it |
+| 110 | Applying a suggestion answers as the OpenAPI file publishes it, and a lost answer can be settled | At v19.4.1-ee: `lib/api/suggestions.rb` L10-54 and L57-84; `app/policies/suggestion_policy.rb`; `lib/gitlab/user_access.rb` L72-77; `app/services/suggestions/apply_service.rb` L11-66 and `ee/app/services/ee/suggestions/apply_service.rb`; `lib/gitlab/suggestions/suggestion_set.rb` L70-119; `lib/gitlab/suggestions/commit_message.rb`; `app/models/suggestion.rb` L48-62; `lib/api/entities/note.rb` L37-39 and `lib/api/entities/suggestion.rb`; `app/services/notes/update_service.rb` L112-123 | **Refined (tier 1).** Both routes answer 200 with the suggestions as the file publishes them, but they are the objects read before the commit, so `applied` can still be false, and the commit's sha is in no field. GitLab looks a suggestion up by id alone, with no project in the path; batch_apply answers 404 when an id is missing or given twice. An account that may not push to the source branch, a protected one or a fork without collaboration, gets 403 before anything is done. Every other refusal is 400 with the reason, the first failing check winning: the file gone, another branch, applied already, the merge request merged or closed, the source branch deleted, lines changed since, the same content, and "A file has been changed." when the comment's `head_sha` is not the branch's head, which holds for every suggestion right after a push until GitLab moves the comments, so a later try can pass. Lines that overlap in a batch are refused. The commit is `Files::MultiService` as the account on the source branch, with the project's message or a default, and `%{…}` placeholders filled in a custom message too. The suggestions are marked applied in the same request, so a second apply is 400 and never commits twice. An edit to a comment deletes its suggestions and creates new ones, so an id stands for the text it was read with. Only a merge request's diff notes carry `suggestions`, on the discussions and notes routes. `apply_suggestions` finds every id on the merge request first, refuses the default and protected source branches as `create_commit` does, sends the PUT once, reads the suggestions and the branch back, and settles a lost answer by the same read |

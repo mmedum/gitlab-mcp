@@ -34,8 +34,8 @@ func TestShipAndDestructiveAreRegisteredOnlyByTheirFlags(t *testing.T) {
 		}
 		return out
 	}
-	shipTools := []string{"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline",
-		"run_merge_request_pipeline", "retry_pipeline", "retry_job", "play_job", "cancel_pipeline"}
+	shipTools := []string{"merge_merge_request", "cancel_auto_merge", "approve_merge_request", "unapprove_merge_request",
+		"apply_suggestions", "run_pipeline", "run_merge_request_pipeline", "retry_pipeline", "retry_job", "play_job", "cancel_pipeline"}
 	deleteTools := []string{"delete_branch", "delete_comment"}
 	for _, c := range []struct {
 		name       string
@@ -531,6 +531,335 @@ func TestRetryJobWhoseAnswerWasLostIsSettled(t *testing.T) {
 	text := h.fails("retry_job", map[string]any{"project": alpha, "job_id": gitlabtest.JobFailed}, "ambiguous_outcome")
 	if !strings.Contains(text, "a read shows it was created: job") {
 		t.Errorf("settled: %s", text)
+	}
+}
+
+// ---------------------------------------------------------- auto-merge
+
+// cancelPosts counts the auto-merge cancels sent.
+func cancelPosts(h *harness) int {
+	n := 0
+	for _, r := range h.gl.Requests() {
+		if r.Method == "POST" && strings.HasSuffix(r.EscapedPath, "/cancel_merge_when_pipeline_succeeds") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestCancelAutoMerge(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	text, out := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2})
+	if get(out, "outcome") != "unchanged" || get(out, "auto_merge") != false || cancelPosts(h) != 0 {
+		t.Errorf("without an auto-merge = %v, %d sent", out, cancelPosts(h))
+	}
+	if !strings.Contains(text, "nothing was sent") {
+		t.Errorf("text:\n%s", text)
+	}
+
+	h.gl.SetAutoMerge(alpha, 2, "bob")
+	before, _ := h.gl.MergeRequest(alpha, 2)
+	_, dry := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2, "dry_run": true})
+	if get(dry, "outcome") != "dry_run" || get(dry, "set_by") != "bob" || cancelPosts(h) != 0 {
+		t.Errorf("dry run = %v, %d sent", dry, cancelPosts(h))
+	}
+
+	text, out = h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2})
+	after, _ := h.gl.MergeRequest(alpha, 2)
+	if get(out, "outcome") != "canceled" || get(out, "auto_merge") != false || get(out, "set_by") != "bob" ||
+		get(out, "state") != "opened" || after.MergeWhenPipelineSucceeds || after.MergeUser != nil {
+		t.Errorf("canceled = %v; instance holds %v, %v", out, after.MergeWhenPipelineSucceeds, after.MergeUser)
+	}
+	if !after.UpdatedAt.After(before.UpdatedAt) || get(out, "updated_at") != after.UpdatedAt.Format(time.RFC3339Nano) {
+		t.Errorf("updated_at = %v, instance %v, before %v", get(out, "updated_at"), after.UpdatedAt, before.UpdatedAt)
+	}
+	if !strings.Contains(text, "Canceled the auto-merge of merge request !2") {
+		t.Errorf("text:\n%s", text)
+	}
+
+	_, again := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2})
+	if get(again, "outcome") != "unchanged" || cancelPosts(h) != 1 {
+		t.Errorf("again = %v, %d sent", again, cancelPosts(h))
+	}
+}
+
+// GitLab answers 201 when it does not cancel, with the reason in the
+// body; the result reads it rather than the status.
+func TestCancelAutoMergeReadsTheBody(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.gl.SetAutoMerge(alpha, 2, "alice")
+	path := fmt.Sprintf("/projects/%d/merge_requests/2/cancel_merge_when_pipeline_succeeds", h.gl.ProjectID(alpha))
+	refused := `{"status":"error","message":"Can't cancel the automatic merge","http_status":406}`
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: path, Status: 201, Body: refused})
+	text := h.fails("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2}, "conflict")
+	if !strings.Contains(text, "still set") || !strings.Contains(text, "Can't cancel the automatic merge") {
+		t.Errorf("refusal: %s", text)
+	}
+	// The same answer to a cancel that landed, as when one raced with
+	// another: the read afterwards shows none set.
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: path, Status: 201, Body: refused, AfterApply: true})
+	text, out := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2})
+	if get(out, "outcome") != "unchanged" || get(out, "auto_merge") != false || !strings.Contains(text, "in the meantime") {
+		t.Errorf("raced = %v\n%s", out, text)
+	}
+}
+
+// Whoever may merge it, or its author, cancels; GitLab answers anyone
+// else 401, which is the account's role, not its token.
+func TestCancelAutoMergePermission(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.gl.SetAutoMerge(alpha, 1, "alice")
+	dave := newHarness(t, harnessOptions{cfg: ship, over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
+	dave.fails("cancel_auto_merge", map[string]any{"project": alpha, "iid": 1}, "forbidden")
+	if mr, _ := h.gl.MergeRequest(alpha, 1); !mr.MergeWhenPipelineSucceeds {
+		t.Fatal("a refused cancel canceled")
+	}
+	// bob wrote !1 and develops the project, so he may not merge into
+	// its protected main, and may cancel all the same.
+	bob := newHarness(t, harnessOptions{cfg: ship, over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("bob", "api") }})
+	_, out := bob.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 1})
+	if get(out, "outcome") != "canceled" {
+		t.Errorf("the author's cancel = %v", out)
+	}
+}
+
+// --------------------------------------------------------- suggestions
+
+// login is src/login.go on feature/login, the fixtures' merge request
+// source branch.
+const loginFile = "src/login.go"
+
+// suggest adds a suggestion by bob on a merge request and returns its
+// comment's and its own id.
+func suggest(h *harness, iid int64, from, to int, replacement string) (int64, int64) {
+	h.t.Helper()
+	note, id, ok := h.gl.AddSuggestion(alpha, iid, "bob", loginFile, from, to, replacement)
+	if !ok {
+		h.t.Fatalf("no suggestion on !%d lines %d-%d", iid, from, to)
+	}
+	return note, id
+}
+
+// applyPuts counts the applies sent.
+func applyPuts(h *harness) int {
+	n := 0
+	for _, r := range h.gl.Requests() {
+		if r.Method == "PUT" && strings.HasPrefix(r.EscapedPath, "/api/v4/suggestions/") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestListDiscussionsNamesSuggestions(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	note, id := suggest(h, 1, 3, 3, "// login signs a user in.\n")
+	text, out := h.ok("list_discussions", map[string]any{"project": alpha, "type": "merge_request", "iid": 1})
+	var found any
+	for _, th := range get(out, "threads").([]any) {
+		for _, n := range get(th, "notes").([]any) {
+			if get(n, "id") == float64(note) {
+				found = get(n, "suggestions")
+			} else if len(get(n, "suggestions").([]any)) != 0 {
+				t.Errorf("comment %v has suggestions %v", get(n, "id"), get(n, "suggestions"))
+			}
+		}
+	}
+	want := []any{map[string]any{"id": float64(id), "from_line": float64(3), "to_line": float64(3), "appliable": true, "applied": false}}
+	if fmt.Sprint(found) != fmt.Sprint(want) {
+		t.Errorf("suggestions = %v, want %v", found, want)
+	}
+	if !strings.Contains(text, fmt.Sprintf("Suggestions in comment %d, for apply_suggestions: %d (line 3, appliable).", note, id)) {
+		t.Errorf("text:\n%s", text)
+	}
+}
+
+func TestApplySuggestion(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	note, id := suggest(h, 1, 3, 3, "// login signs a user in.\n")
+	before := branchHead(h, "feature/login")
+
+	_, dry := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}, "dry_run": true})
+	if get(dry, "outcome") != "dry_run" || get(dry, "head_before") != before || applyPuts(h) != 0 {
+		t.Errorf("dry run = %v, %d sent", dry, applyPuts(h))
+	}
+
+	text, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id},
+		"commit_message": "Apply %{suggestions_count} suggestion on %{branch_name}"})
+	head := branchHead(h, "feature/login")
+	if get(out, "outcome") != "applied" || get(out, "head_before") != before || get(out, "head") != head || head == before ||
+		get(out, "source_branch") != "feature/login" || get(out, "source_project") != alpha {
+		t.Errorf("applied = %v; branch at %s, was %s", out, head, before)
+	}
+	want := map[string]any{"id": float64(id), "note_id": float64(note), "file_path": loginFile, "from_line": float64(3),
+		"to_line": float64(3), "applied": true}
+	if fmt.Sprint(get(out, "suggestions", 0)) != fmt.Sprint(want) {
+		t.Errorf("suggestion = %v, want %v", get(out, "suggestions", 0), want)
+	}
+	if file, _ := h.gl.FileAt(alpha, "feature/login", loginFile); file != "package main\n\n// login signs a user in.\nfunc login() {}\n" {
+		t.Errorf("file = %q", file)
+	}
+	if c, _ := h.gl.BranchHead(alpha, "feature/login"); c.Message != "Apply 1 suggestion on feature/login" ||
+		c.AuthorName != "Alice Example" {
+		t.Errorf("commit %q by %s", c.Message, c.AuthorName)
+	}
+	if !strings.Contains(text, "Applied 1 suggestion(s) of merge request !1") || !strings.Contains(text, head) {
+		t.Errorf("text:\n%s", text)
+	}
+	if applyPuts(h) != 1 {
+		t.Errorf("%d applies sent", applyPuts(h))
+	}
+
+	// Applied already: nothing is sent, and the head is reported.
+	_, again := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}})
+	if get(again, "outcome") != "unchanged" || get(again, "head") != head || applyPuts(h) != 1 {
+		t.Errorf("again = %v, %d sent", again, applyPuts(h))
+	}
+}
+
+// Several suggestions go in one commit through the batch route.
+func TestApplySuggestionsInOneCommit(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	_, first := suggest(h, 1, 1, 1, "package login\n")
+	_, second := suggest(h, 1, 3, 4, "// login is real now.\nfunc login() { return }\n")
+	before := branchHead(h, "feature/login")
+	_, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{second, first}})
+	if get(out, "outcome") != "applied" || get(out, "suggestions", 0, "applied") != true || get(out, "suggestions", 1, "applied") != true {
+		t.Errorf("applied = %v", out)
+	}
+	file, _ := h.gl.FileAt(alpha, "feature/login", loginFile)
+	if file != "package login\n\n// login is real now.\nfunc login() { return }\n" {
+		t.Errorf("file = %q", file)
+	}
+	c, _ := h.gl.BranchHead(alpha, "feature/login")
+	if len(c.ParentIDs) != 1 || c.ParentIDs[0] != before || c.Message != "Apply 2 suggestion(s) to 1 file(s)" {
+		t.Errorf("head %v", c)
+	}
+	var paths []string
+	for _, r := range h.gl.Requests() {
+		if r.Method == "PUT" {
+			paths = append(paths, r.EscapedPath)
+		}
+	}
+	if fmt.Sprint(paths) != "[/api/v4/suggestions/batch_apply]" {
+		t.Errorf("sent %v", paths)
+	}
+}
+
+// What the server can tell before sending is refused before sending.
+func TestApplySuggestionsRefusedBeforeSending(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	_, id := suggest(h, 1, 3, 3, "// one\n")
+	_, onTwo := suggest(h, 2, 3, 3, "// two\n")
+	_, applied := suggest(h, 1, 1, 1, "package login\n")
+	h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{applied}})
+	sent := applyPuts(h)
+	for _, c := range []struct {
+		name  string
+		iid   int
+		ids   []int64
+		class string
+	}{
+		{"no ids", 1, []int64{}, "invalid"},
+		{"an id twice", 1, []int64{id, id}, "invalid"},
+		{"not a positive id", 1, []int64{0}, "invalid"},
+		{"another merge request's", 1, []int64{onTwo}, "not_found"},
+		{"no such suggestion", 1, []int64{999999}, "not_found"},
+		{"one applied among others", 1, []int64{id, applied}, "conflict"},
+	} {
+		text, _, isErr := h.call("apply_suggestions", map[string]any{"project": alpha, "iid": c.iid, "ids": c.ids})
+		if !isErr || !strings.HasPrefix(text, "["+c.class+"]") {
+			t.Errorf("%s: %s", c.name, text)
+		}
+	}
+	h.ok("update_merge_request", map[string]any{"project": alpha, "iid": 2, "updated_at": mrWitness(h, 2), "state": "close"})
+	h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 2, "ids": []int64{onTwo}}, "conflict")
+	if applyPuts(h) != sent {
+		t.Errorf("%d applies sent by refused calls", applyPuts(h)-sent)
+	}
+}
+
+// A protected source branch takes code only through a merge request, so
+// a suggestion is not committed to it (§4.4), even where GitLab would.
+func TestApplySuggestionsRefusesAProtectedSourceBranch(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	_, out := h.ok("create_merge_request", map[string]any{"project": alpha, "source_branch": "release/1.0", "target_branch": "main",
+		"title": "Release"})
+	iid := int64(get(out, "iid").(float64))
+	_, id, ok := h.gl.AddSuggestion(alpha, iid, "bob", "src/main.go", 3, 3, "func main() { run() }\n")
+	if !ok {
+		t.Fatal("no suggestion")
+	}
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": iid, "ids": []int64{id}}, "blocked")
+	if !strings.Contains(text, "protected") || applyPuts(h) != 0 {
+		t.Errorf("refusal: %s; %d sent", text, applyPuts(h))
+	}
+}
+
+// A merge request from a fork commits to the fork, which is held to the
+// write allow-list too.
+func TestApplySuggestionsHoldsTheForkToTheAllowList(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: config.Config{EnableShip: true, WriteNamespaces: []string{alpha}}})
+	_, id := suggest(h, 1, 3, 3, "// one\n")
+	h.gl.SetMRSourceProject(alpha, 1, gitlabtest.ProjectBeta)
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}, "blocked")
+	if !strings.Contains(text, config.EnvWriteNamespaces) || applyPuts(h) != 0 {
+		t.Errorf("refusal: %s; %d sent", text, applyPuts(h))
+	}
+}
+
+// GitLab's own refusals name the reason; right after a push it refuses
+// every suggestion until it catches up, which is said.
+func TestApplySuggestionsRefusedByGitLab(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	_, id := suggest(h, 1, 3, 3, "// one\n")
+	if _, ok := h.gl.PushTo(alpha, "feature/login"); !ok {
+		t.Fatal("push")
+	}
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}, "conflict")
+	if !strings.Contains(text, "A file has been changed.") || !strings.Contains(text, "try again shortly") {
+		t.Errorf("after a push: %s", text)
+	}
+
+	_, other := suggest(h, 1, 3, 3, "// two\n")
+	dave := newHarness(t, harnessOptions{cfg: ship, over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
+	text = dave.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{other}}, "forbidden")
+	if !strings.Contains(text, "may not push to the source branch") {
+		t.Errorf("no push rights: %s", text)
+	}
+	if s, _ := h.gl.Suggestion(other); s.Applied {
+		t.Error("a refused apply applied")
+	}
+}
+
+// A lost answer is settled by reading, never by applying again.
+func TestApplySuggestionsWhoseAnswerWasLost(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	_, id := suggest(h, 1, 3, 3, "// one\n")
+	path := fmt.Sprintf("/suggestions/%d/apply", id)
+	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: path, Status: 500, AfterApply: true, Body: `{"message":"500 Internal Server Error"}`})
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}, "ambiguous_outcome")
+	if !strings.Contains(text, "a read shows every suggestion applied") || !strings.Contains(text, branchHead(h, "feature/login")) ||
+		!strings.Contains(text, "Do not repeat the call") || applyPuts(h) != 1 {
+		t.Errorf("landed: %s; %d sent", text, applyPuts(h))
+	}
+
+	_, other := suggest(h, 2, 3, 3, "// two\n")
+	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: fmt.Sprintf("/suggestions/%d/apply", other), Status: 502,
+		Body: `{"message":"502 Bad Gateway"}`})
+	text = h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 2, "ids": []int64{other}}, "ambiguous_outcome")
+	if !strings.Contains(text, "a read shows none applied") || !strings.Contains(text, "calling again is safe") || applyPuts(h) != 2 {
+		t.Errorf("not landed: %s; %d sent", text, applyPuts(h))
+	}
+
+	// None applied, but the branch moved: someone else's push or this
+	// commit cannot be told apart.
+	_, third := suggest(h, 3, 3, 3, "// three\n")
+	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: fmt.Sprintf("/suggestions/%d/apply", third), Status: 502,
+		Body: `{"message":"502 Bad Gateway"}`, Before: func() { h.gl.PushTo(alpha, "feature/login") }})
+	text = h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 3, "ids": []int64{third}}, "ambiguous_outcome")
+	if !strings.Contains(text, "0 of 1 applied") || !strings.Contains(text, "do not repeat the call") {
+		t.Errorf("unknown: %s", text)
 	}
 }
 

@@ -636,7 +636,7 @@ func planShip(s scratch) []step {
 		// branches only.
 		{tool: "create_branch", args: map[string]any{"project": p, "branch": mrBranch, "ref": s.Default}},
 		{tool: "create_commit", args: map[string]any{"project": p, "branch": mrBranch, "message": "A change to run a pipeline for",
-			"actions": []any{map[string]any{"action": "create", "file_path": "ship/mr-pipeline.txt", "content": "pipeline\n"}}}},
+			"actions": []any{map[string]any{"action": "create", "file_path": "ship/mr-pipeline.txt", "content": "pipeline\nsecond\nthird\n"}}}},
 		{tool: "create_merge_request", args: map[string]any{"project": p, "source_branch": mrBranch,
 			"title": "Merge request pipeline " + s.Name}, save: map[string]string{"mrpipe_mr": "iid"}},
 		// GitLab prepares the merge request's diff in the background.
@@ -649,6 +649,46 @@ func planShip(s scratch) []step {
 			"title": "Default into a protected branch " + s.Name}, save: map[string]string{"mrguard_mr": "iid"}},
 		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrguard_mr}}"}, pause: 20 * time.Second,
 			declines: true, expectError: true, why: "both branches are protected, and the person declines the question"},
+
+		// Suggestions on the merge request pipeline's merge request: two
+		// applied in one commit, then one more alone once GitLab has moved
+		// the comments to the new head.
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}",
+			"body": "A suggestion the live run wrote.\n\n```suggestion:-0+0\npipeline, suggested\n```\n", "file": "ship/mr-pipeline.txt",
+			"line": 1, "side": "new"}},
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}",
+			"body": "Another suggestion.\n\n```suggestion:-0+0\nthird, suggested\n```\n", "file": "ship/mr-pipeline.txt",
+			"line": 3, "side": "new"}},
+		{tool: "list_discussions", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}"},
+			save: map[string]string{"sg_third": "threads.0.notes.0.suggestions.0.id", "sg_first": "threads.1.notes.0.suggestions.0.id"}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrguard_mr}}", "ids": []any{"{{sg_first}}"}},
+			expectError: true, why: "a merge request whose source is the default branch"},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_first}}"}},
+			expectError: true, why: "an id given twice"},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_third}}"},
+			"commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}", "dry_run": true}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_third}}"},
+			"commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}"}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}"}}},
+		{tool: "get_file", args: map[string]any{"project": p, "path": "ship/mr-pipeline.txt", "ref": mrBranch}},
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}",
+			"body": "One more.\n\n```suggestion:-0+0\nsecond, suggested\n```\n", "file": "ship/mr-pipeline.txt", "line": 2, "side": "new"},
+			pause: 20 * time.Second},
+		{tool: "list_discussions", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}"},
+			save: map[string]string{"sg_second": "threads.0.notes.0.suggestions.0.id"}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_second}}"}}, anyOutcome: true,
+			why: "GitLab refuses a suggestion until it has moved the comments to the branch's new head, which takes a moment"},
+
+		// An auto-merge set while the merge request's pipeline runs, then
+		// canceled; a pipeline that already passed merges it instead,
+		// and the cancel then finds none set.
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}, pause: 10 * time.Second,
+			save: map[string]string{"mrpipe_sha": "sha"}},
+		{tool: "merge_merge_request", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "sha": "{{mrpipe_sha}}", "auto_merge": true},
+			anyOutcome: true, why: "GitLab sets the auto-merge, or merges now when the pipeline has already passed"},
+		{tool: "cancel_auto_merge", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "dry_run": true}},
+		{tool: "cancel_auto_merge", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}},
+		{tool: "cancel_auto_merge", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}},
 
 		// CI: a pipeline run and canceled, the failed one retried, a job
 		// retried, the manual one started.
@@ -999,7 +1039,8 @@ func init() {
 		"lint_ci", "list_item_events", "list_boards", "list_todos", "add_todo", "subscribe", "react", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",
 		"create_commit",
-		"merge_merge_request", "approve_merge_request", "unapprove_merge_request", "run_pipeline", "run_merge_request_pipeline",
+		"merge_merge_request", "cancel_auto_merge", "approve_merge_request", "unapprove_merge_request", "apply_suggestions",
+		"run_pipeline", "run_merge_request_pipeline",
 		"retry_pipeline", "retry_job", "play_job", "cancel_pipeline", "delete_branch", "delete_comment", "list_wiki_pages", "get_wiki_page", "save_wiki_page",
 		"delete_wiki_page", "list_releases", "get_release", "create_release", "list_environments", "list_deployments",
 		// Without a project these read or write the maintainer's own

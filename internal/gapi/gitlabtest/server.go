@@ -92,6 +92,8 @@ type Server struct {
 	nextEventID     int64
 	nextDraftID     int64
 	nextCommit      int64
+	// nextSuggestionID is the id AddSuggestion gives next; zero before the first.
+	nextSuggestionID int64
 
 	// reviewerStates is the reviewer state each user last submitted with
 	// a review, by project, merge request and user.

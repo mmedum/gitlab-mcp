@@ -475,7 +475,18 @@ func (s *Service) note(n gitlab.Note, offset, budget int) (model.Note, error) {
 		return model.Note{}, err
 	}
 	return model.Note{ID: n.ID, Author: user(n.Author), CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt, System: n.System,
-		Internal: n.Internal, UntrustedBody: body, Budget: b}, nil
+		Internal: n.Internal, UntrustedBody: body, Budget: b, Suggestions: noteSuggestions(n)}, nil
+}
+
+// noteSuggestions are a comment's suggestion blocks, without their text,
+// which the body shows.
+func noteSuggestions(n gitlab.Note) []model.NoteSuggestion {
+	out := make([]model.NoteSuggestion, 0, len(n.Suggestions))
+	for _, sg := range n.Suggestions {
+		out = append(out, model.NoteSuggestion{ID: sg.ID, FromLine: sg.FromLine, ToLine: sg.ToLine, Appliable: sg.Appliable,
+			Applied: sg.Applied})
+	}
+	return out
 }
 
 // oneNote answers a read of one comment from an offset.

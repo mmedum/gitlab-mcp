@@ -1,0 +1,4 @@
+Canceled the auto-merge of merge request !3: it no longer merges when its pipeline succeeds.
+Project: example-group/alpha (project id 2001), public: anyone can see what is written there.
+https://gitlab.example.com/example-group/alpha/-/merge_requests/3; opened; set to merge automatically: no; it had been set by @bob.
+updated_at is 2026-01-06T11:00:00Z; pass it to update_merge_request for the next change.

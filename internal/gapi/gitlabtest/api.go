@@ -43,6 +43,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, rest string) {
 	case get && s.serveTopRead(w, r, user, seg):
 	case get && s.servePlanningTop(w, r, user, seg):
 	case s.serveToolsetTop(w, r, user, seg):
+	case s.serveSuggestions(w, r, user, seg):
 	case r.Method == http.MethodPost && match(seg, "todos", "*", "mark_as_done"):
 		s.markTodoDone(w, user, seg[1])
 	case get && len(seg) == 3 && seg[0] == "groups":
@@ -428,9 +429,10 @@ func issuesAccess(p *project) string {
 
 // Role access levels, as GitLab numbers them.
 const (
-	plannerAccess   = 15
-	reporterAccess  = 20
-	developerAccess = 30
+	plannerAccess    = 15
+	reporterAccess   = 20
+	developerAccess  = 30
+	maintainerAccess = 40
 )
 
 // SetMemberLevel gives a user an access level in a project, 20 for

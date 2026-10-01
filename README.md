@@ -97,8 +97,10 @@ contract: tools keep their names and output fields.
 | `subscribe` | Subscribe to an issue's or a merge request's notifications, or unsubscribe |
 | `react` | Add or remove your emoji reaction on an issue, a merge request or a comment |
 | `merge_merge_request` | Merge at the head you reviewed, or when the pipeline succeeds (Ship) |
+| `cancel_auto_merge` | Stop a merge request merging when its pipeline succeeds (Ship) |
 | `approve_merge_request` | Approve at the head you reviewed (Ship) |
 | `unapprove_merge_request` | Withdraw your approval (Ship) |
+| `apply_suggestions` | Commit suggestions from a merge request's diff comments to its source branch; never a protected one (Ship) |
 | `rebase_merge_request` | Rebase a merge request's source branch, from the head you reviewed (Ship) |
 | `move_issue` | Move an issue to another project, never to one more people can see (Ship) |
 | `run_pipeline` | Run a pipeline for a ref, with variables whose values are never shown (Ship) |

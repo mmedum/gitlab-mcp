@@ -29,6 +29,8 @@ func (s *Server) serveMRShip(w http.ResponseWriter, r *http.Request, p *project,
 		s.unapprove(w, p, mr, user)
 	case post && match(rest, "pipelines"):
 		s.createMRPipeline(w, p, mr, user)
+	case post && match(rest, "cancel_merge_when_pipeline_succeeds"):
+		s.cancelAutoMerge(w, p, mr, user)
 	default:
 		return false
 	}
@@ -51,7 +53,8 @@ func (s *Server) merge(w http.ResponseWriter, r *http.Request, p *project, mr *g
 		return
 	}
 	if auto, _ := b.boolean("auto_merge"); auto && mr.HeadPipeline != nil && mr.HeadPipeline.Status != "success" {
-		mr.MergeWhenPipelineSucceeds = true
+		u := s.user(user)
+		mr.MergeWhenPipelineSucceeds, mr.MergeUser = true, &u
 		bump(&mr.UpdatedAt, s.opts.Now().UTC())
 		writeJSON(w, http.StatusOK, mr)
 		return
