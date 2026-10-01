@@ -92,7 +92,9 @@ type project struct {
 	// Review: each merge request's diffs, and the default user's drafts.
 	mrDiffs map[int64][]gitlab.Diff
 	drafts  map[int64][]gitlab.DraftNote
-	tags    []gitlab.Tag
+	// mrVersions is each merge request's diff versions, newest first.
+	mrVersions map[int64][]gitlab.MergeRequestVersion
+	tags       []gitlab.Tag
 	// protectedTags are the project's protected-tag rules.
 	protectedTags []gitlab.ProtectedTag
 
@@ -169,6 +171,7 @@ func (s *Server) generate() {
 	s.nextProjectID = firstProjectID
 	s.nextIssueID = firstIssueID
 	s.nextMRID = firstMRID
+	s.nextVersionID = firstVersionID
 	s.nextNoteID = firstNoteID
 	s.nextEventID = firstItemEventID
 
@@ -216,6 +219,7 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		fileCommits: map[string]map[string]string{},
 		mrDiffs:     map[int64][]gitlab.Diff{},
 		drafts:      map[int64][]gitlab.DraftNote{},
+		mrVersions:  map[int64][]gitlab.MergeRequestVersion{},
 		jobs:        map[int64][]gitlab.Job{},
 		mrPipelines: map[int64]int64{},
 		bridges:     map[int64][]gitlab.Bridge{},
@@ -375,6 +379,7 @@ func (s *Server) addMR(p *project, title, source, target, author, baseSHA, headS
 	}
 	s.nextMRID++
 	p.mrs = append(p.mrs, mr)
+	s.addVersion(p, mr, created)
 	return mr
 }
 

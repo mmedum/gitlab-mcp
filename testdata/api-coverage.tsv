@@ -279,8 +279,8 @@ DELETE /projects/{id}/merge_requests/{merge_request_iid}	written-off	1	merge req
 GET /projects/{id}/merge_requests/{merge_request_iid}/changes	written-off	1	deprecated for /diffs (§8a)
 PUT /projects/{id}/merge_requests/{merge_request_iid}/rebase	gated	1	Client.RebaseMergeRequest: rebase_merge_request, Ship (§17.13)
 GET /projects/{id}/merge_requests/{merge_request_iid}/raw_diffs	deferred	1	the whole diff as one text; get_mr_diff reads /diffs, which says what GitLab cut
-GET /projects/{id}/merge_requests/{merge_request_iid}/versions	deferred	1	diff versions; diffpos needs only diff_refs (§7.4)
-GET /projects/{id}/merge_requests/{merge_request_iid}/versions/{version_id}	deferred	1	one diff version; diffpos needs only diff_refs (§7.4)
+GET /projects/{id}/merge_requests/{merge_request_iid}/versions	used	1	Client.ListMergeRequestVersions: list_mr_versions, and compare_mr_versions finds the two versions' heads
+GET /projects/{id}/merge_requests/{merge_request_iid}/versions/{version_id}	deferred	1	one diff version, every file's diff in one unpaged answer; compare_mr_versions compares two versions' heads instead (§7.3)
 GET /projects/{id}/merge_requests/{merge_request_iid}/approval_state	written-off	1	approval rules state: governance configuration, Premium (§8a)
 POST /projects/{id}/merge_requests/{merge_request_iid}/approvals	written-off	1	deprecated: changes approval configuration, governance (§8a)
 PUT /projects/{id}/merge_requests/{merge_request_iid}/reset_approvals	written-off	1	resetting approvals: governance, bot-only in GitLab (§8a)
@@ -289,7 +289,7 @@ POST /projects/{id}/merge_requests/{merge_request_iid}/cancel_merge_when_pipelin
 GET /projects/{id}/merge_requests/{merge_request_iid}/closes_issues	used	1	Client.ListMergeRequestClosesIssues: get_merge_request shows the issues a merge closes
 GET /projects/{id}/merge_requests/{merge_request_iid}/related_issues	used	1	Client.ListMergeRequestRelatedIssues: get_merge_request shows the issues related to it
 GET /projects/{id}/merge_requests/{merge_request_iid}/participants	deferred	1	participants; get_merge_request may add it (§17a)
-GET /projects/{id}/merge_requests/{merge_request_iid}/reviewers	deferred	1	reviewer states; get_merge_request carries the reviewers
+GET /projects/{id}/merge_requests/{merge_request_iid}/reviewers	used	1	Client.ListMergeRequestReviewers: get_merge_request shows each reviewer's review state
 GET /projects/{id}/merge_requests/{merge_request_iid}/merge_ref	deferred	1	the merge ref commit; no task in §8 needs it
 GET /projects/{id}/merge_requests/{merge_request_iid}/pipelines	deferred	1	a merge request's pipelines; list_pipelines by ref covers it (§17a)
 POST /projects/{id}/merge_requests/{merge_request_iid}/pipelines	gated	1	Client.CreateMergeRequestPipeline: run_merge_request_pipeline, Ship; a lost answer is settled by the pipelines listing (§4.5)

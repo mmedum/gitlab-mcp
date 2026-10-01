@@ -413,6 +413,7 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	}
 	fmt.Fprintf(&b, "Author @%s; assignees %s; reviewers %s; labels %s.\n", Ident(mr.Author.Username),
 		users(mr.Assignees), users(mr.Reviewers), idents(mr.Labels))
+	b.WriteString(reviewerStates(mr.ReviewerStates) + "\n")
 	fmt.Fprintf(&b, "Created %s; updated %s", when(mr.CreatedAt), when(mr.UpdatedAt))
 	if mr.MergedAt != nil {
 		fmt.Fprintf(&b, "; merged %s", when(*mr.MergedAt))
@@ -443,6 +444,29 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 
 // linkedItems renders one list of linked items under heading. Each title
 // was written by someone else and is shown inside the boundary.
+// reviewerStates is one line: each reviewer and where their review
+// stands.
+func reviewerStates(r *model.ReviewerStates) string {
+	if r == nil {
+		return "Review states: could not be read."
+	}
+	if len(r.Reviewers) == 0 {
+		return "Review states: no reviewers."
+	}
+	states := make([]string, len(r.Reviewers))
+	for i, x := range r.Reviewers {
+		states[i] = fmt.Sprintf("@%s %s", Ident(x.User.Username), Ident(x.State))
+	}
+	line := "Review states: " + strings.Join(states, ", ")
+	switch {
+	case r.More && r.Total != nil:
+		line += fmt.Sprintf("; %d shown of %d, the rest not shown", len(r.Reviewers), *r.Total)
+	case r.More:
+		line += "; GitLab has more, not shown"
+	}
+	return line + "."
+}
+
 func linkedItems(heading string, l *model.LinkedItems, bd Boundary) string {
 	if l == nil {
 		return heading + ": could not be read."

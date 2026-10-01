@@ -99,10 +99,10 @@ func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset in
 	return out, nil
 }
 
-// GetMergeRequest reads a merge request with its approval state, a
-// summary of its threads and the issues linked to it (§7.2). The reads
-// are independent and run at once. The approval and link reads are best
-// effort: an instance that refuses them still has a merge request to
+// GetMergeRequest reads a merge request with its approval state, each
+// reviewer's state, a summary of its threads and the issues linked to it
+// (§7.2). The reads are independent and run at once. The approval,
+// reviewer and link reads are best effort: an instance that refuses them still has a merge request to
 // show. A read that continues the description from an offset leaves the
 // links out.
 func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, offset int) (model.MergeRequest, error) {
@@ -115,6 +115,8 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 		mr                    *gitlab.MergeRequest
 		approvals             *gitlab.Approvals
 		approvalsErr          error
+		reviewers             *model.ReviewerStates
+		reviewersErr          error
 		summary               model.DiscussionSummary
 		summaryErr            error
 		closes, related       *model.LinkedItems
@@ -122,6 +124,7 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 	)
 	wg.Go(func() { mr, err = s.client.GetMergeRequest(ctx, p, iid) })
 	wg.Go(func() { approvals, approvalsErr = s.client.GetMergeRequestApprovals(ctx, p, iid) })
+	wg.Go(func() { reviewers, reviewersErr = s.reviewerStates(ctx, p, iid) })
 	wg.Go(func() { summary, summaryErr = s.summary(ctx, p, iid, true) })
 	if offset == 0 {
 		wg.Go(func() {
@@ -142,7 +145,7 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 	if approvalsErr != nil && !soft(approvalsErr) {
 		return model.MergeRequest{}, approvalsErr
 	}
-	for _, err := range []error{summaryErr, closesErr, relatedErr} {
+	for _, err := range []error{reviewersErr, summaryErr, closesErr, relatedErr} {
 		if err != nil {
 			return model.MergeRequest{}, err
 		}
@@ -160,7 +163,7 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 		HasConflicts: mr.HasConflicts, ChangesCount: mr.ChangesCount, CreatedAt: mr.CreatedAt, UpdatedAt: mr.UpdatedAt,
 		MergedAt: mr.MergedAt, ClosedAt: mr.ClosedAt, UntrustedTitle: title, UntrustedDescription: desc,
 		DescriptionBudget: budget, Discussions: summary, ClosesIssues: closes, RelatedIssues: related,
-		TimeStats: timeStats(mr.TimeStats), Upvotes: mr.Upvotes, Downvotes: mr.Downvotes,
+		TimeStats: timeStats(mr.TimeStats), Upvotes: mr.Upvotes, Downvotes: mr.Downvotes, ReviewerStates: reviewers,
 	}
 	if mr.MergeUser != nil {
 		u := user(*mr.MergeUser)
@@ -178,6 +181,32 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 		for _, by := range a.ApprovedBy {
 			out.Approvals.ApprovedBy = append(out.Approvals.ApprovedBy, by.User.Username)
 		}
+	}
+	return out, nil
+}
+
+// reviewerPage is how many reviewers' states a read shows: one page, the
+// most GitLab gives.
+const reviewerPage = gapi.MaxPerPage
+
+// reviewerStates reads the first page of a merge request's reviewers
+// with their review states. It is best effort, as the approvals are: a
+// soft failure leaves the states null.
+func (s *Service) reviewerStates(ctx context.Context, p gapi.Project, iid int64) (*model.ReviewerStates, error) {
+	rows, page, err := s.client.ListMergeRequestReviewers(ctx, p, iid, gapi.ListOptions{PerPage: reviewerPage})
+	if err != nil {
+		if soft(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := &model.ReviewerStates{Reviewers: make([]model.ReviewerState, 0, len(rows)), More: !page.Complete()}
+	if page.TotalKnown() {
+		total := page.Total
+		out.Total = &total
+	}
+	for _, r := range rows {
+		out.Reviewers = append(out.Reviewers, model.ReviewerState{User: user(r.User), State: r.State, AddedAt: r.CreatedAt})
 	}
 	return out, nil
 }

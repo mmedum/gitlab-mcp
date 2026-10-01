@@ -513,6 +513,7 @@ func (s *Server) refreshMR(p *project, mr *gitlab.MergeRequest) {
 	mr.DiffRefs = &gitlab.DiffRefs{BaseSHA: base, StartSHA: base, HeadSHA: head}
 	p.mrDiffs[mr.IID] = treeDiffs(p.trees[mr.TargetBranch], p.trees[mr.SourceBranch])
 	mr.ChangesCount = strconv.Itoa(len(p.mrDiffs[mr.IID]))
+	s.addVersion(p, mr, s.opts.Now().UTC())
 }
 
 // setMR applies a body's fields to a merge request. The draft state

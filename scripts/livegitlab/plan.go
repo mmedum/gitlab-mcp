@@ -418,6 +418,22 @@ func phase2(s scratch) []step {
 			"clear_milestone": true, "add_assignees": me, "add_reviewers": me}, save: map[string]string{"mr_at3": "updated_at"}},
 		{tool: "update_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}", "updated_at": "{{mr_at3}}", "state": "reopen"}},
 
+		// A push after the merge request opened gives it a second diff
+		// version, and the changes since the first are that push alone.
+		// The run's account is a reviewer again, so get_merge_request below
+		// shows its review state.
+		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}"}, save: map[string]string{"mr_v1": "versions.0.id"}},
+		{tool: "create_commit", args: map[string]any{"project": p, "branch": branch, "message": "A change after review",
+			"actions": []any{create("written/after-review.txt", "after review\n")}}},
+		// GitLab makes the version in the background after the push.
+		{tool: "list_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "max": 1}, paged: true, pause: 10 * time.Second,
+			save: map[string]string{"mr_v2": "versions.0.id"}},
+		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v1}}"}},
+		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v1}}",
+			"to_version": "{{mr_v2}}", "commit_offset": 1, "file_offset": 0, "diff_offset": 5}},
+		{tool: "compare_mr_versions", args: map[string]any{"project": p, "iid": "{{mr}}", "from_version": "{{mr_v2}}"},
+			expectError: true, why: "the newest version: nothing was pushed after it"},
+
 		// Time tracking, every option on the issue and the merge request,
 		// from the witnesses a read gives: updated_at, and the total spent,
 		// which GitLab does not move updated_at for (§18 row 101).
@@ -955,7 +971,7 @@ var rules = map[string]rule{
 
 func init() {
 	for _, tool := range []string{"get_project", "get_issue", "list_discussions", "get_merge_request", "list_mr_files",
-		"get_mr_diff", "list_mr_commits", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
+		"get_mr_diff", "list_mr_commits", "list_mr_versions", "compare_mr_versions", "list_review_comments", "get_file", "list_tree", "list_branches", "list_commits",
 		"get_commit", "compare_refs", "list_tags", "list_pipelines", "get_pipeline", "list_jobs", "get_job_log", "get_test_report",
 		"lint_ci", "list_item_events", "list_boards", "list_todos", "add_todo", "subscribe", "react", "create_issue", "update_issue", "add_comment", "update_comment", "resolve_discussion", "add_review_comment",
 		"delete_review_comment", "submit_review", "create_merge_request", "update_merge_request", "track_time", "create_branch",

@@ -332,6 +332,7 @@ type MergeRequest struct {
 	ChangesCount         string            `json:"changes_count" jsonschema:"Files changed, as GitLab counts them: 12, or 1000+"`
 	HeadPipeline         *Pipeline         `json:"head_pipeline"`
 	Approvals            *Approvals        `json:"approvals" jsonschema:"Null when the approval state could not be read"`
+	ReviewerStates       *ReviewerStates   `json:"reviewer_states" jsonschema:"Each reviewer's review state, the first 100 as GitLab lists them; null when they could not be read"`
 	CreatedAt            time.Time         `json:"created_at"`
 	UpdatedAt            time.Time         `json:"updated_at"`
 	MergedAt             *time.Time        `json:"merged_at"`
@@ -372,6 +373,21 @@ type Approvals struct {
 	Required   *int     `json:"required"`
 	Left       *int     `json:"left"`
 	ApprovedBy []string `json:"approved_by" jsonschema:"Usernames"`
+}
+
+// ReviewerStates is where each reviewer of a merge request stands.
+type ReviewerStates struct {
+	Reviewers []ReviewerState `json:"reviewers"`
+	More      bool            `json:"more" jsonschema:"True when GitLab has more reviewers than are shown"`
+	// Total is GitLab's count, null when GitLab did not say.
+	Total *int `json:"total" jsonschema:"GitLab's count, or null when it did not say"`
+}
+
+// ReviewerState is one reviewer and their review state.
+type ReviewerState struct {
+	User    User      `json:"user"`
+	State   string    `json:"state" jsonschema:"unreviewed, review_started, reviewed, requested_changes, approved or unapproved; GitLab's own value, and new values appear between releases"`
+	AddedAt time.Time `json:"added_at" jsonschema:"When the reviewer was asked"`
 }
 
 // ------------------------------------------------------------ discussions
@@ -680,6 +696,39 @@ type Compare struct {
 	CommitsTotal     int  `json:"commits_total"`
 	NextCommitOffset *int `json:"next_commit_offset" jsonschema:"Pass as commit_offset to see more commits; null when none are left"`
 	Diffs
+}
+
+// MRVersion is one diff version of a merge request: GitLab makes one on
+// each push to the source branch, and on a rebase.
+type MRVersion struct {
+	ID        int64     `json:"id" jsonschema:"Pass as from_version or to_version to compare_mr_versions"`
+	HeadSHA   string    `json:"head_commit_sha" jsonschema:"The source branch's head when the version was made"`
+	BaseSHA   *string   `json:"base_commit_sha" jsonschema:"The merge base with the target branch; null on an empty or very old version"`
+	StartSHA  *string   `json:"start_commit_sha" jsonschema:"The target branch's head when the version was made; null on an empty or very old version"`
+	CreatedAt time.Time `json:"created_at"`
+	State     string    `json:"state" jsonschema:"collected; empty: no commits; overflow: GitLab kept only part of the diff; without_files: GitLab deleted an old version's stored diff. GitLab's own value, and others appear"`
+	// ChangesCount is GitLab's real_size.
+	ChangesCount *string `json:"changes_count" jsonschema:"Files changed, as GitLab counts them: 12, or 1000+; null on an empty version"`
+}
+
+// MRVersions is list_mr_versions' result.
+type MRVersions struct {
+	Project  ProjectRef  `json:"project"`
+	IID      int64       `json:"iid"`
+	Versions []MRVersion `json:"versions" jsonschema:"Newest first"`
+	Listing  Listing     `json:"listing"`
+}
+
+// MRVersionChanges is compare_mr_versions' result: the repository
+// compare from the older version's head to the newer's, straight.
+type MRVersionChanges struct {
+	IID         int64     `json:"iid"`
+	FromVersion MRVersion `json:"from_version"`
+	ToVersion   MRVersion `json:"to_version"`
+	// BaseMoved is a moved merge base: the diff then carries what the
+	// target branch gained in between.
+	BaseMoved bool `json:"base_moved" jsonschema:"The versions have different merge bases, as after a rebase: the diff then includes the target branch changes the rebase brought in, not only the author's"`
+	Compare
 }
 
 // Tag is one row of list_tags.

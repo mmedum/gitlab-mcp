@@ -33,6 +33,44 @@ func writePage[T any](s *Server, w http.ResponseWriter, r *http.Request, rows []
 	}
 }
 
+// firstVersionID is the first diff version's id, fixed so a test can
+// state one literally.
+const firstVersionID = 120001
+
+// addVersion records a diff version when a merge request's head or base
+// moved, as GitLab does on a push. The newest is first.
+func (s *Server) addVersion(p *project, mr *gitlab.MergeRequest, at time.Time) {
+	base, head := mr.DiffRefs.BaseSHA, mr.DiffRefs.HeadSHA
+	if vs := p.mrVersions[mr.IID]; len(vs) > 0 && vs[0].HeadCommitSHA == head && vs[0].BaseCommitSHA == base {
+		return
+	}
+	v := gitlab.MergeRequestVersion{ID: s.nextVersionID, HeadCommitSHA: head, BaseCommitSHA: base,
+		StartCommitSHA: mr.DiffRefs.StartSHA, CreatedAt: at, State: "collected"}
+	if head == base {
+		// An empty version has no diff, so GitLab never sets its size.
+		v.State = "empty"
+	} else {
+		size := mr.ChangesCount
+		v.RealSize = &size
+	}
+	s.nextVersionID++
+	p.mrVersions[mr.IID] = append([]gitlab.MergeRequestVersion{v}, p.mrVersions[mr.IID]...)
+}
+
+// reviewers is a merge request's reviewers with their review states:
+// unreviewed until one submits a review with a state.
+func (s *Server) reviewers(p *project, mr *gitlab.MergeRequest) []gitlab.MergeRequestReviewer {
+	out := make([]gitlab.MergeRequestReviewer, 0, len(mr.Reviewers))
+	for _, u := range mr.Reviewers {
+		state := s.reviewerStates[reviewerKey(p.PathWithNamespace, mr.IID, u.Username)]
+		if state == "" {
+			state = "unreviewed"
+		}
+		out = append(out, gitlab.MergeRequestReviewer{User: u, State: state, CreatedAt: mr.CreatedAt})
+	}
+	return out
+}
+
 // SetMRDiffs replaces the files a merge request changes.
 func (s *Server) SetMRDiffs(projectPath string, iid int64, diffs []gitlab.Diff) bool {
 	s.mu.Lock()
@@ -93,6 +131,10 @@ func (s *Server) serveMRReview(w http.ResponseWriter, r *http.Request, p *projec
 		writePage(s, w, r, p.mrDiffs[mr.IID])
 	case match(rest, "commits"):
 		writePage(s, w, r, s.mrCommits(p, mr))
+	case match(rest, "versions"):
+		writePage(s, w, r, p.mrVersions[mr.IID])
+	case match(rest, "reviewers"):
+		writePage(s, w, r, s.reviewers(p, mr))
 	case match(rest, "draft_notes"):
 		// Drafts are their author's alone.
 		var mine []gitlab.DraftNote

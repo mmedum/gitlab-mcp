@@ -259,6 +259,11 @@ func (s *Service) CompareRefs(ctx context.Context, q CompareQuery) (model.Compar
 	if err != nil {
 		return model.Compare{}, err
 	}
+	return compared(ref, q, c)
+}
+
+// compared bounds one compare's commits and diffs by the query's offsets.
+func compared(ref model.ProjectRef, q CompareQuery, c *gitlab.Compare) (model.Compare, error) {
 	if q.CommitOffset > len(c.Commits) {
 		return model.Compare{}, gapi.Errf(gapi.ClassInvalid, "commit_offset %d is past the %d commits compared", q.CommitOffset,
 			len(c.Commits))
@@ -280,6 +285,128 @@ func (s *Service) CompareRefs(ctx context.Context, q CompareQuery) (model.Compar
 		out.NextCommitOffset = &end
 	}
 	return out, nil
+}
+
+// maxVersionPages bounds the versions read to find two of them: ten
+// pages of a hundred, newest first.
+const maxVersionPages = 10
+
+// ListMRVersions lists a merge request's diff versions, newest first
+// (§7.3).
+func (s *Service) ListMRVersions(ctx context.Context, raw string, iid int64, opts gapi.ListOptions) (model.MRVersions, error) {
+	p, ref, err := s.project(ctx, raw)
+	if err != nil {
+		return model.MRVersions{}, err
+	}
+	rows, page, err := s.client.ListMergeRequestVersions(ctx, p, iid, opts)
+	if err != nil {
+		return model.MRVersions{}, err
+	}
+	out := model.MRVersions{Project: ref, IID: iid, Versions: make([]model.MRVersion, 0, len(rows)), Listing: listing(len(rows), page)}
+	for _, v := range rows {
+		out.Versions = append(out.Versions, mrVersion(v))
+	}
+	return out, nil
+}
+
+func mrVersion(v gitlab.MergeRequestVersion) model.MRVersion {
+	return model.MRVersion{ID: v.ID, HeadSHA: v.HeadCommitSHA, BaseSHA: nonEmpty(v.BaseCommitSHA),
+		StartSHA: nonEmpty(v.StartCommitSHA), CreatedAt: v.CreatedAt, State: v.State, ChangesCount: v.RealSize}
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// MRVersionQuery is compare_mr_versions' query. ToVersion 0 is the
+// newest version.
+type MRVersionQuery struct {
+	Project                  string
+	IID                      int64
+	FromVersion, ToVersion   int64
+	CommitOffset, FileOffset int
+	DiffOffset               int
+}
+
+// CompareMRVersions shows what changed in a merge request between two of
+// its versions (§7.3). GitLab has no route for it; the web page compares
+// the repository from the older version's head to the newer's, straight
+// rather than from their merge base, so a squash or a rebase between them
+// does not hide the change. This does the same, in the target project,
+// where GitLab keeps both heads.
+func (s *Service) CompareMRVersions(ctx context.Context, q MRVersionQuery) (model.MRVersionChanges, error) {
+	if q.FromVersion <= 0 || q.ToVersion < 0 {
+		return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid, "from_version is a version id, as list_mr_versions gives it")
+	}
+	p, ref, err := s.project(ctx, q.Project)
+	if err != nil {
+		return model.MRVersionChanges{}, err
+	}
+	find := func(rows []gitlab.MergeRequestVersion, id int64) int {
+		return slices.IndexFunc(rows, func(v gitlab.MergeRequestVersion) bool { return v.ID == id })
+	}
+	done := func(rows []gitlab.MergeRequestVersion) bool {
+		return find(rows, q.FromVersion) >= 0 && (q.ToVersion == 0 || find(rows, q.ToVersion) >= 0)
+	}
+	rows, complete, err := readPagesUntil(maxVersionPages, func(o gapi.ListOptions) ([]gitlab.MergeRequestVersion, gapi.Page, error) {
+		return s.client.ListMergeRequestVersions(ctx, p, q.IID, o)
+	}, done)
+	if err != nil {
+		return model.MRVersionChanges{}, err
+	}
+	from, to := find(rows, q.FromVersion), 0
+	if q.ToVersion != 0 {
+		to = find(rows, q.ToVersion)
+	}
+	for _, v := range []struct {
+		name string
+		id   int64
+		at   int
+	}{{"from_version", q.FromVersion, from}, {"to_version", q.ToVersion, to}} {
+		switch {
+		case v.at >= 0:
+		case complete:
+			return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid,
+				"%s %d is not a version of this merge request; list_mr_versions lists them", v.name, v.id)
+		default:
+			return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid,
+				"%s %d is not among this merge request's newest %d versions, the most this compares", v.name, v.id, len(rows))
+		}
+	}
+	switch {
+	case from == to && q.ToVersion == 0:
+		return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid,
+			"from_version %d is the newest version: nothing was pushed after it", q.FromVersion)
+	case from == to:
+		return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid, "from_version and to_version are the same version")
+	}
+	// Newest first: the older version comes later.
+	if from < to {
+		return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid,
+			"from_version %d is newer than to_version %d; from_version is the older one", q.FromVersion, rows[to].ID)
+	}
+	older, newer := rows[from], rows[to]
+	for _, v := range []gitlab.MergeRequestVersion{older, newer} {
+		if v.HeadCommitSHA == "" {
+			return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid, "version %d has no commits to compare", v.ID)
+		}
+	}
+	cq := CompareQuery{From: older.HeadCommitSHA, To: newer.HeadCommitSHA, Straight: true, CommitOffset: q.CommitOffset,
+		FileOffset: q.FileOffset, DiffOffset: q.DiffOffset}
+	c, err := s.client.Compare(ctx, p, cq.From, cq.To, true)
+	if err != nil {
+		return model.MRVersionChanges{}, err
+	}
+	changes, err := compared(ref, cq, c)
+	if err != nil {
+		return model.MRVersionChanges{}, err
+	}
+	return model.MRVersionChanges{IID: q.IID, FromVersion: mrVersion(older), ToVersion: mrVersion(newer),
+		BaseMoved: older.BaseCommitSHA != "" && newer.BaseCommitSHA != "" && older.BaseCommitSHA != newer.BaseCommitSHA,
+		Compare:   changes}, nil
 }
 
 // ListTags lists a project's tags.

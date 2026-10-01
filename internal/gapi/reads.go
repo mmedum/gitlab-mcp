@@ -310,6 +310,15 @@ func (c *Client) GetMergeRequestApprovals(ctx context.Context, p Project, iid in
 	return &out, err
 }
 
+// ListMergeRequestReviewers lists a merge request's reviewers with each
+// one's review state, in no order GitLab promises.
+func (c *Client) ListMergeRequestReviewers(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.MergeRequestReviewer, Page, error) {
+	var out []gitlab.MergeRequestReviewer
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/reviewers",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_merge_request_reviewers"}, opts, &out)
+	return out, page, err
+}
+
 // ListMergeRequestDiscussions lists a merge request's threads.
 func (c *Client) ListMergeRequestDiscussions(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.Discussion, Page, error) {
 	var out []gitlab.Discussion

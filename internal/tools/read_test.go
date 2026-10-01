@@ -27,7 +27,7 @@ func TestGetMe(t *testing.T) {
 		"instance.edition":          "Community",
 		"instance.known":            true,
 		"token.kind":                "oauth",
-		"registered.tools":          float64(58),
+		"registered.tools":          float64(60),
 		"registered.read_only":      false,
 		"write_namespaces.confined": false,
 	} {
@@ -683,6 +683,50 @@ func TestGetMergeRequest(t *testing.T) {
 	}
 }
 
+// get_merge_request shows each reviewer's review state, which is not the
+// state of their account.
+func TestGetMergeRequestReviewerStates(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, out := h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	if get(out, "reviewer_states", "reviewers", 0, "user", "username") != "carol" ||
+		get(out, "reviewer_states", "reviewers", 0, "state") != "unreviewed" || get(out, "reviewer_states", "more") != false ||
+		get(out, "reviewer_states", "total") != float64(1) || !strings.Contains(text, "Review states: @carol unreviewed.") {
+		t.Errorf("reviewer states = %v", get(out, "reviewer_states"))
+	}
+	carol := newHarness(t, harnessOptions{over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("carol", "api") }})
+	carol.ok("submit_review", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1, "reviewer_state": "requested_changes"})
+	_, out = h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 1})
+	if get(out, "reviewer_states", "reviewers", 0, "state") != "requested_changes" {
+		t.Errorf("after carol requested changes = %v", get(out, "reviewer_states"))
+	}
+
+	// One page of 100 is read; GitLab saying there are more is passed on.
+	path := fmt.Sprintf("/projects/%d/merge_requests/2/reviewers", alphaID)
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: path, Status: http.StatusOK, Query: "per_page=100",
+		Header: http.Header{"Content-Type": {"application/json"}, "X-Total": {"101"}, "X-Next-Page": {"2"}},
+		Body: `[{"user":{"id":1003,"username":"carol","name":"Carol Example","state":"blocked"},"state":"approved",` +
+			`"created_at":"2026-01-05T09:00:00Z"},{"user":{"id":1002,"username":"bob","name":"Bob Example","state":"active"},` +
+			`"state":"review_started","created_at":"2026-01-05T10:00:00Z"}]`})
+	text, out = h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 2})
+	if get(out, "reviewer_states", "reviewers", 0, "state") != "approved" || get(out, "reviewer_states", "more") != true ||
+		get(out, "reviewer_states", "total") != float64(101) ||
+		get(out, "reviewer_states", "reviewers", 1, "added_at") != "2026-01-05T10:00:00Z" ||
+		!strings.Contains(text, "Review states: @carol approved, @bob review_started; 2 shown of 101, the rest not shown.") {
+		t.Errorf("a page of reviewers with more = %v\n%s", get(out, "reviewer_states"), text)
+	}
+
+	// An instance that refuses the read still shows the merge request.
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: path, Status: http.StatusForbidden, Body: `{"message":"403 Forbidden"}`})
+	text, out = h.ok("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 2})
+	if get(out, "reviewer_states") != nil || !strings.Contains(text, "Review states: could not be read.") {
+		t.Errorf("refused reviewer states = %v", get(out, "reviewer_states"))
+	}
+	// A sign-in failure is not best effort: it fails the read.
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: path, Status: http.StatusUnauthorized, Times: 5,
+		Body: `{"message":"401 Unauthorized"}`})
+	h.fails("get_merge_request", map[string]any{"project": gitlabtest.ProjectAlpha, "iid": 2}, "auth")
+}
+
 func TestGetFile(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	_, out := h.ok("get_file", map[string]any{"project": gitlabtest.ProjectAlpha, "path": "docs/with space.md"})
@@ -737,11 +781,11 @@ func TestSurfaceCounts(t *testing.T) {
 		cfg  config.Config
 		want int
 	}{
-		{"default", config.Config{}, 58},
-		{"read-only", config.Config{ReadOnly: true}, 37},
-		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 71},
-		{"every toolset, read-only", config.Config{ReadOnly: true, Toolsets: config.Toolsets}, 46},
-		{"full", FullSurface(config.Config{}), 94},
+		{"default", config.Config{}, 60},
+		{"read-only", config.Config{ReadOnly: true}, 39},
+		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 73},
+		{"every toolset, read-only", config.Config{ReadOnly: true, Toolsets: config.Toolsets}, 48},
+		{"full", FullSurface(config.Config{}), 96},
 	}
 	for _, c := range cases {
 		if got := len(Surface(c.cfg, nil)); got != c.want {

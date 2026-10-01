@@ -307,6 +307,30 @@ type Approver struct {
 	User UserBasic `json:"user"`
 }
 
+// MergeRequestReviewer is one row of GET
+// /projects/:id/merge_requests/:iid/reviewers. User.State is the
+// account's state; State is the review state.
+type MergeRequestReviewer struct {
+	User      UserBasic `json:"user"`
+	State     string    `json:"state"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// MergeRequestVersion is one row of GET
+// /projects/:id/merge_requests/:iid/versions: one diff version, made on
+// each push. The base and start SHAs are null on an empty or very old
+// version; RealSize is "12", or "1000+" when GitLab stopped counting,
+// and null on an empty version.
+type MergeRequestVersion struct {
+	ID             int64     `json:"id"`
+	HeadCommitSHA  string    `json:"head_commit_sha"`
+	BaseCommitSHA  string    `json:"base_commit_sha"`
+	StartCommitSHA string    `json:"start_commit_sha"`
+	CreatedAt      time.Time `json:"created_at"`
+	State          string    `json:"state"`
+	RealSize       *string   `json:"real_size"`
+}
+
 // Discussion is one thread of GET …/discussions.
 type Discussion struct {
 	ID             string `json:"id"`

@@ -5,6 +5,7 @@ Diff refs: base 0000000000000000000000000000000000000000, start 0000000000000000
 Head pipeline 60003: success.
 Approvals: approved no; approved by nobody; 1 required, 1 left.
 Author @bob; assignees none; reviewers @alice; labels none.
+Review states: @alice requested_changes.
 Created 2026-01-05T09:00:00Z; updated 2026-01-06T11:00:00Z.
 Time: estimate (none), spent (none).
 Votes: 0 thumbsup, 0 thumbsdown.
