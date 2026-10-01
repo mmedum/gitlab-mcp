@@ -487,12 +487,8 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 		}
 
 		v := c.decide(ctx, p.call, p.name, p.repeatable, res, sendErr)
-		if resent && p.call.Method == http.MethodDelete && v.err != nil && v.err.Class == ClassNotFound {
-			// An earlier attempt may have deleted it, so the repeat's 404
-			// does not show it was never there.
-			v = verdict{err: &Error{Class: ClassAmbiguousOutcome, Status: status, err: v.err,
-				Message: fmt.Sprintf("GitLab did not confirm whether %s took effect: an earlier attempt may have deleted it, "+
-					"and the repeat found nothing. Read before doing anything again", p.name)}}
+		if resent {
+			v = repeatedDelete(p, v)
 		}
 		logAttempt(v.outcome())
 		if v.reauth && !reauthorized {
@@ -532,6 +528,17 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 		last = v
 	}
 	return nil, last.err
+}
+
+// repeatedDelete reads a repeated DELETE's 404: an earlier attempt may
+// have deleted it, so the 404 does not show it was never there.
+func repeatedDelete(p *prepared, v verdict) verdict {
+	if p.call.Method != http.MethodDelete || v.err == nil || v.err.Class != ClassNotFound {
+		return v
+	}
+	return verdict{err: &Error{Class: ClassAmbiguousOutcome, Status: v.err.Status, err: v.err,
+		Message: fmt.Sprintf("GitLab did not confirm whether %s took effect: an earlier attempt may have deleted it, "+
+			"and the repeat found nothing. Read before doing anything again", p.name)}}
 }
 
 // mayHaveLanded reports whether a failed attempt may have reached
