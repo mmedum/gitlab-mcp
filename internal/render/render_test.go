@@ -55,6 +55,34 @@ func TestCodeMakesHiddenTextVisible(t *testing.T) {
 	}
 }
 
+// Every character a reader would not see is named: an identifier made
+// of one, or two names a variation selector tells apart, read as code
+// that is not there.
+func TestInvisibleNamesWhatAReaderCannotSee(t *testing.T) {
+	cases := []struct {
+		name, in string
+		want     []rune
+	}{
+		{"visible code", "const ok = 1;\n\tif (ok) {}\r\n", nil},
+		{"a bidirectional override", "ok\u202e", []rune{0x202E}},
+		{"the Hangul filler", "const \u3164 = 1", []rune{0x3164}},
+		{"the Hangul choseong filler", "const \u115f = 1", []rune{0x115F}},
+		{"the Hangul jungseong filler", "const \u1160 = 1", []rune{0x1160}},
+		{"the halfwidth Hangul filler", "const \uffa0 = 1", []rune{0xFFA0}},
+		{"a Khmer inherent vowel", "ok\u17b4 = ok\u17b5", []rune{0x17B4, 0x17B5}},
+		{"a combining grapheme joiner", "o\u034fk", []rune{0x034F}},
+		{"a variation selector", "ok\ufe00 = ok", []rune{0xFE00}},
+		{"a supplementary variation selector", "ok\U000E0100 = ok", []rune{0xE0100}},
+		{"braille blank, named once", "a\u2800b\u2800", []rune{0x2800}},
+		{"a control", "a\x07b", []rune{0x07}},
+	}
+	for _, c := range cases {
+		if got := Invisible(c.in); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %U, want %U", c.name, got, c.want)
+		}
+	}
+}
+
 func TestLine(t *testing.T) {
 	got, n := Line("  Fix\n\tthe\u200b   bug  ", 0)
 	if got != "Fix the bug" || n != 1 {
