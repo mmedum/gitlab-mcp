@@ -1,7 +1,9 @@
 # Architecture — gitlab-mcp
 
-**Status: 2.2.0, 2026-10-02: phases 0 to 7 — the person confirms what
-ships or deletes (§4.12) — 2.1.0's nine tools, and seven more for
+**Status: 2.2.1, 2026-10-02: a delete repeated after it may have landed
+reports `[ambiguous_outcome]` rather than not found (§4.5). Phases 0 to
+7 — the person confirms what ships or deletes (§4.12) — 2.1.0's nine
+tools, and 2.2.0's seven more for
 reviewing merge requests: `react`, `list_mr_versions`,
 `compare_mr_versions`, `update_review_comment`,
 `publish_review_comment`, and `apply_suggestions` and
