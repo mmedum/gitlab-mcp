@@ -1110,7 +1110,10 @@ witness. A default or protected source branch is refused (§4.4), and so
 is a fork outside `GITLAB_MCP_WRITE_NAMESPACES` (§4.7), since the
 commit lands in the fork. A suggestion whose text holds a hidden,
 bidirectional or other invisible character is refused `[blocked]`,
-naming them. Then the person is asked (§4.12): the question names the
+naming them: Unicode's default-ignorable characters, such as the
+Hangul fillers, which are identifiers that read as nothing, and the
+variation selectors, which make two names that read the same, U+FE0F
+after an emoji included. Then the person is asked (§4.12): the question names the
 project, the merge request, the source branch and its head, and quotes
 each suggestion's text, five at most with the rest counted; the head
 and every whole text are bound. GitLab's 400 names why a suggestion does not
