@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-10-02
+
 ### Fixed
 
 - A delete repeated after a lost answer or a 5xx, whose repeat found nothing, is `[ambiguous_outcome]`, not `[not_found]`; `delete_review_comment` said the draft was not yours when an earlier attempt had deleted it.
@@ -149,7 +151,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v1.1.0...v2.0.0
