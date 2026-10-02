@@ -1,12 +1,13 @@
 # Architecture — gitlab-mcp
 
-**Status: 2.1.0, 2026-10-01: phases 0 to 7 — the person confirms what
-ships or deletes (§4.12) — and nine tools on top: `get_test_report`,
-`list_item_events`, `list_boards`, `track_time`, `subscribe`,
-`add_todo`, `update_snippet`, `delete_snippet` and
-`run_merge_request_pipeline`, with the linked items in three reads
-(§16). The module path is `/v2`. §17.10 stands and §17.11 waits.
-Nothing is owed.** This document holds the platform facts, the design bets, a
+**Status: 2.2.0, 2026-10-02: phases 0 to 7 — the person confirms what
+ships or deletes (§4.12) — 2.1.0's nine tools, and seven more for
+reviewing merge requests: `react`, `list_mr_versions`,
+`compare_mr_versions`, `update_review_comment`,
+`publish_review_comment`, and `apply_suggestions` and
+`cancel_auto_merge` (Ship), with reviewer states in
+`get_merge_request` (§16). The module path is `/v2`. §17.10 stands and
+§17.11 waits. Nothing is owed.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
