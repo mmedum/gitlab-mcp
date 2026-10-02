@@ -51,6 +51,9 @@ func TestLeaksFind(t *testing.T) {
 	}{
 		{"a reserved address", "alice@example.com and bob@gitlab.example.com and x@y.invalid and a@b.co.test", ""},
 		{"a real-looking address", "mail carol@" + tDomain + " today", "an address at a domain somebody could own"},
+		{"a reserved name under a real suffix", "mail carol@example" + ".dk today", "an address at a domain somebody could own"},
+		{"a reserved label inside a real domain", "mail carol@corp.test" + ".com today", "an address at a domain somebody could own"},
+		{"a reserved name as a prefix", "mail carol@notexample" + ".com today", "an address at a domain somebody could own"},
 		{"the co-author trailer", "Co-Authored-By: Claude <noreply@anthropic.com>", ""},
 		{"another vendor address", "ask support@" + "anthropic.com", "an address at a vendor's no-reply domain"},
 		{"a GitHub no-reply", "12345+someone@users.noreply.github.com", ""},
@@ -77,6 +80,8 @@ func TestLeaksFind(t *testing.T) {
 		{"an application id", "client_id=" + strings.Repeat("3c", 32), "an OAuth application id"},
 		{"a bare SHA-256", "sha256 " + strings.Repeat("3c", 32), ""},
 		{"a leak inside base64", "content: " + b64("see https://"+"git."+tDomain+"/team/app today"), "inside base64"},
+		// 36 characters with a "+": a short run, in the standard alphabet only.
+		{"a short leak inside base64", "c: " + b64("to: carol@"+tDomain+"?>"), "inside base64"},
 		{"a leak inside base64url", "c=" + b64url("mail carol@"+tDomain+" please, thanks"), "inside base64"},
 		{"clean base64", "content: " + b64("package main\n\nfunc main() {}\n"), ""},
 		{"a hash is not base64 text", strings.Repeat("a1b2c3d4", 8), ""},

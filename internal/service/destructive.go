@@ -86,14 +86,17 @@ func sameHead(head, sha string) bool {
 
 // deleted reads a delete's answer with the read made after it. A delete
 // may be repeated after its answer was lost, and the repeat finds
-// nothing: a not-found delete of something now gone is reported deleted,
-// saying so.
+// nothing: a not-found or unconfirmed delete of something now gone is
+// reported deleted, saying so.
 func deleted(deleteErr, readErr error, what string) ([]string, error) {
 	switch {
 	case deleteErr == nil:
 		return confirmGone(readErr, what)
 	case gapi.IsClass(deleteErr, gapi.ClassNotFound) && gapi.IsClass(readErr, gapi.ClassNotFound):
 		return []string{"GitLab answered the delete with not found, and a read afterwards finds no such " + what +
+			": it is gone, whether this call or another deleted it."}, nil
+	case gapi.IsClass(deleteErr, gapi.ClassAmbiguousOutcome) && gapi.IsClass(readErr, gapi.ClassNotFound):
+		return []string{"GitLab did not confirm the delete, and a read afterwards finds no such " + what +
 			": it is gone, whether this call or another deleted it."}, nil
 	}
 	return nil, deleteErr

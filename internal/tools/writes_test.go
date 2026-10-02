@@ -439,6 +439,12 @@ func TestAReviewIsDraftedThenSubmitted(t *testing.T) {
 		t.Errorf("delete: %v", del)
 	}
 	h.fails("delete_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": get(out, "note_id")}, "not_found")
+	// A delete whose answer was lost is repeated, and the repeat's 404
+	// does not say the draft was never the account's.
+	_, out = h.ok("add_review_comment", map[string]any{"project": alpha, "iid": 1, "body": "Drop me too."})
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodDelete, Path: fmt.Sprintf("/projects/2001/merge_requests/1/draft_notes/%v", get(out, "note_id")),
+		AfterApply: true, Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+	h.fails("delete_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": get(out, "note_id")}, "ambiguous_outcome")
 
 	// A draft with a quick action is refused now, since it would run
 	// when published.

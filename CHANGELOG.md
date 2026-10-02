@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Fixed
+
+- A delete repeated after a lost answer or a 5xx, whose repeat found nothing, is `[ambiguous_outcome]`, not `[not_found]`; `delete_review_comment` said the draft was not yours when an earlier attempt had deleted it.
+
 ## [2.2.0] - 2026-10-02
 
 ### Added
