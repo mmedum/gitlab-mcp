@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -106,12 +107,17 @@ func SuggestionText(from, to string) (fromShown, toShown string, cut bool, hidde
 // Invisible lists the characters of s a reader would not see, each once,
 // in order: hidden and bidirectional ones, characters drawn as blank
 // space, and controls other than tab, line feed and carriage return.
+// Unicode's other default-ignorable characters, the Hangul fillers among
+// them, and the variation selectors are included: a filler is an
+// identifier that reads as nothing, and a selector makes two names
+// that read the same (\u00A74.12).
 func Invisible(s string) []rune {
 	var out []rune
 	for _, r := range strings.ToValidUTF8(s, "\uFFFD") {
 		switch {
 		case r == '\t' || r == '\n' || r == '\r':
-		case hidden(r), control(r), r == 0x2800, r == 0x3164, r == 0xFFA0:
+		case hidden(r), control(r), r == 0x2800,
+			unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r), unicode.Is(unicode.Variation_Selector, r):
 			if !slices.Contains(out, r) {
 				out = append(out, r)
 			}
