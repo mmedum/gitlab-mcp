@@ -239,6 +239,7 @@ GET /projects/{id}/issues/{issue_iid}/closed_by	used	1	Client.ListIssueClosedBy:
 GET /projects/{id}/issues/{issue_iid}/related_merge_requests	used	1	Client.ListIssueRelatedMergeRequests: get_issue shows the merge requests related to the issue
 GET /projects/{id}/issues/{issue_iid}/participants	deferred	1	participants; get_issue may add it (§17a)
 POST /projects/{id}/issues/{issue_iid}/todo	used	1	Client.CreateIssueTodo: add_todo; GitLab answers 304 while a pending to-do you added is there; a create all the same, never repeated (§4.5, §18 row 102)
+POST /projects/{id}/uploads	used	1	Client.UploadFile: upload_file, an image read from a directory the person allowed, for Markdown to embed; a create, never repeated, and no read settles a lost one (§4.5, §7.10, §18 rows 112-116). Moved from written off on 2026-10-07 by the maintainer's decision (issue #50)
 GET /projects/{id}/issues/{issue_iid}/user_agent_detail	written-off	1	user agent details: an administrator's spam tooling (§8a)
 GET /projects/{id}/issues/{issue_iid}/award_emoji	used	1	Client.ListAwards: react reads your reactions on the issue first, since GitLab refuses one already there with 404 (§18 row 106)
 POST /projects/{id}/issues/{issue_iid}/award_emoji	used	1	Client.CreateAward: react; every refusal is 404, worded in the account's language, so a refusal is followed by a read; never repeated (§4.5, §18 row 106)
@@ -612,7 +613,7 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	acts on r
 * /elasticsearch_indexed_namespaces*	written-off	2	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
 * /organizations*	written-off	2	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
 * /groups/{id}/placeholder_reassignments*	written-off	3	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
-* /projects/{id}/uploads*	written-off	7	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
+* /projects/{id}/uploads*	written-off	6	listing, reading by id and deleting uploads need the Maintainer role, and Workhorse's authorize step is internal: administration (§8a). The create is used by upload_file
 * /groups/{id}/uploads*	written-off	7	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
 * /topics*	written-off	6	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)
 * /project_aliases*	written-off	4	hooks, integrations, imports, exports, mirrors, settings, licenses, uploads and instance operations: administration (§8a)

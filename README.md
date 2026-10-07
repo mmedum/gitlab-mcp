@@ -98,6 +98,7 @@ contract: tools keep their names and output fields.
 | `add_todo` | Add a to-do for yourself on an issue or a merge request |
 | `subscribe` | Subscribe to an issue's or a merge request's notifications, or unsubscribe |
 | `react` | Add or remove your emoji reaction on an issue, a merge request or a comment |
+| `upload_file` | Upload an image from a directory you allowed and get the Markdown that shows it in a comment or description |
 | `merge_merge_request` | Merge at the head you reviewed, or when the pipeline succeeds (Ship) |
 | `cancel_auto_merge` | Stop a merge request merging when its pipeline succeeds (Ship) |
 | `approve_merge_request` | Approve at the head you reviewed (Ship) |
@@ -239,6 +240,10 @@ public, or deletes anything. Only your accept writes.
   branch only through a merge request; a direct commit there is refused.
 - **No blind retries.** A create that may or may not have happened is
   settled by reading, never by creating again.
+- **Local files only from where you allow.** `upload_file` reads an
+  image only from your client's roots or `GITLAB_MCP_UPLOAD_DIRS`, and
+  only a PNG, JPEG, GIF or WebP judged from its bytes, so a comment
+  asking for a key file to be "attached" gets nothing.
 
 The default token can still merge and approve; leaving Ship off stops
 this server doing so, not anything else holding the token.

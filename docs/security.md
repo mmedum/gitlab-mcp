@@ -218,6 +218,18 @@ replace it with a `read_api` one.
   tag.
 - **Job artifacts are masked like logs.** `get_job_artifact` replaces
   token and key shapes, and shows no binary file.
+- **An upload reads only an image, from where you allowed.**
+  `upload_file` reads a local file only inside your MCP client's roots
+  or the directories `GITLAB_MCP_UPLOAD_DIRS` names, through Go's
+  `os.Root`, so neither `..` nor a symbolic link leads out. It refuses a
+  symbolic link, a directory, a FIFO, anything over 10 MiB, and anything
+  whose bytes are not a PNG, JPEG, GIF or WebP; SVG is refused because
+  it is text that can carry script. Only the file's base name goes to
+  GitLab, never its directory. In a public project anyone with the
+  link can open the upload, and in a private or internal one too unless
+  the project requires sign-in to view media files; the result says
+  which. GitLab keeps the upload even if nothing links to it, and this
+  server cannot delete it.
 - **Release links stay in the project.** `create_release` takes asset
   links only to the project's own pages and API paths on gitlab.com, its
   packages included, with no credentials in the URL, and

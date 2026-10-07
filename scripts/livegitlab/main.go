@@ -26,14 +26,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"image"
+	"image/png"
 	"maps"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -165,10 +169,13 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	}
 	spikes(ctx, settings, s, "", p)
 
-	serverEnv := []string{config.EnvLogLevel + "=info"}
-	if o.profile != "" {
-		serverEnv = append(serverEnv, config.EnvProfile+"="+o.profile)
+	images, cleanup, err := writeImages(&s, red)
+	if err != nil {
+		return err
 	}
+	defer cleanup()
+
+	serverEnv := serverEnvFor(o, images)
 	rec := newRecorder()
 	// One scripted person answers for both servers, so a tool that asks
 	// only on some calls is judged over the whole run.
@@ -206,6 +213,52 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	}
 	p.Say("every call behaved as expected")
 	return nil
+}
+
+// serverEnvFor is the environment both servers start with: the log
+// level, the directory upload_file may read the run's images from, and
+// the profile when one was named.
+func serverEnvFor(o options, images string) []string {
+	env := []string{config.EnvLogLevel + "=info", config.EnvUploadDirs + "=" + images}
+	if o.profile != "" {
+		env = append(env, config.EnvProfile+"="+o.profile)
+	}
+	return env
+}
+
+// writeImages generates what upload_file sends: a PNG and a text file in
+// a directory of their own, which the server may read from, and a PNG in
+// another, which it may not. Both directories are masked in the
+// transcript, and removed when the run ends.
+func writeImages(s *scratch, red *redact.Redactor) (string, func(), error) {
+	allowed, err := os.MkdirTemp("", "gitlab-mcp-live-images-")
+	if err != nil {
+		return "", nil, err
+	}
+	outside, err := os.MkdirTemp("", "gitlab-mcp-live-outside-")
+	if err != nil {
+		_ = os.RemoveAll(allowed)
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(allowed); _ = os.RemoveAll(outside) }
+	red.Known(redact.KindPath, allowed)
+	red.Known(redact.KindPath, outside)
+	var img bytes.Buffer
+	if err := png.Encode(&img, image.NewRGBA(image.Rect(0, 0, 16, 16))); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	s.Image = filepath.Join(allowed, "live-mock-up.png")
+	s.NotImage = filepath.Join(allowed, "live-notes.txt")
+	s.Outside = filepath.Join(outside, "live-outside.png")
+	for path, data := range map[string][]byte{s.Image: img.Bytes(), s.NotImage: []byte("Plain text the live run wrote.\n"),
+		s.Outside: img.Bytes()} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+	}
+	return allowed, cleanup, nil
 }
 
 // session starts a server with env, drives steps through it, and

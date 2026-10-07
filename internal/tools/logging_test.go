@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
 )
 
@@ -54,7 +57,13 @@ var fixtureText = []string{
 func TestLogsNeverCarryThePayload(t *testing.T) {
 	var logs bytes.Buffer
 	lg := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	h := newHarness(t, harnessOptions{logger: lg})
+	// An image upload_file may read, its directory and name both canaries.
+	uploads := filepath.Join(t.TempDir(), canary+"-dir")
+	if err := os.Mkdir(uploads, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	image, _ := pngFile(t, uploads, canary+"-image.png")
+	h := newHarness(t, harnessOptions{logger: lg, cfg: config.Config{UploadDirs: []string{uploads}}})
 
 	list, err := h.cs.ListTools(t.Context(), nil)
 	if err != nil {
@@ -85,6 +94,7 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 		"search":          {"group": nil, "search": "package", "state": nil, "ref": nil},
 
 		"list_item_events": {"page_token": nil},
+		"upload_file":      {"path": image},
 	}
 	for _, tool := range list.Tools {
 		schema := tool.InputSchema.(map[string]any)
@@ -133,6 +143,10 @@ func TestLogsNeverCarryThePayload(t *testing.T) {
 		if !strings.Contains(out, `"call":"`+call+`","attempt":1,"status":200`) {
 			t.Errorf("no successful %s request was logged; the canaries never reached a payload", call)
 		}
+	}
+	// The upload went out, and GitLab stored it under the canary's name.
+	if !strings.Contains(out, `"call":"upload_file","attempt":1,"status":201`) {
+		t.Error("no successful upload was logged; the canary path never reached GitLab")
 	}
 	host := strings.TrimPrefix(h.gl.URL, "http://")
 	for _, bad := range append([]string{canary, host, url.PathEscape(gitlabtest.ProjectAlpha)}, fixtureText...) {

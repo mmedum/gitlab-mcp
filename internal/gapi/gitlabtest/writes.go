@@ -169,6 +169,8 @@ func (s *Server) serveProjectWrite(w http.ResponseWriter, r *http.Request, p *pr
 		s.createCommit(w, r, p, user)
 	case match(seg, "ci", "lint"):
 		s.lintContent(w, r)
+	case match(seg, "uploads"):
+		s.createUpload(w, r, p, user)
 	default:
 		return false
 	}

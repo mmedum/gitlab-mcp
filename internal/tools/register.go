@@ -285,6 +285,9 @@ func (c *caller[In, Out]) handle(ctx context.Context, req *mcp.CallToolRequest) 
 		outcome = classOf(err)
 		return errorResult(err), nil
 	}
+	// The client's roots are asked for only by a call that reads a
+	// local file, and only when it gets that far.
+	ctx = service.WithRoots(ctx, clientRoots{req: req, lg: c.d.logger()})
 	v := reflect.ValueOf(&in).Elem()
 	dry := c.dryRun >= 0 && v.Field(c.dryRun).Bool()
 	if dry {

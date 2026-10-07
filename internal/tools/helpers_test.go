@@ -47,6 +47,8 @@ type harnessOptions struct {
 	// over is an in-memory GitLab another harness already made, to serve
 	// the same state under another configuration.
 	over *gitlabtest.Server
+	// roots are the roots the client shares.
+	roots []*mcp.Root //nolint:staticcheck // SA1019: the deprecated roots are what upload_file reads
 }
 
 func newHarness(t *testing.T, o harnessOptions) *harness {
@@ -98,8 +100,9 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	if o.client != nil {
 		o.client(co)
 	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, co).Connect(t.Context(), ct,
-		&mcp.ClientSessionOptions{ProtocolVersion: o.protocol})
+	mc := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, co)
+	mc.AddRoots(o.roots...) //nolint:staticcheck // SA1019: the deprecated roots are what upload_file reads
+	cs, err := mc.Connect(t.Context(), ct, &mcp.ClientSessionOptions{ProtocolVersion: o.protocol})
 	if err != nil {
 		t.Fatalf("connect client: %v", err)
 	}

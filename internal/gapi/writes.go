@@ -375,3 +375,13 @@ func (c *Client) LintCIContent(ctx context.Context, p Project, content string, q
 		ReadOnly: "linting creates nothing", Name: "lint_ci"}, &out)
 	return &out, err
 }
+
+// UploadFile uploads a file to a project, for Markdown in its issues,
+// merge requests and comments to link. A create: GitLab keeps every
+// upload, so it is never repeated (§4.5).
+func (c *Client) UploadFile(ctx context.Context, p Project, name, contentType string, data []byte) (*gitlab.ProjectUpload, error) {
+	var out gitlab.ProjectUpload
+	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/uploads", Args: []string{p.segment()},
+		Form: &Form{Field: "file", Filename: name, ContentType: contentType, Data: data}, Name: "upload_file"}, &out)
+	return &out, err
+}

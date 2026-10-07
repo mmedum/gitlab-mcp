@@ -552,6 +552,32 @@ func subscribe() definition {
 	}
 }
 
+// --------------------------------------------------------------- images
+
+type uploadFileIn struct {
+	Project idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	Path    string   `json:"path" jsonschema:"The image's absolute path on this machine, inside one of the client's roots or a directory GITLAB_MCP_UPLOAD_DIRS names. A PNG, JPEG, GIF or WebP of at most 10 MiB; a symbolic link is refused"`
+	DryRun  bool     `json:"dry_run,omitempty" jsonschema:"Read and check the image and the project, and return what would be sent, without uploading anything"`
+}
+
+func uploadFile() definition {
+	return tool[uploadFileIn, model.UploadWrite]{
+		sp: spec{Name: "upload_file", Kind: Write,
+			Description: "Upload an image from this machine to a project and get the Markdown that shows it, to put in a comment " +
+				"(add_comment), a review comment (add_review_comment) or a description (create_issue, update_issue, " +
+				"create_merge_request, update_merge_request) in the same project. The image is read only from the client's roots " +
+				"and the directories GITLAB_MCP_UPLOAD_DIRS names, and must be a PNG, JPEG, GIF or WebP of at most 10 MiB, judged " +
+				"from its bytes; it is sent under its file name with the extension of its type, and nothing else on this machine " +
+				"is read. The result says who can open the image by its link: in a public project anyone, and in a private or " +
+				"internal one anyone too unless the project requires sign-in to view media files. GitLab keeps the upload even " +
+				"if nothing links to it, and this server cannot delete it. Never repeated after a lost answer." + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in uploadFileIn) (model.UploadWrite, error) {
+			return svc.UploadFile(ctx, service.Upload{Project: string(in.Project), Path: in.Path})
+		},
+		text: render.UploadWrite,
+	}
+}
+
 // ------------------------------------------------------------ reactions
 
 type reactIn struct {

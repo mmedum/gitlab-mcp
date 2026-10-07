@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `upload_file` uploads a PNG, JPEG, GIF or WebP from your client's roots or the new `GITLAB_MCP_UPLOAD_DIRS` to a project and returns the Markdown that shows it, says who can open its link, and is never repeated after a lost answer.
+
 ## [2.2.1] - 2026-10-02
 
 ### Fixed

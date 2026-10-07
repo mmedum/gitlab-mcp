@@ -385,12 +385,14 @@ type response struct {
 
 // prepared is a call checked and built, ready to send.
 type prepared struct {
-	call       Call
-	name       string
-	endpoint   *url.URL
-	payload    []byte
-	token      string
-	repeatable bool
+	call     Call
+	name     string
+	endpoint *url.URL
+	payload  []byte
+	// contentType is the payload's Content-Type header.
+	contentType string
+	token       string
+	repeatable  bool
 }
 
 // do sends a call under the retry policy and decodes the answer.
@@ -428,8 +430,16 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 	if p.endpoint, err = c.endpoint(call.Root, path, call.Query); err != nil {
 		return nil, err
 	}
-	if call.Body != nil {
+	switch {
+	case call.Body != nil && call.Form != nil:
+		return nil, Errf(ClassUnexpected, "%s sets both a JSON body and a form", p.name)
+	case call.Body != nil:
 		if p.payload, err = json.Marshal(call.Body); err != nil {
+			return nil, Wrap(ClassInvalid, err, "the request for %s could not be encoded", p.name)
+		}
+		p.contentType = "application/json"
+	case call.Form != nil:
+		if p.payload, p.contentType, err = call.Form.encode(); err != nil {
 			return nil, Wrap(ClassInvalid, err, "the request for %s could not be encoded", p.name)
 		}
 	}
@@ -465,7 +475,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 			s.requests.Add(1)
 		}
 		start := time.Now()
-		res, sendErr := c.attempt(ctx, p.call.Method, p.endpoint, p.payload, p.token, p.call.UnmodifiedSince)
+		res, sendErr := c.attempt(ctx, p, p.token)
 		release()
 		status := 0
 		if res != nil {
@@ -640,7 +650,8 @@ var (
 
 // attempt makes one HTTP request. The address is checked against the
 // instance before the token is attached.
-func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, payload []byte, token string, unmodifiedSince time.Time) (*attemptResult, error) {
+func (c *Client) attempt(ctx context.Context, p *prepared, token string) (*attemptResult, error) {
+	endpoint := p.endpoint
 	if !c.inst.SameOrigin(endpoint) {
 		return nil, errOffInstance
 	}
@@ -650,10 +661,10 @@ func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, 
 	headers := time.AfterFunc(c.headerTimeout, func() { headersLate.Store(true); cancel() })
 
 	var reader io.Reader
-	if payload != nil {
-		reader = bytes.NewReader(payload)
+	if p.payload != nil {
+		reader = bytes.NewReader(p.payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), reader)
+	req, err := http.NewRequestWithContext(ctx, p.call.Method, endpoint.String(), reader)
 	if err != nil {
 		headers.Stop()
 		return nil, WithoutURL(err)
@@ -661,15 +672,15 @@ func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if p.contentType != "" {
+		req.Header.Set("Content-Type", p.contentType)
 	}
-	if !unmodifiedSince.IsZero() {
+	if since := p.call.UnmodifiedSince; !since.IsZero() {
 		// RFC 3339 with the fraction, not an HTTP-date: GitLab reads the
 		// header with Ruby's Time.parse and compares it with a time kept to
 		// the microsecond, so a date cut to the second would refuse nearly
 		// every delete (check_unmodified_since! in lib/api/helpers.rb).
-		req.Header.Set("If-Unmodified-Since", unmodifiedSince.UTC().Format(time.RFC3339Nano))
+		req.Header.Set("If-Unmodified-Since", since.UTC().Format(time.RFC3339Nano))
 	}
 	resp, err := c.http.Do(req)
 	headers.Stop()

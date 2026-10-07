@@ -96,6 +96,8 @@ var plainInputs = map[string]string{
 	"tag_name":                   "a Git tag name, which GitLab takes as a ref, not Markdown",
 	"create_tag.message":         "an annotated tag's message, written into Git; Tags::CreateService runs no quick action (app/services/tags/create_service.rb at v19.4.1-ee)",
 	"cherry_pick_commit.message": "a commit message the Commits API writes into Git; it runs no quick action, as for create_commit",
+	"upload_file.path": "a path on this machine the image is read from; the path is never sent, and the name sent is its base " +
+		"name made safe, which GitLab stores as a file name and runs no quick action from (lib/api/markdown_uploads.rb at v19.4.1-ee)",
 	"track_time.estimate": "a duration, checked against the server's own grammar and sent as duration, which " +
 		"Gitlab::TimeTrackingFormatter parses to seconds; no description is sent, so the update service runs no quick action " +
 		"(lib/api/time_tracking_endpoints.rb at v19.4.1-ee)",

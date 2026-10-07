@@ -123,6 +123,7 @@ func checkFields(snap apiSnapshot, rows []fieldRow, calls []clientCall, client, 
 		opsCompared[op.key()] = true
 		fc.query(c, *op)
 		fc.body(c, *op)
+		fc.form(c, *op)
 		fc.response(c, *op)
 	}
 	problems := fc.problems
@@ -211,6 +212,43 @@ func (fc *fieldChecker) body(c clientCall, op apiOperation) {
 			fc.excuse(op.key(), "body", f, fmt.Sprintf("sent as %s and published as %s", fields[f], t))
 		}
 	}
+}
+
+// form holds the field a multipart call puts its file in to the
+// operation's request, as body holds a JSON body's fields.
+func (fc *fieldChecker) form(c clientCall, op apiOperation) {
+	if c.Form == nil {
+		return
+	}
+	field, ok := formField(c.Form)
+	if !ok {
+		fc.problems = append(fc.problems, fmt.Sprintf("%s: %s sends a form this gate cannot read; write it as a Form literal "+
+			"whose Field is a string literal", c.Pos, c.Func))
+		return
+	}
+	fc.sent++
+	if _, ok := op.Request[field]; !ok {
+		fc.excuse(op.key(), "body", field, "sent and not published")
+	}
+}
+
+// formField is the Field of a Form{...} or &Form{...} literal.
+func formField(e ast.Expr) (string, bool) {
+	if u, ok := e.(*ast.UnaryExpr); ok {
+		e = u.X
+	}
+	lit, ok := e.(*ast.CompositeLit)
+	if !ok {
+		return "", false
+	}
+	for _, el := range lit.Elts {
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Field" {
+				return stringLit(kv.Value)
+			}
+		}
+	}
+	return "", false
 }
 
 // response holds every field the call decodes to a 2xx schema.

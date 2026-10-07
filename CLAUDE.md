@@ -173,6 +173,8 @@ than the gate loosened.
   build's version.
 - `internal/diffpos/` a diff note's position computed from a unified
   diff, no network.
+- `internal/localimage/` an image read from a directory the person
+  allowed, for `upload_file`, no network.
 - `scripts/gates/` the repository's own checks, as Go;
   `scripts/internal/` what the gates and drivers share;
   `scripts/livegitlab/` the live driver; `scripts/evals/` the

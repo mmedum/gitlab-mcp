@@ -116,6 +116,8 @@ type Server struct {
 	// awards are the emoji reactions, oldest first.
 	awards      []award
 	nextAwardID int64
+	// uploads are the files uploaded for Markdown, oldest first.
+	uploads []Upload
 
 	faults   []*Fault
 	requests []Request

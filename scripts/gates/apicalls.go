@@ -37,12 +37,12 @@ type clientCall struct {
 	Func string
 	Pos  string // file:line, for a message a person can open
 
-	// Query and Body are the literal's fields, nil when absent. Out is
-	// the argument the response is decoded into: the last argument of
-	// the c.Do or c.list call the literal is passed to.
-	Query, Body, Out ast.Expr
-	fn               *ast.FuncDecl
-	file             *ast.File
+	// Query, Body and Form are the literal's fields, nil when absent.
+	// Out is the argument the response is decoded into: the last
+	// argument of the c.Do or c.list call the literal is passed to.
+	Query, Body, Form, Out ast.Expr
+	fn                     *ast.FuncDecl
+	file                   *ast.File
 }
 
 // op is the call as the verdict file spells an operation's verb, and
@@ -232,6 +232,8 @@ func (c *clientCall) readFields(lit *ast.CompositeLit) (methodOK, pathOK bool) {
 			c.Query = kv.Value
 		case "Body":
 			c.Body = kv.Value
+		case "Form":
+			c.Form = kv.Value
 		case "ReadOnly":
 			c.ReadOnly, _ = stringLit(kv.Value)
 		}

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -73,6 +74,7 @@ const (
 	EnvRequirePrompt             = EnvPrefix + "REQUIRE_PROMPT"
 	EnvToolsets                  = EnvPrefix + "TOOLSETS"
 	EnvWriteNamespaces           = EnvPrefix + "WRITE_NAMESPACES"
+	EnvUploadDirs                = EnvPrefix + "UPLOAD_DIRS"
 	EnvLogLevel                  = EnvPrefix + "LOG_LEVEL"
 	EnvLogFormat                 = EnvPrefix + "LOG_FORMAT"
 	EnvHTTPTimeout               = EnvPrefix + "HTTP_TIMEOUT"
@@ -107,6 +109,8 @@ var Vars = []Var{
 		Doc: "comma-separated optional toolsets: " + strings.Join(Toolsets, ", ") + ", or all"},
 	{Name: EnvWriteNamespaces, Flag: "write-namespaces",
 		Doc: "comma-separated groups or projects that writes are confined to; unset means anywhere"},
+	{Name: EnvUploadDirs, Flag: "upload-dirs",
+		Doc: "absolute directories upload_file may read images from, besides the client's roots, separated as PATH is"},
 	{Name: EnvLogLevel, Flag: "log-level", Default: string(LogInfo),
 		Doc: "log level: debug, info, warn, error"},
 	{Name: EnvLogFormat, Flag: "log-format", Default: string(LogText),
@@ -209,9 +213,13 @@ type Config struct {
 	// WriteNamespaces confine Write, Ship and Destructive (§4.7). Empty
 	// means no confinement.
 	WriteNamespaces []string
-	LogLevel        LogLevel
-	LogFormat       LogFormat
-	HTTPTimeout     time.Duration
+	// UploadDirs are the directories upload_file may read an image from,
+	// besides the roots the client names (§7.10). Empty means the roots
+	// alone.
+	UploadDirs  []string
+	LogLevel    LogLevel
+	LogFormat   LogFormat
+	HTTPTimeout time.Duration
 	// ConfigDir is the resolved base directory for profiles.
 	ConfigDir userconfig.Dir
 }
@@ -352,6 +360,8 @@ func (s *Settings) Build() (Config, error) {
 	add(err)
 	c.WriteNamespaces, err = parseNamespaces(s.get(EnvWriteNamespaces))
 	add(err)
+	c.UploadDirs, err = parseUploadDirs(s.get(EnvUploadDirs))
+	add(err)
 
 	c.LogLevel = LogLevel(strings.ToLower(strings.TrimSpace(s.get(EnvLogLevel))))
 	if !slices.Contains(logLevels, c.LogLevel) {
@@ -453,6 +463,29 @@ func parseNamespaces(v string) ([]string, error) {
 	}
 	if len(bad) > 0 {
 		return nil, fmt.Errorf("%w: %s: not a group or project path: %s", ErrInvalid, EnvWriteNamespaces, strings.Join(bad, ", "))
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}
+
+// parseUploadDirs reads the directories upload_file may read from, split
+// as PATH is: on colons, or semicolons on Windows. Each must be absolute,
+// because the server's working directory is whatever the client started
+// it in, and a relative directory would mean that.
+func parseUploadDirs(v string) ([]string, error) {
+	var out, bad []string
+	for _, dir := range filepath.SplitList(v) {
+		dir = strings.TrimSpace(dir)
+		switch {
+		case dir == "":
+		case !filepath.IsAbs(dir):
+			bad = append(bad, fmt.Sprintf("%q", dir))
+		default:
+			out = append(out, filepath.Clean(dir))
+		}
+	}
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("%w: %s: not an absolute directory: %s", ErrInvalid, EnvUploadDirs, strings.Join(bad, ", "))
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil
