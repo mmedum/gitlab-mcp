@@ -219,8 +219,8 @@ replace it with a `read_api` one.
 - **Job artifacts are masked like logs.** `get_job_artifact` replaces
   token and key shapes, and shows no binary file.
 - **An upload reads only an image, from where you allowed.**
-  `upload_file` reads a local file only inside your MCP client's roots
-  or the directories `GITLAB_MCP_UPLOAD_DIRS` names, through Go's
+  `upload_file` reads a local file only inside the directories
+  `GITLAB_MCP_UPLOAD_DIRS` names, and none when it is unset, through Go's
   `os.Root`, so neither `..` nor a symbolic link leads out. It refuses a
   symbolic link, a directory, a FIFO, anything over 10 MiB, and anything
   whose bytes are not a PNG, JPEG, GIF or WebP; SVG is refused because

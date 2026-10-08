@@ -110,7 +110,7 @@ var Vars = []Var{
 	{Name: EnvWriteNamespaces, Flag: "write-namespaces",
 		Doc: "comma-separated groups or projects that writes are confined to; unset means anywhere"},
 	{Name: EnvUploadDirs, Flag: "upload-dirs",
-		Doc: "absolute directories upload_file may read images from, besides the client's roots, separated as PATH is"},
+		Doc: "absolute directories upload_file may read images from, separated as PATH is; unset means none"},
 	{Name: EnvLogLevel, Flag: "log-level", Default: string(LogInfo),
 		Doc: "log level: debug, info, warn, error"},
 	{Name: EnvLogFormat, Flag: "log-format", Default: string(LogText),
@@ -213,9 +213,8 @@ type Config struct {
 	// WriteNamespaces confine Write, Ship and Destructive (§4.7). Empty
 	// means no confinement.
 	WriteNamespaces []string
-	// UploadDirs are the directories upload_file may read an image from,
-	// besides the roots the client names (§7.10). Empty means the roots
-	// alone.
+	// UploadDirs are the only directories upload_file may read an image
+	// from (§7.10). Empty means none: the tool refuses every path.
 	UploadDirs  []string
 	LogLevel    LogLevel
 	LogFormat   LogFormat

@@ -27,7 +27,7 @@ itself, and every problem is reported together.
 | `GITLAB_MCP_REQUIRE_PROMPT` | `--require-prompt` | `false` | Refuse the writes that ask you, when your MCP client cannot ask. See below. |
 | `GITLAB_MCP_TOOLSETS` | `--toolsets` | none | Comma-separated optional toolsets: `activity`, `deployments`, `planning`, `releases`, `snippets`, `wiki`, or `all`. |
 | `GITLAB_MCP_WRITE_NAMESPACES` | `--write-namespaces` | anywhere | Comma-separated group or project paths that Write, Ship and Destructive calls are confined to. A call aimed elsewhere is `[blocked]`. |
-| `GITLAB_MCP_UPLOAD_DIRS` | `--upload-dirs` | none | Absolute directories `upload_file` may read images from, besides your MCP client's roots, separated as `PATH` is: `:` on Linux and macOS, `;` on Windows. See below. |
+| `GITLAB_MCP_UPLOAD_DIRS` | `--upload-dirs` | none | The absolute directories `upload_file` may read images from, separated as `PATH` is: `:` on Linux and macOS, `;` on Windows. Unset, it reads none. See below. |
 | `GITLAB_MCP_LOG_LEVEL` | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. |
 | `GITLAB_MCP_LOG_FORMAT` | `--log-format` | `text` | `text` or `json`. |
 | `GITLAB_MCP_HTTP_TIMEOUT` | `--http-timeout` | `60s` | Deadline for one attempt at an API call, as a Go duration between `1s` and `10m`. |
@@ -95,13 +95,10 @@ with nobody watching cannot make these writes at all.
 
 ## Where `upload_file` reads from
 
-`upload_file` reads an image from this machine only inside your MCP
-client's roots, when the client shares them, and the directories
-`GITLAB_MCP_UPLOAD_DIRS` names. With neither, it refuses and names the
-setting. Some clients share only the directory they were started in,
-and on the newest MCP protocol the server cannot ask for roots during a
-call, so an image in a temporary or downloads directory needs the
-setting:
+`upload_file` reads an image from this machine only inside the
+directories `GITLAB_MCP_UPLOAD_DIRS` names. Unset, it refuses every path
+and names the setting. It does not use your MCP client's roots, which
+the protocol deprecates in favor of server configuration such as this:
 
 ```json
 "env": { "GITLAB_MCP_UPLOAD_DIRS": "/home/you/Pictures/screenshots" }
@@ -177,7 +174,7 @@ authority in the system's trust store.
 }
 ```
 
-The Claude Desktop bundle asks for the application id, the profile and
-read-only mode, and passes them as the matching
-variables. It does not log you in; run `gitlab-mcp login` from a
+The Claude Desktop bundle asks for the application id, the profile,
+read-only mode and one image directory for `upload_file`, and passes
+them as the matching variables. It does not log you in; run `gitlab-mcp login` from a
 terminal first (`docs/setup.md`).

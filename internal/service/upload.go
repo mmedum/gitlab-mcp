@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"slices"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/v2/internal/localimage"
@@ -10,35 +9,10 @@ import (
 )
 
 // Uploading an image for Markdown to embed (§7.10). The image is a local
-// file, read by internal/localimage from a directory the person allowed:
-// one of the client's roots, or one GITLAB_MCP_UPLOAD_DIRS names. GitLab
-// keeps an upload whether or not anything links to it, so it is sent
-// once (§4.5), and listing uploads needs the Maintainer role and gives no
-// link, so a lost answer stays unknown.
-
-// Roots lists the directories the client shares as its roots. The tools
-// layer installs one per call; a call without one has none.
-type Roots interface {
-	Roots(ctx context.Context) []string
-}
-
-type rootsKey struct{}
-
-// WithRoots returns a context whose client roots are r's.
-func WithRoots(ctx context.Context, r Roots) context.Context {
-	return context.WithValue(ctx, rootsKey{}, r)
-}
-
-// uploadDirs is every directory an upload may read from: the setting's
-// and the client's roots, sorted, each once.
-func (s *Service) uploadDirs(ctx context.Context) []string {
-	dirs := slices.Clone(s.cfg.UploadDirs)
-	if r, ok := ctx.Value(rootsKey{}).(Roots); ok {
-		dirs = append(dirs, r.Roots(ctx)...)
-	}
-	slices.Sort(dirs)
-	return slices.Compact(dirs)
-}
+// file, read by internal/localimage from a directory the person named in
+// GITLAB_MCP_UPLOAD_DIRS. GitLab keeps an upload whether or not anything
+// links to it, so it is sent once (§4.5), and listing uploads needs the
+// Maintainer role and gives no link, so a lost answer stays unknown.
 
 // Upload is upload_file's request.
 type Upload struct {
@@ -51,7 +25,7 @@ type Upload struct {
 // that embeds it. The image is read and checked before anything is
 // sent, a dry run included.
 func (s *Service) UploadFile(ctx context.Context, in Upload) (model.UploadWrite, error) {
-	img, err := localimage.Read(in.Path, s.uploadDirs(ctx))
+	img, err := localimage.Read(in.Path, s.cfg.UploadDirs)
 	if err != nil {
 		return model.UploadWrite{}, err
 	}

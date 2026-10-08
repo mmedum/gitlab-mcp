@@ -66,7 +66,7 @@ func TestMcpbFixturePasses(t *testing.T) {
 	if err := mcpbCheck(&out, mcpbRoot(t, mcpbFixture(t))); err != nil {
 		t.Fatalf("the fixture fails: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "7 staged files, 3 platforms, 3 user_config keys") {
+	if !strings.Contains(out.String(), "7 staged files, 3 platforms, 4 user_config keys") {
 		t.Errorf("the gate does not say what it read: %s", out.String())
 	}
 }
@@ -101,6 +101,12 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"composed user_config not declared", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_CONFIG_DIR"] = "${user_config.home}/gitlab"
 		}, "spends ${user_config.home}"},
+		{"an optional user_config key with no default", func(d map[string]any) {
+			delete(mcpbDig(d, "user_config", "upload_dirs"), "default")
+		}, "spends ${user_config.upload_dirs}, which is optional with no default"},
+		{"a user_config key with multiple values", func(d map[string]any) {
+			mcpbDig(d, "user_config", "upload_dirs")["multiple"] = true
+		}, "spends ${user_config.upload_dirs}, which takes multiple values"},
 		{"an env var the server does not read", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_NOPE"] = "x"
 		}, "sets GITLAB_MCP_NOPE, which the server does not read"},

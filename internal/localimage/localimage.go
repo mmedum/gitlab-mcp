@@ -1,6 +1,6 @@
-// Package localimage reads an image the person names from a directory
-// they allowed, for upload_file to send (docs/architecture.md §7.10). It
-// touches no network.
+// Package localimage reads an image from a directory the person allowed
+// in GITLAB_MCP_UPLOAD_DIRS, for upload_file to send (docs/architecture.md
+// §7.10). It touches no network.
 //
 // An upload tool is an exfiltration channel by construction: a comment
 // that persuades a model to "attach" a key file would send the key. So
@@ -77,15 +77,14 @@ func Read(path string, dirs []string) (Image, error) {
 		return Image{}, gapi.Errf(gapi.ClassInvalid, "path may not contain a .. element; pass the image's path as it is")
 	}
 	if len(dirs) == 0 {
-		return Image{}, gapi.Errf(gapi.ClassBlocked, "upload_file reads only from directories the person allowed, and there are "+
-			"none: no roots came from the client, and %s is not set. Nothing was read or sent. Set %s to the directory holding the "+
-			"image and restart the server", config.EnvUploadDirs, config.EnvUploadDirs)
+		return Image{}, gapi.Errf(gapi.ClassBlocked, "upload_file reads only from the directories %s names, and it is not set. "+
+			"Nothing was read or sent. Set it to the directory holding the image and restart the server", config.EnvUploadDirs)
 	}
 	dir, rel, ok := within(filepath.Clean(path), dirs)
 	if !ok {
-		return Image{}, gapi.Errf(gapi.ClassBlocked, "path is outside every directory upload_file may read from (%s). Nothing was "+
-			"read or sent. Save the image in one of them, or add its directory to %s and restart the server",
-			strings.Join(dirs, ", "), config.EnvUploadDirs)
+		return Image{}, gapi.Errf(gapi.ClassBlocked, "path is outside every directory %s names (%s). Nothing was read or sent. "+
+			"Save the image in one of them, or add its directory to the setting and restart the server",
+			config.EnvUploadDirs, strings.Join(dirs, ", "))
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {

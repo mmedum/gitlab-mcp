@@ -5,14 +5,10 @@ import (
 	"image"
 	"image/png"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mmedum/gitlab-mcp/v2/internal/config"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
@@ -172,95 +168,18 @@ func TestUploadFileSendsNothingUntilItMay(t *testing.T) {
 	}
 }
 
-// upload_file reads from the client's roots and the setting's
-// directories together, asks the client only when it declared roots,
-// and gets none on 2026-07-28, where the SDK may not ask mid-call.
-func TestUploadFileReadsOnlyFromAllowedDirectories(t *testing.T) {
-	type tc struct {
-		name     string
-		roots    bool // the file's directory is a root
-		setting  bool // the file's directory is in the setting
-		protocol string
-		noRoots  bool // the client declares no roots capability
-		class    string
-	}
-	for _, c := range []tc{
-		{name: "the setting alone", setting: true, protocol: "2025-11-25"},
-		{name: "a root alone", roots: true, protocol: "2025-11-25"},
-		{name: "a root, on 2025-06-18", roots: true, protocol: "2025-06-18"},
-		{name: "neither", protocol: "2025-11-25", class: "blocked"},
-		{name: "a root on 2026-07-28", roots: true, protocol: "2026-07-28", class: "blocked"},
-		{name: "the setting on 2026-07-28", setting: true, protocol: "2026-07-28"},
-		{name: "a root the client did not declare", roots: true, protocol: "2025-11-25", noRoots: true, class: "blocked"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			dir, elsewhere := t.TempDir(), t.TempDir()
-			o := harnessOptions{protocol: c.protocol, cfg: config.Config{UploadDirs: []string{elsewhere}}}
-			if c.setting {
-				o.cfg.UploadDirs = append(o.cfg.UploadDirs, dir)
-			}
-			o.roots = []*mcp.Root{{URI: fileURI(t.TempDir())}} //nolint:staticcheck // SA1019: roots are what is tested
-			if c.roots {
-				o.roots = append(o.roots, &mcp.Root{URI: fileURI(dir)}) //nolint:staticcheck // SA1019: roots are what is tested
-			}
-			if c.noRoots {
-				o.client = func(co *mcp.ClientOptions) { co.Capabilities = &mcp.ClientCapabilities{} }
-			}
-			h := newHarness(t, o)
-			path, _ := pngFile(t, dir, "shot.png")
-			if c.class == "" {
-				h.ok("upload_file", map[string]any{"project": alpha, "path": path})
-				return
-			}
-			text := h.fails("upload_file", map[string]any{"project": alpha, "path": path}, c.class)
-			if !strings.Contains(text, config.EnvUploadDirs) || uploadPosts(h) != 0 {
-				t.Errorf("refusal: %s; %d upload(s) sent", text, uploadPosts(h))
-			}
-		})
-	}
-	// With no directory at all, the refusal says what to set.
-	h := newHarness(t, harnessOptions{protocol: "2025-11-25", client: func(co *mcp.ClientOptions) { co.Capabilities = &mcp.ClientCapabilities{} }})
-	path, _ := pngFile(t, t.TempDir(), "shot.png")
-	if text := h.fails("upload_file", map[string]any{"project": alpha, "path": path}, "blocked"); !strings.Contains(text, "there are none") {
-		t.Errorf("no directories: %s", text)
-	}
-}
+// upload_file reads only from the directories GITLAB_MCP_UPLOAD_DIRS
+// names; unset, it refuses and says to set it.
+func TestUploadFileReadsOnlyFromTheSettingsDirectories(t *testing.T) {
+	dir := t.TempDir()
+	path, _ := pngFile(t, dir, "shot.png")
+	h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}}})
+	h.ok("upload_file", map[string]any{"project": alpha, "path": path})
 
-func fileURI(dir string) string {
-	p := filepath.ToSlash(dir)
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	return (&url.URL{Scheme: "file", Path: p}).String()
-}
-
-func TestRootDir(t *testing.T) {
-	abs := t.TempDir()
-	cases := []struct {
-		uri  string
-		want string
-		ok   bool
-	}{
-		{fileURI(abs), abs, true},
-		{"file://localhost" + strings.TrimPrefix(fileURI(abs), "file://"), abs, true},
-		{fileURI(filepath.Join(abs, "a dir")), filepath.Join(abs, "a dir"), true},
-		{"https://example.invalid/dir", "", false},
-		{"file://elsewhere.invalid/dir", "", false},
-		{"file:relative/dir", "", false},
-		{"%zz", "", false},
-	}
-	if runtime.GOOS == "windows" {
-		cases = append(cases, struct {
-			uri  string
-			want string
-			ok   bool
-		}{"file:///C:/work", `C:\work`, true})
-	}
-	for _, c := range cases {
-		got, ok := rootDir(c.uri)
-		if got != c.want || ok != c.ok {
-			t.Errorf("rootDir(%q) = %q, %v; want %q, %v", c.uri, got, ok, c.want, c.ok)
-		}
+	h = newHarness(t, harnessOptions{})
+	text := h.fails("upload_file", map[string]any{"project": alpha, "path": path}, "blocked")
+	if !strings.Contains(text, config.EnvUploadDirs+" names, and it is not set") || len(h.gl.Requests()) != 0 {
+		t.Errorf("refusal: %s; %d request(s)", text, len(h.gl.Requests()))
 	}
 }
 

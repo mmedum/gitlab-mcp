@@ -241,7 +241,7 @@ public, or deletes anything. Only your accept writes.
 - **No blind retries.** A create that may or may not have happened is
   settled by reading, never by creating again.
 - **Local files only from where you allow.** `upload_file` reads an
-  image only from your client's roots or `GITLAB_MCP_UPLOAD_DIRS`, and
+  image only from the directories `GITLAB_MCP_UPLOAD_DIRS` names, and
   only a PNG, JPEG, GIF or WebP judged from its bytes, so a comment
   asking for a key file to be "attached" gets nothing.
 
