@@ -2259,7 +2259,8 @@ scratch issue, and was refused a text file and an image outside the
 allowed directory. A code review and a security review followed (§16a),
 and the person is now asked before an upload (§4.12). A second live run
 on 2026-10-08 drove what they changed: the person declined one upload,
-which sent nothing, and accepted the next.*
+which sent nothing, and accepted the next. A third, after the simplify
+pass that times every request body by its progress, passed as well.*
 
 ### 16a. Found by review, and fixed
 
