@@ -1,9 +1,11 @@
 # Architecture — gitlab-mcp
 
-**Status: 2.2.1, 2026-10-02: a delete repeated after it may have landed
-reports `[ambiguous_outcome]` rather than not found (§4.5). Phases 0 to
-7 — the person confirms what ships or deletes (§4.12) — 2.1.0's nine
-tools, and 2.2.0's seven more for
+**Status: 2.3.0, 2026-10-08: `upload_file` uploads an image from a
+directory `GITLAB_MCP_UPLOAD_DIRS` names, after asking the person
+(§7.10, §4.12), and every request body is timed by its progress (§11).
+2.2.1: a repeated delete that may have landed is `[ambiguous_outcome]`
+(§4.5). Phases 0 to 7 — the person confirms what ships, deletes or
+uploads (§4.12) — 2.1.0's nine tools, and 2.2.0's seven more for
 reviewing merge requests: `react`, `list_mr_versions`,
 `compare_mr_versions`, `update_review_comment`,
 `publish_review_comment`, and `apply_suggestions` and
@@ -665,7 +667,12 @@ questions asked often are answered without reading (§18 row 94).
 3. **No question possible.** A client that declares no form elicitation
    gets no question, and the flags and `confirm` are the guard, as
    before. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses those writes as
-   `[blocked]` instead.
+   `[blocked]` instead. `upload_file` has no flag, so there, with
+   `GITLAB_MCP_REQUIRE_PROMPT` off, the upload directories and
+   `GITLAB_MCP_WRITE_NAMESPACES` are its only guards: a planted comment
+   could upload an allowed image to a public project its author
+   maintains. The documents advise either setting for such a client;
+   the behavior is the maintainer's choice (2026-10-08).
 4. **A dry run never asks.** Nor does a pipeline on a ref no rule
    protects, or an issue update that keeps it confidential. Nor does
    `cancel_auto_merge`, which stops a merge and ships nothing. `run_pipeline`
@@ -2527,6 +2534,18 @@ api-fields gates; and smaller cleanups in the tests, the in-memory
 instance and the live driver. Kept: both `link_opens_for` and
 `media_requires_sign_in` in the result, and the test helper that counts
 uploads by their route.
+
+**v2.3.0 release review.** The release security review
+(`audit/security-reviews/v2.3.0.md`) found four low findings, and the
+timeout's wording was corrected with them:
+
+| Found | Resolved |
+|---|---|
+| Removing the image's hash from the question's binding left every test green | `TestAskBinds` holds two images with the same name, type and size to different bindings, and fails with the hash removed |
+| On a case-insensitive disk, as macOS has by default, the home directory spelled in another case passed the name comparison | At startup each upload directory is also compared, as a file, with the home directory and each directory above it. The test runs where the disk ignores case, macOS and Windows in CI, and is skipped elsewhere. Nothing is checked again per call: replacing a directory later needs write access to this machine, which an instruction planted in GitLab content does not have |
+| `openIn`'s call to the swap check has no test; only the check itself is tested | Left untested: covering it needs a hook between `Lstat` and the open, a test-only back door the testing standard forbids. The non-blocking open is untested for the same reason (§18 row 115): both guard a race no test can stage |
+| With no question possible and `GITLAB_MCP_REQUIRE_PROMPT` off, the upload directories and the write allow-list are `upload_file`'s only guards | The maintainer's chosen behavior, unchanged; §4.12, `docs/security.md` and `docs/configuration.md` say so plainly and advise either setting for such a client |
+| `GITLAB_MCP_HTTP_TIMEOUT` was described as the deadline for one attempt | It bounds a call's time without progress: sending, waiting for the answer to start, reading it. The configuration page, the flag's help and `config.DefaultHTTPTimeout` say so |
 
 ### Closing a phase
 
