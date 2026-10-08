@@ -1,19 +1,19 @@
 # Written by scripts/livegitlab at the end of a run; do not edit.
-# run of 2026-10-02 against a gitlab.com instance
+# run of 2026-10-08 against a gitlab.com instance
 # Columns: tool.option (tool.* for the call itself), times sent.
-add_comment.*	17
-add_comment.body	17
+add_comment.*	18
+add_comment.body	18
 add_comment.discussion_id	1
 add_comment.dry_run	1
 add_comment.end_line	1
 add_comment.escape_commands	1
 add_comment.file	8
-add_comment.iid	17
+add_comment.iid	18
 add_comment.line	8
-add_comment.project	17
+add_comment.project	18
 add_comment.side	8
 add_comment.thread	2
-add_comment.type	17
+add_comment.type	18
 add_review_comment.*	7
 add_review_comment.body	7
 add_review_comment.discussion_id	3
@@ -707,3 +707,7 @@ update_snippet.project	8
 update_snippet.snippet_id	8
 update_snippet.title	5
 update_snippet.updated_at	8
+upload_file.*	5
+upload_file.dry_run	1
+upload_file.path	5
+upload_file.project	5
