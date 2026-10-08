@@ -663,11 +663,22 @@ func (c *Client) attempt(ctx context.Context, p *prepared, token string) (*attem
 	var reader io.Reader
 	if p.payload != nil {
 		reader = bytes.NewReader(p.payload)
+		if p.call.Form != nil {
+			// A file can take longer to send than the header timeout allows,
+			// so for an upload the clock starts again whenever more of the
+			// body is taken: it times a stall, and once the body is sent,
+			// the wait for the answer.
+			reader = &progress{r: reader, moved: func() { headers.Reset(c.headerTimeout) }}
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, p.call.Method, endpoint.String(), reader)
 	if err != nil {
 		headers.Stop()
 		return nil, WithoutURL(err)
+	}
+	if p.payload != nil {
+		// The wrapper hides the length a bytes.Reader would have given.
+		req.ContentLength = int64(len(p.payload))
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
@@ -707,6 +718,20 @@ func (c *Client) attempt(ctx context.Context, p *prepared, token string) (*attem
 	}
 	res.body = body
 	return res, nil
+}
+
+// progress reports every read of a request body that took bytes.
+type progress struct {
+	r     io.Reader
+	moved func()
+}
+
+func (p *progress) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.moved()
+	}
+	return n, err
 }
 
 // stallGuard cancels a body whose next Read makes no progress within

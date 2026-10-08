@@ -1314,3 +1314,53 @@ func TestNotModified(t *testing.T) {
 		})
 	}
 }
+
+// slowBody takes a request's body a piece at a time, as a slow uplink
+// sends it, then answers. It gives up when the request is canceled.
+type slowBody struct {
+	piece int
+	gap   time.Duration
+	reply string
+}
+
+func (s slowBody) RoundTrip(r *http.Request) (*http.Response, error) {
+	buf := make([]byte, s.piece)
+	for {
+		select {
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		case <-time.After(s.gap):
+		}
+		if _, err := r.Body.Read(buf); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	return &http.Response{StatusCode: http.StatusCreated, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: io.NopCloser(strings.NewReader(s.reply)), Request: r}, nil
+}
+
+// An upload whose body takes longer to send than the header timeout,
+// while it keeps moving, is not cut off; a JSON write is timed as
+// before, from the start.
+func TestAnUploadIsTimedByItsProgress(t *testing.T) {
+	newClient := func(rt http.RoundTripper) *Client {
+		cl, err := New(Options{Instance: mustInstance(t, "https://gitlab.example.com"), Tokens: StaticToken("t"),
+			HTTPClient: &http.Client{Transport: rt}, HeaderTimeout: 150 * time.Millisecond, MaxAttempts: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cl
+	}
+	// 1 MiB in 64 KiB pieces 40 ms apart: about 650 ms, each gap well
+	// inside the 150 ms timeout.
+	up, err := newClient(slowBody{piece: 64 << 10, gap: 40 * time.Millisecond, reply: `{"id":7,"markdown":"![a](/uploads/x/a.png)"}`}).
+		UploadFile(context.Background(), ProjectByID(2001), "a.png", "image/png", make([]byte, 1<<20))
+	if err != nil || up.ID != 7 {
+		t.Fatalf("upload: %+v, %v", up, err)
+	}
+	_, err = newClient(slowBody{piece: 4, gap: 40 * time.Millisecond, reply: `{"iid":1}`}).
+		CreateIssue(context.Background(), ProjectByID(2001), IssueCreate{Title: "a title long enough to take a while"})
+	wantClass(t, err, ClassAmbiguousOutcome)
+}

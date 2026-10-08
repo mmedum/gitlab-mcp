@@ -24,6 +24,8 @@ type harness struct {
 	gl  *gitlabtest.Server
 	cs  *mcp.ClientSession
 	reg []service.Registered
+	// cfg is the configuration the tools were registered under.
+	cfg config.Config
 }
 
 type harnessOptions struct {
@@ -104,7 +106,7 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 		t.Fatalf("connect client: %v", err)
 	}
 	t.Cleanup(func() { _ = cs.Close() })
-	return &harness{t: t, gl: gl, cs: cs, reg: reg}
+	return &harness{t: t, gl: gl, cs: cs, reg: reg, cfg: cfg}
 }
 
 // call calls a tool and returns its text, its structured half decoded

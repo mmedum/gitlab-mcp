@@ -18,7 +18,8 @@ import (
 // result says can open the image, where it may read from, and that a
 // lost answer is not sent again (§7.10). Which files it refuses is
 // internal/localimage's test; here one refusal shows the check runs
-// before anything is sent.
+// before anything is sent. These clients declare no elicitation, so
+// nothing is asked; the question is ask_test.go's.
 
 // firstSecret is the secret the in-memory instance gives its first
 // upload.
@@ -161,10 +162,9 @@ func TestUploadFileSendsNothingUntilItMay(t *testing.T) {
 	if err := os.WriteFile(key, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.gl.ResetRequests()
 	h.fails("upload_file", map[string]any{"project": alpha, "path": key}, "invalid")
-	if n := len(h.gl.Requests()); n != 0 {
-		t.Errorf("a refused file still made %d request(s)", n)
+	if n := writesSent(h); n != 0 {
+		t.Errorf("a refused file still made %d write(s)", n)
 	}
 }
 
@@ -178,17 +178,23 @@ func TestUploadFileReadsOnlyFromTheSettingsDirectories(t *testing.T) {
 
 	h = newHarness(t, harnessOptions{})
 	text := h.fails("upload_file", map[string]any{"project": alpha, "path": path}, "blocked")
-	if !strings.Contains(text, config.EnvUploadDirs+" names, and it is not set") || len(h.gl.Requests()) != 0 {
-		t.Errorf("refusal: %s; %d request(s)", text, len(h.gl.Requests()))
+	if !strings.Contains(text, config.EnvUploadDirs+" names, and it is not set") || writesSent(h) != 0 {
+		t.Errorf("refusal: %s; %d write(s)", text, writesSent(h))
 	}
 }
 
+// The allow-list is held before anything on this machine is read: a
+// call aimed outside it learns nothing about the path, not even that
+// nothing is there.
 func TestUploadFileIsHeldToTheAllowList(t *testing.T) {
 	dir := t.TempDir()
 	h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}, WriteNamespaces: []string{gitlabtest.GroupSub}}})
 	path, _ := pngFile(t, dir, "shot.png")
-	if text := h.fails("upload_file", map[string]any{"project": alpha, "path": path}, "blocked"); !strings.Contains(text, config.EnvWriteNamespaces) {
-		t.Errorf("refusal: %s", text)
+	for _, p := range []string{path, filepath.Join(dir, "missing.png"), "relative.png"} {
+		text := h.fails("upload_file", map[string]any{"project": alpha, "path": p}, "blocked")
+		if !strings.Contains(text, config.EnvWriteNamespaces) || strings.Contains(text, "path") {
+			t.Errorf("%s: %s", p, text)
+		}
 	}
 	if uploadPosts(h) != 0 {
 		t.Fatal("an upload outside the allow-list was sent")

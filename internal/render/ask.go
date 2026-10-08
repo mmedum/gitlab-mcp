@@ -223,6 +223,21 @@ func AskCreateTag(project, name, ref string) Question {
 	)
 }
 
+// AskUploadFile asks before upload_file: an upload discloses the image
+// to whoever can open its link. notes are the server's own sentences on
+// who can and what goes with it. The image's bytes are bound.
+func AskUploadFile(project, name, contentType string, size int, notes []string, data []byte) Question {
+	q := ask(slices.Concat(
+		[]string{fmt.Sprintf("upload_file: upload the image %s (%s, %d bytes) from this machine to %s?",
+			quoted(name, quotedLen), contentType, size, quoted(project, quotedLen))},
+		notes,
+		[]string{"GitLab keeps an upload even if nothing links to it, and this server cannot delete it."},
+	)...)
+	h := sha256.Sum256(data)
+	q.Bind += "\x00" + hex.EncodeToString(h[:])
+	return q
+}
+
 // AskPublishIssue asks before update_issue makes a confidential issue
 // public.
 func AskPublishIssue(project string, iid int64, title string) Question {

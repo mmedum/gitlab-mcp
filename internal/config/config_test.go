@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -132,6 +133,58 @@ func TestUploadDirs(t *testing.T) {
 	}
 	if c, err = load(t, []string{"--upload-dirs", a}, map[string]string{EnvUploadDirs: b}); err != nil || !slices.Equal(c.UploadDirs, []string{a}) {
 		t.Errorf("the flag: %v, %v", c.UploadDirs, err)
+	}
+}
+
+// A filesystem root and the home directory, or a directory holding it,
+// are refused at startup; a folder inside the home directory is not.
+func TestUploadDirsRefuseWhatHoldsEverything(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "people", "you")
+	shots := filepath.Join(home, "Pictures", "shots")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	root := base
+	for filepath.Dir(root) != root {
+		root = filepath.Dir(root)
+	}
+	for _, c := range []struct {
+		dir  string
+		want bool // accepted
+	}{
+		{shots, true},
+		{filepath.Join(base, "elsewhere"), true},
+		{home, false},
+		{filepath.Join(base, "people"), false},
+		{root, false},
+	} {
+		c2, err := load(t, nil, map[string]string{EnvUploadDirs: c.dir})
+		switch {
+		case c.want && (err != nil || !slices.Equal(c2.UploadDirs, []string{c.dir})):
+			t.Errorf("%s: %v, %v; want it accepted", c.dir, c2.UploadDirs, err)
+		case !c.want && (!errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "filesystem root or holds your home directory")):
+			t.Errorf("%s: %v; want it refused", c.dir, err)
+		}
+	}
+	// With no home directory known, a filesystem root is still refused.
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	if _, err := load(t, nil, map[string]string{EnvUploadDirs: root}); !errors.Is(err, ErrInvalid) ||
+		!strings.Contains(err.Error(), "filesystem root") {
+		t.Errorf("%s with no home known: %v; want it refused", root, err)
+	}
+}
+
+// An existing directory whose name holds the list separator is one
+// entry, as the bundle's folder picker hands it over.
+func TestUploadDirsKeepsAFolderWhoseNameHoldsTheSeparator(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "shots"+string(filepath.ListSeparator)+"2026")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c, err := load(t, nil, map[string]string{EnvUploadDirs: dir})
+	if err != nil || !slices.Equal(c.UploadDirs, []string{dir}) {
+		t.Errorf("UploadDirs = %v, %v; want [%s]", c.UploadDirs, err, dir)
 	}
 }
 

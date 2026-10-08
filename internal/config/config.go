@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -468,26 +469,64 @@ func parseNamespaces(v string) ([]string, error) {
 }
 
 // parseUploadDirs reads the directories upload_file may read from, split
-// as PATH is: on colons, or semicolons on Windows. Each must be absolute,
-// because the server's working directory is whatever the client started
-// it in, and a relative directory would mean that.
+// as PATH is: on colons, or semicolons on Windows. A value that is itself
+// an existing absolute directory is one entry, so a folder whose name
+// holds the separator, as a picker may hand over, is not split into
+// something else. Each must be absolute, because the server's working
+// directory is whatever the client started it in. A filesystem root and
+// the home directory, or a directory holding it, are refused: they would
+// let upload_file read nearly every image the person has.
 func parseUploadDirs(v string) ([]string, error) {
-	var out, bad []string
-	for _, dir := range filepath.SplitList(v) {
+	entries := filepath.SplitList(v)
+	if whole := strings.TrimSpace(v); filepath.IsAbs(whole) {
+		if fi, err := os.Stat(whole); err == nil && fi.IsDir() {
+			entries = []string{whole}
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	var out, relative, wide []string
+	for _, dir := range entries {
 		dir = strings.TrimSpace(dir)
 		switch {
 		case dir == "":
 		case !filepath.IsAbs(dir):
-			bad = append(bad, fmt.Sprintf("%q", dir))
+			relative = append(relative, fmt.Sprintf("%q", dir))
+		case tooWide(filepath.Clean(dir), home):
+			wide = append(wide, fmt.Sprintf("%q", dir))
 		default:
 			out = append(out, filepath.Clean(dir))
 		}
 	}
-	if len(bad) > 0 {
-		return nil, fmt.Errorf("%w: %s: not an absolute directory: %s", ErrInvalid, EnvUploadDirs, strings.Join(bad, ", "))
+	var errs []error
+	if len(relative) > 0 {
+		errs = append(errs, fmt.Errorf("%w: %s: not an absolute directory: %s", ErrInvalid, EnvUploadDirs, strings.Join(relative, ", ")))
+	}
+	if len(wide) > 0 {
+		errs = append(errs, fmt.Errorf("%w: %s: %s is a filesystem root or holds your home directory, so upload_file could read "+
+			"nearly every image you have; name a dedicated folder, such as a screenshots folder", ErrInvalid, EnvUploadDirs,
+			strings.Join(wide, ", ")))
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil
+}
+
+// tooWide reports a filesystem root, which is its own parent, and the
+// home directory or a directory holding it.
+func tooWide(dir, home string) bool {
+	if filepath.Dir(dir) == dir {
+		return true
+	}
+	if home == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, filepath.Clean(home))
+	return err == nil && filepath.IsLocal(rel)
 }
 
 // parseTestInstance reads the development override. Unset means

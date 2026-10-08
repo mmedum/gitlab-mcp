@@ -562,14 +562,16 @@ type uploadFileIn struct {
 
 func uploadFile() definition {
 	return tool[uploadFileIn, model.UploadWrite]{
-		sp: spec{Name: "upload_file", Kind: Write,
+		sp: spec{Name: "upload_file", Kind: Write, Asks: "before it uploads the image",
 			Description: "Upload an image from this machine to a project and get the Markdown that shows it, to put in a comment " +
 				"(add_comment), a review comment (add_review_comment) or a description (create_issue, update_issue, " +
 				"create_merge_request, update_merge_request) in the same project. The image is read only from the directories " +
 				"GITLAB_MCP_UPLOAD_DIRS names, and must be a PNG, JPEG, GIF or WebP of at most 10 MiB, judged " +
 				"from its bytes; it is sent under its file name with the extension of its type, and nothing else on this machine " +
 				"is read. The result says who can open the image by its link: in a public project anyone, and in a private or " +
-				"internal one anyone too unless the project requires sign-in to view media files. GitLab keeps the upload even " +
+				"internal one anyone too unless the project requires sign-in to view media files; the project's Maintainers can " +
+				"also download any upload by its id. GitLab removes a JPEG's metadata; other images' metadata goes as it is. " +
+				"GitLab keeps the upload even " +
 				"if nothing links to it, and this server cannot delete it. Never repeated after a lost answer." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in uploadFileIn) (model.UploadWrite, error) {
 			return svc.UploadFile(ctx, service.Upload{Project: string(in.Project), Path: in.Path})

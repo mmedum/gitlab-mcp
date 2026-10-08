@@ -16,6 +16,12 @@
 //  4. At most MaxBytes are read, and the bytes must sniff as PNG, JPEG,
 //     GIF or WebP, the way GitLab's Workhorse sniffs the uploads it
 //     serves. SVG is text that can carry script, and is refused.
+//
+// The sniff keeps out what is not an image: a key, a configuration
+// file, a document. It does not prove the whole file is one. Bytes after
+// a valid image header go too, and a file made that way needs someone
+// who can write to this machine, which an instruction planted in GitLab
+// content cannot do by itself.
 package localimage
 
 import (
@@ -80,37 +86,28 @@ func Read(path string, dirs []string) (Image, error) {
 		return Image{}, gapi.Errf(gapi.ClassBlocked, "upload_file reads only from the directories %s names, and it is not set. "+
 			"Nothing was read or sent. Set it to the directory holding the image and restart the server", config.EnvUploadDirs)
 	}
-	dir, rel, ok := within(filepath.Clean(path), dirs)
-	if !ok {
-		return Image{}, gapi.Errf(gapi.ClassBlocked, "path is outside every directory %s names (%s). Nothing was read or sent. "+
-			"Save the image in one of them, or add its directory to the setting and restart the server",
-			config.EnvUploadDirs, strings.Join(dirs, ", "))
+	candidates := within(filepath.Clean(path), dirs)
+	if len(candidates) == 0 {
+		return Image{}, gapi.Errf(gapi.ClassBlocked, "path is outside every directory %s names. Nothing was read or sent. "+
+			"Save the image in one of them, or add its directory to the setting and restart the server", config.EnvUploadDirs)
 	}
-	root, err := os.OpenRoot(dir)
+	// The widest directory first; a narrower one is tried when a link in
+	// the path leads out of the wider, as an allowed directory that is
+	// itself a link does.
+	var f *os.File
+	var err error
+	for _, c := range candidates {
+		if f, err = openIn(c.dir, c.rel); !escapes(err) {
+			break
+		}
+	}
 	if err != nil {
-		return Image{}, failed(err, "the allowed directory "+dir)
-	}
-	defer func() { _ = root.Close() }()
-
-	before, err := root.Lstat(rel)
-	if err != nil {
-		return Image{}, failed(err, "path")
-	}
-	if err := regular(before); err != nil {
-		return Image{}, err
-	}
-	f, err := root.OpenFile(rel, os.O_RDONLY|openFlags, 0)
-	if err != nil {
+		if _, classified := gapi.ClassOf(err); classified {
+			return Image{}, err
+		}
 		return Image{}, failed(err, "path")
 	}
 	defer func() { _ = f.Close() }()
-	after, err := f.Stat()
-	if err != nil {
-		return Image{}, failed(err, "path")
-	}
-	if err := unchanged(before, after); err != nil {
-		return Image{}, err
-	}
 
 	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
 	if err != nil {
@@ -123,32 +120,67 @@ func Read(path string, dirs []string) (Image, error) {
 	typ := http.DetectContentType(data)
 	ext, ok := extensions[typ]
 	if !ok {
-		return Image{}, gapi.Errf(gapi.ClassInvalid, "path is not a PNG, JPEG, GIF or WebP image: its bytes read as %s. upload_file "+
-			"sends only those four, read from the bytes rather than the name; SVG is refused because it is text that can carry script", typ)
+		return Image{}, gapi.Errf(gapi.ClassInvalid, "path is not a PNG, JPEG, GIF or WebP image, judged from its bytes rather than "+
+			"its name; upload_file sends only those four. SVG is refused because it is text that can carry script")
 	}
 	return Image{Name: name(path, ext), Type: typ, Data: data}, nil
 }
 
-// within finds the widest allowed directory lexically holding path, and
-// path relative to it. The widest, because a symbolic link that stays in
-// it stays in an allowed directory, where a narrower one would refuse it.
-func within(path string, dirs []string) (string, string, bool) {
-	dir, rel := "", ""
+// candidate is an allowed directory lexically holding the path, and the
+// path relative to it.
+type candidate struct{ dir, rel string }
+
+// within lists the allowed directories lexically holding path, widest
+// first: a symbolic link that stays inside a wider one stays in an
+// allowed directory, where a narrower one would refuse it.
+func within(path string, dirs []string) []candidate {
+	var out []candidate
 	for _, d := range dirs {
-		r, err := filepath.Rel(d, path)
-		if err != nil || !filepath.IsLocal(r) {
-			continue
-		}
-		if dir == "" || len(d) < len(dir) {
-			dir, rel = d, r
+		if r, err := filepath.Rel(d, path); err == nil && filepath.IsLocal(r) {
+			out = append(out, candidate{dir: d, rel: r})
 		}
 	}
-	return dir, rel, dir != ""
+	slices.SortStableFunc(out, func(a, b candidate) int { return len(a.dir) - len(b.dir) })
+	return out
+}
+
+// openIn opens rel inside dir through os.Root, checked before and after
+// it is opened. An error from the operating system comes back as it is,
+// so the caller can tell an escape from the rest.
+func openIn(dir, rel string) (*os.File, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, gapi.Errf(gapi.ClassNotFound, "a directory %s names does not exist", config.EnvUploadDirs)
+		}
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	before, err := root.Lstat(rel)
+	if err != nil {
+		return nil, err
+	}
+	if err := regular(before); err != nil {
+		return nil, err
+	}
+	f, err := root.OpenFile(rel, os.O_RDONLY|openFlags, 0)
+	if err != nil {
+		return nil, err
+	}
+	after, err := f.Stat()
+	if err == nil {
+		err = unchanged(before, after)
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // regular refuses anything but a regular file: a symbolic link, whose
 // target the person may not have meant to share; a directory; a FIFO or
-// a device, which a read could wait on for ever.
+// a device, which a read could wait on forever.
 func regular(fi fs.FileInfo) error {
 	if !fi.Mode().IsRegular() {
 		return gapi.Errf(gapi.ClassInvalid, "path is %s, not a regular file; pass the path of the image itself", kind(fi.Mode()))
@@ -188,6 +220,12 @@ func kind(m fs.FileMode) string {
 // change there refuses the path all the same, as [invalid].
 const errEscapes = "path escapes from parent"
 
+// escapes reports os.Root's refusal of a path that leads out of it.
+func escapes(err error) bool {
+	var pe *fs.PathError
+	return errors.As(err, &pe) && pe.Err.Error() == errEscapes
+}
+
 // failed classifies a failure to open, read or stat what names. The
 // operating system's message names the path, so only its cause is kept.
 func failed(err error, what string) error {
@@ -199,7 +237,7 @@ func failed(err error, what string) error {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return gapi.Errf(gapi.ClassNotFound, "there is nothing at %s", what)
-	case cause.Error() == errEscapes:
+	case escapes(err):
 		return gapi.Errf(gapi.ClassBlocked, "%s leads outside the directory it is in, through a symbolic link; upload_file reads only "+
 			"inside the directories the person allowed. Nothing was read or sent", what)
 	}

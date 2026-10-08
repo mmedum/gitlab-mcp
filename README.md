@@ -231,7 +231,7 @@ scope cannot separate any of it:
 When your MCP client supports elicitation, the server also asks you
 before it merges, approves, runs a manual job or a pipeline on a
 protected ref or for a merge request between protected branches, publishes a release or a tag, makes a confidential issue
-public, or deletes anything. Only your accept writes.
+public, uploads an image, or deletes anything. Only your accept writes.
 
 - **No quick actions.** GitLab runs `/merge`, `/close` and the rest from
   a description or comment. Every body this server sends is checked, and

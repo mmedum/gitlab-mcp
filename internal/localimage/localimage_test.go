@@ -212,12 +212,17 @@ func TestRefusals(t *testing.T) {
 			}
 		})
 	}
-	// The refusal says what to set, and which directories are allowed.
+	// The refusals name the setting, and neither the allowed directories
+	// nor what a file that is no image holds.
 	if _, err := Read(good, nil); !strings.Contains(err.Error(), "GITLAB_MCP_UPLOAD_DIRS") {
 		t.Errorf("no directories: %v", err)
 	}
-	if _, err := Read(filepath.Join(other, "elsewhere.png"), []string{dir}); !strings.Contains(err.Error(), dir) {
+	if _, err := Read(filepath.Join(other, "elsewhere.png"), []string{dir}); !strings.Contains(err.Error(), "GITLAB_MCP_UPLOAD_DIRS") ||
+		strings.Contains(err.Error(), dir) {
 		t.Errorf("outside: %v", err)
+	}
+	if _, err := Read(filepath.Join(dir, "key.png"), []string{dir}); err == nil || strings.Contains(err.Error(), "text/") {
+		t.Errorf("text: %v", err)
 	}
 }
 
@@ -240,6 +245,25 @@ func TestALinkThatStaysInsideIsFollowed(t *testing.T) {
 	}
 	if _, err := Read(path, []string{narrow}); err == nil || classOf(err) != "blocked" {
 		t.Errorf("with only the narrower directory allowed: %v", err)
+	}
+}
+
+// An allowed directory that is itself a link to elsewhere works: the
+// wider allowed directory holding it refuses the link, and the path is
+// opened through the narrower one instead.
+func TestAnAllowedDirectoryThatIsALinkWorks(t *testing.T) {
+	wide, elsewhere := t.TempDir(), t.TempDir()
+	png := pngBytes(t)
+	write(t, filepath.Join(elsewhere, "shot.png"), png)
+	shots := filepath.Join(wide, "shots")
+	symlink(t, elsewhere, shots)
+	path := filepath.Join(shots, "shot.png")
+
+	if img, err := Read(path, []string{wide, shots}); err != nil || !bytes.Equal(img.Data, png) {
+		t.Errorf("both allowed: %v", err)
+	}
+	if _, err := Read(path, []string{wide}); err == nil || classOf(err) != "blocked" {
+		t.Errorf("only the wider allowed: %v", err)
 	}
 }
 

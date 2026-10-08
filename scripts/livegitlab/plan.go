@@ -601,8 +601,11 @@ func phase2(s scratch) []step {
 		// An image for a comment, read from the run's own directory, which
 		// the server is started with in GITLAB_MCP_UPLOAD_DIRS; its
 		// Markdown is posted on the scratch issue, after the reactions and
-		// the to-do steps that a comment would disturb.
+		// the to-do steps that a comment would disturb. The person is asked
+		// before an upload: declined, nothing goes; accepted, it does.
 		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image, "dry_run": true}},
+		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image}, declines: true, expectError: true,
+			why: "the person declines the question"},
 		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image}, save: map[string]string{"image_md": "markdown"}},
 		{tool: "upload_file", args: map[string]any{"project": p, "path": s.NotImage}, expectError: true,
 			why: "a text file, which is no image"},

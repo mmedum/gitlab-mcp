@@ -70,7 +70,7 @@
     "upload_dirs": {
       "type": "directory",
       "title": "Image directory",
-      "description": "A directory upload_file may read images from, to upload them for comments and descriptions. Leave it empty and upload_file refuses every path.",
+      "description": "A dedicated folder upload_file may read images from, such as a screenshots folder: it can read every image in it. Your home folder and a disk's root are refused. Leave it empty and upload_file refuses every path.",
       "default": "",
       "required": false
     }

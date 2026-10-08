@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
 )
 
@@ -61,8 +62,15 @@ var (
 // with p, on protocol, to every tool.
 func askingHarness(t *testing.T, protocol string, p *answerer, o harnessOptions) *harness {
 	t.Helper()
-	o.cfg, o.person, o.protocol = full, p, protocol
+	o.cfg, o.person, o.protocol = withUploads(t, full), p, protocol
 	return newHarness(t, o)
+}
+
+// withUploads is cfg with a directory upload_file may read from.
+func withUploads(t *testing.T, cfg config.Config) config.Config {
+	t.Helper()
+	cfg.UploadDirs = []string{t.TempDir()}
+	return cfg
 }
 
 // askCase makes what a call needs, answering yes to anything it asks on
@@ -171,6 +179,15 @@ var askCases = map[string]askCase{
 			return map[string]any{"project": alpha, "type": "issue", "iid": 1, "note_id": id, "updated_at": at, "confirm": true}
 		},
 		shows: []string{"delete a comment on issue #1", "by `" + gitlabtest.DefaultUser + "`", "text: `"},
+	},
+	"upload_file": {
+		setup: func(h *harness) map[string]any {
+			path, _ := pngFile(h.t, h.cfg.UploadDirs[0], "mock-up.png")
+			return map[string]any{"project": alpha, "path": path}
+		},
+		shows: []string{"upload the image `mock-up.png` (image/png, ", "from this machine to `" + alpha + "`?",
+			"In this public project anyone with an image's link can open it", "Maintainers can list every upload",
+			"metadata", "cannot delete it"},
 	},
 	"delete_snippet": {
 		setup: func(h *harness) map[string]any {
@@ -305,14 +322,15 @@ func TestNoPromptPossible(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: full})
 	h.ok("merge_merge_request", askCases["merge_merge_request"].setup(h))
 
-	strict := full
-	strict.RequirePrompt = true
 	for _, name := range asksPerson() {
 		t.Run(name, func(t *testing.T) {
 			// The setup's own writes are made where they are not asked about.
-			h := newHarness(t, harnessOptions{cfg: full})
+			cfg := withUploads(t, full)
+			h := newHarness(t, harnessOptions{cfg: cfg})
 			args := askCases[name].setup(h)
 			h.gl.ResetRequests()
+			strict := cfg
+			strict.RequirePrompt = true
 			sh := newHarness(t, harnessOptions{cfg: strict, over: h.gl})
 			text := sh.fails(name, args, "blocked")
 			if !strings.Contains(text, "GITLAB_MCP_REQUIRE_PROMPT") {

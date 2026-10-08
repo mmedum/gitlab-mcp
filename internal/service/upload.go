@@ -6,6 +6,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/v2/internal/localimage"
 	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v2/internal/render"
 )
 
 // Uploading an image for Markdown to embed (§7.10). The image is a local
@@ -22,25 +23,31 @@ type Upload struct {
 }
 
 // UploadFile uploads a local image to a project and returns the Markdown
-// that embeds it. The image is read and checked before anything is
-// sent, a dry run included.
+// that embeds it. The project is read and held to the write allow-list
+// first, so a call aimed elsewhere reads nothing on this machine; then
+// the image is read and checked, a dry run included; then the person is
+// asked, since an upload discloses the image (§4.12).
 func (s *Service) UploadFile(ctx context.Context, in Upload) (model.UploadWrite, error) {
-	img, err := localimage.Read(in.Path, s.cfg.UploadDirs)
+	t, err := s.writeTarget(ctx, in.Project)
 	if err != nil {
 		return model.UploadWrite{}, err
 	}
-	t, err := s.writeTarget(ctx, in.Project)
+	img, err := localimage.Read(in.Path, s.cfg.UploadDirs)
 	if err != nil {
 		return model.UploadWrite{}, err
 	}
 	requires := t.project.EnforceAuthChecksOnUploads
 	reach, note := linkReach(t.ref.Visibility, requires)
-	out := model.UploadWrite{Outcome: "uploaded", Write: model.Write{Target: t.ref, Notes: []string{note}}, Filename: img.Name,
+	notes := []string{note, maintainersNote, metadataNote(img.Type)}
+	out := model.UploadWrite{Outcome: "uploaded", Write: model.Write{Target: t.ref, Notes: notes}, Filename: img.Name,
 		ContentType: img.Type, Size: len(img.Data), MediaRequiresSignIn: requires, LinkOpensFor: reach}
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun = "dry_run", true
 		out.WouldSend = preview("POST", "upload the image to the project", []string{"file"})
 		return out, nil
+	}
+	if err := ask(ctx, render.AskUploadFile(t.ref.Project.Path, img.Name, img.Type, len(img.Data), notes, img.Data)); err != nil {
+		return model.UploadWrite{}, err
 	}
 	up, err := s.client.UploadFile(ctx, t.p, img.Name, img.Type, img.Data)
 	if gapi.IsClass(err, gapi.ClassAmbiguousOutcome) {
@@ -66,6 +73,24 @@ const (
 	reachReaders = "project_readers"
 	reachUnknown = "unknown"
 )
+
+// maintainersNote is who reaches an upload without its link: listing
+// and downloading uploads by id needs the Maintainer role
+// (lib/api/markdown_uploads.rb at v19.4.1-ee, §18 row 116).
+const maintainersNote = "The project's Maintainers can list every upload and download it by its id, without the link."
+
+// metadataNote says what happens to the image's metadata: GitLab's
+// Workhorse removes a JPEG's when it stores it, keeping its size,
+// resolution and orientation, and leaves the other types' alone (§18 row
+// 118).
+func metadataNote(contentType string) string {
+	if contentType == "image/jpeg" {
+		return "GitLab removes a JPEG's metadata, such as EXIF location and camera details, when it stores it, keeping only " +
+			"its size, resolution and orientation."
+	}
+	return "The image's metadata, such as EXIF, XMP or PNG text, goes as it is in the file: GitLab removes metadata only " +
+		"from a JPEG."
+}
 
 // linkReach says who can open an uploaded image by its link, from the
 // project's visibility and its media setting, and says it in a sentence.
