@@ -15,9 +15,15 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-08
+
 ### Added
 
 - `upload_file` uploads a PNG, JPEG, GIF or WebP from a directory the new `GITLAB_MCP_UPLOAD_DIRS` names, which the Claude Desktop bundle asks for, to a project and returns the Markdown that shows it; it asks you first, says who can open its link, and is never repeated after a lost answer.
+
+### Fixed
+
+- A large write on a slow connection is no longer cut off while it is still being sent and reported as `[ambiguous_outcome]`: the timeout now counts a stall, not the time the body takes to send.
 
 ## [2.2.1] - 2026-10-02
 
@@ -155,7 +161,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.0.0...v2.1.0

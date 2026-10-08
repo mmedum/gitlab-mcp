@@ -30,7 +30,7 @@ itself, and every problem is reported together.
 | `GITLAB_MCP_UPLOAD_DIRS` | `--upload-dirs` | none | The absolute directories `upload_file` may read images from, separated as `PATH` is: `:` on Linux and macOS, `;` on Windows; a value that is one existing directory is taken whole. Unset, it reads none. See below. |
 | `GITLAB_MCP_LOG_LEVEL` | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. |
 | `GITLAB_MCP_LOG_FORMAT` | `--log-format` | `text` | `text` or `json`. |
-| `GITLAB_MCP_HTTP_TIMEOUT` | `--http-timeout` | `60s` | Deadline for one attempt at an API call, as a Go duration between `1s` and `10m`. |
+| `GITLAB_MCP_HTTP_TIMEOUT` | `--http-timeout` | `60s` | How long a call to GitLab may go without progress: while its request is sent, waiting for the answer to start once it is, and between pieces of the answer. A large upload on a slow connection is not cut off while it keeps moving. A Go duration between `1s` and `10m`. |
 | `GITLAB_MCP_CONFIG_DIR` | `--config-dir` | your OS config directory plus `gitlab-mcp` | Where profiles are stored. Must be inside your home directory. |
 
 Two more are read from the environment only:
@@ -95,6 +95,14 @@ A client that cannot ask gets no question, and the flags and `confirm:
 true` are the guard, as before. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses
 those writes there instead. A client that supports elicitation but runs
 with nobody watching cannot make these writes at all.
+
+`upload_file` has no flag of its own. With a client that cannot ask and
+`GITLAB_MCP_REQUIRE_PROMPT` off, its only guards are the upload
+directories and `GITLAB_MCP_WRITE_NAMESPACES`, so an instruction planted
+in a comment could upload an image from those directories to a public
+project the comment's author maintains. With such a client, set
+`GITLAB_MCP_REQUIRE_PROMPT=true`, or confine writes with
+`GITLAB_MCP_WRITE_NAMESPACES`.
 
 ## Where `upload_file` reads from
 

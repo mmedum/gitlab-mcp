@@ -110,7 +110,12 @@ not proof that you read the question: a client may answer by itself, as
 Codex does for a question with no fields when it runs with no approvals
 and full access, and VS Code when you skip the question. A client that
 cannot ask gets no question; `GITLAB_MCP_REQUIRE_PROMPT=true` refuses
-those writes there.
+those writes there. `upload_file` has no flag of its own, so with such a
+client and `GITLAB_MCP_REQUIRE_PROMPT` off, its only guards are the
+upload directories and `GITLAB_MCP_WRITE_NAMESPACES`: an instruction
+planted in a comment could upload an image from those directories to a
+public project the comment's author maintains. With a client that cannot
+ask, set `GITLAB_MCP_REQUIRE_PROMPT=true` or a write allow-list.
 
 **The default token can merge, approve and run pipelines.** GitLab's
 `api` scope covers every write, and it has no narrower scope that

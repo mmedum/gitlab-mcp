@@ -36,7 +36,9 @@ import (
 // (§18 row 30).
 const EnvPrefix = "GITLAB_MCP_"
 
-// DefaultHTTPTimeout bounds one attempt at an API call.
+// DefaultHTTPTimeout bounds how long a call to GitLab may go without
+// progress: while its request body is sent, waiting for the answer to
+// start once it is, and between reads of the answer.
 const DefaultHTTPTimeout = 60 * time.Second
 
 // HTTP timeout bounds. Below a second nothing completes; above ten
@@ -117,7 +119,7 @@ var Vars = []Var{
 	{Name: EnvLogFormat, Flag: "log-format", Default: string(LogText),
 		Doc: "log format: text, json"},
 	{Name: EnvHTTPTimeout, Flag: "http-timeout", Default: DefaultHTTPTimeout.String(),
-		Doc: "deadline for one attempt at an API call, between 1s and 10m"},
+		Doc: "how long a call to GitLab may go without progress: sending, waiting for the answer, reading it; between 1s and 10m"},
 	{Name: EnvConfigDir, Flag: "config-dir",
 		Doc: "directory for profiles; must be inside your home directory"},
 	{Name: EnvConfigDirAllowOutsideHome, Default: "false", Switch: true,
@@ -516,12 +518,32 @@ func parseUploadDirs(v string) ([]string, error) {
 // tooWide reports a filesystem root, which is its own parent, and the
 // home directory or a directory holding it. Links and short names are
 // resolved first, so a name that reaches the home directory another way
-// is caught too.
+// is caught; and the directory is compared, as a file, with the home
+// directory and each directory above it, since on a case-insensitive
+// disk, as macOS has by default, two spellings of one directory compare
+// unequal as names.
 func tooWide(dir, home string) bool {
 	if filepath.Dir(dir) == dir {
 		return true
 	}
-	return home != "" && userconfig.WithinDir(userconfig.RealPath(dir), userconfig.RealPath(home))
+	if home == "" {
+		return false
+	}
+	if userconfig.WithinDir(userconfig.RealPath(dir), userconfig.RealPath(home)) {
+		return true
+	}
+	d, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	for p := filepath.Clean(home); ; p = filepath.Dir(p) {
+		if fi, err := os.Stat(p); err == nil && os.SameFile(d, fi) {
+			return true
+		}
+		if filepath.Dir(p) == p {
+			return false
+		}
+	}
 }
 
 // parseTestInstance reads the development override. Unset means
