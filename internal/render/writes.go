@@ -403,3 +403,18 @@ func TodoWrite(w model.TodoWrite, _ Boundary) string {
 	}
 	return b.String()
 }
+
+// UploadWrite renders upload_file. The Markdown is GitLab's, built from
+// a name the server made safe, and stands in a code span so a client
+// shows it rather than drawing the image.
+func UploadWrite(w model.UploadWrite, _ Boundary) string {
+	var b strings.Builder
+	writeHead(&b, fmt.Sprintf("Uploaded %s.", Ident(w.Filename)), w.Write)
+	fmt.Fprintf(&b, "\nImage: %s, %s, %d bytes.", Ident(w.Filename), w.ContentType, w.Size)
+	if w.DryRun {
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\nMarkdown, for this project's issues, merge requests and comments: `%s`", Ident(w.Markdown))
+	fmt.Fprintf(&b, "\nFrom another project, link it as %s on gitlab.com.", Ident(w.FullPath))
+	return b.String()
+}

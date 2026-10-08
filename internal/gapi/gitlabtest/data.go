@@ -211,12 +211,15 @@ func (s *Server) newProject(namespace, path, name, visibility string, groupID in
 		}
 	}
 	open := 0
+	mediaAuth := true
 	p := &project{
 		Project: gitlab.Project{
 			ID: id, Name: name, NameWithNamespace: "Example Group / " + name, Path: path, PathWithNamespace: full,
 			Description: "A generated project for tests.", DefaultBranch: "main", Visibility: visibility,
 			WebURL: s.URL + "/" + full, Topics: []string{"example"}, CreatedAt: created, LastActivityAt: &created,
 			Namespace: ns, OpenIssuesCount: &open,
+			// GitLab's default for a new project; SetMediaAuth changes it.
+			EnforceAuthChecksOnUploads: &mediaAuth,
 		},
 		private:     visibility == "private",
 		members:     map[string]bool{},

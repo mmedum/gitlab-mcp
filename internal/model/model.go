@@ -1451,6 +1451,24 @@ type TodoWrite struct {
 	TodoID int64  `json:"todo_id" jsonschema:"The to-do item's id, which mark_todos_done takes; when unchanged, the one already there; 0 in a dry run that would add one, or when it could not be found"`
 }
 
+// UploadWrite is upload_file's result.
+type UploadWrite struct {
+	Outcome string `json:"outcome" jsonschema:"uploaded or dry_run"`
+	Write
+	Filename    string `json:"filename" jsonschema:"The name the image was sent under: the file's base name, made safe, with the extension of its type"`
+	ContentType string `json:"content_type" jsonschema:"image/png, image/jpeg, image/gif or image/webp, read from the file's bytes"`
+	Size        int    `json:"size" jsonschema:"The image's size in bytes"`
+	Markdown    string `json:"markdown" jsonschema:"GitLab's Markdown for the image, to put in a comment, a review comment or a description in the same project; empty in a dry run"`
+	URL         string `json:"url" jsonschema:"The upload's path relative to the project, as the Markdown links it; empty in a dry run"`
+	FullPath    string `json:"full_path" jsonschema:"The upload's path on gitlab.com, /-/project/<id>/uploads/..., which links it from any project; empty in a dry run"`
+	Alt         string `json:"alt" jsonschema:"The Markdown's link text, as GitLab chose it"`
+	UploadID    int64  `json:"upload_id" jsonschema:"GitLab's id for the upload; 0 in a dry run"`
+	// MediaRequiresSignIn is the project's "Require authentication to
+	// view media files", as GitLab reported it.
+	MediaRequiresSignIn *bool  `json:"media_requires_sign_in" jsonschema:"The project's setting Require authentication to view media files, as GitLab reported it; null when GitLab did not say"`
+	LinkOpensFor        string `json:"link_opens_for" jsonschema:"Who can open the image by its link: anyone_with_link, project_readers or unknown"`
+}
+
 // ------------------------------------------------------------------ ship
 
 // MergeWrite is merge_merge_request's result.

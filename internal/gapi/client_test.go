@@ -1076,7 +1076,7 @@ func TestNewRequiresInstance(t *testing.T) {
 func TestTokenNeverLeavesTheInstance(t *testing.T) {
 	f := newFixture(t, gitlabtest.Options{})
 	u, _ := url.Parse("https://other.invalid/api/v4/user")
-	_, err := f.client.attempt(context.Background(), "GET", u, nil, "secret", time.Time{})
+	_, err := f.client.attempt(context.Background(), &prepared{call: Call{Method: "GET"}, endpoint: u, token: "secret"})
 	if !errors.Is(err, errOffInstance) {
 		t.Errorf("err = %v, want errOffInstance", err)
 	}
@@ -1312,5 +1312,95 @@ func TestNotModified(t *testing.T) {
 				t.Errorf("answered %+v, err %v; want the 304 reported", a, err)
 			}
 		})
+	}
+}
+
+// slowBody takes a request's body a piece at a time, as a slow uplink
+// sends it, then answers; after stallAfter pieces, when set, it takes no
+// more, as a stalled uplink does. It gives up when the request is
+// canceled, and keeps what the request's GetBody gives.
+type slowBody struct {
+	piece, stallAfter int
+	gap               time.Duration
+	reply             string
+	replay            *[]byte
+}
+
+func (s slowBody) RoundTrip(r *http.Request) (*http.Response, error) {
+	if s.replay != nil && r.GetBody != nil {
+		rc, err := r.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		if *s.replay, err = io.ReadAll(rc); err != nil {
+			return nil, err
+		}
+	}
+	buf := make([]byte, s.piece)
+	for n := 0; ; n++ {
+		if s.stallAfter > 0 && n == s.stallAfter {
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		}
+		select {
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		case <-time.After(s.gap):
+		}
+		if _, err := r.Body.Read(buf); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	return &http.Response{StatusCode: http.StatusCreated, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: io.NopCloser(strings.NewReader(s.reply)), Request: r}, nil
+}
+
+// A body that takes longer to send than the header timeout, while it
+// keeps moving, is not cut off, an upload's or a JSON write's; one that
+// stops moving is, and a create cut off so is ambiguous.
+func TestAWriteIsTimedByItsProgress(t *testing.T) {
+	newClient := func(rt http.RoundTripper) *Client {
+		cl, err := New(Options{Instance: mustInstance(t, "https://gitlab.example.com"), Tokens: StaticToken("t"),
+			HTTPClient: &http.Client{Transport: rt}, HeaderTimeout: 150 * time.Millisecond, MaxAttempts: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cl
+	}
+	// 1 MiB in 64 KiB pieces 40 ms apart: about 650 ms, each gap well
+	// inside the 150 ms timeout.
+	up, err := newClient(slowBody{piece: 64 << 10, gap: 40 * time.Millisecond, reply: `{"id":7,"markdown":"![a](/uploads/x/a.png)"}`}).
+		UploadFile(context.Background(), ProjectByID(2001), "a.png", "image/png", make([]byte, 1<<20))
+	if err != nil || up.ID != 7 {
+		t.Fatalf("upload: %+v, %v", up, err)
+	}
+	issue := IssueCreate{Title: "a title long enough to take a while to send"}
+	got, err := newClient(slowBody{piece: 4, gap: 40 * time.Millisecond, reply: `{"iid":1}`}).
+		CreateIssue(context.Background(), ProjectByID(2001), issue)
+	if err != nil || got.IID != 1 {
+		t.Fatalf("a slow JSON write: %+v, %v", got, err)
+	}
+	_, err = newClient(slowBody{piece: 4, gap: 40 * time.Millisecond, stallAfter: 2, reply: `{"iid":1}`}).
+		CreateIssue(context.Background(), ProjectByID(2001), issue)
+	wantClass(t, err, ClassAmbiguousOutcome)
+}
+
+// A request with a body can give it again, as Go's HTTP/2 transport asks
+// for a stream the server refused: the same bytes.
+func TestABodyCanBeReplayed(t *testing.T) {
+	var replay []byte
+	cl, err := New(Options{Instance: mustInstance(t, "https://gitlab.example.com"), Tokens: StaticToken("t"),
+		HTTPClient: &http.Client{Transport: slowBody{piece: 1 << 10, reply: `{"iid":1}`, replay: &replay}}, MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := IssueCreate{Title: "Replayed", Description: "The same bytes."}
+	if _, err := cl.CreateIssue(context.Background(), ProjectByID(2001), issue); err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"title":"Replayed","description":"The same bytes."}`; string(replay) != want {
+		t.Errorf("GetBody gave %q, want %q", replay, want)
 	}
 }

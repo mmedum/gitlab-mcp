@@ -27,6 +27,7 @@ func definitions() []definition {
 		getBlame(), cherryPickCommit(), revertCommit(),
 		listPipelines(), getPipeline(), listJobs(), getJobLog(), getTestReport(), lintCI(), listJobArtifacts(), getJobArtifact(),
 		listLabels(), listMilestones(), listBoards(), search(), listTodos(), markTodosDone(), addTodo(), subscribe(), react(),
+		uploadFile(),
 		mergeMergeRequest(), cancelAutoMerge(), approveMergeRequest(), unapproveMergeRequest(), applySuggestions(), rebaseMergeRequest(), moveIssue(),
 		runPipeline(), runMergeRequestPipeline(), retryPipeline(), retryJob(), playJob(), cancelPipeline(),
 		deleteBranch(), deleteComment(),

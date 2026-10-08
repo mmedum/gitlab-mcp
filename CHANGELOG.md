@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `upload_file` uploads a PNG, JPEG, GIF or WebP from a directory the new `GITLAB_MCP_UPLOAD_DIRS` names, which the Claude Desktop bundle asks for, to a project and returns the Markdown that shows it; it asks you first, says who can open its link, and is never repeated after a lost answer.
+
 ## [2.2.1] - 2026-10-02
 
 ### Fixed

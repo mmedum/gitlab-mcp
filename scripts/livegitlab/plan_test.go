@@ -21,7 +21,8 @@ func sampleScratch() scratch {
 		Default: "main", Feature: "feature-0a0b0c", Feature2: "draft-0a0b0c", File: "docs/live.md",
 		SHA: strings.Repeat("a", 40), Issue: 1, Issue2: 2, MR: 1, MR2: 2, Note: 77, User: "alice", Label: "live-0a0b0c",
 		Label2: "live-0a0b0c-b", Milestone: "Live milestone gitlab-mcp-live-20260926-0a0b0c", Pipeline: 5001, JobFailed: 6001,
-		JobPassed: 6002, JobManual: 6003,
+		JobPassed: 6002, JobManual: 6003, Image: "/tmp/live-images/live-mock-up.png", NotImage: "/tmp/live-images/live-notes.txt",
+		Outside: "/tmp/live-outside/live-outside.png",
 	}
 }
 
@@ -138,6 +139,7 @@ func TestConfinedRefusesAStepOutside(t *testing.T) {
 		{step{tool: "list_milestones", args: map[string]any{"project": s.Path, "include_ancestors": true}}, "not the run's"},
 		{step{tool: "list_todos", args: map[string]any{"state": "pending"}}, "scratch project only"},
 		{step{tool: "get_job_log", args: map[string]any{"job_id": 1}}, "scratch project only"},
+		{step{tool: "upload_file", args: map[string]any{"project": s.Path, "path": "/home/example/.ssh/id_ed25519"}}, "the run generated"},
 		{step{tool: "list_everything", args: map[string]any{}}, "no confinement rule"},
 	}
 	for _, tc := range cases {

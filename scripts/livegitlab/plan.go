@@ -66,6 +66,10 @@ type scratch struct {
 	JobFailed int64
 	JobPassed int64
 	JobManual int64
+	// Images: a generated PNG and a text file in the directory the
+	// server is started with in GITLAB_MCP_UPLOAD_DIRS, and a PNG in a
+	// directory it is not.
+	Image, NotImage, Outside string
 }
 
 // step is one tool call and what it should do. A refusal that is
@@ -594,6 +598,21 @@ func phase2(s scratch) []step {
 		{tool: "react", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "note_id": "{{react_note}}", "emoji": "tada",
 			"remove": true}},
 
+		// An image for a comment, read from the run's own directory, which
+		// the server is started with in GITLAB_MCP_UPLOAD_DIRS; its
+		// Markdown is posted on the scratch issue, after the reactions and
+		// the to-do steps that a comment would disturb. The person is asked
+		// before an upload: declined, nothing goes; accepted, it does.
+		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image, "dry_run": true}},
+		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image}, declines: true, expectError: true,
+			why: "the person declines the question"},
+		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image}, save: map[string]string{"image_md": "markdown"}},
+		{tool: "upload_file", args: map[string]any{"project": p, "path": s.NotImage}, expectError: true,
+			why: "a text file, which is no image"},
+		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Outside}, expectError: true,
+			why: "an image outside every directory the server may read from"},
+		{tool: "add_comment", args: map[string]any{"project": p, "type": "issue", "iid": s.Issue, "body": "{{image_md}}"}},
+
 		{tool: "lint_ci", args: map[string]any{"project": p, "content": "check:\n  script:\n    - echo live\n", "include_jobs": true}},
 		{tool: "lint_ci", args: map[string]any{"project": p, "content": "include:\n  - local: other.yml\n"}, expectError: true,
 			why: "supplied content with an include, which GitLab would fetch"},
@@ -1055,6 +1074,12 @@ var rules = map[string]rule{
 			}
 		}
 		return nil
+	},
+	"upload_file": func(st step, s scratch) error {
+		if p := st.args["path"]; p != s.Image && p != s.NotImage && p != s.Outside {
+			return fmt.Errorf("%s: only the files the run generated are uploaded", st.tool)
+		}
+		return inProject(st, s)
 	},
 	"move_issue": func(st step, s scratch) error {
 		if st.args["to_project"] != s.Path+"-b" {

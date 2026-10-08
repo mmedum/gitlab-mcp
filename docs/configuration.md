@@ -27,6 +27,7 @@ itself, and every problem is reported together.
 | `GITLAB_MCP_REQUIRE_PROMPT` | `--require-prompt` | `false` | Refuse the writes that ask you, when your MCP client cannot ask. See below. |
 | `GITLAB_MCP_TOOLSETS` | `--toolsets` | none | Comma-separated optional toolsets: `activity`, `deployments`, `planning`, `releases`, `snippets`, `wiki`, or `all`. |
 | `GITLAB_MCP_WRITE_NAMESPACES` | `--write-namespaces` | anywhere | Comma-separated group or project paths that Write, Ship and Destructive calls are confined to. A call aimed elsewhere is `[blocked]`. |
+| `GITLAB_MCP_UPLOAD_DIRS` | `--upload-dirs` | none | The absolute directories `upload_file` may read images from, separated as `PATH` is: `:` on Linux and macOS, `;` on Windows; a value that is one existing directory is taken whole. Unset, it reads none. See below. |
 | `GITLAB_MCP_LOG_LEVEL` | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. |
 | `GITLAB_MCP_LOG_FORMAT` | `--log-format` | `text` | `text` or `json`. |
 | `GITLAB_MCP_HTTP_TIMEOUT` | `--http-timeout` | `60s` | Deadline for one attempt at an API call, as a Go duration between `1s` and `10m`. |
@@ -50,8 +51,12 @@ and a bare flag such as `--read-only` means `true`.
 - A token whose granted scopes cannot serve the mode, such as a
   `read_api` login with read-only mode off. Start-up fails naming the
   missing scope; run `gitlab-mcp login` again in the mode you want.
-- An unknown toolset, a namespace that is not a group or project path, a
-  timeout outside its bounds, a log level or format not listed above.
+- An unknown toolset, a namespace that is not a group or project path, an
+  upload directory that is not absolute, a timeout outside its bounds, a
+  log level or format not listed above.
+- An upload directory that is a filesystem root, your home directory or
+  a directory holding it: `upload_file` could read nearly every image
+  you have. Name a dedicated folder, such as a screenshots folder.
 
 ## What the settings register
 
@@ -66,6 +71,7 @@ flags decide what is registered rather than what is requested:
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds Destructive | `api` |
 | `GITLAB_MCP_TOOLSETS` | adds the tools of each toolset named | no change |
 | `GITLAB_MCP_WRITE_NAMESPACES` | nothing; confines Write, Ship and Destructive | no change |
+| `GITLAB_MCP_UPLOAD_DIRS` | nothing; lets `upload_file` read images from more directories | no change |
 
 A tool that is not registered does not exist for the model: it cannot
 be called, persuaded or not. The server's instructions name the
@@ -77,7 +83,7 @@ protect.
 
 Before a merge, an approval, a manual job, a release, a new tag, a
 pipeline on the default branch or a protected branch or tag, making a
-confidential issue public, and every delete, the server asks you
+confidential issue public, an image upload, and every delete, the server asks you
 through your MCP client when the client supports elicitation. The
 question names the tool, what it touches and what cannot be undone.
 Text from GitLab in it stands in backticks or code style. Accepting the
@@ -89,6 +95,23 @@ A client that cannot ask gets no question, and the flags and `confirm:
 true` are the guard, as before. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses
 those writes there instead. A client that supports elicitation but runs
 with nobody watching cannot make these writes at all.
+
+## Where `upload_file` reads from
+
+`upload_file` reads an image from this machine only inside the
+directories `GITLAB_MCP_UPLOAD_DIRS` names. Unset, it refuses every path
+and names the setting. It does not use your MCP client's roots, which
+the protocol deprecates in favor of server configuration such as this:
+
+```json
+"env": { "GITLAB_MCP_UPLOAD_DIRS": "/home/you/Pictures/screenshots" }
+```
+
+It reads only a PNG, JPEG, GIF or WebP of at most 10 MiB, judged from
+the bytes, and refuses a symbolic link and a path that leaves the
+directory. The path is compared with the directory as written, so spell
+both the same way. When your client can ask, the server asks you before
+each upload.
 
 ## Where things are stored
 
@@ -155,7 +178,7 @@ authority in the system's trust store.
 }
 ```
 
-The Claude Desktop bundle asks for the application id, the profile and
-read-only mode, and passes them as the matching
-variables. It does not log you in; run `gitlab-mcp login` from a
+The Claude Desktop bundle asks for the application id, the profile,
+read-only mode and one image directory for `upload_file`, and passes
+them as the matching variables. It does not log you in; run `gitlab-mcp login` from a
 terminal first (`docs/setup.md`).

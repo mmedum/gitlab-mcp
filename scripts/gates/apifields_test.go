@@ -12,12 +12,14 @@ import (
 
 // The fixture client: a list call whose query comes from a method with a
 // bool-decided branch, a single read decoding a nested struct, a call
-// with a url.Values literal, and a write with a body.
+// with a url.Values literal, a write with a body, and an upload with a
+// form.
 const fixtureClient = `package gapi
 
 import "net/url"
 
-type Call struct{ Method, Path string; Args []string; Query url.Values; Body any }
+type Call struct{ Method, Path string; Args []string; Query url.Values; Body any; Form *Form }
+type Form struct{ Field, Filename string }
 type Client struct{}
 type ListOptions struct{}
 func (c *Client) Do(_ any, _ Call, _ any) error { return nil }
@@ -60,6 +62,11 @@ func (c *Client) GetTrace(id string) error {
 func (c *Client) CreateIssue(title string) error {
 	var out gitlab.Issue
 	return c.Do(nil, Call{Method: "POST", Path: "issues", Body: &issueBody{Title: title}}, &out)
+}
+
+func (c *Client) Upload(name string) error {
+	var out gitlab.User
+	return c.Do(nil, Call{Method: "POST", Path: "uploads", Form: &Form{Field: "file", Filename: name}}, &out)
 }
 `
 
@@ -104,6 +111,8 @@ func fixtureFieldSnapshot() apiSnapshot {
 		// A text answer the file publishes as if it were JSON, as it
 		// publishes a job log: []byte takes it as it is.
 		{Verb: "GET", Path: "/issues/{id}/trace", Responses: map[string]map[string]string{"200": issue}},
+		{Verb: "POST", Path: "/uploads", Request: map[string]string{"file": "string"},
+			Responses: map[string]map[string]string{"201": {"username": "string"}}},
 	}}
 }
 
@@ -156,7 +165,7 @@ func TestTheFixtureFieldsHold(t *testing.T) {
 	if len(problems) > 0 {
 		t.Fatalf("problems on a correct fixture:\n%s", strings.Join(problems, "\n"))
 	}
-	if !strings.Contains(report, "4 operations, 6 sent and 33 decoded fields") {
+	if !strings.Contains(report, "5 operations, 7 sent and 34 decoded fields") {
 		t.Errorf("report = %s", report)
 	}
 }
@@ -183,6 +192,12 @@ func TestTheFieldsGateFailsEveryWay(t *testing.T) {
 		{name: "a body field not published",
 			snap: func(s *apiSnapshot) { delete(s.Operations[2].Request, "title") },
 			want: "POST /issues body title: sent and not published"},
+		{name: "a form field not published",
+			snap: func(s *apiSnapshot) { delete(s.Operations[4].Request, "file") },
+			want: "POST /uploads body file: sent and not published"},
+		{name: "a form whose field is not a literal",
+			client: strings.Replace(fixtureClient, `Field: "file"`, "Field: name", 1),
+			want:   "Client.Upload sends a form this gate cannot read"},
 		{name: "a body field whose kind cannot hold the published type",
 			rows: func(r []fieldRow) []fieldRow { return r[:6] },
 			want: "POST /issues body weight: sent as string and published as integer"},
@@ -216,7 +231,7 @@ func TestTheFieldsGateFailsEveryWay(t *testing.T) {
 			want: "Pipeline.SHA decodes \"runners_token\""},
 		{name: "the floor on decoded fields",
 			fl:   fieldsFloors{ops: 3, sent: 5, decoded: 1000, rows: 1},
-			want: "compared 33 decoded fields and the floor is 1000"},
+			want: "compared 34 decoded fields and the floor is 1000"},
 		{name: "the floor on the record",
 			fl:   fieldsFloors{ops: 3, sent: 5, decoded: 1, rows: 100},
 			want: "has 7 rows and the floor is 100"},

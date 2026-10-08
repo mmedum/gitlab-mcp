@@ -386,12 +386,12 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default so the
-default surface, sixty-two tools, stays under the 64-tool point where one
+default surface, sixty-three tools, stays under the 64-tool point where one
 client starts regrouping tools. A read joins the default when it answers a
 question a default tool acts on: `list_boards` did, beside `list_labels`
 and `list_milestones`, since a board's columns are read with
 `search_issues` (maintainer, 2026-09-30). With Ship and Destructive both
-on, the surface is seventy-seven tools, past the 64-tool point; both flags
+on, the surface is seventy-eight tools, past the 64-tool point; both flags
 are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
@@ -440,6 +440,7 @@ time and the signed-in user:
 | one draft published | the threads, for this account's comment with the draft's text newer than every note read before the call: a reply in its thread, or a new thread at the draft's place; then the draft. GitLab saves the comment before it deletes the draft, with no transaction, so not published needs both a complete search that finds none and the draft still there |
 | a snippet change that creates, deletes or moves a file | the snippet's files and `updated_at` |
 | suggestions applied | each suggestion's `applied` on the merge request's diff comments, and the source branch's head: all applied is applied, by this call when the head is one commit on by the account, by this call or another otherwise; anything else read right after the failure is unknown, since GitLab may still be committing |
+| an image uploaded | nothing can: listing a project's uploads needs the Maintainer role and gives no link, so a lost answer stays unknown, the result says a repeat would leave the first upload, if it landed, with nothing linking to it, and the person decides (§7.10, §18 row 116) |
 
 Found means **created**, and the result carries it. Not found means
 **not created**, and the result says so without creating it. Anything
@@ -625,8 +626,9 @@ rather than reporting success.
 Registration decides what the server can do (§4.3), and `confirm:
 true` is an argument the model writes, which a persuaded model writes
 too. So when the client can ask, the server asks the person itself,
-through MCP form elicitation, before sixteen writes: `merge_merge_request`,
+through MCP form elicitation, before seventeen writes: `merge_merge_request`,
 `approve_merge_request`, `apply_suggestions`, `play_job`, `create_release`, `create_tag`,
+`upload_file`,
 `run_pipeline` on the default branch or a protected branch or tag,
 `run_merge_request_pipeline` when both its branches are protected,
 `update_issue` when it makes a confidential issue public, and the seven
@@ -635,6 +637,10 @@ chose on 2026-09-29 (§14): the writes that ship, publish or destroy.
 `apply_suggestions` joined it on 2026-10-01, the maintainer's call
 after a security review: what it commits was written by someone other
 than the person or the model, unlike `create_commit`'s text.
+`upload_file` joined it on 2026-10-08, the maintainer's call after a
+security review: an upload is a disclosure a planted comment could aim
+at a project its author maintains, with no comment for the person to
+notice (§7.10).
 Retrying, cancelling, rebasing, moving and commenting do not ask, since
 questions asked often are answered without reading (§18 row 94).
 
@@ -795,7 +801,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `NOTICE` | unofficial, not affiliated with GitLab Inc., trademark note, Apache-2.0 |
 | issue and PR templates | `ISSUE_TEMPLATE/config.yml` with the private advisory link and "run `doctor` first"; the bug form asks for `doctor`, version, install method, the client and its version, flag state and a debug log, explains why those are safe to paste, and says what never to paste — "a tool result is your organization's code"; the PR template with Summary, Test plan and Notes and the schema-change footer |
 | `audit/` **(09-25)** | `audit/security-reviews/v<tag>.md`, the committed `/security-review` over `prev-tag..HEAD`; `audit/release-smoke/v<tag>.md`, the release verification record: gates, reproducible-build hashes, schema and spec re-fetches, bugs found, the maintainer's go-ahead |
-| `packaging/mcpb/manifest.json` | `$schema` at the pinned tag; `manifest_version` 0.3; placeholder version `0.0.0-dev`; `claude_desktop >= 0.10.0`; per-platform commands; `author`, `license`, `keywords`, `repository`, `documentation` and a `support` URL; `user_config` with `client_id`, `profile` and `read_only` (no instance: gitlab.com only); a `long_description` saying the bundle does not log you in |
+| `packaging/mcpb/manifest.json` | `$schema` at the pinned tag; `manifest_version` 0.3; placeholder version `0.0.0-dev`; `claude_desktop >= 0.10.0`; per-platform commands; `author`, `license`, `keywords`, `repository`, `documentation` and a `support` URL; `user_config` with `client_id`, `profile`, `read_only` and `upload_dirs` (no instance: gitlab.com only); a `long_description` saying the bundle does not log you in |
 | Linux launcher | generated by the packer from the same staging table that names the binaries; `set -eu`; x86_64/amd64 and aarch64/arm64 aliased; `exec`s; an unknown architecture to stderr, non-zero, suggesting `go install`; a missing or non-executable binary named |
 
 **Gates (`scripts/gates`, one command, one registry).**
@@ -822,7 +828,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `classes` | the closed vocabulary of §6.5 derived from the code and asserted both ways; duplicates found by count; a `Planned` list with reasons; a floor |
 | `coverage` | per package, scored on its own files, `cmd/` included; per-package floor overrides; each exemption with a reason; an all-exempt run fails; floors on packages and profile lines |
 | `outcomes` | every write's result states its outcome on every branch; an AST check that a branch on a boolean request field does not state an outcome without reading the response; floors on files and fields |
-| `mcpb` | the committed manifest validated from its raw bytes against the **vendored** schema chosen by its own `manifest_version`; each vendored schema embedded with a recorded SHA-256 and source URL, a mismatch refused; `$schema` matched as a whole URL at a full tag or SHA; `manifest_version` equal to the URL's; a floor at 0.3; unknown keys preserved by decoding twice; entry point, every command and every override naming a staged file; every override a claimed platform; each claimed platform spawning the file staged **for it**; every `${user_config.x}` in a composed value declared; the no-login sentence; a `support` URL |
+| `mcpb` | the committed manifest validated from its raw bytes against the **vendored** schema chosen by its own `manifest_version`; each vendored schema embedded with a recorded SHA-256 and source URL, a mismatch refused; `$schema` matched as a whole URL at a full tag or SHA; `manifest_version` equal to the URL's; a floor at 0.3; unknown keys preserved by decoding twice; entry point, every command and every override naming a staged file; every override a claimed platform; each claimed platform spawning the file staged **for it**; every `${user_config.x}` in a composed value declared, and one spent in `env` either required or given a default and never `multiple`, since a host leaves it as written otherwise (§18 row 117); the no-login sentence; a `support` URL |
 | `mcpb-pack` (release) | decode–encode stamping, never text substitution; `0755` on every staged binary; a fixed mtime asserted against a literal; globs matching exactly one file; the staged binary's `--version` read back; the packed archive read back |
 | `release` | goreleaser's config held against the release workflow: universal binaries via `ids`, the bundle in both `extra_files`, `subject-path` with a valid separator, signing and SBOM pins; a six-archive floor; one universal binary; no `changelog:` block; before-hooks that do not mutate the tree |
 | `server-json` | derived from go.mod with `/vN` stripped; the description (at most 100 characters) from the one constant the manifest also uses; the hash taken from `checksums.txt` with exactly one `.mcpb` row, **after** the signature check; validated against the vendored registry schema; HTTPS, release URL and identifier shape held by a test; `schema-refetch` (manual) compares vendored bytes with upstream under a timeout and writes nothing |
@@ -1350,11 +1356,92 @@ is gated by version (§4.9). A tier-gated route answering 403 or 404 on a
 feature GitLab licenses is `[unsupported]` naming the likely tier, never
 `not_found`.
 
+### 7.10 Images for comments
+
+`upload_file` uploads an image from this machine to a project and
+returns GitLab's Markdown for it, for a comment, a review comment or a
+description in the same project. GitLab resolves `/uploads/...` against
+the project that renders it, so from another project the link is
+`full_path` on gitlab.com (§18 row 113). It takes a project and an
+absolute `path`. Content as base64 was rejected: a 1 MB image costs
+hundreds of thousands of tokens.
+
+A tool that reads local files is how a comment persuading a model to
+"attach" a key file would send the key, and even an image is a
+disclosure. So, in this order:
+
+1. **The project first.** The project is read and held to
+   `GITLAB_MCP_WRITE_NAMESPACES`, as every write is, before anything on
+   this machine is read, so a call aimed elsewhere learns nothing about
+   the path.
+2. **Where it reads.** Only the directories `GITLAB_MCP_UPLOAD_DIRS`
+   names. Unset, the call is `[blocked]` naming it; a path outside them
+   is `[blocked]` too, naming only the setting. Startup refuses a
+   relative directory, a filesystem root, and the home directory or one
+   holding it; a value that is itself an existing directory is one
+   entry, whatever its name holds. The Claude Desktop bundle asks for one
+   dedicated folder. MCP roots were rejected (maintainer, 2026-10-08):
+   SEP-2577 deprecates them from protocol 2026-07-28 in favor of
+   directories passed as tool parameters, resource URIs or server
+   configuration, and go-sdk v1.8.0 will not ask for them during a call
+   on that protocol (§18 row 114).
+3. **How it opens.** `internal/localimage` takes an absolute path with
+   no `..` and opens it through `os.Root` on the widest allowed
+   directory that holds it, so neither `..` nor a symbolic link leads
+   out. A link along the path is followed only when it is relative and
+   stays inside; `os.Root` refuses absolute ones. When a link leads out
+   of the wider directory, a narrower allowed one is tried, so an allowed
+   directory that is itself a link works. A symbolic link as the file
+   itself, a directory, a FIFO or a device is refused. The file is
+   checked with `Lstat`, opened without blocking, and checked again on
+   the open file, so one swapped in between is `[conflict]` (§18 row 115).
+4. **What it sends.** At most 10 MiB, a tenth of gitlab.com's 100 MiB
+   attachment limit: far above a screenshot or a mock-up, and small
+   enough to hold in memory and send in one request. The bytes must
+   sniff as PNG, JPEG, GIF or WebP with `http.DetectContentType`, which
+   GitLab's Workhorse uses to set the type it serves; the refusal does
+   not say what the bytes are. The sniff keeps out what is not an image;
+   bytes after a valid header go too, and making such a file needs write
+   access to this machine. SVG is text that can carry script, and is
+   refused. The name sent is the file's base name, every character but
+   ASCII letters, digits, `.`, `-` and `_` made `_`, with the extension
+   of the sniffed type in place of its own. GitLab decides from the
+   extension whether Markdown embeds the upload and whether a private
+   project serves it without sign-in, so the extension has to agree with
+   the bytes (§18 row 113). No directory is sent. The image's metadata
+   goes as it is in the file, except that Workhorse removes a JPEG's,
+   keeping its size, resolution and orientation (§18 row 118).
+5. **The person is asked.** Before every upload but a dry run, after
+   every read, with §4.12's question: the project, the name, type and
+   size sent, who can open the link, that Maintainers reach it by id,
+   and what happens to its metadata. Otherwise a planted comment could
+   send any image in the allowed folders to a project its author
+   maintains, with no comment for the person to notice: the POST needs
+   only read access to the project, and a Maintainer can list and
+   download every upload by id.
+6. **Who can open it.** The result names the project's visibility and
+   `link_opens_for`: `anyone_with_link` in a public project, and in a
+   private or internal one whose "Require authentication to view media
+   files" (`enforce_auth_checks_on_uploads`) is off; `project_readers`
+   when it is on; `unknown` when GitLab did not say (§18 row 112). The
+   project's Maintainers can list and download every upload by its id,
+   without the link (§18 row 116).
+7. **Sent once.** GitLab keeps an upload whether or not anything links
+   to it. A lost answer is `[ambiguous_outcome]` and no read settles it
+   (§4.5): the result says so, that a repeat would leave the first
+   upload, if it landed, with nothing linking to it, and to ask the
+   person before calling again.
+
+A dry run reads and checks the image and the project and sends nothing.
+Like every write's, an upload's body is timed by its progress (§11), so
+a slow uplink does not cut a large image off mid-body. Logs never carry
+the path, the name or the bytes (§9.2).
+
 ## 8. Tool surface
 
-100 tools. With the default toolsets: sixty-two by default,
-thirty-nine in read-only mode, seventy-seven with Ship and Destructive
-both enabled. Every toolset and flag on registers all 100.
+101 tools. With the default toolsets: sixty-three by default,
+thirty-nine in read-only mode, seventy-eight with Ship and Destructive
+both enabled. Every toolset and flag on registers all 101.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people:
 every write but `add_todo`, `subscribe`, `mark_todos_done` and
@@ -1427,6 +1514,7 @@ Destructive kinds, as a signal and not a control.
 | `add_todo` | Write | default | `POST …/issues|merge_requests/:iid/todo` |
 | `subscribe` | Write | default | `POST …/issues|merge_requests/:iid/subscribe`, `/unsubscribe` |
 | `react` | Write | default | `GET`/`POST …/issues|merge_requests/:iid[/notes/:id]/award_emoji`, `GET`/`DELETE …/award_emoji/:id` (own reactions) |
+| `upload_file` | Write | default | `POST /projects/:id/uploads` (an image from a directory `GITLAB_MCP_UPLOAD_DIRS` names; asks the person; never repeated) |
 | `merge_merge_request` | Ship | default | `PUT …/merge_requests/:iid/merge` |
 | `cancel_auto_merge` | Ship | default | `POST …/merge_requests/:iid/cancel_merge_when_pipeline_succeeds` (reads the answer's `status`; nothing sent without an auto-merge) |
 | `approve_merge_request` | Ship | default | `POST …/merge_requests/:iid/approve` |
@@ -1490,7 +1578,8 @@ operations it covers. The gate fails on an operation with neither, a
 client call with no row, and a row or rule matching nothing.
 
 The committed snapshot is v19.4.1-ee, 1,856 operations; the TSV holds
-346 exact rows and 224 prefix rules, and the gate reports the counts.
+365 exact rows and 219 prefix rules (2026-10-07), and the gate reports
+the counts.
 The groups below are the design's verdicts; the TSV is the record.
 
 | Group (path prefix) | Verdict |
@@ -1522,6 +1611,7 @@ The groups below are the design's verdicts; the TSV is the record.
 | AI, editor and chat features; feature flags; topics; namespaces; badges; notification settings; the CI catalog; job-token scope; resource groups | Written off: product administration or features with no assistant task in a project |
 | issue boards | Read used: the project's boards, which carry their lists. One board or list by id, and every board and list write, deferred |
 | suggestions | Gated: `apply_suggestions`, Ship |
+| Markdown uploads | `POST /projects/{id}/uploads` used by `upload_file` (§7.10). It was written off with the rest of `/projects/{id}/uploads*` as administration until 2026-10-07, when the maintainer moved it to used (issue #50): it is the attachment path every comment box uses, and any account that can read the project may call it. Listing, reading by id and deleting uploads stay written off: they need the Maintainer role. Workhorse's authorize route is internal |
 | error tracking and alerts, Markdown rendering, templates, merge trains, DORA and analytics | Deferred: no tool in §8 yet (§17.11 for the Premium ones) |
 | navigation reads no tool uses yet (`GET /groups`, `/users/{id}` and the like) | Deferred until a tool needs them |
 
@@ -1599,6 +1689,7 @@ something to do.
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds Destructive | `api` (no change) |
 | `GITLAB_MCP_TOOLSETS` | adds `wiki`, `snippets`, `releases`, `deployments`, `activity`, `planning`, or `all` | — |
 | `GITLAB_MCP_WRITE_NAMESPACES` | confines Write, Ship, Destructive (§4.7) | — |
+| `GITLAB_MCP_UPLOAD_DIRS` | nothing; the only directories `upload_file` may read images from (§7.10); unset, it reads none; a filesystem root or a directory holding the home directory is refused at startup | — |
 
 No setting chooses the instance: it is gitlab.com (§4.9).
 
@@ -1690,7 +1781,7 @@ differently from the rest.
 Configuration: `GITLAB_MCP_PROFILE`, `GITLAB_MCP_CLIENT_ID`,
 `GITLAB_MCP_READ_ONLY`, `GITLAB_MCP_ENABLE_SHIP`,
 `GITLAB_MCP_ENABLE_DESTRUCTIVE`, `GITLAB_MCP_TOOLSETS`,
-`GITLAB_MCP_WRITE_NAMESPACES`, `GITLAB_MCP_LOG_LEVEL`,
+`GITLAB_MCP_WRITE_NAMESPACES`, `GITLAB_MCP_UPLOAD_DIRS`, `GITLAB_MCP_LOG_LEVEL`,
 `GITLAB_MCP_LOG_FORMAT` (`text` default), `GITLAB_MCP_HTTP_TIMEOUT`
 (60 s default), `GITLAB_MCP_CONFIG_DIR`. Each also a flag.
 `docs/configuration.md` is checked against the exported list. There is
@@ -1717,7 +1808,11 @@ Process: one stdio session; starts before authentication so `doctor` and
   own buckets, and `submit_review` publishes many comments in one call
   for that reason. `get_me` reports the last reading.
 - **Timeouts** on every request (§3), a 32 MiB cap on a response body,
-  job logs read in windows.
+  job logs read in windows. A request body is timed by its progress:
+  the header timeout starts again whenever more of it is sent, so it
+  times a stall and then the wait for the answer, and a slow uplink does
+  not cut a large commit or image off mid-body. The body can be given
+  again, as Go's HTTP/2 transport asks for a stream the server refused.
 - **Per-item outcomes** for every multi-id write (`mark_todos_done`).
 
 ## 12. Distribution and setup
@@ -1749,6 +1844,11 @@ gated. It covers gitlab.com, the only instance.
   outside every hunk.
 - **`internal/instance`**, over every base-URL shape of §3.4, which the
   loopback test override may still take.
+- **`internal/localimage`**, over generated images and every path it
+  refuses: relative, with `..`, with no directory allowed, outside them,
+  missing, a directory, a FIFO, a symbolic link, a link leading out, an
+  absolute link, text, SVG, empty, and one byte over the cap; and an
+  allowed directory that is itself a link.
 - **`gitlabtest`**, an in-memory GitLab behind the REST paths the client
   uses, generated per §9.1, modeling the facts of §2 the server depends
   on: quick actions executed from bodies (so a missing guard fails a
@@ -1790,6 +1890,8 @@ gated. It covers gitlab.com, the only instance.
 | Unregistered, not registered-and-refusing, for gated tools | this design | §17b |
 | Release pipeline in phase 0 | this design | §12 |
 | The person asked before applying review suggestions | maintainer, 2026-10-01 | §4.12: the committed text is someone else's, under the person's name |
+| The person asked before every upload | maintainer, 2026-10-08, after the security review | §4.12, §7.10: an upload is a disclosure; the POST needs only read access, and a Maintainer can list and download uploads by id |
+| `upload_file` reads only from the directories `GITLAB_MCP_UPLOAD_DIRS` names; MCP roots are not used | maintainer, 2026-10-08 | §7.10; roots are deprecated (SEP-2577), so the setting, and the bundle's field for it, is the only way to allow a directory (§18 row 114) |
 | The person asked before a merge, an approval, a manual job, a release, a tag, a pipeline on a protected ref, publishing a confidential issue and every delete; the empty form; `GITLAB_MCP_REQUIRE_PROMPT` | maintainer, 2026-09-29 | §4.12; a client that declares elicitation and answers with nobody there cannot make these writes, which is why the release is a major one |
 
 ## 15. What must be verified live
@@ -2143,6 +2245,23 @@ hands on no witness after a commit (§18 row 103).
 runs spent the scratch group's CI minutes, and every job failed
 `ci_quota_exceeded` until they reset on 2026-10-01. Nothing is owed.*
 
+**After 2.2.1 — `upload_file` (#50).** An image from a directory the
+person allowed, uploaded for Markdown to embed (§7.10). The maintainer
+moved `POST /projects/{id}/uploads` from written off to used (§8a). Each
+behavior was checked against GitLab's source at v19.4.1-ee first, and
+the bundle's new field against the MCPB reference host (§18 rows
+112–117). MCP roots were built and then dropped on 2026-10-08 (§18 row
+114): the setting is the only source of directories.
+
+*Built 2026-10-07. A live run on gitlab.com passed on 2026-10-08: it
+uploaded the run's own generated PNG, posted its Markdown on the
+scratch issue, and was refused a text file and an image outside the
+allowed directory. A code review and a security review followed (§16a),
+and the person is now asked before an upload (§4.12). A second live run
+on 2026-10-08 drove what they changed: the person declined one upload,
+which sent nothing, and accepted the next. A third, after the simplify
+pass that times every request body by its progress, passed as well.*
+
 ### 16a. Found by review, and fixed
 
 Each phase's `/code-review high` and `/security-review` findings are
@@ -2375,6 +2494,39 @@ leak gate and fixtures found:
 | Found | Fixed |
 |---|---|
 | A delete repeated after a 5xx or a lost answer reported the repeat's 404 as `[not_found]`; `delete_review_comment` said the draft was not yours | `[ambiguous_outcome]`; a delete read back as gone is reported deleted (§4.5) |
+
+**`upload_file` (#50).** A code review (medium) and a security review
+of the first two commits, fixed on the branch:
+
+| Found | Fixed |
+|---|---|
+| Security: an upload is a disclosure a planted comment could aim at a project its author maintains, with no comment for the person to notice | The person is asked before every upload (§4.12), the maintainer's decision of 2026-10-08 |
+| A call aimed at a project outside the allow-list read the local file first, and its refusal could tell what was there | The project is read and held to the allow-list first |
+| The refusal of a path outside the allowed directories listed them, and that of a file that is no image named its type | Each names only the setting, and nothing of the file |
+| A filesystem root or the home directory could be allowed, opening nearly every image | Refused at startup; the bundle asks for a dedicated folder |
+| A folder whose name held the list separator split into other directories | A value that is an existing directory is one entry |
+| An allowed directory that is itself a link was refused under a wider allowed one | Every allowed directory holding the path is tried, widest first, past an escape |
+| A slow upload was cut off by the header timeout mid-body and reported as ambiguous | Every request body is timed by its progress, the header timeout starting again with each piece sent (§11); a large commit had the same cut-off |
+| The sniff read as proof that the whole file is an image | The package says what it proves; bytes after a valid header need write access to this machine |
+| The result did not say that Maintainers reach every upload by id, or what happens to the image's metadata | It says both, and so does the question; Workhorse removes a JPEG's metadata (§18 row 118) |
+| `CLAUDE.md` rule 8 did not cover a create no read can settle | It does: `[ambiguous_outcome]`, and the person decides |
+| "for ever" | "forever" |
+| Suggested: open with `O_NOFOLLOW` in place of `Lstat`, open and `os.SameFile` | Declined: `os.Root` follows a final link even with `O_NOFOLLOW` (probe, Go 1.27.1), and Windows has no such flag |
+| Suggested: send the image without copying it into the body | Declined: one copy of at most 10 MiB per call, and a streamed body would have to be rebuilt for a retry |
+
+`/simplify` (reuse, simplification, efficiency, altitude), applied: the
+progress timer and a replayable body for every request body, not only
+uploads; `internal/localimage` returns its own typed refusals, which
+`upload_file`'s service words and classes, so the package imports
+neither `gapi` nor `config`; the size is refused from the open file's
+stat and the type from its first 512 bytes before the rest is read,
+into a buffer of the stat's size; the question is built only when one
+goes out; the home check resolves links and short names with
+`userconfig`'s helpers; one literal-key helper for the outcomes and
+api-fields gates; and smaller cleanups in the tests, the in-memory
+instance and the live driver. Kept: both `link_opens_for` and
+`media_requires_sign_in` in the result, and the test helper that counts
+uploads by their route.
 
 ### Closing a phase
 
@@ -2717,3 +2869,10 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 109 | Canceling an auto-merge answers as the OpenAPI file publishes it, and stops the merge | At v19.4.1-ee: `lib/api/merge_requests.rb` L930-948; `app/services/auto_merge_service.rb` L54-60; `app/services/auto_merge/base_service.rb` L36-46 and L114-140; `app/services/auto_merge/merge_when_checks_pass_service.rb` L15-31; `app/services/merge_requests/merge_service.rb` L18-48; `app/models/merge_request.rb` L1797-1799 and L2096-2099; `lib/api/entities/merge_request_basic.rb` L10-12 and L65; `lib/api/helpers.rb` L613 | **Refuted (tier 1; the success body and the merge going on, tier 1, live).** The route returns the service's result and presents nothing, so GitLab renders that hash under POST's 201: `{"status":"success"}` when it canceled, and `{"status":"error","message":"Can't cancel the automatic merge","http_status":406}` when no auto-merge was set or saving failed. The 406 the file lists, and the merge request it publishes as the body, never come. A cancel clears `merge_when_pipeline_succeeds` and `merge_user`, saves, so `updated_at` moves, adds a system note and fires the merge request hook. `merge_when_pipeline_succeeds` is GitLab's `auto_merge_enabled` for every strategy, so it says whether one is set. Someone who may merge into the target branch, or the author, may cancel; anyone else gets 401 from `unauthorized!`, which here is a role and not a token. A second cancel changes nothing and answers the error body, so the call repeats. `AutoMergeService#cancel` checks `auto_merge_enabled?` alone, not the state, while `MergeService#execute` (`app/services/merge_requests/merge_service.rb` L18-48) locks the merge request (`in_locked_state`, `app/models/merge_request.rb` L2190-2199) and merges without looking at the flag again, once `MergeWhenChecksPassService#process` has queued it with `merge_async`: so a cancel that arrives while the merge runs clears the flag, answers success, and the merge request merges anyway. The live run on gitlab.com, 2026-10-01, saw exactly that: `{"status":"success"}`, the read back `locked` with no auto-merge, and `merged` a moment later. `cancel_auto_merge` reads the merge request first and sends nothing without an auto-merge or while it is locked or merged, reads `status` in the body, and reads the merge request again for the result, which is `canceled` only when it is open with no auto-merge set; `locked` is `merging` and `merged` is `merged`. The success body was seen live |
 | 110 | Applying a suggestion answers as the OpenAPI file publishes it, and a lost answer can be settled | At v19.4.1-ee: `lib/api/suggestions.rb` L10-54 and L57-84; `app/policies/suggestion_policy.rb`; `lib/gitlab/user_access.rb` L72-77; `app/services/suggestions/apply_service.rb` L11-66 and `ee/app/services/ee/suggestions/apply_service.rb`; `lib/gitlab/suggestions/suggestion_set.rb` L70-119; `lib/gitlab/suggestions/commit_message.rb`; `app/models/suggestion.rb` L48-62; `lib/api/entities/note.rb` L37-39 and `lib/api/entities/suggestion.rb`; `app/services/notes/update_service.rb` L112-123 | **Refined (tier 1).** Both routes answer 200 with the suggestions as the file publishes them, but they are the objects read before the commit, so `applied` can still be false, and the commit's sha is in no field. GitLab looks a suggestion up by id alone, with no project in the path; batch_apply answers 404 when an id is missing or given twice. An account that may not push to the source branch, a protected one or a fork without collaboration, gets 403 before anything is done. Every other refusal is 400 with the reason, the first failing check winning: the file gone, another branch, applied already, the merge request merged or closed, the source branch deleted, lines changed since, the same content, and "A file has been changed." when the comment's `head_sha` is not the branch's head, which holds for every suggestion right after a push until GitLab moves the comments, so a later try can pass. Lines that overlap in a batch are refused. The commit is `Files::MultiService` as the account on the source branch, with the project's message or a default, and `%{…}` placeholders filled in a custom message too. The suggestions are marked applied in the same request, so a second apply is 400 and never commits twice. An edit to a comment deletes its suggestions and creates new ones, so an id stands for the text it was read with. Only a merge request's diff notes carry `suggestions`, on the discussions and notes routes. `to_content` is committed byte for byte, while the comment's body reaches a reader as Markdown with hidden characters dropped. `apply_suggestions` finds every id on the merge request first, refuses the default and protected source branches as `create_commit` does, refuses a text with invisible characters, asks the person with each text, sends the PUT once, reads the suggestions and the branch back, and settles a lost answer by the same read, calling anything short of every suggestion applied unknown, since `Files::MultiService` may still be committing when the answer is lost |
 | 111 | A draft review comment can be edited under a witness and keeps its place, and publishing one says what it made | `lib/api/draft_notes.rb` L20-25, L142-165, L201-231 and L262-288, `lib/api/entities/draft_note.rb`, `app/models/draft_note.rb` L29-33 and L99-137, `app/models/concerns/diff_positionable_note.rb` L27-50, `app/services/draft_notes/publish_service.rb` and `app/services/notes/create_service.rb` L26-47 at v19.4.1-ee, which has no EE override of the publish service | **Refuted (tier 1).** GitLab finds a draft only among its author's, so another person's is 404, a maintainer's call included; the tools say they change only your own. The draft entity carries no time or version, so `update_review_comment` takes `note_sha256`, a hash of the text, and reads first. The PUT needs `note` (400 when blank) and writes `position` as sent, so an edit without it clears the draft's place and the draft publishes as a general thread: the tool sends the draft's own position back, and refuses a draft on an image, whose fields it does not carry. A text over `description_and_note_max_size` in bytes, or a position failing its schema or size, raises unrescued, so GitLab answers 500, not 400, and would again: that 500 is not repeated, and the tool reads the draft and, unchanged, answers `[invalid]`. The PUT does not check the position against the diff. Publishing one draft runs its quick actions and answers 204 with no comment id. When the comment does not save, because it was only commands or failed a check, GitLab logs a warning, deletes the draft and still answers 204, and a second publish is 404. `publish_draft_note` saves the comment and then deletes the draft with no transaction, so a draft still there after a lost answer does not show nothing was published. So `publish_review_comment` is sent once, refuses a draft with a quick-action line, and reads the threads for this account's comment with the draft's text, carriage returns dropped as GitLab drops them, newer than every note read before the publish: in a reply's thread, or as the first note of a new thread at the draft's place. Finding none after a 204, it reports the draft lost and gives the text back. `submit_review` publishes drafts written elsewhere too, so it refuses a review with a quick-action line in any draft. An account that may no longer comment gets 500, and the draft stays. A reply drafted to resolve its thread resolves it when the account may and reopens it otherwise; any other reply reopens it (`set_discussion_resolve_status`). A single publish creates no review and leaves the reviewer state alone. `DraftNote` validates `author_id` unique per merge request and discussion (`app/models/draft_note.rb` L26), so a person has at most one draft reply per thread, and a second is 400 `author_id has already been taken`, as the live run on gitlab.com, 2026-10-01, answered; `add_review_comment` reads the account's drafts and refuses a second as `[conflict]` before sending, and maps GitLab's refusal to the same |
+| 112 | An image uploaded to a private project opens only for people who can read the project | At v19.4.1-ee: `app/controllers/concerns/uploads_actions.rb` L172-182 (`bypass_auth_checks_on_uploads?`: showing an embeddable upload skips the access check unless the project is not public and `enforce_auth_checks_on_uploads?`), `app/controllers/banzai/uploads_controller.rb` L27-31 (the id-based upload paths: the bypass, else `read_project`), `lib/gitlab/file_type_detection.rb` L22 and L69 (embeddable by extension), `lib/api/entities/project.rb` L173 (`enforce_auth_checks_on_uploads` exposed outside the admin-only block of L119), `lib/api/projects.rb` L596-610 (a signed-in read is presented with `Projects::WithAccessAndCatalogSetting`, a `Project`), `app/models/project.rb` L653 and L1520-1529 (delegated to a project setting built when missing), `db/structure.sql` L29554 (`DEFAULT true NOT NULL`); docs.gitlab.com/security/user_file_uploads | **Refuted (tier 1).** In a public project anyone with an upload's link opens it. In a private or internal one an image, a video or an audio file opens for anyone with its link, signed in or not, unless the project's "Require authentication to view media files" is on. The column defaults to true for a new project, and an older one may hold false. Every signed-in reader of `GET /projects/:id` is sent the setting, so `upload_file` takes it from the project read its allow-list check already makes and reports `link_opens_for`, `unknown` if GitLab leaves it out. Probed live on 2026-10-08: a new private scratch project reported the setting on to the account that owns it; a reader who is not a Maintainer was not probed |
+| 113 | GitLab judges an upload by its content | At v19.4.1-ee: `lib/gitlab/file_type_detection.rb` L1-22 (it "identifies files only by the file extension"), `lib/gitlab/file_markdown_link_builder.rb` L9-23 (`![...]` for an embeddable extension, the link text the name without its extension), `app/uploaders/file_uploader.rb` L221-223 (`/uploads/<secret>/<filename>`), `workhorse/internal/headers/content_headers.go` L82-90 (the served type is `http.DetectContentType` of the bytes, SVG apart), `lib/banzai/filter/upload_link_filter.rb` L30-41 (`/uploads/...` is rewritten under the rendering project's id) | **Refuted (tier 1).** Rails decides from the name's extension whether Markdown embeds an upload and whether a private project serves it without sign-in; Workhorse sets the served type from the bytes. So `upload_file` sniffs with the function Workhorse uses, accepts four image types, and sends the base name with the extension of the type the bytes show, so name and bytes agree. Markdown with `/uploads/...` resolves only in the project the image was uploaded to; `full_path` works from anywhere |
+| 114 | `upload_file` should also read from the client's MCP roots | SEP-2577 (final; https://modelcontextprotocol.io/seps/2577-deprecate-roots-sampling-and-logging): roots deprecated from protocol 2026-07-28, the stated replacement "directories and files passed as tool parameters, resource URIs or server configuration"; go-sdk v1.8.0 `mcp/server.go` L1619-1651 (`ListRoots` refused while serving a request from 2026-07-28, which wants an input request instead, SEP-2322); a probe through the SDK's in-memory transports, 2026-10-07 | **Rejected (tier 1; maintainer, 2026-10-08).** On 2025-06-18 and 2025-11-25 `ListRoots` worked mid-call; on 2026-07-28, the SDK's default, it is refused before anything is sent, and the SDK marks every roots API deprecated. A first version read roots where it could; it was dropped. `GITLAB_MCP_UPLOAD_DIRS`, which SEP-2577's server configuration is, is the only source of directories, and the refusal with it unset names it |
+| 115 | `os.Root` keeps a path inside its directory | Go 1.27.1: `os/root.go` L33-43 (links are followed, never out of the root, and never absolute), `os/file.go` L421 (`errPathEscapes`, unexported), `os/root_windows.go` L211-244 and `os/types_windows.go` L46-80 (on Windows the root's `Lstat` takes the file id from the handle, so `os.SameFile` holds); the `internal/localimage` tests | **Confirmed (tier 1), with two limits.** A relative link that leaves the root, and every absolute link, are refused as escaping; the refusal is matched by its text, and a change to that text still refuses, as `[invalid]`. `Root` does not stop a FIFO or a device, so `localimage` refuses anything but a regular file before opening, opens with `O_NONBLOCK` where FIFOs exist, and holds the open file to the one checked with `os.SameFile` A probe on 2026-10-08 found `O_NOFOLLOW` ignored for the final component: `Root` follows the link itself, so the check stays `Lstat` and `os.SameFile` |
+| 116 | A lost upload can be settled by reading | At v19.4.1-ee: `lib/api/markdown_uploads.rb` L16 (`authenticate_non_get!`), L69-73 (the POST checks no role: any account that can read the project uploads), L90-91 and L104-120 (listing, and downloading by id, need `admin_upload`, Maintainer); the OpenAPI file's `GET /projects/{id}/uploads` (id, size, filename, created_at, uploaded_by: no secret); `app/services/upload_service.rb` L11-18 (a file over the instance's limit stores nothing), `doc/user/gitlab_com/_index.md` L34 and `db/structure.sql` L14071 (100 MiB) | **Refuted (tier 1).** A Developer cannot list uploads, and a Maintainer's listing has no secret, so no read can tell whether a lost upload landed or give its link. `upload_file` sends once and answers `[ambiguous_outcome]`, saying a repeat would leave the first upload, if it landed, with nothing linking to it |
+| 117 | A bundle's optional setting the person leaves empty reaches the server empty | anthropics/mcpb at v2.1.2: its manifest specification, L555-583 and L699 (user_config, and arrays expanded only as separate arguments), `src/shared/config.ts` L18-80 (`replaceVariables` replaces only the variables it has, and refuses an array in a string) and L139-178 (variables come from defaults and the person's values) | **Refuted (tier 1, the reference host; Claude Desktop not probed).** An optional key with no default is never a variable, so `${user_config.x}` reaches the environment as written, and the server refuses it as a directory that is not absolute. A `multiple` value is an array, which is not substituted in a string either. So `upload_dirs` is one `directory` with the default `""`, and the `mcpb` gate refuses an env-spent key that is optional with no default, or `multiple` |
+| 118 | An uploaded image keeps its metadata | At v19.4.1-ee: `workhorse/internal/upstream/routes.go` L362 and L612-613 (`POST /api/v4/projects/:id/uploads` goes through `upload.Multipart`), `workhorse/internal/upload/multipart_uploader.go` L21-36 and `saved_file_tracker.go` L72-81 (`TransformContents`), `workhorse/internal/upload/exif.go` (`handleExifUpload`: only when the bytes sniff as JPEG or decode as TIFF), `workhorse/internal/upload/exif/exif.go` L53-64, L164-218 and L238-253 (a name ending `.jpg`, `.jpeg` or `.tiff`; `exiftool -IPTC= -XMP=`, then `-all=` keeping the size, resolution and orientation tags) | **Refined (tier 1; not probed live).** Workhorse removes a JPEG's metadata before GitLab stores it, EXIF location and camera details included, keeping only its size, resolution and orientation, unless the instance sets `SKIP_EXIFTOOL`. PNG, GIF and WebP are not touched, so their text chunks and EXIF or XMP go as they are. `upload_file` names a JPEG `.jpg`, so the removal applies, and the result and the question say which case holds |

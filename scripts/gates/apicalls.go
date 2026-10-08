@@ -37,12 +37,12 @@ type clientCall struct {
 	Func string
 	Pos  string // file:line, for a message a person can open
 
-	// Query and Body are the literal's fields, nil when absent. Out is
-	// the argument the response is decoded into: the last argument of
-	// the c.Do or c.list call the literal is passed to.
-	Query, Body, Out ast.Expr
-	fn               *ast.FuncDecl
-	file             *ast.File
+	// Query, Body and Form are the literal's fields, nil when absent.
+	// Out is the argument the response is decoded into: the last
+	// argument of the c.Do or c.list call the literal is passed to.
+	Query, Body, Form, Out ast.Expr
+	fn                     *ast.FuncDecl
+	file                   *ast.File
 }
 
 // op is the call as the verdict file spells an operation's verb, and
@@ -152,6 +152,19 @@ func funcName(fn *ast.FuncDecl) string {
 	return fn.Name.Name
 }
 
+// keyValue is the value a composite literal gives key, and whether it
+// gives one.
+func keyValue(cl *ast.CompositeLit, key string) (ast.Expr, bool) {
+	for _, el := range cl.Elts {
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			if id, ok := kv.Key.(*ast.Ident); ok && id.Name == key {
+				return kv.Value, true
+			}
+		}
+	}
+	return nil, false
+}
+
 func stringLit(e ast.Expr) (string, bool) {
 	lit, ok := e.(*ast.BasicLit)
 	if !ok || lit.Kind != token.STRING {
@@ -232,6 +245,8 @@ func (c *clientCall) readFields(lit *ast.CompositeLit) (methodOK, pathOK bool) {
 			c.Query = kv.Value
 		case "Body":
 			c.Body = kv.Value
+		case "Form":
+			c.Form = kv.Value
 		case "ReadOnly":
 			c.ReadOnly, _ = stringLit(kv.Value)
 		}

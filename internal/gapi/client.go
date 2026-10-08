@@ -385,12 +385,14 @@ type response struct {
 
 // prepared is a call checked and built, ready to send.
 type prepared struct {
-	call       Call
-	name       string
-	endpoint   *url.URL
-	payload    []byte
-	token      string
-	repeatable bool
+	call     Call
+	name     string
+	endpoint *url.URL
+	payload  []byte
+	// contentType is the payload's Content-Type header.
+	contentType string
+	token       string
+	repeatable  bool
 }
 
 // do sends a call under the retry policy and decodes the answer.
@@ -428,8 +430,14 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 	if p.endpoint, err = c.endpoint(call.Root, path, call.Query); err != nil {
 		return nil, err
 	}
-	if call.Body != nil {
+	switch {
+	case call.Body != nil:
 		if p.payload, err = json.Marshal(call.Body); err != nil {
+			return nil, Wrap(ClassInvalid, err, "the request for %s could not be encoded", p.name)
+		}
+		p.contentType = "application/json"
+	case call.Form != nil:
+		if p.payload, p.contentType, err = call.Form.encode(); err != nil {
 			return nil, Wrap(ClassInvalid, err, "the request for %s could not be encoded", p.name)
 		}
 	}
@@ -465,7 +473,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 			s.requests.Add(1)
 		}
 		start := time.Now()
-		res, sendErr := c.attempt(ctx, p.call.Method, p.endpoint, p.payload, p.token, p.call.UnmodifiedSince)
+		res, sendErr := c.attempt(ctx, p)
 		release()
 		status := 0
 		if res != nil {
@@ -640,7 +648,8 @@ var (
 
 // attempt makes one HTTP request. The address is checked against the
 // instance before the token is attached.
-func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, payload []byte, token string, unmodifiedSince time.Time) (*attemptResult, error) {
+func (c *Client) attempt(ctx context.Context, p *prepared) (*attemptResult, error) {
+	endpoint := p.endpoint
 	if !c.inst.SameOrigin(endpoint) {
 		return nil, errOffInstance
 	}
@@ -649,27 +658,40 @@ func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, 
 	var headersLate atomic.Bool
 	headers := time.AfterFunc(c.headerTimeout, func() { headersLate.Store(true); cancel() })
 
-	var reader io.Reader
-	if payload != nil {
-		reader = bytes.NewReader(payload)
+	// A large body can take longer to send than the header timeout
+	// allows, so the clock starts again whenever more of it is taken: it
+	// times a stall while the body is sent, then the wait for the answer.
+	payload := func() io.Reader {
+		return &progress{r: bytes.NewReader(p.payload), moved: func() { headers.Reset(c.headerTimeout) }}
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), reader)
+	var reader io.Reader
+	if p.payload != nil {
+		reader = payload()
+	}
+	req, err := http.NewRequestWithContext(ctx, p.call.Method, endpoint.String(), reader)
 	if err != nil {
 		headers.Stop()
 		return nil, WithoutURL(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if p.payload != nil {
+		// The wrapper hides the length and the replay a bytes.Reader would
+		// have given: Go's HTTP/2 transport replays a body for a stream
+		// the server refused before reading it.
+		req.ContentLength = int64(len(p.payload))
+		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(payload()), nil }
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if p.contentType != "" {
+		req.Header.Set("Content-Type", p.contentType)
 	}
-	if !unmodifiedSince.IsZero() {
+	if since := p.call.UnmodifiedSince; !since.IsZero() {
 		// RFC 3339 with the fraction, not an HTTP-date: GitLab reads the
 		// header with Ruby's Time.parse and compares it with a time kept to
 		// the microsecond, so a date cut to the second would refuse nearly
 		// every delete (check_unmodified_since! in lib/api/helpers.rb).
-		req.Header.Set("If-Unmodified-Since", unmodifiedSince.UTC().Format(time.RFC3339Nano))
+		req.Header.Set("If-Unmodified-Since", since.UTC().Format(time.RFC3339Nano))
 	}
 	resp, err := c.http.Do(req)
 	headers.Stop()
@@ -696,6 +718,20 @@ func (c *Client) attempt(ctx context.Context, method string, endpoint *url.URL, 
 	}
 	res.body = body
 	return res, nil
+}
+
+// progress reports every read of a request body that took bytes.
+type progress struct {
+	r     io.Reader
+	moved func()
+}
+
+func (p *progress) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.moved()
+	}
+	return n, err
 }
 
 // stallGuard cancels a body whose next Read makes no progress within

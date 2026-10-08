@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -53,8 +54,8 @@ func TestDefaults(t *testing.T) {
 	if c.ReadOnly || c.EnableShip || c.EnableDestructive {
 		t.Errorf("a switch defaulted on: %+v", c)
 	}
-	if len(c.Toolsets) != 0 || len(c.WriteNamespaces) != 0 {
-		t.Errorf("Toolsets %v, WriteNamespaces %v; want none", c.Toolsets, c.WriteNamespaces)
+	if len(c.Toolsets) != 0 || len(c.WriteNamespaces) != 0 || len(c.UploadDirs) != 0 {
+		t.Errorf("Toolsets %v, WriteNamespaces %v, UploadDirs %v; want none", c.Toolsets, c.WriteNamespaces, c.UploadDirs)
 	}
 	if c.LogLevel != LogInfo || c.LogFormat != LogText || c.HTTPTimeout != 60*time.Second {
 		t.Errorf("LogLevel %q, LogFormat %q, HTTPTimeout %v", c.LogLevel, c.LogFormat, c.HTTPTimeout)
@@ -116,6 +117,89 @@ func TestEnvironmentAndFlags(t *testing.T) {
 	}
 }
 
+// The upload directories are split as PATH is, cleaned, sorted and
+// deduplicated; a flag wins over the environment as for every setting.
+func TestUploadDirs(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	sep := string(filepath.ListSeparator)
+	c, err := load(t, nil, map[string]string{EnvUploadDirs: b + sep + " " + a + string(filepath.Separator) + sep + sep + b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{a, b}
+	slices.Sort(want)
+	if !slices.Equal(c.UploadDirs, want) {
+		t.Errorf("UploadDirs = %v, want %v", c.UploadDirs, want)
+	}
+	if c, err = load(t, []string{"--upload-dirs", a}, map[string]string{EnvUploadDirs: b}); err != nil || !slices.Equal(c.UploadDirs, []string{a}) {
+		t.Errorf("the flag: %v, %v", c.UploadDirs, err)
+	}
+}
+
+// A filesystem root and the home directory, or a directory holding it,
+// are refused at startup; a folder inside the home directory is not.
+func TestUploadDirsRefuseWhatHoldsEverything(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "people", "you")
+	shots := filepath.Join(home, "Pictures", "shots")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	root := base
+	for filepath.Dir(root) != root {
+		root = filepath.Dir(root)
+	}
+	for _, c := range []struct {
+		dir  string
+		want bool // accepted
+	}{
+		{shots, true},
+		{filepath.Join(base, "elsewhere"), true},
+		{home, false},
+		{filepath.Join(base, "people"), false},
+		{root, false},
+	} {
+		c2, err := load(t, nil, map[string]string{EnvUploadDirs: c.dir})
+		switch {
+		case c.want && (err != nil || !slices.Equal(c2.UploadDirs, []string{c.dir})):
+			t.Errorf("%s: %v, %v; want it accepted", c.dir, c2.UploadDirs, err)
+		case !c.want && (!errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "filesystem root or holds your home directory")):
+			t.Errorf("%s: %v; want it refused", c.dir, err)
+		}
+	}
+	// A name that reaches the home directory through a link is refused
+	// as the home directory's parent is.
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(filepath.Join(base, "people"), link); err != nil {
+		t.Logf("no symbolic links here, so the linked case is not run: %v", err)
+	} else if _, err := load(t, nil, map[string]string{EnvUploadDirs: link}); !errors.Is(err, ErrInvalid) ||
+		!strings.Contains(err.Error(), "holds your home directory") {
+		t.Errorf("%s, a link to the home directory's parent: %v; want it refused", link, err)
+	}
+	// With no home directory known, a filesystem root is still refused.
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	if _, err := load(t, nil, map[string]string{EnvUploadDirs: root}); !errors.Is(err, ErrInvalid) ||
+		!strings.Contains(err.Error(), "filesystem root") {
+		t.Errorf("%s with no home known: %v; want it refused", root, err)
+	}
+}
+
+// An existing directory whose name holds the list separator is one
+// entry, as the bundle's folder picker hands it over.
+func TestUploadDirsKeepsAFolderWhoseNameHoldsTheSeparator(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "shots"+string(filepath.ListSeparator)+"2026")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c, err := load(t, nil, map[string]string{EnvUploadDirs: dir})
+	if err != nil || !slices.Equal(c.UploadDirs, []string{dir}) {
+		t.Errorf("UploadDirs = %v, %v; want [%s]", c.UploadDirs, err, dir)
+	}
+}
+
 func TestToolsetsAll(t *testing.T) {
 	c, err := load(t, nil, map[string]string{EnvToolsets: "all"})
 	if err != nil {
@@ -151,6 +235,7 @@ func TestInvalidValuesReportedTogether(t *testing.T) {
 		EnvLogLevel:        "loud",
 		EnvLogFormat:       "xml",
 		EnvHTTPTimeout:     "soon",
+		EnvUploadDirs:      "relative/images" + string(filepath.ListSeparator) + t.TempDir(),
 	}
 	_, err := load(t, nil, env)
 	if !errors.Is(err, ErrInvalid) {
@@ -161,6 +246,7 @@ func TestInvalidValuesReportedTogether(t *testing.T) {
 		"unknown toolset issues, pipelines (want activity, deployments, planning, releases, snippets, wiki, or all)",
 		`"example-group/../x"`, `"a//b"`,
 		EnvLogLevel, EnvLogFormat, EnvHTTPTimeout,
+		EnvUploadDirs + `: not an absolute directory: "relative/images"`,
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
@@ -298,6 +384,7 @@ func TestVarsList(t *testing.T) {
 		"GITLAB_MCP_REQUIRE_PROMPT":                {"require-prompt", "false"},
 		"GITLAB_MCP_TOOLSETS":                      {"toolsets", ""},
 		"GITLAB_MCP_WRITE_NAMESPACES":              {"write-namespaces", ""},
+		"GITLAB_MCP_UPLOAD_DIRS":                   {"upload-dirs", ""},
 		"GITLAB_MCP_LOG_LEVEL":                     {"log-level", "info"},
 		"GITLAB_MCP_LOG_FORMAT":                    {"log-format", "text"},
 		"GITLAB_MCP_HTTP_TIMEOUT":                  {"http-timeout", "1m0s"},

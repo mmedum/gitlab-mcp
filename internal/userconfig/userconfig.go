@@ -107,18 +107,18 @@ func BaseDir(override string, allowOutsideHome bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: the home directory cannot be found (%w)", ErrOutsideHome, err)
 	}
-	if !withinDir(realPath(home), realPath(abs)) {
+	if !WithinDir(RealPath(home), RealPath(abs)) {
 		return "", fmt.Errorf("%w: %q", ErrOutsideHome, override)
 	}
 	return abs, nil
 }
 
-// realPath resolves links as far as the file system can, so that two
+// RealPath resolves links as far as the file system can, so that two
 // names for one directory compare equal: macOS temporary paths under
 // /var are /private/var, and Windows hands out 8.3 short names. The
 // directory usually does not exist yet, so the deepest existing
 // ancestor is resolved and the rest appended.
-func realPath(path string) string {
+func RealPath(path string) string {
 	rest := ""
 	for cur := path; ; {
 		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
@@ -133,8 +133,8 @@ func realPath(path string) string {
 	}
 }
 
-// withinDir reports whether path is dir or sits under it.
-func withinDir(dir, path string) bool {
+// WithinDir reports whether path is dir or sits under it.
+func WithinDir(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
 	if err != nil {
 		return false

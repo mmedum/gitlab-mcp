@@ -102,7 +102,7 @@ is an argument the model writes. So when the client supports MCP
 elicitation, the server asks you itself before a merge, an approval,
 applying review suggestions, a manual job, a release, a new tag, a pipeline on a protected ref or for
 a merge request between two protected branches,
-publishing a confidential issue and every delete. Text from GitLab in
+publishing a confidential issue, an image upload and every delete. Text from GitLab in
 the question stands in backticks or code style, on one line, with no
 link drawn. Only an accept writes. The answer is bound to the call it
 was asked for, spent once, and void after 5 minutes. An accept is still
@@ -218,6 +218,26 @@ replace it with a `read_api` one.
   tag.
 - **Job artifacts are masked like logs.** `get_job_artifact` replaces
   token and key shapes, and shows no binary file.
+- **An upload reads only an image, from where you allowed.**
+  `upload_file` reads a local file only inside the directories
+  `GITLAB_MCP_UPLOAD_DIRS` names, and none when it is unset, through Go's
+  `os.Root`, so neither `..` nor a symbolic link leads out. A filesystem
+  root and your home directory, or one holding it, are refused at
+  startup. The project is checked against `GITLAB_MCP_WRITE_NAMESPACES`
+  before anything on this machine is read. It refuses a symbolic link, a
+  directory, a FIFO, anything over 10 MiB, and anything whose bytes do
+  not start as a PNG, JPEG, GIF or WebP; SVG is refused because it is
+  text that can carry script. That check keeps out what is not an image;
+  it does not prove the whole file is one. Only the file's base name goes
+  to GitLab, never its directory. When your client can ask, you are
+  asked before each upload. In a public project anyone with the link can
+  open the upload, and in a private or internal one too unless the
+  project requires sign-in to view media files; the result says which.
+  The project's Maintainers can list and download every upload by its
+  id, without the link. GitLab removes a JPEG's metadata when it stores
+  it, but a PNG's, GIF's or WebP's goes as it is in the file. GitLab
+  keeps the upload even if nothing links to it, and this server cannot
+  delete it.
 - **Release links stay in the project.** `create_release` takes asset
   links only to the project's own pages and API paths on gitlab.com, its
   packages included, with no credentials in the URL, and

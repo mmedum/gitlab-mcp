@@ -139,6 +139,24 @@ type Project struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	LastActivityAt    *time.Time `json:"last_activity_at"`
 	Namespace         Namespace  `json:"namespace"`
+	// EnforceAuthChecksOnUploads is "Require authentication to view media
+	// files": when false, an image uploaded to a private or internal
+	// project opens for anyone with its link. nil when not sent.
+	EnforceAuthChecksOnUploads *bool `json:"enforce_auth_checks_on_uploads"`
+}
+
+// ProjectUpload is a file uploaded to a project for Markdown to link,
+// as POST /projects/:id/uploads answers.
+type ProjectUpload struct {
+	ID int64 `json:"id"`
+	// Alt is the Markdown's link text: the name without its extension
+	// for an image.
+	Alt string `json:"alt"`
+	// URL is the path relative to the project, /uploads/<secret>/<name>.
+	URL string `json:"url"`
+	// FullPath is the path on the instance, /-/project/<id>/uploads/....
+	FullPath string `json:"full_path"`
+	Markdown string `json:"markdown"`
 }
 
 // Milestone is the milestone embedded in an issue or merge request.

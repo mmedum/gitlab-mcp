@@ -197,6 +197,29 @@ func mcpbDocumentProblems(m mcpbManifest, raw []byte) []string {
 // one composed into a longer string.
 var mcpbUserConfigRef = regexp.MustCompile(`\$\{user_config\.([A-Za-z0-9_]+)\}`)
 
+// mcpbSubstituted refuses a user_config key an env value spends that a
+// host may leave unsubstituted: optional with no default, or multiple.
+func mcpbSubstituted(where, key string, raw json.RawMessage) []string {
+	var opt struct {
+		Required bool            `json:"required"`
+		Default  json.RawMessage `json:"default"`
+		Multiple bool            `json:"multiple"`
+	}
+	if err := json.Unmarshal(raw, &opt); err != nil {
+		return []string{fmt.Sprintf("user_config.%s is not an object: %v", key, err)}
+	}
+	var problems []string
+	if !opt.Required && opt.Default == nil {
+		problems = append(problems, fmt.Sprintf("%s spends ${user_config.%s}, which is optional with no default; "+
+			"a host leaves it as written when the person sets nothing, so give it a default", where, key))
+	}
+	if opt.Multiple {
+		problems = append(problems, fmt.Sprintf("%s spends ${user_config.%s}, which takes multiple values; "+
+			"a host does not substitute an array in a string", where, key))
+	}
+	return problems
+}
+
 // mcpbValidate is the referential checks. It takes the staged table and
 // the launcher's names as arguments so a test can break each one.
 func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []string {
@@ -231,7 +254,11 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 		}
 	}
 
-	// Every ${user_config.x} in an env value is declared.
+	// Every ${user_config.x} in an env value is declared, and is
+	// substituted whatever the person does: the reference host leaves the
+	// reference as written for an optional key with no default, and for
+	// an array of values in a string (src/shared/config.ts in
+	// anthropics/mcpb at v2.1.2), and the server would then refuse it.
 	envs := map[string]map[string]string{"mcp_config": m.Server.MCPConfig.Env}
 	for platform, over := range m.Server.MCPConfig.PlatformOverrides {
 		envs["platform_overrides."+platform] = over.Env
@@ -239,10 +266,13 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 	for where, env := range envs {
 		for key, value := range env {
 			for _, ref := range mcpbUserConfigRef.FindAllStringSubmatch(value, -1) {
-				if _, ok := m.UserConfig[ref[1]]; !ok {
+				raw, ok := m.UserConfig[ref[1]]
+				if !ok {
 					problems = append(problems, fmt.Sprintf("%s.env.%s spends ${user_config.%s}, which user_config "+
 						"does not declare", where, key, ref[1]))
+					continue
 				}
+				problems = append(problems, mcpbSubstituted(where+".env."+key, ref[1], raw)...)
 			}
 		}
 	}
@@ -376,11 +406,13 @@ func mcpbLicense(root string) string {
 }
 
 // mcpbUserConfig is what the bundle asks for at install, each key with
-// the variable it sets. §5a: client_id, profile and read_only.
+// the variable it sets. §5a: client_id, profile, read_only and
+// upload_dirs.
 var mcpbUserConfig = map[string]string{
-	"client_id": config.EnvClientID,
-	"profile":   config.EnvProfile,
-	"read_only": config.EnvReadOnly,
+	"client_id":   config.EnvClientID,
+	"profile":     config.EnvProfile,
+	"read_only":   config.EnvReadOnly,
+	"upload_dirs": config.EnvUploadDirs,
 }
 
 // mcpbServerPackage is where the one description constant lives, which

@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -73,6 +75,7 @@ const (
 	EnvRequirePrompt             = EnvPrefix + "REQUIRE_PROMPT"
 	EnvToolsets                  = EnvPrefix + "TOOLSETS"
 	EnvWriteNamespaces           = EnvPrefix + "WRITE_NAMESPACES"
+	EnvUploadDirs                = EnvPrefix + "UPLOAD_DIRS"
 	EnvLogLevel                  = EnvPrefix + "LOG_LEVEL"
 	EnvLogFormat                 = EnvPrefix + "LOG_FORMAT"
 	EnvHTTPTimeout               = EnvPrefix + "HTTP_TIMEOUT"
@@ -107,6 +110,8 @@ var Vars = []Var{
 		Doc: "comma-separated optional toolsets: " + strings.Join(Toolsets, ", ") + ", or all"},
 	{Name: EnvWriteNamespaces, Flag: "write-namespaces",
 		Doc: "comma-separated groups or projects that writes are confined to; unset means anywhere"},
+	{Name: EnvUploadDirs, Flag: "upload-dirs",
+		Doc: "absolute directories upload_file may read images from, separated as PATH is; unset means none"},
 	{Name: EnvLogLevel, Flag: "log-level", Default: string(LogInfo),
 		Doc: "log level: debug, info, warn, error"},
 	{Name: EnvLogFormat, Flag: "log-format", Default: string(LogText),
@@ -209,9 +214,12 @@ type Config struct {
 	// WriteNamespaces confine Write, Ship and Destructive (§4.7). Empty
 	// means no confinement.
 	WriteNamespaces []string
-	LogLevel        LogLevel
-	LogFormat       LogFormat
-	HTTPTimeout     time.Duration
+	// UploadDirs are the only directories upload_file may read an image
+	// from (§7.10). Empty means none: the tool refuses every path.
+	UploadDirs  []string
+	LogLevel    LogLevel
+	LogFormat   LogFormat
+	HTTPTimeout time.Duration
 	// ConfigDir is the resolved base directory for profiles.
 	ConfigDir userconfig.Dir
 }
@@ -352,6 +360,8 @@ func (s *Settings) Build() (Config, error) {
 	add(err)
 	c.WriteNamespaces, err = parseNamespaces(s.get(EnvWriteNamespaces))
 	add(err)
+	c.UploadDirs, err = parseUploadDirs(s.get(EnvUploadDirs))
+	add(err)
 
 	c.LogLevel = LogLevel(strings.ToLower(strings.TrimSpace(s.get(EnvLogLevel))))
 	if !slices.Contains(logLevels, c.LogLevel) {
@@ -456,6 +466,62 @@ func parseNamespaces(v string) ([]string, error) {
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil
+}
+
+// parseUploadDirs reads the directories upload_file may read from, split
+// as PATH is: on colons, or semicolons on Windows. A value that is itself
+// an existing absolute directory is one entry, so a folder whose name
+// holds the separator, as a picker may hand over, is not split into
+// something else. Each must be absolute, because the server's working
+// directory is whatever the client started it in. A filesystem root and
+// the home directory, or a directory holding it, are refused: they would
+// let upload_file read nearly every image the person has.
+func parseUploadDirs(v string) ([]string, error) {
+	entries := filepath.SplitList(v)
+	if whole := strings.TrimSpace(v); filepath.IsAbs(whole) {
+		if fi, err := os.Stat(whole); err == nil && fi.IsDir() {
+			entries = []string{whole}
+		}
+	}
+	home, _ := os.UserHomeDir()
+	var out, relative, wide []string
+	for _, dir := range entries {
+		dir = strings.TrimSpace(dir)
+		switch {
+		case dir == "":
+		case !filepath.IsAbs(dir):
+			relative = append(relative, fmt.Sprintf("%q", dir))
+		case tooWide(filepath.Clean(dir), home):
+			wide = append(wide, fmt.Sprintf("%q", dir))
+		default:
+			out = append(out, filepath.Clean(dir))
+		}
+	}
+	var errs []error
+	if len(relative) > 0 {
+		errs = append(errs, fmt.Errorf("%w: %s: not an absolute directory: %s", ErrInvalid, EnvUploadDirs, strings.Join(relative, ", ")))
+	}
+	if len(wide) > 0 {
+		errs = append(errs, fmt.Errorf("%w: %s: %s is a filesystem root or holds your home directory, so upload_file could read "+
+			"nearly every image you have; name a dedicated folder, such as a screenshots folder", ErrInvalid, EnvUploadDirs,
+			strings.Join(wide, ", ")))
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}
+
+// tooWide reports a filesystem root, which is its own parent, and the
+// home directory or a directory holding it. Links and short names are
+// resolved first, so a name that reaches the home directory another way
+// is caught too.
+func tooWide(dir, home string) bool {
+	if filepath.Dir(dir) == dir {
+		return true
+	}
+	return home != "" && userconfig.WithinDir(userconfig.RealPath(dir), userconfig.RealPath(home))
 }
 
 // parseTestInstance reads the development override. Unset means

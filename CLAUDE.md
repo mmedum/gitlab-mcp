@@ -90,7 +90,8 @@ or missed. Siblings are never named in this repository (rule 1).
    does not deduplicate. A snippet update that creates, moves or
    deletes a file is sent once too. An ambiguous failure is
    `[ambiguous_outcome]` and the server reads to settle it; it never
-   creates again to find out. §4.5.
+   creates again to find out. Where no read can settle it, as for an
+   upload, the result says so and the person decides. §4.5.
 9. **A write carries a witness.** Where GitLab offers one
    (`last_commit_id`, `sha`) it is required; where it offers none, the
    server reads first, compares the caller's witness and refuses
@@ -173,6 +174,8 @@ than the gate loosened.
   build's version.
 - `internal/diffpos/` a diff note's position computed from a unified
   diff, no network.
+- `internal/localimage/` an image read from a directory the person
+  allowed, for `upload_file`, no network.
 - `scripts/gates/` the repository's own checks, as Go;
   `scripts/internal/` what the gates and drivers share;
   `scripts/livegitlab/` the live driver; `scripts/evals/` the

@@ -1,6 +1,10 @@
 package gapi
 
 import (
+	"bytes"
+	"mime"
+	"mime/multipart"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -31,6 +35,10 @@ type Call struct {
 	Query url.Values
 	// Body is marshaled as JSON when not nil.
 	Body any
+	// Form sends a file as multipart/form-data instead of a JSON body,
+	// for the one route that takes a file. Its Field is a literal at the
+	// call site, which `scripts/gates api-fields` reads.
+	Form *Form
 	// Root is where Path starts. The zero value is the API root.
 	Root Root
 	// Repeatable is the reason a POST may be sent twice without applying
@@ -76,6 +84,37 @@ type Call struct {
 	// Name is a short label for logs and messages, "get_issue". Never a
 	// path.
 	Name string
+}
+
+// Form is a multipart/form-data body carrying one file.
+type Form struct {
+	// Field is the form field the file goes in, such as "file".
+	Field string
+	// Filename is the name the file is sent under, without a directory.
+	Filename string
+	// ContentType is the file part's media type.
+	ContentType string
+	Data        []byte
+}
+
+// encode is the body and its Content-Type header.
+func (f *Form) encode() ([]byte, string, error) {
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": f.Field, "filename": f.Filename}))
+	h.Set("Content-Type", f.ContentType)
+	part, err := w.CreatePart(h)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(f.Data); err != nil {
+		return nil, "", err
+	}
+	if err := w.Close(); err != nil {
+		return nil, "", err
+	}
+	return b.Bytes(), w.FormDataContentType(), nil
 }
 
 // Root is the base a Call's Path is resolved against.
