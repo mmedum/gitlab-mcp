@@ -187,6 +187,38 @@ func TestUploadDirsRefuseWhatHoldsEverything(t *testing.T) {
 	}
 }
 
+// On a case-insensitive disk, as macOS has by default, the home
+// directory spelled in another case, or a directory above it, is the
+// same directory and is refused; elsewhere there is nothing to test.
+func TestUploadDirsRefuseHomeInAnotherCase(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "people", "you")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a, errA := os.Stat(home)
+	b, errB := os.Stat(filepath.Join(base, "people", "YOU"))
+	if errA != nil || errB != nil || !os.SameFile(a, b) {
+		t.Skip("this file system tells names apart by case")
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, dir := range []string{filepath.Join(base, "people", "YOU"), filepath.Join(base, "PEOPLE")} {
+		if _, err := load(t, nil, map[string]string{EnvUploadDirs: dir}); !errors.Is(err, ErrInvalid) ||
+			!strings.Contains(err.Error(), "holds your home directory") {
+			t.Errorf("%s: %v; want it refused", dir, err)
+		}
+	}
+	// A directory beside the home directory is still allowed.
+	beside := filepath.Join(base, "people", "shots")
+	if err := os.Mkdir(beside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := load(t, nil, map[string]string{EnvUploadDirs: beside}); err != nil {
+		t.Errorf("%s: %v; want it accepted", beside, err)
+	}
+}
+
 // An existing directory whose name holds the list separator is one
 // entry, as the bundle's folder picker hands it over.
 func TestUploadDirsKeepsAFolderWhoseNameHoldsTheSeparator(t *testing.T) {

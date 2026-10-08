@@ -185,6 +185,13 @@ func TestAskBinds(t *testing.T) {
 	if x, y := AskDeleteSnippet("", 1, "t", files), AskDeleteSnippet("", 1, "t", []string{strings.Repeat("f", 199) + "g", "b"}); x.Text != y.Text || x.Bind == y.Bind {
 		t.Error("a snippet's file name past its shown start is not bound")
 	}
+	// Two images the question names alike, the same name, type and size,
+	// are told apart by their bytes.
+	notes := []string{"Who can open it."}
+	if x, y := AskUploadFile("p", "shot.png", "image/png", notes, []byte("one image")),
+		AskUploadFile("p", "shot.png", "image/png", notes, []byte("two image")); x.Text != y.Text || x.Bind == y.Bind {
+		t.Error("an image's bytes are not bound")
+	}
 	many := make([]string, 12)
 	for i := range many {
 		many[i] = fmt.Sprintf("file-%02d.txt", i)
