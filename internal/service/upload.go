@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 
+	"github.com/mmedum/gitlab-mcp/v2/internal/config"
 	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/v2/internal/localimage"
 	"github.com/mmedum/gitlab-mcp/v2/internal/model"
@@ -34,7 +36,7 @@ func (s *Service) UploadFile(ctx context.Context, in Upload) (model.UploadWrite,
 	}
 	img, err := localimage.Read(in.Path, s.cfg.UploadDirs)
 	if err != nil {
-		return model.UploadWrite{}, err
+		return model.UploadWrite{}, imageRefused(err)
 	}
 	requires := t.project.EnforceAuthChecksOnUploads
 	reach, note := linkReach(t.ref.Visibility, requires)
@@ -46,8 +48,10 @@ func (s *Service) UploadFile(ctx context.Context, in Upload) (model.UploadWrite,
 		out.WouldSend = preview("POST", "upload the image to the project", []string{"file"})
 		return out, nil
 	}
-	if err := ask(ctx, render.AskUploadFile(t.ref.Project.Path, img.Name, img.Type, len(img.Data), notes, img.Data)); err != nil {
-		return model.UploadWrite{}, err
+	if asks(ctx) {
+		if err := ask(ctx, render.AskUploadFile(t.ref.Project.Path, img.Name, img.Type, notes, img.Data)); err != nil {
+			return model.UploadWrite{}, err
+		}
 	}
 	up, err := s.client.UploadFile(ctx, t.p, img.Name, img.Type, img.Data)
 	if gapi.IsClass(err, gapi.ClassAmbiguousOutcome) {
@@ -73,6 +77,52 @@ const (
 	reachReaders = "project_readers"
 	reachUnknown = "unknown"
 )
+
+// imageRefused words a refusal from internal/localimage with this tool's
+// and its setting's names, and gives it its class (§6.5). The words name
+// neither the allowed directories nor what a file holds.
+func imageRefused(err error) error {
+	var e *localimage.Error
+	if !errors.As(err, &e) {
+		return err
+	}
+	const nothing = "Nothing was read or sent."
+	switch e.Kind {
+	case localimage.NotAbsolute:
+		return gapi.Errf(gapi.ClassInvalid, "path must be the image's absolute path; a relative one would be read from wherever "+
+			"the server was started")
+	case localimage.DotDot:
+		return gapi.Errf(gapi.ClassInvalid, "path may not contain a .. element; pass the image's path as it is")
+	case localimage.NoDirectories:
+		return gapi.Errf(gapi.ClassBlocked, "upload_file reads only from the directories %s names, and it is not set. %s Set it "+
+			"to the directory holding the image and restart the server", config.EnvUploadDirs, nothing)
+	case localimage.Outside:
+		return gapi.Errf(gapi.ClassBlocked, "path is outside every directory %s names. %s Save the image in one of them, or add "+
+			"its directory to the setting and restart the server", config.EnvUploadDirs, nothing)
+	case localimage.Escapes:
+		return gapi.Errf(gapi.ClassBlocked, "path leads outside the directory it is in, through a symbolic link; upload_file "+
+			"reads only inside the directories %s names. %s", config.EnvUploadDirs, nothing)
+	case localimage.NoDirectory:
+		return gapi.Errf(gapi.ClassNotFound, "a directory %s names does not exist", config.EnvUploadDirs)
+	case localimage.Missing:
+		return gapi.Errf(gapi.ClassNotFound, "there is nothing at path")
+	case localimage.NotRegular:
+		return gapi.Errf(gapi.ClassInvalid, "path is %s, not a regular file; pass the path of the image itself", e.Detail)
+	case localimage.Changed:
+		return gapi.Errf(gapi.ClassConflict, "the file at path changed while it was being opened, so what was checked is not what "+
+			"would be read. %s Call again once it is settled", nothing)
+	case localimage.TooLarge:
+		return gapi.Errf(gapi.ClassInvalid, "the image is larger than %d MiB, the most upload_file sends; make it smaller first",
+			localimage.MaxBytes>>20)
+	case localimage.NotImage:
+		return gapi.Errf(gapi.ClassInvalid, "path is not a PNG, JPEG, GIF or WebP image, judged from its bytes rather than its "+
+			"name; upload_file sends only those four. SVG is refused because it is text that can carry script")
+	case localimage.Unreadable:
+		return gapi.Errf(gapi.ClassInvalid, "path could not be read: %s", e.Detail)
+	}
+	return gapi.Errf(gapi.ClassUnexpected, "the image was refused for a reason this server does not word; this is a defect, "+
+		"please report it")
+}
 
 // maintainersNote is who reaches an upload without its link: listing
 // and downloading uploads by id needs the Maintainer role

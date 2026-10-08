@@ -241,14 +241,11 @@ func formField(e ast.Expr) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	for _, el := range lit.Elts {
-		if kv, ok := el.(*ast.KeyValueExpr); ok {
-			if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Field" {
-				return stringLit(kv.Value)
-			}
-		}
+	v, ok := keyValue(lit, "Field")
+	if !ok {
+		return "", false
 	}
-	return "", false
+	return stringLit(v)
 }
 
 // response holds every field the call decodes to a 2xx schema.

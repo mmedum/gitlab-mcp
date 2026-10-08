@@ -95,9 +95,13 @@ func sanitizedName(name string) string {
 func (s *Server) Uploads(projectPath string) []Upload {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return nil
+	}
 	var out []Upload
 	for _, u := range s.uploads {
-		if strings.EqualFold(u.Project, projectPath) {
+		if u.Project == p.PathWithNamespace {
 			out = append(out, u)
 		}
 	}

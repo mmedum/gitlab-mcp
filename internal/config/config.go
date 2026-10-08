@@ -483,10 +483,7 @@ func parseUploadDirs(v string) ([]string, error) {
 			entries = []string{whole}
 		}
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = ""
-	}
+	home, _ := os.UserHomeDir()
 	var out, relative, wide []string
 	for _, dir := range entries {
 		dir = strings.TrimSpace(dir)
@@ -517,16 +514,14 @@ func parseUploadDirs(v string) ([]string, error) {
 }
 
 // tooWide reports a filesystem root, which is its own parent, and the
-// home directory or a directory holding it.
+// home directory or a directory holding it. Links and short names are
+// resolved first, so a name that reaches the home directory another way
+// is caught too.
 func tooWide(dir, home string) bool {
 	if filepath.Dir(dir) == dir {
 		return true
 	}
-	if home == "" {
-		return false
-	}
-	rel, err := filepath.Rel(dir, filepath.Clean(home))
-	return err == nil && filepath.IsLocal(rel)
+	return home != "" && userconfig.WithinDir(userconfig.RealPath(dir), userconfig.RealPath(home))
 }
 
 // parseTestInstance reads the development override. Unset means

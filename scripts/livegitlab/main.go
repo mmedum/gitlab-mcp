@@ -93,9 +93,12 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	red.Known(redact.KindPath, o.namespace)
 	// Built from nothing, so a test instance set in the shell cannot
 	// redirect the run: it is always gitlab.com.
+	// The profile is read here and passed to both servers the run starts.
 	env := map[string]string{}
+	var profileEnv []string
 	if o.profile != "" {
 		env[config.EnvProfile] = o.profile
+		profileEnv = []string{config.EnvProfile + "=" + o.profile}
 	}
 	getenv := func(k string) string { return env[k] }
 	cfg, err := config.Load(nil, getenv)
@@ -175,7 +178,7 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	}
 	defer cleanup()
 
-	serverEnv := serverEnvFor(o, images)
+	serverEnv := append([]string{config.EnvLogLevel + "=info", config.EnvUploadDirs + "=" + images}, profileEnv...)
 	rec := newRecorder()
 	// One scripted person answers for both servers, so a tool that asks
 	// only on some calls is judged over the whole run.
@@ -215,37 +218,25 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	return nil
 }
 
-// serverEnvFor is the environment both servers start with: the log
-// level, the directory upload_file may read the run's images from, and
-// the profile when one was named.
-func serverEnvFor(o options, images string) []string {
-	env := []string{config.EnvLogLevel + "=info", config.EnvUploadDirs + "=" + images}
-	if o.profile != "" {
-		env = append(env, config.EnvProfile+"="+o.profile)
-	}
-	return env
-}
-
 // writeImages generates what upload_file sends: a PNG and a text file in
-// a directory of their own, which the server may read from, and a PNG in
-// another, which it may not. Both directories are masked in the
-// transcript, and removed when the run ends.
-func writeImages(s *scratch, red *redact.Redactor) (string, func(), error) {
-	allowed, err := os.MkdirTemp("", "gitlab-mcp-live-images-")
+// a directory the server may read from, and a PNG in one beside it, which
+// it may not. Their parent is masked in the transcript, and removed when
+// the run ends or this fails.
+func writeImages(s *scratch, red *redact.Redactor) (allowed string, cleanup func(), err error) {
+	parent, err := os.MkdirTemp("", "gitlab-mcp-live-images-")
 	if err != nil {
 		return "", nil, err
 	}
-	outside, err := os.MkdirTemp("", "gitlab-mcp-live-outside-")
-	if err != nil {
-		_ = os.RemoveAll(allowed)
-		return "", nil, err
-	}
-	cleanup := func() { _ = os.RemoveAll(allowed); _ = os.RemoveAll(outside) }
-	red.Known(redact.KindPath, allowed)
-	red.Known(redact.KindPath, outside)
+	cleanup = func() { _ = os.RemoveAll(parent) }
+	defer func() {
+		if err != nil {
+			cleanup()
+		}
+	}()
+	red.Known(redact.KindPath, parent)
+	allowed, outside := filepath.Join(parent, "allowed"), filepath.Join(parent, "outside")
 	var img bytes.Buffer
-	if err := png.Encode(&img, image.NewRGBA(image.Rect(0, 0, 16, 16))); err != nil {
-		cleanup()
+	if err = png.Encode(&img, image.NewRGBA(image.Rect(0, 0, 16, 16))); err != nil {
 		return "", nil, err
 	}
 	s.Image = filepath.Join(allowed, "live-mock-up.png")
@@ -253,8 +244,10 @@ func writeImages(s *scratch, red *redact.Redactor) (string, func(), error) {
 	s.Outside = filepath.Join(outside, "live-outside.png")
 	for path, data := range map[string][]byte{s.Image: img.Bytes(), s.NotImage: []byte("Plain text the live run wrote.\n"),
 		s.Outside: img.Bytes()} {
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			cleanup()
+		if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return "", nil, err
+		}
+		if err = os.WriteFile(path, data, 0o600); err != nil {
 			return "", nil, err
 		}
 	}

@@ -13,8 +13,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
 )
 
 // The images are generated here, never copied from anywhere (§9.1).
@@ -65,13 +63,13 @@ func symlink(t *testing.T, target, link string) {
 	}
 }
 
-// classOf is an error's class token.
-func classOf(err error) string {
-	var e *gapi.Error
+// kindOf is a refusal's kind, 0 for anything else.
+func kindOf(err error) Kind {
+	var e *Error
 	if !errors.As(err, &e) {
-		return "unclassified: " + err.Error()
+		return 0
 	}
-	return string(e.Class)
+	return e.Kind
 }
 
 func TestReadsAnImageAndNamesItByItsType(t *testing.T) {
@@ -106,7 +104,9 @@ func TestReadsAnImageAndNamesItByItsType(t *testing.T) {
 	}
 }
 
-// MaxBytes is read whole, and a byte more is refused.
+// MaxBytes is read whole, and a byte more is refused, by the size the
+// file has when it is opened: a file of zeros a byte too large is
+// refused as too large, not as no image, which reading it would find.
 func TestTheSizeCap(t *testing.T) {
 	dir := t.TempDir()
 	head := pngBytes(t)
@@ -116,8 +116,19 @@ func TestTheSizeCap(t *testing.T) {
 		t.Errorf("an image of exactly %d bytes: %d bytes, %v", MaxBytes, len(img.Data), err)
 	}
 	over := write(t, filepath.Join(dir, "over.png"), append(head, make([]byte, MaxBytes+1-len(head))...))
-	if _, err := Read(over, []string{dir}); err == nil || classOf(err) != "invalid" || !strings.Contains(err.Error(), "larger than 10 MiB") {
+	if _, err := Read(over, []string{dir}); kindOf(err) != TooLarge {
 		t.Errorf("an image a byte over: %v", err)
+	}
+	zeros := filepath.Join(dir, "zeros.png")
+	f, err := os.Create(zeros)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(MaxBytes + 1); err != nil || f.Close() != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(zeros, []string{dir}); kindOf(err) != TooLarge {
+		t.Errorf("zeros a byte over: %v", err)
 	}
 }
 
@@ -129,22 +140,22 @@ func TestRefusals(t *testing.T) {
 	png := pngBytes(t)
 	good := write(t, filepath.Join(dir, "good.png"), png)
 	cases := []struct {
-		name  string
-		path  func(t *testing.T) string
-		dirs  []string
-		class string
+		name string
+		path func(t *testing.T) string
+		dirs []string
+		kind Kind
 	}{
-		{"a relative path", func(*testing.T) string { return "good.png" }, []string{dir}, "invalid"},
+		{"a relative path", func(*testing.T) string { return "good.png" }, []string{dir}, NotAbsolute},
 		{"a .. element, even one that leads back in", func(*testing.T) string {
 			return filepath.Join(dir, "sub") + string(filepath.Separator) + ".." + string(filepath.Separator) + "good.png"
-		}, []string{dir}, "invalid"},
-		{"no allowed directory", func(*testing.T) string { return good }, nil, "blocked"},
+		}, []string{dir}, DotDot},
+		{"no allowed directory", func(*testing.T) string { return good }, nil, NoDirectories},
 		{"outside every allowed directory", func(t *testing.T) string {
 			return write(t, filepath.Join(other, "elsewhere.png"), png)
-		}, []string{dir}, "blocked"},
-		{"nothing there", func(*testing.T) string { return filepath.Join(dir, "missing.png") }, []string{dir}, "not_found"},
+		}, []string{dir}, Outside},
+		{"nothing there", func(*testing.T) string { return filepath.Join(dir, "missing.png") }, []string{dir}, Missing},
 		{"an allowed directory that is gone", func(*testing.T) string { return filepath.Join(dir, "gone", "shot.png") },
-			[]string{filepath.Join(dir, "gone")}, "not_found"},
+			[]string{filepath.Join(dir, "gone")}, NoDirectory},
 		{"a file the account may not read", func(t *testing.T) string {
 			if runtime.GOOS == "windows" || os.Getuid() == 0 {
 				t.Skip("file modes do not refuse a read here")
@@ -154,26 +165,26 @@ func TestRefusals(t *testing.T) {
 				t.Fatal(err)
 			}
 			return p
-		}, []string{dir}, "invalid"},
+		}, []string{dir}, Unreadable},
 		{"a directory", func(t *testing.T) string {
 			p := filepath.Join(dir, "folder.png")
 			if err := os.Mkdir(p, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			return p
-		}, []string{dir}, "invalid"},
+		}, []string{dir}, NotRegular},
 		{"a FIFO", func(t *testing.T) string {
 			p := filepath.Join(dir, "pipe.png")
 			if err := mkfifo(p); err != nil {
 				t.Skipf("no FIFOs here: %v", err)
 			}
 			return p
-		}, []string{dir}, "invalid"},
+		}, []string{dir}, NotRegular},
 		{"a symbolic link to an image beside it", func(t *testing.T) string {
 			p := filepath.Join(dir, "link.png")
 			symlink(t, good, p)
 			return p
-		}, []string{dir}, "invalid"},
+		}, []string{dir}, NotRegular},
 		{"a directory link that leads outside", func(t *testing.T) string {
 			write(t, filepath.Join(other, "inside", "secret.png"), png)
 			p := filepath.Join(dir, "out")
@@ -183,46 +194,39 @@ func TestRefusals(t *testing.T) {
 			}
 			symlink(t, target, p)
 			return filepath.Join(p, "secret.png")
-		}, []string{dir}, "blocked"},
+		}, []string{dir}, Escapes},
 		{"an absolute directory link, even to inside", func(t *testing.T) string {
 			write(t, filepath.Join(dir, "real", "shot.png"), png)
 			p := filepath.Join(dir, "absolute")
 			symlink(t, filepath.Join(dir, "real"), p)
 			return filepath.Join(p, "shot.png")
-		}, []string{dir}, "blocked"},
+		}, []string{dir}, Escapes},
 		{"text", func(t *testing.T) string {
 			return write(t, filepath.Join(dir, "key.png"), []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n"))
-		}, []string{dir}, "invalid"},
+		}, []string{dir}, NotImage},
 		// With its XML declaration, as drawing tools write one, an SVG
 		// sniffs as XML rather than plain text.
 		{"an SVG", func(t *testing.T) string {
 			return write(t, filepath.Join(dir, "drawing.svg"),
 				[]byte(`<?xml version="1.0" encoding="UTF-8"?><svg><script>alert(1)</script></svg>`))
-		}, []string{dir}, "invalid"},
-		{"an empty file", func(t *testing.T) string { return write(t, filepath.Join(dir, "empty.png"), nil) }, []string{dir}, "invalid"},
+		}, []string{dir}, NotImage},
+		{"an empty file", func(t *testing.T) string { return write(t, filepath.Join(dir, "empty.png"), nil) }, []string{dir}, NotImage},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := Read(c.path(t), c.dirs)
 			if err == nil {
-				t.Fatalf("read, want [%s]", c.class)
+				t.Fatalf("read, want kind %d", c.kind)
 			}
-			if got := classOf(err); got != c.class {
-				t.Errorf("[%s] %v, want [%s]", got, err, c.class)
+			if got := kindOf(err); got != c.kind {
+				t.Errorf("kind %d, %v; want kind %d", got, err, c.kind)
 			}
 		})
 	}
-	// The refusals name the setting, and neither the allowed directories
-	// nor what a file that is no image holds.
-	if _, err := Read(good, nil); !strings.Contains(err.Error(), "GITLAB_MCP_UPLOAD_DIRS") {
-		t.Errorf("no directories: %v", err)
-	}
-	if _, err := Read(filepath.Join(other, "elsewhere.png"), []string{dir}); !strings.Contains(err.Error(), "GITLAB_MCP_UPLOAD_DIRS") ||
-		strings.Contains(err.Error(), dir) {
-		t.Errorf("outside: %v", err)
-	}
-	if _, err := Read(filepath.Join(dir, "key.png"), []string{dir}); err == nil || strings.Contains(err.Error(), "text/") {
-		t.Errorf("text: %v", err)
+	// A file that is not a regular file says what it is.
+	var e *Error
+	if _, err := Read(dir, []string{filepath.Dir(dir)}); !errors.As(err, &e) || e.Detail != "a directory" {
+		t.Errorf("a directory: %v", err)
 	}
 }
 
@@ -243,7 +247,7 @@ func TestALinkThatStaysInsideIsFollowed(t *testing.T) {
 	if img, err := Read(path, []string{narrow, wide}); err != nil || !bytes.Equal(img.Data, png) {
 		t.Errorf("inside the wider directory: %v", err)
 	}
-	if _, err := Read(path, []string{narrow}); err == nil || classOf(err) != "blocked" {
+	if _, err := Read(path, []string{narrow}); kindOf(err) != Escapes {
 		t.Errorf("with only the narrower directory allowed: %v", err)
 	}
 }
@@ -262,7 +266,7 @@ func TestAnAllowedDirectoryThatIsALinkWorks(t *testing.T) {
 	if img, err := Read(path, []string{wide, shots}); err != nil || !bytes.Equal(img.Data, png) {
 		t.Errorf("both allowed: %v", err)
 	}
-	if _, err := Read(path, []string{wide}); err == nil || classOf(err) != "blocked" {
+	if _, err := Read(path, []string{wide}); kindOf(err) != Escapes {
 		t.Errorf("only the wider allowed: %v", err)
 	}
 }
@@ -282,10 +286,7 @@ func TestTheOpenFileIsTheOneChecked(t *testing.T) {
 	if err := unchanged(stat(a), stat(a)); err != nil {
 		t.Errorf("the same file: %v", err)
 	}
-	if err := unchanged(stat(a), stat(b)); err == nil || classOf(err) != "conflict" {
+	if err := unchanged(stat(a), stat(b)); kindOf(err) != Changed {
 		t.Errorf("another file: %v", err)
-	}
-	if err := unchanged(stat(a), stat(dir)); err == nil || classOf(err) != "conflict" {
-		t.Errorf("a directory: %v", err)
 	}
 }

@@ -144,7 +144,10 @@ func writeResult(where string, fn *ast.FuncDecl, modelStructs map[string]*ast.St
 			}
 		}
 		cl, ok := n.(*ast.CompositeLit)
-		if ok && isModelType(cl.Type, result) && !setsKey(cl, "Outcome") {
+		if !ok || !isModelType(cl.Type, result) {
+			return true
+		}
+		if _, sets := keyValue(cl, "Outcome"); !sets {
 			problems = append(problems, fmt.Sprintf("%s: a model.%s is returned without its Outcome (%s)", where, result, fset.Position(cl.Pos())))
 		}
 		return true
@@ -250,17 +253,6 @@ func hasField(st *ast.StructType, name string) bool {
 	for _, f := range st.Fields.List {
 		for _, n := range f.Names {
 			if n.Name == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func setsKey(cl *ast.CompositeLit, key string) bool {
-	for _, el := range cl.Elts {
-		if kv, ok := el.(*ast.KeyValueExpr); ok {
-			if id, ok := kv.Key.(*ast.Ident); ok && id.Name == key {
 				return true
 			}
 		}

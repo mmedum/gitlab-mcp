@@ -2,6 +2,7 @@ package gitlabtest
 
 import (
 	"bytes"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -16,7 +17,7 @@ func formBody(t *testing.T, field, filename string, data []byte) (*bytes.Buffer,
 	w := multipart.NewWriter(&b)
 	var err error
 	if filename != "" {
-		var part interface{ Write([]byte) (int, error) }
+		var part io.Writer
 		if part, err = w.CreateFormFile(field, filename); err == nil {
 			_, err = part.Write(data)
 		}
@@ -35,21 +36,25 @@ func TestUploadsAnswerAsGitLabDoes(t *testing.T) {
 	s := New(t, Options{})
 	tok := s.Token()
 	url := s.URL + "/api/v4/projects/2001/uploads"
-	for i, c := range []struct {
-		filename, stored, alt, markdown string
+	for _, c := range []struct {
+		filename                      string
+		id                            float64
+		secret, stored, alt, markdown string
 	}{
-		{"my shot.png", "my_shot.png", "my_shot", "![my_shot](/uploads/%s/my_shot.png)"},
-		{"notes.txt", "notes.txt", "notes.txt", "[notes.txt](/uploads/%s/notes.txt)"},
-		{"drawing.svg", "drawing.svg", "drawing.svg", "![drawing.svg](/uploads/%s/drawing.svg)"},
-		{`dir\sub\Clip.GIF`, "Clip.GIF", "Clip", "![Clip](/uploads/%s/Clip.GIF)"},
+		{"my shot.png", 80001, "00000000000000000000000000080001", "my_shot.png", "my_shot",
+			"![my_shot](/uploads/00000000000000000000000000080001/my_shot.png)"},
+		{"notes.txt", 80002, "00000000000000000000000000080002", "notes.txt", "notes.txt",
+			"[notes.txt](/uploads/00000000000000000000000000080002/notes.txt)"},
+		{"drawing.svg", 80003, "00000000000000000000000000080003", "drawing.svg", "drawing.svg",
+			"![drawing.svg](/uploads/00000000000000000000000000080003/drawing.svg)"},
+		{`dir\sub\Clip.GIF`, 80004, "00000000000000000000000000080004", "Clip.GIF", "Clip",
+			"![Clip](/uploads/00000000000000000000000000080004/Clip.GIF)"},
 	} {
 		body, ct := formBody(t, "file", c.filename, []byte("bytes"))
 		resp, got := do(t, http.MethodPost, url, tok, body, ct)
 		wantStatus(t, c.filename, resp, got, http.StatusCreated)
-		secret := []string{"00000000000000000000000000080001", "00000000000000000000000000080002",
-			"00000000000000000000000000080003", "00000000000000000000000000080004"}[i]
-		want := map[string]any{"id": float64(80001 + i), "alt": c.alt, "url": "/uploads/" + secret + "/" + c.stored,
-			"full_path": "/-/project/2001/uploads/" + secret + "/" + c.stored, "markdown": strings.Replace(c.markdown, "%s", secret, 1)}
+		want := map[string]any{"id": c.id, "alt": c.alt, "url": "/uploads/" + c.secret + "/" + c.stored,
+			"full_path": "/-/project/2001/uploads/" + c.secret + "/" + c.stored, "markdown": c.markdown}
 		for k, v := range want {
 			if got[k] != v {
 				t.Errorf("%s: %s = %v, want %v", c.filename, k, got[k], v)

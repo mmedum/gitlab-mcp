@@ -1433,10 +1433,9 @@ disclosure. So, in this order:
    person before calling again.
 
 A dry run reads and checks the image and the project and sends nothing.
-An upload's body is timed by its progress: the header timeout starts
-again whenever more of it is sent, so a slow uplink does not cut a
-large image off mid-body. Logs never carry the path, the name or the
-bytes (§9.2).
+Like every write's, an upload's body is timed by its progress (§11), so
+a slow uplink does not cut a large image off mid-body. Logs never carry
+the path, the name or the bytes (§9.2).
 
 ## 8. Tool surface
 
@@ -1809,7 +1808,11 @@ Process: one stdio session; starts before authentication so `doctor` and
   own buckets, and `submit_review` publishes many comments in one call
   for that reason. `get_me` reports the last reading.
 - **Timeouts** on every request (§3), a 32 MiB cap on a response body,
-  job logs read in windows.
+  job logs read in windows. A request body is timed by its progress:
+  the header timeout starts again whenever more of it is sent, so it
+  times a stall and then the wait for the answer, and a slow uplink does
+  not cut a large commit or image off mid-body. The body can be given
+  again, as Go's HTTP/2 transport asks for a stream the server refused.
 - **Per-item outcomes** for every multi-id write (`mark_todos_done`).
 
 ## 12. Distribution and setup
@@ -2502,13 +2505,27 @@ of the first two commits, fixed on the branch:
 | A filesystem root or the home directory could be allowed, opening nearly every image | Refused at startup; the bundle asks for a dedicated folder |
 | A folder whose name held the list separator split into other directories | A value that is an existing directory is one entry |
 | An allowed directory that is itself a link was refused under a wider allowed one | Every allowed directory holding the path is tried, widest first, past an escape |
-| A slow upload was cut off by the header timeout mid-body and reported as ambiguous | An upload's header clock starts again with each piece of the body sent; JSON writes are timed as before |
+| A slow upload was cut off by the header timeout mid-body and reported as ambiguous | Every request body is timed by its progress, the header timeout starting again with each piece sent (§11); a large commit had the same cut-off |
 | The sniff read as proof that the whole file is an image | The package says what it proves; bytes after a valid header need write access to this machine |
 | The result did not say that Maintainers reach every upload by id, or what happens to the image's metadata | It says both, and so does the question; Workhorse removes a JPEG's metadata (§18 row 118) |
 | `CLAUDE.md` rule 8 did not cover a create no read can settle | It does: `[ambiguous_outcome]`, and the person decides |
 | "for ever" | "forever" |
 | Suggested: open with `O_NOFOLLOW` in place of `Lstat`, open and `os.SameFile` | Declined: `os.Root` follows a final link even with `O_NOFOLLOW` (probe, Go 1.27.1), and Windows has no such flag |
 | Suggested: send the image without copying it into the body | Declined: one copy of at most 10 MiB per call, and a streamed body would have to be rebuilt for a retry |
+
+`/simplify` (reuse, simplification, efficiency, altitude), applied: the
+progress timer and a replayable body for every request body, not only
+uploads; `internal/localimage` returns its own typed refusals, which
+`upload_file`'s service words and classes, so the package imports
+neither `gapi` nor `config`; the size is refused from the open file's
+stat and the type from its first 512 bytes before the rest is read,
+into a buffer of the stat's size; the question is built only when one
+goes out; the home check resolves links and short names with
+`userconfig`'s helpers; one literal-key helper for the outcomes and
+api-fields gates; and smaller cleanups in the tests, the in-memory
+instance and the live driver. Kept: both `link_opens_for` and
+`media_requires_sign_in` in the result, and the test helper that counts
+uploads by their route.
 
 ### Closing a phase
 

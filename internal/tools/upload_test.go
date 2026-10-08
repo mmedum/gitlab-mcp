@@ -50,11 +50,16 @@ func uploadPosts(h *harness) int {
 	return n
 }
 
-func boolp(b bool) *bool { return &b }
+// uploadHarness is a harness whose upload_file may read from one
+// directory, beside cfg, and that directory.
+func uploadHarness(t *testing.T, cfg config.Config) (*harness, string) {
+	t.Helper()
+	cfg = withUploads(t, cfg)
+	return newHarness(t, harnessOptions{cfg: cfg}), cfg.UploadDirs[0]
+}
 
 func TestUploadFile(t *testing.T) {
-	dir := t.TempDir()
-	h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}}})
+	h, dir := uploadHarness(t, config.Config{})
 	path, data := pngFile(t, dir, "mock-up.png")
 	text, out := h.ok("upload_file", map[string]any{"project": alpha, "path": path})
 	want := map[string]any{
@@ -94,8 +99,7 @@ func TestUploadFile(t *testing.T) {
 // An image is sent under the extension its bytes show, which is what
 // makes GitLab's Markdown embed it rather than link it.
 func TestAnUploadIsNamedForItsBytes(t *testing.T) {
-	dir := t.TempDir()
-	h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}}})
+	h, dir := uploadHarness(t, config.Config{})
 	path, _ := pngFile(t, dir, "diagram.txt")
 	_, out := h.ok("upload_file", map[string]any{"project": alpha, "path": path})
 	if get(out, "filename") != "diagram.png" || get(out, "markdown") != "![diagram](/uploads/"+firstSecret+"/diagram.png)" {
@@ -113,18 +117,17 @@ func TestWhoCanOpenAnUpload(t *testing.T) {
 		reach    string
 		sentence string
 	}{
-		{"public", alpha, boolp(true), "anyone_with_link", "In this public project anyone with an image's link can open it"},
-		{"private, sign-in required", gitlabtest.ProjectBeta, boolp(true), "project_readers",
+		{"public", alpha, ptr(true), "anyone_with_link", "In this public project anyone with an image's link can open it"},
+		{"private, sign-in required", gitlabtest.ProjectBeta, ptr(true), "project_readers",
 			"Only people signed in who can see this private project can open an image by its link"},
-		{"private, sign-in not required", gitlabtest.ProjectBeta, boolp(false), "anyone_with_link",
+		{"private, sign-in not required", gitlabtest.ProjectBeta, ptr(false), "anyone_with_link",
 			"In this private project anyone with an image's link can open it, signed in or not"},
 		{"private, not said", gitlabtest.ProjectBeta, nil, "unknown",
 			"unless it does, anyone with an image's link can open it"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
-			h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}}})
+			h, dir := uploadHarness(t, config.Config{})
 			h.gl.SetMediaAuth(c.project, c.setting)
 			path, _ := pngFile(t, dir, "shot.png")
 			text, out := h.ok("upload_file", map[string]any{"project": c.project, "path": path})
@@ -146,8 +149,7 @@ func TestWhoCanOpenAnUpload(t *testing.T) {
 // A dry run reads and checks the image and the project, and sends
 // nothing; a file that is no image is refused before any request at all.
 func TestUploadFileSendsNothingUntilItMay(t *testing.T) {
-	dir := t.TempDir()
-	h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}}})
+	h, dir := uploadHarness(t, config.Config{})
 	path, data := pngFile(t, dir, "shot.png")
 	text, out := h.ok("upload_file", map[string]any{"project": alpha, "path": path, "dry_run": true})
 	if get(out, "outcome") != "dry_run" || get(out, "would_send", "operation") != "upload the image to the project" ||
@@ -162,7 +164,9 @@ func TestUploadFileSendsNothingUntilItMay(t *testing.T) {
 	if err := os.WriteFile(key, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.fails("upload_file", map[string]any{"project": alpha, "path": key}, "invalid")
+	if text := h.fails("upload_file", map[string]any{"project": alpha, "path": key}, "invalid"); strings.Contains(text, "text/") {
+		t.Errorf("the refusal says what the file holds: %s", text)
+	}
 	if n := writesSent(h); n != 0 {
 		t.Errorf("a refused file still made %d write(s)", n)
 	}
@@ -171,13 +175,18 @@ func TestUploadFileSendsNothingUntilItMay(t *testing.T) {
 // upload_file reads only from the directories GITLAB_MCP_UPLOAD_DIRS
 // names; unset, it refuses and says to set it.
 func TestUploadFileReadsOnlyFromTheSettingsDirectories(t *testing.T) {
-	dir := t.TempDir()
+	h, dir := uploadHarness(t, config.Config{})
 	path, _ := pngFile(t, dir, "shot.png")
-	h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}}})
 	h.ok("upload_file", map[string]any{"project": alpha, "path": path})
+	// Outside them, the refusal names the setting and not the directories.
+	outside, _ := pngFile(t, t.TempDir(), "elsewhere.png")
+	text := h.fails("upload_file", map[string]any{"project": alpha, "path": outside}, "blocked")
+	if !strings.Contains(text, "outside every directory "+config.EnvUploadDirs+" names") || strings.Contains(text, dir) {
+		t.Errorf("outside: %s", text)
+	}
 
 	h = newHarness(t, harnessOptions{})
-	text := h.fails("upload_file", map[string]any{"project": alpha, "path": path}, "blocked")
+	text = h.fails("upload_file", map[string]any{"project": alpha, "path": path}, "blocked")
 	if !strings.Contains(text, config.EnvUploadDirs+" names, and it is not set") || writesSent(h) != 0 {
 		t.Errorf("refusal: %s; %d write(s)", text, writesSent(h))
 	}
@@ -187,8 +196,7 @@ func TestUploadFileReadsOnlyFromTheSettingsDirectories(t *testing.T) {
 // call aimed outside it learns nothing about the path, not even that
 // nothing is there.
 func TestUploadFileIsHeldToTheAllowList(t *testing.T) {
-	dir := t.TempDir()
-	h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}, WriteNamespaces: []string{gitlabtest.GroupSub}}})
+	h, dir := uploadHarness(t, config.Config{WriteNamespaces: []string{gitlabtest.GroupSub}})
 	path, _ := pngFile(t, dir, "shot.png")
 	for _, p := range []string{path, filepath.Join(dir, "missing.png"), "relative.png"} {
 		text := h.fails("upload_file", map[string]any{"project": alpha, "path": p}, "blocked")
@@ -208,8 +216,7 @@ func TestUploadFileIsHeldToTheAllowList(t *testing.T) {
 // GitLab's refusal of an upload is passed on as it is, not taken for a
 // lost answer.
 func TestARefusedUploadIsReportedAsGitLabSaid(t *testing.T) {
-	dir := t.TempDir()
-	h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}}})
+	h, dir := uploadHarness(t, config.Config{})
 	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/uploads", Status: http.StatusBadRequest,
 		Body: `{"error":"file is invalid"}`})
 	path, _ := pngFile(t, dir, "shot.png")
@@ -224,22 +231,25 @@ func TestARefusedUploadIsReportedAsGitLabSaid(t *testing.T) {
 // An upload is a create: a lost answer is never sent again, and no read
 // can settle it, so the result says what a repeat would leave (§4.5).
 func TestALostUploadIsNotSentAgain(t *testing.T) {
-	for _, landed := range []bool{true, false} {
-		dir := t.TempDir()
-		h := newHarness(t, harnessOptions{cfg: config.Config{UploadDirs: []string{dir}}})
-		h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/uploads", AfterApply: landed,
-			Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
-		path, _ := pngFile(t, dir, "shot.png")
-		text := h.fails("upload_file", map[string]any{"project": alpha, "path": path}, "ambiguous_outcome")
-		if !strings.Contains(text, "a repeat uploads the image a second time") {
-			t.Errorf("landed %v: %s", landed, text)
-		}
-		want := 0
-		if landed {
-			want = 1
-		}
-		if uploadPosts(h) != 1 || len(h.gl.Uploads(alpha)) != want {
-			t.Errorf("landed %v: %d request(s), %d upload(s) stored", landed, uploadPosts(h), len(h.gl.Uploads(alpha)))
-		}
+	for _, c := range []struct {
+		name           string
+		landed, stored bool
+	}{
+		{"landed", true, true},
+		{"never arrived", false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, dir := uploadHarness(t, config.Config{})
+			h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/projects/2001/uploads", AfterApply: c.landed,
+				Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`})
+			path, _ := pngFile(t, dir, "shot.png")
+			text := h.fails("upload_file", map[string]any{"project": alpha, "path": path}, "ambiguous_outcome")
+			if !strings.Contains(text, "a repeat uploads the image a second time") {
+				t.Errorf("%s", text)
+			}
+			if uploadPosts(h) != 1 || (len(h.gl.Uploads(alpha)) == 1) != c.stored {
+				t.Errorf("%d request(s), %d upload(s) stored", uploadPosts(h), len(h.gl.Uploads(alpha)))
+			}
+		})
 	}
 }

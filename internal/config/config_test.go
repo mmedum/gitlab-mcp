@@ -166,6 +166,18 @@ func TestUploadDirsRefuseWhatHoldsEverything(t *testing.T) {
 			t.Errorf("%s: %v; want it refused", c.dir, err)
 		}
 	}
+	// A name that reaches the home directory through a link is refused
+	// as the home directory's parent is.
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(filepath.Join(base, "people"), link); err != nil {
+		t.Logf("no symbolic links here, so the linked case is not run: %v", err)
+	} else if _, err := load(t, nil, map[string]string{EnvUploadDirs: link}); !errors.Is(err, ErrInvalid) ||
+		!strings.Contains(err.Error(), "holds your home directory") {
+		t.Errorf("%s, a link to the home directory's parent: %v; want it refused", link, err)
+	}
 	// With no home directory known, a filesystem root is still refused.
 	t.Setenv("HOME", "")
 	t.Setenv("USERPROFILE", "")

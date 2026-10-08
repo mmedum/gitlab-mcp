@@ -152,6 +152,19 @@ func funcName(fn *ast.FuncDecl) string {
 	return fn.Name.Name
 }
 
+// keyValue is the value a composite literal gives key, and whether it
+// gives one.
+func keyValue(cl *ast.CompositeLit, key string) (ast.Expr, bool) {
+	for _, el := range cl.Elts {
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			if id, ok := kv.Key.(*ast.Ident); ok && id.Name == key {
+				return kv.Value, true
+			}
+		}
+	}
+	return nil, false
+}
+
 func stringLit(e ast.Expr) (string, bool) {
 	lit, ok := e.(*ast.BasicLit)
 	if !ok || lit.Kind != token.STRING {

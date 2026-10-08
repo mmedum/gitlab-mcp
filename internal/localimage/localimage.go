@@ -25,7 +25,9 @@
 package localimage
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -33,9 +35,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
 )
 
 // MaxBytes is the largest image read: 10 MiB, a tenth of gitlab.com's
@@ -71,59 +70,120 @@ type Image struct {
 	Data []byte
 }
 
+// Kind is why an image was not read. The caller words each one and
+// gives it a class: the names of the tool and the setting are its.
+type Kind int
+
+// The kinds.
+const (
+	// NotAbsolute: the path is relative.
+	NotAbsolute Kind = iota + 1
+	// DotDot: the path has a ".." element.
+	DotDot
+	// NoDirectories: no directory is allowed.
+	NoDirectories
+	// Outside: the path is in none of the allowed directories.
+	Outside
+	// NoDirectory: an allowed directory holding the path does not exist.
+	NoDirectory
+	// Missing: nothing is at the path.
+	Missing
+	// Escapes: a symbolic link along the path leads out of every allowed
+	// directory holding it.
+	Escapes
+	// NotRegular: a symbolic link, a directory, a FIFO or a device;
+	// Detail says which.
+	NotRegular
+	// Changed: the file was swapped between the check and the open.
+	Changed
+	// TooLarge: more than MaxBytes.
+	TooLarge
+	// NotImage: the bytes are not a PNG, JPEG, GIF or WebP.
+	NotImage
+	// Unreadable: the operating system refused; Detail is its reason,
+	// without the path.
+	Unreadable
+)
+
+// Error is a refusal to read an image.
+type Error struct {
+	Kind   Kind
+	Detail string
+}
+
+func (e *Error) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("localimage: refused (kind %d): %s", e.Kind, e.Detail)
+	}
+	return fmt.Sprintf("localimage: refused (kind %d)", e.Kind)
+}
+
+func refuse(k Kind) *Error { return &Error{Kind: k} }
+
 // Read reads the image at path, which must be absolute and inside one of
-// dirs. Every refusal is a classified error, and none reads more than it
-// has to.
+// dirs. Every refusal is an *Error, and none reads more than it has to.
 func Read(path string, dirs []string) (Image, error) {
-	if !filepath.IsAbs(path) {
-		return Image{}, gapi.Errf(gapi.ClassInvalid, "path must be the image's absolute path; a relative one would be read from "+
-			"wherever the server was started")
-	}
-	if slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "..") {
-		return Image{}, gapi.Errf(gapi.ClassInvalid, "path may not contain a .. element; pass the image's path as it is")
-	}
-	if len(dirs) == 0 {
-		return Image{}, gapi.Errf(gapi.ClassBlocked, "upload_file reads only from the directories %s names, and it is not set. "+
-			"Nothing was read or sent. Set it to the directory holding the image and restart the server", config.EnvUploadDirs)
+	switch {
+	case !filepath.IsAbs(path):
+		return Image{}, refuse(NotAbsolute)
+	case slices.Contains(strings.Split(filepath.ToSlash(path), "/"), ".."):
+		return Image{}, refuse(DotDot)
+	case len(dirs) == 0:
+		return Image{}, refuse(NoDirectories)
 	}
 	candidates := within(filepath.Clean(path), dirs)
 	if len(candidates) == 0 {
-		return Image{}, gapi.Errf(gapi.ClassBlocked, "path is outside every directory %s names. Nothing was read or sent. "+
-			"Save the image in one of them, or add its directory to the setting and restart the server", config.EnvUploadDirs)
+		return Image{}, refuse(Outside)
 	}
 	// The widest directory first; a narrower one is tried when a link in
 	// the path leads out of the wider, as an allowed directory that is
 	// itself a link does.
 	var f *os.File
+	var size int64
 	var err error
 	for _, c := range candidates {
-		if f, err = openIn(c.dir, c.rel); !escapes(err) {
+		if f, size, err = openIn(c.dir, c.rel); !is(err, Escapes) {
 			break
 		}
 	}
 	if err != nil {
-		if _, classified := gapi.ClassOf(err); classified {
-			return Image{}, err
-		}
-		return Image{}, failed(err, "path")
+		return Image{}, err
 	}
 	defer func() { _ = f.Close() }()
+	if size > MaxBytes {
+		return Image{}, refuse(TooLarge)
+	}
 
-	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
-	if err != nil {
-		return Image{}, failed(err, "path")
+	// The type is told from the first 512 bytes, as Workhorse tells it, so
+	// a file that is no image is refused having read only those.
+	head := make([]byte, 512)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return Image{}, failed(err)
 	}
-	if len(data) > MaxBytes {
-		return Image{}, gapi.Errf(gapi.ClassInvalid, "the image is larger than %d MiB, the most upload_file sends; make it smaller first",
-			MaxBytes>>20)
-	}
-	typ := http.DetectContentType(data)
+	typ := http.DetectContentType(head[:n])
 	ext, ok := extensions[typ]
 	if !ok {
-		return Image{}, gapi.Errf(gapi.ClassInvalid, "path is not a PNG, JPEG, GIF or WebP image, judged from its bytes rather than "+
-			"its name; upload_file sends only those four. SVG is refused because it is text that can carry script")
+		return Image{}, refuse(NotImage)
 	}
-	return Image{Name: name(path, ext), Type: typ, Data: data}, nil
+	// The rest, into a buffer the size the file had when it was opened.
+	// The limit still bounds it, since the file can grow while it is read.
+	var b bytes.Buffer
+	b.Grow(int(size) + bytes.MinRead)
+	b.Write(head[:n])
+	if _, err := b.ReadFrom(io.LimitReader(f, MaxBytes+1-int64(n))); err != nil {
+		return Image{}, failed(err)
+	}
+	if b.Len() > MaxBytes {
+		return Image{}, refuse(TooLarge)
+	}
+	return Image{Name: name(path, ext), Type: typ, Data: b.Bytes()}, nil
+}
+
+// is reports a refusal of kind k.
+func is(err error, k Kind) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Kind == k
 }
 
 // candidate is an allowed directory lexically holding the path, and the
@@ -145,37 +205,38 @@ func within(path string, dirs []string) []candidate {
 }
 
 // openIn opens rel inside dir through os.Root, checked before and after
-// it is opened. An error from the operating system comes back as it is,
-// so the caller can tell an escape from the rest.
-func openIn(dir, rel string) (*os.File, error) {
+// it is opened, and gives its size when opened.
+func openIn(dir, rel string) (*os.File, int64, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, gapi.Errf(gapi.ClassNotFound, "a directory %s names does not exist", config.EnvUploadDirs)
+			return nil, 0, refuse(NoDirectory)
 		}
-		return nil, err
+		return nil, 0, failed(err)
 	}
 	defer func() { _ = root.Close() }()
 	before, err := root.Lstat(rel)
 	if err != nil {
-		return nil, err
+		return nil, 0, failed(err)
 	}
 	if err := regular(before); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	f, err := root.OpenFile(rel, os.O_RDONLY|openFlags, 0)
 	if err != nil {
-		return nil, err
+		return nil, 0, failed(err)
 	}
 	after, err := f.Stat()
-	if err == nil {
+	if err != nil {
+		err = failed(err)
+	} else {
 		err = unchanged(before, after)
 	}
 	if err != nil {
 		_ = f.Close()
-		return nil, err
+		return nil, 0, err
 	}
-	return f, nil
+	return f, after.Size(), nil
 }
 
 // regular refuses anything but a regular file: a symbolic link, whose
@@ -183,7 +244,7 @@ func openIn(dir, rel string) (*os.File, error) {
 // a device, which a read could wait on forever.
 func regular(fi fs.FileInfo) error {
 	if !fi.Mode().IsRegular() {
-		return gapi.Errf(gapi.ClassInvalid, "path is %s, not a regular file; pass the path of the image itself", kind(fi.Mode()))
+		return &Error{Kind: NotRegular, Detail: kind(fi.Mode())}
 	}
 	return nil
 }
@@ -193,8 +254,7 @@ func regular(fi fs.FileInfo) error {
 // another file.
 func unchanged(before, after fs.FileInfo) error {
 	if !os.SameFile(before, after) {
-		return gapi.Errf(gapi.ClassConflict, "the file at path changed while it was being opened, so what was checked is not what "+
-			"would be read; nothing was read or sent. Call again once it is settled")
+		return refuse(Changed)
 	}
 	return nil
 }
@@ -202,7 +262,7 @@ func unchanged(before, after fs.FileInfo) error {
 func kind(m fs.FileMode) string {
 	switch {
 	case m&fs.ModeSymlink != 0:
-		return "a symbolic link, which upload_file does not follow"
+		return "a symbolic link"
 	case m.IsDir():
 		return "a directory"
 	case m&fs.ModeNamedPipe != 0:
@@ -217,18 +277,12 @@ func kind(m fs.FileMode) string {
 
 // errEscapes is the text of os.Root's refusal of a path that leads out
 // of it. Go does not export the error, so it is matched by its text; a
-// change there refuses the path all the same, as [invalid].
+// change there refuses the path all the same, as Unreadable.
 const errEscapes = "path escapes from parent"
 
-// escapes reports os.Root's refusal of a path that leads out of it.
-func escapes(err error) bool {
-	var pe *fs.PathError
-	return errors.As(err, &pe) && pe.Err.Error() == errEscapes
-}
-
-// failed classifies a failure to open, read or stat what names. The
-// operating system's message names the path, so only its cause is kept.
-func failed(err error, what string) error {
+// failed turns the operating system's refusal into an *Error. Its
+// message names the path, so only its cause is kept.
+func failed(err error) *Error {
 	var pe *fs.PathError
 	cause := err
 	if errors.As(err, &pe) {
@@ -236,12 +290,11 @@ func failed(err error, what string) error {
 	}
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return gapi.Errf(gapi.ClassNotFound, "there is nothing at %s", what)
-	case escapes(err):
-		return gapi.Errf(gapi.ClassBlocked, "%s leads outside the directory it is in, through a symbolic link; upload_file reads only "+
-			"inside the directories the person allowed. Nothing was read or sent", what)
+		return refuse(Missing)
+	case cause.Error() == errEscapes:
+		return refuse(Escapes)
 	}
-	return gapi.Errf(gapi.ClassInvalid, "%s could not be read: %s", what, cause)
+	return &Error{Kind: Unreadable, Detail: cause.Error()}
 }
 
 // name is the name an image is sent under (Image.Name).

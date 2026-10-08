@@ -431,8 +431,6 @@ func (c *Client) prepare(ctx context.Context, call Call) (*prepared, error) {
 		return nil, err
 	}
 	switch {
-	case call.Body != nil && call.Form != nil:
-		return nil, Errf(ClassUnexpected, "%s sets both a JSON body and a form", p.name)
 	case call.Body != nil:
 		if p.payload, err = json.Marshal(call.Body); err != nil {
 			return nil, Wrap(ClassInvalid, err, "the request for %s could not be encoded", p.name)
@@ -475,7 +473,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 			s.requests.Add(1)
 		}
 		start := time.Now()
-		res, sendErr := c.attempt(ctx, p, p.token)
+		res, sendErr := c.attempt(ctx, p)
 		release()
 		status := 0
 		if res != nil {
@@ -650,7 +648,7 @@ var (
 
 // attempt makes one HTTP request. The address is checked against the
 // instance before the token is attached.
-func (c *Client) attempt(ctx context.Context, p *prepared, token string) (*attemptResult, error) {
+func (c *Client) attempt(ctx context.Context, p *prepared) (*attemptResult, error) {
 	endpoint := p.endpoint
 	if !c.inst.SameOrigin(endpoint) {
 		return nil, errOffInstance
@@ -660,16 +658,15 @@ func (c *Client) attempt(ctx context.Context, p *prepared, token string) (*attem
 	var headersLate atomic.Bool
 	headers := time.AfterFunc(c.headerTimeout, func() { headersLate.Store(true); cancel() })
 
+	// A large body can take longer to send than the header timeout
+	// allows, so the clock starts again whenever more of it is taken: it
+	// times a stall while the body is sent, then the wait for the answer.
+	payload := func() io.Reader {
+		return &progress{r: bytes.NewReader(p.payload), moved: func() { headers.Reset(c.headerTimeout) }}
+	}
 	var reader io.Reader
 	if p.payload != nil {
-		reader = bytes.NewReader(p.payload)
-		if p.call.Form != nil {
-			// A file can take longer to send than the header timeout allows,
-			// so for an upload the clock starts again whenever more of the
-			// body is taken: it times a stall, and once the body is sent,
-			// the wait for the answer.
-			reader = &progress{r: reader, moved: func() { headers.Reset(c.headerTimeout) }}
-		}
+		reader = payload()
 	}
 	req, err := http.NewRequestWithContext(ctx, p.call.Method, endpoint.String(), reader)
 	if err != nil {
@@ -677,10 +674,13 @@ func (c *Client) attempt(ctx context.Context, p *prepared, token string) (*attem
 		return nil, WithoutURL(err)
 	}
 	if p.payload != nil {
-		// The wrapper hides the length a bytes.Reader would have given.
+		// The wrapper hides the length and the replay a bytes.Reader would
+		// have given: Go's HTTP/2 transport replays a body for a stream
+		// the server refused before reading it.
 		req.ContentLength = int64(len(p.payload))
+		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(payload()), nil }
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
 	if p.contentType != "" {

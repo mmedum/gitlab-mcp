@@ -48,7 +48,7 @@ var toolPhrases = []phrase{
 		"update_merge_request", "track_time"}, tail: "; an update or time tracking needs the updated_at of your latest read."},
 	{lead: "Comment and react with ", tools: []string{"add_comment", "update_comment", "resolve_discussion", "react"},
 		tail: "; an edit keeps the comment in its thread and needs the updated_at of your read."},
-	{lead: "", tools: []string{"upload_file"}, tail: " uploads an image from a directory GITLAB_MCP_UPLOAD_DIRS names and returns " +
+	{lead: "", tools: []string{"upload_file"}, tail: " uploads an image from a directory " + config.EnvUploadDirs + " names and returns " +
 		"the Markdown that shows it in a comment or a description in the same project."},
 	{lead: "Relate issues with ", tools: []string{"link_issues", "unlink_issues"}, tail: "."},
 	{lead: "Review in drafts with ", tools: []string{"add_review_comment", "update_review_comment", "delete_review_comment",
