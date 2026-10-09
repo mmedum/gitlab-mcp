@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Security
+
+- Built with Go 1.27.2, which fixes ten advisories that `govulncheck` found reachable from this server: in `net/http`, its HTTP/2 code, `crypto/tls`, `net/textproto`, and `os` on Windows.
+
 ## [2.3.0] - 2026-10-08
 
 ### Added

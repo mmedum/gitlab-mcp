@@ -764,7 +764,7 @@ not copied from here.
 
 | Tool | Version |
 |---|---|
-| Go | 1.27.1 (`go-version-file: go.mod` in CI) |
+| Go | 1.27.2 (moved 2026-10-09; `go-version-file: go.mod` in CI) |
 | MCP Go SDK | v1.8.0 |
 | jsonschema-go | v0.4.3 |
 | golangci-lint | v2.14.0 (moved 2026-09-26) |
