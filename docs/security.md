@@ -108,8 +108,12 @@ link drawn. Only an accept writes. The answer is bound to the call it
 was asked for, spent once, and void after 5 minutes. An accept is still
 not proof that you read the question: a client may answer by itself, as
 Codex does for a question with no fields when it runs with no approvals
-and full access, and VS Code when you skip the question. A client that
-cannot ask gets no question; `GITLAB_MCP_REQUIRE_PROMPT=true` refuses
+and full access, and VS Code when you skip the question. A tool that
+asks on every call does not also carry Claude Code's
+`requiresUserInteraction` mark for a client that can ask, so you answer
+once. The question is then that call's only prompt: a Claude Code
+`Elicitation` hook that accepts by itself confirms such a write with
+nobody asked. A client that cannot ask gets no question; `GITLAB_MCP_REQUIRE_PROMPT=true` refuses
 those writes there. `upload_file` has no flag of its own, so with such a
 client and `GITLAB_MCP_REQUIRE_PROMPT` off, its only guards are the
 upload directories and `GITLAB_MCP_WRITE_NAMESPACES`: an instruction

@@ -1,9 +1,12 @@
 # Architecture — gitlab-mcp
 
-**Status: 2.3.0, 2026-10-08: `upload_file` uploads an image from a
-directory `GITLAB_MCP_UPLOAD_DIRS` names, after asking the person
-(§7.10, §4.12), and every request body is timed by its progress (§11).
-2.2.1: a repeated delete that may have landed is `[ambiguous_outcome]`
+**Status: 2.4.0, 2026-10-10: a write the server asks about asks once
+in Claude Code, not twice (§4.12 item 12), built with Go 1.27.2. Owed:
+seeing one prompt live in Claude Code, and what headless `claude -p`
+does with the server's question (§18 row 119). 2.3.0: `upload_file`
+uploads an image from a directory `GITLAB_MCP_UPLOAD_DIRS` names, after
+asking the person (§7.10, §4.12), and every request body is timed by
+its progress (§11). 2.2.1: a repeated delete that may have landed is `[ambiguous_outcome]`
 (§4.5). Phases 0 to 7 — the person confirms what ships, deletes or
 uploads (§4.12) — 2.1.0's nine tools, and 2.2.0's seven more for
 reviewing merge requests: `react`, `list_mr_versions`,
@@ -11,7 +14,7 @@ reviewing merge requests: `react`, `list_mr_versions`,
 `publish_review_comment`, and `apply_suggestions` and
 `cancel_auto_merge` (Ship), with reviewer states in
 `get_merge_request` (§16). The module path is `/v2`. §17.10 stands and
-§17.11 waits. Nothing is owed.** This document holds the platform facts, the design bets, a
+§17.11 waits.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
@@ -742,6 +745,21 @@ questions asked often are answered without reading (§18 row 94).
     is refused. The description of each asking tool says so, and a test
     derives the asking tools from the definitions and holds each:
     declined, nothing sent; accepted, the write.
+12. **One prompt per call.** A Ship or Destructive tool carries Claude
+    Code's `requiresUserInteraction` mark (§8), which makes Claude Code
+    prompt on every call. A tool that asks the person before every
+    write is listed without the mark to a client that can ask, so the
+    person answers once, to the question that shows what the write does.
+    These are `merge_merge_request`, `approve_merge_request`,
+    `apply_suggestions`, `play_job`, `create_release` and the seven
+    deletes. Their spec says `AsksEveryCall`, which `register` refuses
+    on a tool that carries no mark. `run_pipeline` and
+    `run_merge_request_pipeline` ask only on a protected ref, and the
+    other Ship tools never ask, so they keep the mark: there it is the
+    only per-call prompt. A client that cannot ask keeps every mark.
+    `tools/list` middleware drops the mark from a copy of each tool, and
+    a test lists the tools from one server as three kinds of client on
+    every protocol (§18 rows 119 and 120).
 
 ## 5. Module layout
 
@@ -764,7 +782,7 @@ not copied from here.
 
 | Tool | Version |
 |---|---|
-| Go | 1.27.1 (`go-version-file: go.mod` in CI) |
+| Go | 1.27.2 (moved 2026-10-09; `go-version-file: go.mod` in CI) |
 | MCP Go SDK | v1.8.0 |
 | jsonschema-go | v0.4.3 |
 | golangci-lint | v2.14.0 (moved 2026-09-26) |
@@ -1455,7 +1473,9 @@ every write but `add_todo`, `subscribe`, `mark_todos_done` and
 `update_review_comment`, whose effect only the account sees, marked `OwnOnly` on their spec in
 `register`.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
-Destructive kinds, as a signal and not a control.
+Destructive kinds, as a signal and not a control. A client that can ask
+does not get it on a tool that asks the person before every write
+(§4.12 item 12).
 
 | Tool | Kind | Toolset | Main operations |
 |---|---|---|---|
@@ -1900,6 +1920,7 @@ gated. It covers gitlab.com, the only instance.
 | The person asked before every upload | maintainer, 2026-10-08, after the security review | §4.12, §7.10: an upload is a disclosure; the POST needs only read access, and a Maintainer can list and download uploads by id |
 | `upload_file` reads only from the directories `GITLAB_MCP_UPLOAD_DIRS` names; MCP roots are not used | maintainer, 2026-10-08 | §7.10; roots are deprecated (SEP-2577), so the setting, and the bundle's field for it, is the only way to allow a directory (§18 row 114) |
 | The person asked before a merge, an approval, a manual job, a release, a tag, a pipeline on a protected ref, publishing a confidential issue and every delete; the empty form; `GITLAB_MCP_REQUIRE_PROMPT` | maintainer, 2026-09-29 | §4.12; a client that declares elicitation and answers with nobody there cannot make these writes, which is why the release is a major one |
+| `requiresUserInteraction` only where the server's question does not stand in for it: a tool that asks before every write drops the mark for a client that can ask; one that asks sometimes or never keeps it; `destructiveHint` and the server's question stay | maintainer, 2026-10-09 | §4.12 item 12, §18 rows 119 and 120; a write the server asks about asks once in Claude Code, not twice, and a client's `Elicitation` hook that accepts confirms it alone |
 
 ## 15. What must be verified live
 
@@ -2547,6 +2568,13 @@ timeout's wording was corrected with them:
 | With no question possible and `GITLAB_MCP_REQUIRE_PROMPT` off, the upload directories and the write allow-list are `upload_file`'s only guards | The maintainer's chosen behavior, unchanged; §4.12, `docs/security.md` and `docs/configuration.md` say so plainly and advise either setting for such a client |
 | `GITLAB_MCP_HTTP_TIMEOUT` was described as the deadline for one attempt | It bounds a call's time without progress: sending, waiting for the answer to start, reading it. The configuration page, the flag's help and `config.DefaultHTTPTimeout` say so |
 
+**v2.4.0 release review.** The release security review
+(`audit/security-reviews/v2.4.0.md`) found one low finding:
+
+| Found | Resolved |
+|---|---|
+| For a client that can ask, a Claude Code `Elicitation` hook that accepts, or any client that accepts an empty form by itself, now makes the twelve writes that lost the mark with no person asked; the mark used to stop them in the client first | The maintainer's chosen cost, 2026-10-09 (§14); a person has to configure such a hook. `docs/security.md` and the CHANGELOG say so, and §18 row 119 cites the hooks reference |
+
 ### Closing a phase
 
 1. `make check` green; the live driver run and its transcript read.
@@ -2891,7 +2919,9 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 112 | An image uploaded to a private project opens only for people who can read the project | At v19.4.1-ee: `app/controllers/concerns/uploads_actions.rb` L172-182 (`bypass_auth_checks_on_uploads?`: showing an embeddable upload skips the access check unless the project is not public and `enforce_auth_checks_on_uploads?`), `app/controllers/banzai/uploads_controller.rb` L27-31 (the id-based upload paths: the bypass, else `read_project`), `lib/gitlab/file_type_detection.rb` L22 and L69 (embeddable by extension), `lib/api/entities/project.rb` L173 (`enforce_auth_checks_on_uploads` exposed outside the admin-only block of L119), `lib/api/projects.rb` L596-610 (a signed-in read is presented with `Projects::WithAccessAndCatalogSetting`, a `Project`), `app/models/project.rb` L653 and L1520-1529 (delegated to a project setting built when missing), `db/structure.sql` L29554 (`DEFAULT true NOT NULL`); docs.gitlab.com/security/user_file_uploads | **Refuted (tier 1).** In a public project anyone with an upload's link opens it. In a private or internal one an image, a video or an audio file opens for anyone with its link, signed in or not, unless the project's "Require authentication to view media files" is on. The column defaults to true for a new project, and an older one may hold false. Every signed-in reader of `GET /projects/:id` is sent the setting, so `upload_file` takes it from the project read its allow-list check already makes and reports `link_opens_for`, `unknown` if GitLab leaves it out. Probed live on 2026-10-08: a new private scratch project reported the setting on to the account that owns it; a reader who is not a Maintainer was not probed |
 | 113 | GitLab judges an upload by its content | At v19.4.1-ee: `lib/gitlab/file_type_detection.rb` L1-22 (it "identifies files only by the file extension"), `lib/gitlab/file_markdown_link_builder.rb` L9-23 (`![...]` for an embeddable extension, the link text the name without its extension), `app/uploaders/file_uploader.rb` L221-223 (`/uploads/<secret>/<filename>`), `workhorse/internal/headers/content_headers.go` L82-90 (the served type is `http.DetectContentType` of the bytes, SVG apart), `lib/banzai/filter/upload_link_filter.rb` L30-41 (`/uploads/...` is rewritten under the rendering project's id) | **Refuted (tier 1).** Rails decides from the name's extension whether Markdown embeds an upload and whether a private project serves it without sign-in; Workhorse sets the served type from the bytes. So `upload_file` sniffs with the function Workhorse uses, accepts four image types, and sends the base name with the extension of the type the bytes show, so name and bytes agree. Markdown with `/uploads/...` resolves only in the project the image was uploaded to; `full_path` works from anywhere |
 | 114 | `upload_file` should also read from the client's MCP roots | SEP-2577 (final; https://modelcontextprotocol.io/seps/2577-deprecate-roots-sampling-and-logging): roots deprecated from protocol 2026-07-28, the stated replacement "directories and files passed as tool parameters, resource URIs or server configuration"; go-sdk v1.8.0 `mcp/server.go` L1619-1651 (`ListRoots` refused while serving a request from 2026-07-28, which wants an input request instead, SEP-2322); a probe through the SDK's in-memory transports, 2026-10-07 | **Rejected (tier 1; maintainer, 2026-10-08).** On 2025-06-18 and 2025-11-25 `ListRoots` worked mid-call; on 2026-07-28, the SDK's default, it is refused before anything is sent, and the SDK marks every roots API deprecated. A first version read roots where it could; it was dropped. `GITLAB_MCP_UPLOAD_DIRS`, which SEP-2577's server configuration is, is the only source of directories, and the refusal with it unset names it |
-| 115 | `os.Root` keeps a path inside its directory | Go 1.27.1: `os/root.go` L33-43 (links are followed, never out of the root, and never absolute), `os/file.go` L421 (`errPathEscapes`, unexported), `os/root_windows.go` L211-244 and `os/types_windows.go` L46-80 (on Windows the root's `Lstat` takes the file id from the handle, so `os.SameFile` holds); the `internal/localimage` tests | **Confirmed (tier 1), with two limits.** A relative link that leaves the root, and every absolute link, are refused as escaping; the refusal is matched by its text, and a change to that text still refuses, as `[invalid]`. `Root` does not stop a FIFO or a device, so `localimage` refuses anything but a regular file before opening, opens with `O_NONBLOCK` where FIFOs exist, and holds the open file to the one checked with `os.SameFile` A probe on 2026-10-08 found `O_NOFOLLOW` ignored for the final component: `Root` follows the link itself, so the check stays `Lstat` and `os.SameFile` |
+| 115 | `os.Root` keeps a path inside its directory | Go 1.27.2 (first read on 1.27.1; the cited lines are the same in both): `os/root.go` L33-43 (links are followed, never out of the root, and never absolute), `os/file.go` L421 (`errPathEscapes`, unexported), `os/root_windows.go` L211-244 and `os/types_windows.go` L46-80 (on Windows the root's `Lstat` takes the file id from the handle, so `os.SameFile` holds); the `internal/localimage` tests | **Confirmed (tier 1), with two limits.** A relative link that leaves the root, and every absolute link, are refused as escaping; the refusal is matched by its text, and a change to that text still refuses, as `[invalid]`. `Root` does not stop a FIFO or a device, so `localimage` refuses anything but a regular file before opening, opens with `O_NONBLOCK` where FIFOs exist, and holds the open file to the one checked with `os.SameFile`. A probe on 2026-10-08 found `O_NOFOLLOW` ignored for the final component: `Root` follows the link itself, so the check stays `Lstat` and `os.SameFile`. Rechecked on Go 1.27.2 on 2026-10-10, with the same result. 1.27.2 fixes GO-2026-6604: on Windows, `Mkdir` and `MkdirAll` could follow a junction out of the root. `govulncheck` reached it through `openIn`, but the fix changes only those two calls and a path ending in a slash, and `localimage` creates nothing and opens no such path |
 | 116 | A lost upload can be settled by reading | At v19.4.1-ee: `lib/api/markdown_uploads.rb` L16 (`authenticate_non_get!`), L69-73 (the POST checks no role: any account that can read the project uploads), L90-91 and L104-120 (listing, and downloading by id, need `admin_upload`, Maintainer); the OpenAPI file's `GET /projects/{id}/uploads` (id, size, filename, created_at, uploaded_by: no secret); `app/services/upload_service.rb` L11-18 (a file over the instance's limit stores nothing), `doc/user/gitlab_com/_index.md` L34 and `db/structure.sql` L14071 (100 MiB) | **Refuted (tier 1).** A Developer cannot list uploads, and a Maintainer's listing has no secret, so no read can tell whether a lost upload landed or give its link. `upload_file` sends once and answers `[ambiguous_outcome]`, saying a repeat would leave the first upload, if it landed, with nothing linking to it |
 | 117 | A bundle's optional setting the person leaves empty reaches the server empty | anthropics/mcpb at v2.1.2: its manifest specification, L555-583 and L699 (user_config, and arrays expanded only as separate arguments), `src/shared/config.ts` L18-80 (`replaceVariables` replaces only the variables it has, and refuses an array in a string) and L139-178 (variables come from defaults and the person's values) | **Refuted (tier 1, the reference host; Claude Desktop not probed).** An optional key with no default is never a variable, so `${user_config.x}` reaches the environment as written, and the server refuses it as a directory that is not absolute. A `multiple` value is an array, which is not substituted in a string either. So `upload_dirs` is one `directory` with the default `""`, and the `mcpb` gate refuses an env-spent key that is optional with no default, or `multiple` |
 | 118 | An uploaded image keeps its metadata | At v19.4.1-ee: `workhorse/internal/upstream/routes.go` L362 and L612-613 (`POST /api/v4/projects/:id/uploads` goes through `upload.Multipart`), `workhorse/internal/upload/multipart_uploader.go` L21-36 and `saved_file_tracker.go` L72-81 (`TransformContents`), `workhorse/internal/upload/exif.go` (`handleExifUpload`: only when the bytes sniff as JPEG or decode as TIFF), `workhorse/internal/upload/exif/exif.go` L53-64, L164-218 and L238-253 (a name ending `.jpg`, `.jpeg` or `.tiff`; `exiftool -IPTC= -XMP=`, then `-all=` keeping the size, resolution and orientation tags) | **Refined (tier 1; not probed live).** Workhorse removes a JPEG's metadata before GitLab stores it, EXIF location and camera details included, keeping only its size, resolution and orientation, unless the instance sets `SKIP_EXIFTOOL`. PNG, GIF and WebP are not touched, so their text chunks and EXIF or XMP go as they are. `upload_file` names a JPEG `.jpg`, so the removal applies, and the result and the question say which case holds |
+| 119 | A tool the server asks about itself should carry the `requiresUserInteraction` mark too | code.claude.com/docs/en/mcp, "Require approval for a specific tool" and "Respond to MCP elicitation requests", and /docs/en/hooks, "Elicitation output", read 2026-10-10; the maintainer's decision for every server of his, 2026-10-09, after one delete asked twice in Claude Code; this repository's tests on three protocols and three kinds of client | **Refuted (tier 1 for the documents; one prompt not yet seen live).** Claude Code shows a marked tool's prompt on every call, which an allow rule does not skip, and scopes the mark to "tools whose permission prompt is itself the point". With the server's question as well, the person answered twice for one call. So `tools/list` drops the mark, for a client that can ask, from the twelve Ship and Destructive tools that ask before every write (§4.12 item 12). Claude Code declares `elicitation: {form: {}, url: {}}` on 2026-07-28, so it gets the question instead. A tool that asks only sometimes, or never, keeps the mark. The cost: the mark stopped these calls in the client first. Now an `Elicitation` hook that accepts confirms them alone, since such a hook answers "for the user" and "no dialog appears"; so does a client that accepts by itself (§4.12 item 2) |
+| 120 | `tools/list` and `tools/call` see the same client capabilities | MCP Go SDK v1.8.0 `mcp/shared.go` L712-724 (`ClientCapabilities` reads the request's `_meta` before the session's), read 2026-10-10 | **Refuted from 2026-07-28 (tier 1); kept as a known limit.** A client sends its capabilities with each request there, so it can declare form elicitation to `tools/list` and none to `tools/call`, and get neither the mark nor a question. That gains it nothing it lacked: a client that declares form elicitation can accept the question itself. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses such a call. The setting does not change the mark: it decides only what a call does when the client cannot ask |

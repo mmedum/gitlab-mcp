@@ -615,3 +615,62 @@ func TestAPipelineAsksOnAProtectedRef(t *testing.T) {
 		}
 	}
 }
+
+// A tool that asks the person before every write carries Claude Code's
+// requiresUserInteraction mark only for a client that cannot ask; with
+// both, the person would answer twice for one call. A tool that asks only
+// sometimes, or never, keeps it: there the mark is the only per-call
+// prompt. The clients share one server and the one that can ask lists
+// first, so a mark taken off the server's own tool, rather than a copy,
+// goes missing for the clients after it.
+func TestTheMarkIsDroppedOnlyWhereTheServerAlwaysAsks(t *testing.T) {
+	always := []string{"apply_suggestions", "approve_merge_request", "create_release", "delete_branch", "delete_comment",
+		"delete_label", "delete_milestone", "delete_snippet", "delete_tag", "delete_wiki_page", "merge_merge_request", "play_job"}
+	sometimes := []string{"run_merge_request_pipeline", "run_pipeline"}
+	never := []string{"cancel_auto_merge", "cancel_pipeline", "move_issue", "rebase_merge_request", "retry_job", "retry_pipeline",
+		"unapprove_merge_request"}
+	p := &answerer{answer: accepts}
+	urlOnly := &mcp.ClientCapabilities{Elicitation: &mcp.ElicitationCapabilities{URL: &mcp.URLElicitationCapabilities{}}}
+	clients := []struct {
+		name string
+		opts *mcp.ClientOptions
+		want []string
+	}{
+		// Before 2025-11-25 the SDK declares an empty elicitation
+		// capability for a handler, which means form; from it, form.
+		{"form elicitation", &mcp.ClientOptions{ElicitationHandler: p.handle}, slices.Concat(sometimes, never)},
+		{"no elicitation", &mcp.ClientOptions{}, slices.Concat(always, sometimes, never)},
+		{"URL elicitation only", &mcp.ClientOptions{ElicitationHandler: p.handle, Capabilities: urlOnly},
+			slices.Concat(always, sometimes, never)},
+	}
+	for _, protocol := range protocols {
+		s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+		Register(s, Deps{Config: full})
+		for _, c := range clients {
+			cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, c.opts).
+				Connect(t.Context(), connectTo(t, s), &mcp.ClientSessionOptions{ProtocolVersion: protocol})
+			if err != nil {
+				t.Fatalf("%s, %s: connect: %v", protocol, c.name, err)
+			}
+			res, err := cs.ListTools(t.Context(), nil)
+			_ = cs.Close()
+			if err != nil {
+				t.Fatalf("%s, %s: %v", protocol, c.name, err)
+			}
+			if len(res.Tools) != len(definitions()) {
+				t.Fatalf("%s, %s: listed %d tools, want all %d", protocol, c.name, len(res.Tools), len(definitions()))
+			}
+			var marked []string
+			for _, tl := range res.Tools {
+				if tl.Meta["anthropic/requiresUserInteraction"] == true {
+					marked = append(marked, tl.Name)
+				}
+			}
+			slices.Sort(marked)
+			want := slices.Sorted(slices.Values(c.want))
+			if !slices.Equal(marked, want) {
+				t.Errorf("%s, %s: marked %v, want %v", protocol, c.name, marked, want)
+			}
+		}
+	}
+}
