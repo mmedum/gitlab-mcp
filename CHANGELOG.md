@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Changed
+
+- A write the server asks about asks once in Claude Code, not twice. For a client that can ask, the twelve Ship and Destructive tools that ask before every write (`merge_merge_request`, `approve_merge_request`, `apply_suggestions`, `play_job`, `create_release` and the seven deletes) no longer carry Claude Code's `requiresUserInteraction` mark, and the server's question is the confirmation. `run_pipeline`, `run_merge_request_pipeline` and the Ship tools that never ask keep it. A Claude Code `Elicitation` hook that accepts now confirms those twelve by itself.
+
 ### Security
 
 - Built with Go 1.27.2, which fixes ten advisories that `govulncheck` found reachable from this server: in `net/http`, its HTTP/2 code, `crypto/tls`, `net/textproto`, and `os` on Windows.

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,6 +70,58 @@ func newAsking(lg *slog.Logger) *asking {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	return &asking{key: key, lg: lg, used: map[string]time.Time{}}
+}
+
+// canAsk reports whether a client can put a question to the person. Form
+// is what an empty elicitation capability declares; only a client that
+// declares URL alone cannot show a form.
+func canAsk(c *mcp.ClientCapabilities) bool {
+	return c != nil && c.Elicitation != nil && (c.Elicitation.Form != nil || c.Elicitation.URL == nil)
+}
+
+// interactionKey is Claude Code's mark for a tool it prompts for even
+// under an allow rule. It is a signal, not a control (§8).
+const interactionKey = "anthropic/requiresUserInteraction"
+
+// interactionHint is receiving middleware for tools/list. A tool in
+// always asks the person before every write, so it loses the mark when
+// the client can ask: the server's question is the confirmation then,
+// and it shows what the write does, where the client's prompt shows the
+// arguments. With both, the person would answer twice for one call. The
+// mark stays for a client that cannot ask, and on a tool that asks only
+// sometimes, such as a pipeline that asks only on a protected ref, or
+// never: there it is the only per-call prompt.
+func interactionHint(always map[string]bool) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			list, ok := res.(*mcp.ListToolsResult)
+			if err != nil || !ok {
+				return res, err
+			}
+			lr, ok := req.(*mcp.ListToolsRequest)
+			if !ok || !canAsk(lr.ClientCapabilities()) {
+				return res, err
+			}
+			// The tools are the server's own, listed to every client;
+			// copy before changing one.
+			out := *list
+			out.Tools = make([]*mcp.Tool, len(list.Tools))
+			for i, t := range list.Tools {
+				out.Tools[i] = t
+				if _, marked := t.Meta[interactionKey]; marked && always[t.Name] {
+					c := *t
+					c.Meta = maps.Clone(t.Meta)
+					delete(c.Meta, interactionKey)
+					if len(c.Meta) == 0 {
+						c.Meta = nil
+					}
+					out.Tools[i] = &c
+				}
+			}
+			return &out, nil
+		}
+	}
 }
 
 // askState is what a requestState carries. It binds the answer to the
@@ -179,11 +232,7 @@ func (p *person) args() string {
 // client could otherwise answer a question before it was asked.
 func (a *asking) personFor(req *mcp.CallToolRequest, tool string, in any, require bool) (*person, error) {
 	p := &person{a: a, tool: tool, in: in, require: require, now: time.Now(), travels: true}
-	if c := req.ClientCapabilities(); c != nil && c.Elicitation != nil {
-		// Form is what an empty elicitation capability declares; only a
-		// client that declares URL alone cannot show a form.
-		p.canAsk = c.Elicitation.Form != nil || c.Elicitation.URL == nil
-	}
+	p.canAsk = canAsk(req.ClientCapabilities())
 	if req.Session != nil {
 		if ip := req.Session.InitializeParams(); ip != nil {
 			p.travels = ip.ProtocolVersion >= statelessProtocol

@@ -78,7 +78,9 @@ func (k Kind) annotations(idempotent, ownOnly bool) *mcp.ToolAnnotations {
 }
 
 // interactive reports whether a client is asked to put a person in the
-// loop. A signal, not a control (§8).
+// loop. A signal, not a control (§8). interactionHint takes the mark off
+// a tool that asks the person itself on every call, for a client that
+// can ask.
 func (k Kind) interactive() bool { return k == Ship || k == Destructive }
 
 // spec is one tool's registration, minus its handler.
@@ -104,6 +106,12 @@ type spec struct {
 	// service asks at its write; a tool without it that reaches one is
 	// refused. Every Destructive tool asks.
 	Asks string
+	// AsksEveryCall says Asks has no condition: every write is put to
+	// the person. Such a tool loses the requiresUserInteraction mark for
+	// a client that can ask (interactionHint), since the question is the
+	// confirmation then. A tool that asks only sometimes keeps it. Only
+	// a Ship or Destructive tool carries the mark, so only one may say it.
+	AsksEveryCall bool
 	// Guarded are the inputs, by JSON name, that carry Markdown GitLab
 	// runs quick actions from. register routes each through
 	// internal/quickaction before the handler sees it and declares them
@@ -196,6 +204,12 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 	if t.sp.Kind == Destructive && t.sp.Asks == "" {
 		panic("tools: " + t.sp.Name + " is Destructive and does not ask the person")
 	}
+	if t.sp.AsksEveryCall && t.sp.Asks == "" {
+		panic("tools: " + t.sp.Name + " asks on every call and does not say when it asks")
+	}
+	if t.sp.AsksEveryCall && !t.sp.Kind.interactive() {
+		panic("tools: " + t.sp.Name + " asks on every call and carries no mark to drop")
+	}
 	description := t.sp.Description
 	if t.sp.Asks != "" {
 		description += " When the client can ask, the server also asks the person " + t.sp.Asks + "; a call they do not " +
@@ -209,7 +223,7 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 		OutputSchema: out,
 	}
 	if t.sp.Kind.interactive() {
-		mt.Meta = mcp.Meta{"anthropic/requiresUserInteraction": true}
+		mt.Meta = mcp.Meta{interactionKey: true}
 	}
 	c := &caller[In, Out]{t: t, d: d, in: in, inResolved: inResolved, outResolved: outResolved,
 		enums: enumsOf(t.sp.Enums), dryRun: boolField[In]("dry_run"), confirm: boolField[In]("confirm"),

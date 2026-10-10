@@ -429,6 +429,16 @@ func TestRegisterRefusesAWriteMissingARule(t *testing.T) {
 		"no such input":  tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"nope"}, Description: "x"}, run: run, text: text},
 		"a non-string":   tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"dry_run"}, Description: "x"}, run: run, text: text},
 		"a guarded read": tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Read, Guarded: []string{"body"}, Description: "x"}, run: run, text: text},
+		"asks on every call, saying nothing of when": func() definition {
+			def := fake("x", Ship, "").(tool[fakeIn, fakeOut])
+			def.sp.AsksEveryCall = true
+			return def
+		}(),
+		"asks on every call, with no mark": func() definition {
+			def := fake("x", Write, "before it writes").(tool[fakeIn, fakeOut])
+			def.sp.AsksEveryCall = true
+			return def
+		}(),
 		"no model.Write": tool[fakeIn, time.Time]{sp: spec{Name: "x", Kind: Write, Description: "x"}, run: func(context.Context, *service.Service, fakeIn) (time.Time, error) { return time.Time{}, nil }, text: func(time.Time, render.Boundary) string { return "" }},
 	} {
 		func() {

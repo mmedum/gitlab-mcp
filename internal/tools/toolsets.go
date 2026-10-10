@@ -83,7 +83,7 @@ type deleteWikiPageIn struct {
 
 func deleteWikiPage() definition {
 	return tool[deleteWikiPageIn, model.WikiDelete]{
-		sp: spec{Name: "delete_wiki_page", Asks: "before it deletes", Kind: Destructive, Toolset: "wiki", Idempotent: true,
+		sp: spec{Name: "delete_wiki_page", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Toolset: "wiki", Idempotent: true,
 			Description: "Delete a project wiki page. content_sha256 from get_wiki_page is required, and the call is refused " +
 				"[stale] if the page changed since. The result is read back." + destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteWikiPageIn) (model.WikiDelete, error) {
@@ -217,7 +217,7 @@ type deleteSnippetIn struct {
 
 func deleteSnippet() definition {
 	return tool[deleteSnippetIn, model.SnippetDelete]{
-		sp: spec{Name: "delete_snippet", Asks: "before it deletes", Kind: Destructive, Toolset: "snippets", Idempotent: true,
+		sp: spec{Name: "delete_snippet", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Toolset: "snippets", Idempotent: true,
 			Description: "Delete one of your own snippets, in a project or personal, with its files and their history. Another " +
 				"person's snippet is refused [blocked], even where GitLab would allow it. updated_at from your read is " +
 				"required. The result is read back." + destructiveNote + visibleNote},
@@ -293,7 +293,7 @@ type releaseLinkIn struct {
 
 func createRelease() definition {
 	return tool[createReleaseIn, model.ReleaseWrite]{
-		sp: spec{Name: "create_release", Asks: "before it publishes the release", Kind: Ship, Toolset: "releases",
+		sp: spec{Name: "create_release", Asks: "before it publishes the release", AsksEveryCall: true, Kind: Ship, Toolset: "releases",
 			Description: "Create a release of a tag, with asset links to the project's own pages when given. When the tag does " +
 				"not exist, GitLab creates it at ref, which starts the project's tag pipelines; the result says whether it did. A second release of one tag is refused [conflict]. " +
 				"Never repeated after a lost answer." + shipNote + visibleNote},

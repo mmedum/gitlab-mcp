@@ -232,6 +232,8 @@ When your MCP client supports elicitation, the server also asks you
 before it merges, approves, runs a manual job or a pipeline on a
 protected ref or for a merge request between protected branches, publishes a release or a tag, makes a confidential issue
 public, uploads an image, or deletes anything. Only your accept writes.
+Where it asks on every call, it does not also tell Claude Code to prompt
+you first, so you answer once.
 
 - **No quick actions.** GitLab runs `/merge`, `/close` and the rest from
   a description or comment. Every body this server sends is checked, and

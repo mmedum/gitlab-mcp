@@ -87,12 +87,7 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	reg := register(s, deps, defs)
 	RegisterResources(s, deps)
 	s.AddReceivingMiddleware(append([]mcp.Middleware{AskFailures()}, o.middleware...)...)
-	ct, st := mcp.NewInMemoryTransports()
-	ss, err := s.Connect(t.Context(), st, nil)
-	if err != nil {
-		t.Fatalf("connect server: %v", err)
-	}
-	t.Cleanup(func() { _ = ss.Close() })
+	ct := connectTo(t, s)
 	co := &mcp.ClientOptions{}
 	if o.person != nil {
 		co.ElicitationHandler = o.person.handle
@@ -107,6 +102,19 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	}
 	t.Cleanup(func() { _ = cs.Close() })
 	return &harness{t: t, gl: gl, cs: cs, reg: reg, cfg: cfg}
+}
+
+// connectTo connects a new server session on s and returns the client's
+// end of it.
+func connectTo(t *testing.T, s *mcp.Server) mcp.Transport {
+	t.Helper()
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := s.Connect(t.Context(), st, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	return ct
 }
 
 // call calls a tool and returns its text, its structured half decoded

@@ -33,7 +33,7 @@ type mergeMergeRequestIn struct {
 
 func mergeMergeRequest() definition {
 	return tool[mergeMergeRequestIn, model.MergeWrite]{
-		sp: spec{Name: "merge_merge_request", Asks: "before it merges or sets a merge request to merge", Kind: Ship,
+		sp: spec{Name: "merge_merge_request", Asks: "before it merges or sets a merge request to merge", AsksEveryCall: true, Kind: Ship,
 			Description: "Merge a merge request into its target branch, or with auto_merge set it to merge when its pipeline " +
 				"succeeds. sha is required: the head you reviewed, so nothing pushed after your read is merged. A merge request " +
 				"GitLab will not merge now is refused [conflict] naming its detailed_merge_status. The result names the merge " +
@@ -56,7 +56,7 @@ type approveMergeRequestIn struct {
 
 func approveMergeRequest() definition {
 	return tool[approveMergeRequestIn, model.ApprovalWrite]{
-		sp: spec{Name: "approve_merge_request", Asks: "before it approves", Kind: Ship, Idempotent: true,
+		sp: spec{Name: "approve_merge_request", Asks: "before it approves", AsksEveryCall: true, Kind: Ship, Idempotent: true,
 			Description: "Approve a merge request as the signed-in account: a sign-off other people's merge rules count. sha is " +
 				"required, the head you reviewed. An approval already given is reported unchanged. The result says whether " +
 				"the approval rules are met." + shipNote + visibleNote},
@@ -116,7 +116,7 @@ type applySuggestionsIn struct {
 
 func applySuggestions() definition {
 	return tool[applySuggestionsIn, model.SuggestionsApply]{
-		sp: spec{Name: "apply_suggestions", Asks: "before it commits the suggestions", Kind: Ship,
+		sp: spec{Name: "apply_suggestions", Asks: "before it commits the suggestions", AsksEveryCall: true, Kind: Ship,
 			Description: "Apply suggestions from a merge request's diff comments: GitLab commits them, in one commit as the " +
 				"signed-in account, to the source branch. The default branch and a protected source branch are refused " +
 				"[blocked], and so is a suggestion whose text holds hidden or bidirectional characters; every id must be on " +
@@ -253,7 +253,7 @@ type playJobIn struct {
 
 func playJob() definition {
 	return tool[playJobIn, model.JobWrite]{
-		sp: spec{Name: "play_job", Asks: "before it runs the job", Kind: Ship,
+		sp: spec{Name: "play_job", Asks: "before it runs the job", AsksEveryCall: true, Kind: Ship,
 			Description: "Start a manual job, such as a deployment a person has to trigger, with values for its inputs when " +
 				"given. A job that is not waiting to be started is refused [conflict]. Never repeated after a lost answer." + shipNote},
 		run: func(ctx context.Context, svc *service.Service, in playJobIn) (model.JobWrite, error) {
@@ -284,7 +284,7 @@ type deleteBranchIn struct {
 
 func deleteBranch() definition {
 	return tool[deleteBranchIn, model.BranchDelete]{
-		sp: spec{Name: "delete_branch", Asks: "before it deletes", Kind: Destructive, Idempotent: true,
+		sp: spec{Name: "delete_branch", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Idempotent: true,
 			Description: "Delete a branch. It refuses the default branch and every protected one [blocked], and one GitLab does " +
 				"not count merged into the default branch unless unmerged is true. sha, the head you read, is required. The " +
 				"result is read back." + destructiveNote + visibleNote},
@@ -307,7 +307,7 @@ type deleteCommentIn struct {
 
 func deleteComment() definition {
 	return tool[deleteCommentIn, model.CommentDelete]{
-		sp: spec{Name: "delete_comment", Asks: "before it deletes", Kind: Destructive, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+		sp: spec{Name: "delete_comment", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
 			Description: "Delete one of your own comments on an issue or a merge request. Another person's comment is refused " +
 				"[blocked], even where GitLab would allow it. updated_at from your read is required. The result is read " +
 				"back." + destructiveNote + visibleNote},

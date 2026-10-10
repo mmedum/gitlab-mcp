@@ -742,6 +742,21 @@ questions asked often are answered without reading (§18 row 94).
     is refused. The description of each asking tool says so, and a test
     derives the asking tools from the definitions and holds each:
     declined, nothing sent; accepted, the write.
+12. **One prompt per call.** A Ship or Destructive tool carries Claude
+    Code's `requiresUserInteraction` mark (§8), which makes Claude Code
+    prompt on every call. A tool that asks the person before every
+    write is listed without the mark to a client that can ask, so the
+    person answers once, to the question that shows what the write does.
+    These are `merge_merge_request`, `approve_merge_request`,
+    `apply_suggestions`, `play_job`, `create_release` and the seven
+    deletes. Their spec says `AsksEveryCall`, which `register` refuses
+    on a tool that carries no mark. `run_pipeline` and
+    `run_merge_request_pipeline` ask only on a protected ref, and the
+    other Ship tools never ask, so they keep the mark: there it is the
+    only per-call prompt. A client that cannot ask keeps every mark.
+    `tools/list` middleware drops the mark from a copy of each tool, and
+    a test lists the tools from one server as three kinds of client on
+    every protocol (§18 rows 119 and 120).
 
 ## 5. Module layout
 
@@ -1455,7 +1470,9 @@ every write but `add_todo`, `subscribe`, `mark_todos_done` and
 `update_review_comment`, whose effect only the account sees, marked `OwnOnly` on their spec in
 `register`.
 `_meta["anthropic/requiresUserInteraction"]` is set on Ship and
-Destructive kinds, as a signal and not a control.
+Destructive kinds, as a signal and not a control. A client that can ask
+does not get it on a tool that asks the person before every write
+(§4.12 item 12).
 
 | Tool | Kind | Toolset | Main operations |
 |---|---|---|---|
@@ -1900,6 +1917,7 @@ gated. It covers gitlab.com, the only instance.
 | The person asked before every upload | maintainer, 2026-10-08, after the security review | §4.12, §7.10: an upload is a disclosure; the POST needs only read access, and a Maintainer can list and download uploads by id |
 | `upload_file` reads only from the directories `GITLAB_MCP_UPLOAD_DIRS` names; MCP roots are not used | maintainer, 2026-10-08 | §7.10; roots are deprecated (SEP-2577), so the setting, and the bundle's field for it, is the only way to allow a directory (§18 row 114) |
 | The person asked before a merge, an approval, a manual job, a release, a tag, a pipeline on a protected ref, publishing a confidential issue and every delete; the empty form; `GITLAB_MCP_REQUIRE_PROMPT` | maintainer, 2026-09-29 | §4.12; a client that declares elicitation and answers with nobody there cannot make these writes, which is why the release is a major one |
+| `requiresUserInteraction` only where the server's question does not stand in for it: a tool that asks before every write drops the mark for a client that can ask; one that asks sometimes or never keeps it; `destructiveHint` and the server's question stay | maintainer, 2026-10-09 | §4.12 item 12, §18 rows 119 and 120; a write the server asks about asks once in Claude Code, not twice, and a client's `Elicitation` hook that accepts confirms it alone |
 
 ## 15. What must be verified live
 
@@ -2547,6 +2565,13 @@ timeout's wording was corrected with them:
 | With no question possible and `GITLAB_MCP_REQUIRE_PROMPT` off, the upload directories and the write allow-list are `upload_file`'s only guards | The maintainer's chosen behavior, unchanged; §4.12, `docs/security.md` and `docs/configuration.md` say so plainly and advise either setting for such a client |
 | `GITLAB_MCP_HTTP_TIMEOUT` was described as the deadline for one attempt | It bounds a call's time without progress: sending, waiting for the answer to start, reading it. The configuration page, the flag's help and `config.DefaultHTTPTimeout` say so |
 
+**v2.4.0 release review.** The release security review
+(`audit/security-reviews/v2.4.0.md`) found one low finding:
+
+| Found | Resolved |
+|---|---|
+| For a client that can ask, a Claude Code `Elicitation` hook that accepts, or any client that accepts an empty form by itself, now makes the twelve writes that lost the mark with no person asked; the mark used to stop them in the client first | The maintainer's chosen cost, 2026-10-09 (§14); a person has to configure such a hook. `docs/security.md` and the CHANGELOG say so, and §18 row 119 cites the hooks reference |
+
 ### Closing a phase
 
 1. `make check` green; the live driver run and its transcript read.
@@ -2895,3 +2920,5 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 116 | A lost upload can be settled by reading | At v19.4.1-ee: `lib/api/markdown_uploads.rb` L16 (`authenticate_non_get!`), L69-73 (the POST checks no role: any account that can read the project uploads), L90-91 and L104-120 (listing, and downloading by id, need `admin_upload`, Maintainer); the OpenAPI file's `GET /projects/{id}/uploads` (id, size, filename, created_at, uploaded_by: no secret); `app/services/upload_service.rb` L11-18 (a file over the instance's limit stores nothing), `doc/user/gitlab_com/_index.md` L34 and `db/structure.sql` L14071 (100 MiB) | **Refuted (tier 1).** A Developer cannot list uploads, and a Maintainer's listing has no secret, so no read can tell whether a lost upload landed or give its link. `upload_file` sends once and answers `[ambiguous_outcome]`, saying a repeat would leave the first upload, if it landed, with nothing linking to it |
 | 117 | A bundle's optional setting the person leaves empty reaches the server empty | anthropics/mcpb at v2.1.2: its manifest specification, L555-583 and L699 (user_config, and arrays expanded only as separate arguments), `src/shared/config.ts` L18-80 (`replaceVariables` replaces only the variables it has, and refuses an array in a string) and L139-178 (variables come from defaults and the person's values) | **Refuted (tier 1, the reference host; Claude Desktop not probed).** An optional key with no default is never a variable, so `${user_config.x}` reaches the environment as written, and the server refuses it as a directory that is not absolute. A `multiple` value is an array, which is not substituted in a string either. So `upload_dirs` is one `directory` with the default `""`, and the `mcpb` gate refuses an env-spent key that is optional with no default, or `multiple` |
 | 118 | An uploaded image keeps its metadata | At v19.4.1-ee: `workhorse/internal/upstream/routes.go` L362 and L612-613 (`POST /api/v4/projects/:id/uploads` goes through `upload.Multipart`), `workhorse/internal/upload/multipart_uploader.go` L21-36 and `saved_file_tracker.go` L72-81 (`TransformContents`), `workhorse/internal/upload/exif.go` (`handleExifUpload`: only when the bytes sniff as JPEG or decode as TIFF), `workhorse/internal/upload/exif/exif.go` L53-64, L164-218 and L238-253 (a name ending `.jpg`, `.jpeg` or `.tiff`; `exiftool -IPTC= -XMP=`, then `-all=` keeping the size, resolution and orientation tags) | **Refined (tier 1; not probed live).** Workhorse removes a JPEG's metadata before GitLab stores it, EXIF location and camera details included, keeping only its size, resolution and orientation, unless the instance sets `SKIP_EXIFTOOL`. PNG, GIF and WebP are not touched, so their text chunks and EXIF or XMP go as they are. `upload_file` names a JPEG `.jpg`, so the removal applies, and the result and the question say which case holds |
+| 119 | A tool the server asks about itself should carry the `requiresUserInteraction` mark too | code.claude.com/docs/en/mcp, "Require approval for a specific tool" and "Respond to MCP elicitation requests", and /docs/en/hooks, "Elicitation output", read 2026-10-10; the maintainer's decision for every server of his, 2026-10-09, after one delete asked twice in Claude Code; this repository's tests on three protocols and three kinds of client | **Refuted (tier 1 for the documents; one prompt not yet seen live).** Claude Code shows a marked tool's prompt on every call, which an allow rule does not skip, and scopes the mark to "tools whose permission prompt is itself the point". With the server's question as well, the person answered twice for one call. So `tools/list` drops the mark, for a client that can ask, from the twelve Ship and Destructive tools that ask before every write (§4.12 item 12). Claude Code declares `elicitation: {form: {}, url: {}}` on 2026-07-28, so it gets the question instead. A tool that asks only sometimes, or never, keeps the mark. The cost: the mark stopped these calls in the client first. Now an `Elicitation` hook that accepts confirms them alone, since such a hook answers "for the user" and "no dialog appears"; so does a client that accepts by itself (§4.12 item 2) |
+| 120 | `tools/list` and `tools/call` see the same client capabilities | MCP Go SDK v1.8.0 `mcp/shared.go` L712-724 (`ClientCapabilities` reads the request's `_meta` before the session's), read 2026-10-10 | **Refuted from 2026-07-28 (tier 1); kept as a known limit.** A client sends its capabilities with each request there, so it can declare form elicitation to `tools/list` and none to `tools/call`, and get neither the mark nor a question. That gains it nothing it lacked: a client that declares form elicitation can accept the question itself. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses such a call. The setting does not change the mark: it decides only what a call does when the client cannot ask |
