@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-10
+
 ### Changed
 
 - A write the server asks about asks once in Claude Code, not twice. For a client that can ask, the twelve Ship and Destructive tools that ask before every write (`merge_merge_request`, `approve_merge_request`, `apply_suggestions`, `play_job`, `create_release` and the seven deletes) no longer carry Claude Code's `requiresUserInteraction` mark, and the server's question is the confirmation. `run_pipeline`, `run_merge_request_pipeline` and the Ship tools that never ask keep it. A Claude Code `Elicitation` hook that accepts now confirms those twelve by itself.
@@ -169,7 +171,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.1.0...v2.2.0

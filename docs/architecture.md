@@ -1,9 +1,12 @@
 # Architecture — gitlab-mcp
 
-**Status: 2.3.0, 2026-10-08: `upload_file` uploads an image from a
-directory `GITLAB_MCP_UPLOAD_DIRS` names, after asking the person
-(§7.10, §4.12), and every request body is timed by its progress (§11).
-2.2.1: a repeated delete that may have landed is `[ambiguous_outcome]`
+**Status: 2.4.0, 2026-10-10: a write the server asks about asks once
+in Claude Code, not twice (§4.12 item 12), built with Go 1.27.2. Owed:
+seeing one prompt live in Claude Code, and what headless `claude -p`
+does with the server's question (§18 row 119). 2.3.0: `upload_file`
+uploads an image from a directory `GITLAB_MCP_UPLOAD_DIRS` names, after
+asking the person (§7.10, §4.12), and every request body is timed by
+its progress (§11). 2.2.1: a repeated delete that may have landed is `[ambiguous_outcome]`
 (§4.5). Phases 0 to 7 — the person confirms what ships, deletes or
 uploads (§4.12) — 2.1.0's nine tools, and 2.2.0's seven more for
 reviewing merge requests: `react`, `list_mr_versions`,
@@ -11,7 +14,7 @@ reviewing merge requests: `react`, `list_mr_versions`,
 `publish_review_comment`, and `apply_suggestions` and
 `cancel_auto_merge` (Ship), with reviewer states in
 `get_merge_request` (§16). The module path is `/v2`. §17.10 stands and
-§17.11 waits. Nothing is owed.** This document holds the platform facts, the design bets, a
+§17.11 waits.** This document holds the platform facts, the design bets, a
 verdict on every API operation group, the phase plan and the spikes that
 must answer before the phases that depend on them.
 
