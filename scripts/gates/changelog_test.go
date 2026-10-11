@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,27 +59,68 @@ func gitCommit(t *testing.T, dir, msg string, files map[string]string) {
 	gitDo(t, dir, "commit", "-q", "--allow-empty", "-m", msg)
 }
 
+// changelogGoMod is go.mod as the go command writes it, with both forms
+// of require.
+const changelogGoMod = "module m\n\ngo 1.27.2\n\nrequire (\n\texample.com/a v1.0.0\n\tgithub.com/modelcontextprotocol/go-sdk v1.8.0\n" +
+	"\texample.com/b v0.1.0 // indirect\n)\n\nrequire example.com/c v1.2.0\n"
+
+// changelogGoModCommented carries the comments the go command keeps after
+// `require (` and after `)`.
+var changelogGoModCommented = strings.NewReplacer("require (\n", "require ( // direct\n", ")\n\n", ") // direct\n\n").
+	Replace(changelogGoMod)
+
 const changelogBase = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- One.\n\n## [0.1.0] - 2026-01-01\n\n### Added\n\n- First.\n\n" +
 	"[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n[0.1.0]: https://example.com/releases/tag/v0.1.0\n"
 
 func TestChangelogPR(t *testing.T) {
+	bumpA := strings.NewReplacer("a v1.0.0", "a v1.1.0")
 	cases := []struct {
 		name  string
+		goMod string // the base's go.mod; empty: changelogGoMod
 		files map[string]string
 		want  string // empty: passes
 	}{
-		{"entry under Unreleased", map[string]string{
+		{"entry under Unreleased", "", map[string]string{
 			"internal/x/x.go": "package x // changed\n",
 			"CHANGELOG.md":    strings.Replace(changelogBase, "- One.\n", "- One.\n- Two.\n", 1),
 		}, ""},
-		{"no shipped change", map[string]string{"docs/a.md": "x\n", "internal/x/x_test.go": "package x\n"}, ""},
-		{"shipped change, no entry", map[string]string{"internal/x/x.go": "package x // changed\n"},
+		{"no shipped change", "", map[string]string{"docs/a.md": "x\n", "internal/x/x_test.go": "package x\n"}, ""},
+		{"shipped change, no entry", "", map[string]string{"internal/x/x.go": "package x // changed\n"},
 			"did not"},
-		{"entry under a released heading", map[string]string{
+		{"entry under a released heading", "", map[string]string{
 			"internal/x/x.go": "package x // changed\n",
 			"CHANGELOG.md":    strings.Replace(changelogBase, "- First.\n", "- First.\n- Late.\n", 1),
 		}, "no line was added under [Unreleased]"},
-		{"a release cut", map[string]string{
+		{"a dependency bump", "", map[string]string{
+			"go.mod": strings.NewReplacer("a v1.0.0", "a v1.1.0", "c v1.2.0", "c v1.3.0",
+				"// indirect\n)", "// indirect\n\texample.com/d v0.2.0 // indirect\n)").Replace(changelogGoMod),
+		}, ""},
+		{"a dependency bump between commented parens", changelogGoModCommented, map[string]string{
+			"go.mod": bumpA.Replace(changelogGoModCommented),
+		}, ""},
+		{"a dependency bump with code", "", map[string]string{
+			"go.mod":          bumpA.Replace(changelogGoMod),
+			"internal/x/x.go": "package x // changed\n",
+		}, "1 shipped file(s) changed (internal/x/x.go)"},
+		{"a go directive change", "", map[string]string{
+			"go.mod": strings.Replace(changelogGoMod, "go 1.27.2", "go 1.27.3", 1),
+		}, "1 shipped file(s) changed (go.mod)"},
+		{"a toolchain directive", "", map[string]string{
+			"go.mod": strings.Replace(changelogGoMod, "go 1.27.2\n", "go 1.27.2\n\ntoolchain go1.27.3\n", 1),
+		}, "1 shipped file(s) changed (go.mod)"},
+		{"a replace after a commented paren", changelogGoModCommented, map[string]string{
+			"go.mod": changelogGoModCommented + "\nreplace example.com/a => example.com/fork v1.0.0\n",
+		}, "1 shipped file(s) changed (go.mod)"},
+		{"a bump of the MCP SDK", "", map[string]string{
+			"go.mod": strings.Replace(changelogGoMod, "go-sdk v1.8.0", "go-sdk v1.9.0", 1),
+		}, "1 shipped file(s) changed (go.mod)"},
+		{"a require block left open", "", map[string]string{
+			"go.mod": bumpA.Replace(strings.Replace(changelogGoMod, ")\n", "", 1)),
+		}, "1 shipped file(s) changed (go.mod)"},
+		{"a bump in a require the go command would not spell", strings.Replace(changelogGoMod, "require (", "require(", 1),
+			map[string]string{"go.mod": bumpA.Replace(strings.Replace(changelogGoMod, "require (", "require(", 1))},
+			"1 shipped file(s) changed (go.mod)"},
+		{"a release cut", "", map[string]string{
 			"go.mod": "module m // changed\n",
 			"CHANGELOG.md": strings.Replace(changelogBase, "## [Unreleased]\n\n### Added\n\n- One.\n",
 				"## [Unreleased]\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- One.\n", 1),
@@ -86,7 +128,8 @@ func TestChangelogPR(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := gitRepo(t, map[string]string{"CHANGELOG.md": changelogBase, "internal/x/x.go": "package x\n", "go.mod": "module m\n"})
+			goMod := cmp.Or(tc.goMod, changelogGoMod)
+			dir := gitRepo(t, map[string]string{"CHANGELOG.md": changelogBase, "internal/x/x.go": "package x\n", "go.mod": goMod})
 			gitDo(t, dir, "checkout", "-q", "-b", "topic")
 			gitCommit(t, dir, "work", tc.files)
 			// The base branch moves on with a shipped change and its own

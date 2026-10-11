@@ -48,6 +48,10 @@ under `dist/`. `release-notes` prints what the release page would say.
 - A live run of anything that touched sign-in, the quick-action guard,
   diff positions, a write's witness or an API response shape, **with the
   transcript read** (`docs/development.md`).
+- `make vuln` in a worktree of the previous tag. A dependency bump
+  carries no CHANGELOG line of its own, so an advisory reported there
+  and not at `HEAD` was fixed by a bump in this release, and gets its
+  line under Security now.
 - `make schema-diff`, read for anything breaking, resources included.
   A breaking change has `BREAKING CHANGE:` in the range, and a
   `**Breaking:**` CHANGELOG line.
