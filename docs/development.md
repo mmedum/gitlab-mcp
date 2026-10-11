@@ -71,7 +71,7 @@ SHA the event recorded, which is stale in a stack of pull requests:
 | Target | Holds |
 |---|---|
 | `make merge-base` | `gates merge-base`: prints the commit the pull request is measured from |
-| `make changelog` | `gates changelog`: the pull request adds a CHANGELOG line, unless it cuts a release |
+| `make changelog` | `gates changelog`: the pull request adds a CHANGELOG line, unless it cuts a release or only bumps the modules go.mod requires, the MCP SDK excepted |
 | `make schema-ack` | `gates schema-ack`: a changed tool surface is acknowledged by `SCHEMA-CHANGE:` or `BREAKING CHANGE:` on a commit the pull request adds |
 
 The acknowledgment is an empty commit, never an amend:
@@ -114,8 +114,8 @@ rule with a floor on how much it read:
 - the README's tool table against the tools the built binary registers;
 - the tool counts in `docs/architecture.md` §8 against its table;
 - the status line against the newest tag or CHANGELOG heading;
-- if Go that ships changed since the last tag, the CHANGELOG has an
-  entry under `[Unreleased]`;
+- if Go that ships changed since the last tag, a dependency bump
+  aside, the CHANGELOG has an entry under `[Unreleased]`;
 - no version number in prose (a badge shows it);
 - a number in the sentence introducing a list matches the list;
 - the application blocks in `docs/setup.md`, generated from

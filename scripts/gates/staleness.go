@@ -73,7 +73,7 @@ type stalenessInputs struct {
 	// commands are the gate registry's names.
 	commands []string
 	// newestTag is the newest semver tag, "" for none; changedSince is
-	// the shipped Go changed since it.
+	// the shipped Go changed since it, a dependency bump in go.mod aside.
 	newestTag    string
 	changedSince []string
 	// built is whether any non-test Go file exists under internal/.
@@ -193,11 +193,10 @@ func stalenessGather(root string, args []string) (stalenessInputs, error) {
 	in.commands = slices.Sorted(maps.Keys(commands))
 	in.newestTag = stalenessNewestTag(root)
 	if in.newestTag != "" {
-		changed, err := gitx.ChangedFiles(root, "v"+in.newestTag, "HEAD")
+		in.changedSince, err = stalenessShippedSince(root, "v"+in.newestTag)
 		if err != nil {
 			return in, err
 		}
-		in.changedSince = stalenessShipped(changed)
 	}
 	in.tools, in.toolsErr = stalenessTools(args)
 	return in, nil
@@ -283,6 +282,16 @@ func stalenessBuilt(root string) bool {
 		return nil
 	})
 	return built
+}
+
+// stalenessShippedSince are the shipped files changed since tag, a
+// dependency bump in go.mod aside, as the `changelog` gate counts them.
+func stalenessShippedSince(root, tag string) ([]string, error) {
+	changed, err := gitx.ChangedFiles(root, tag, "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return withoutGoModBump(root, tag, "HEAD", stalenessShipped(changed))
 }
 
 // stalenessShipped are the changed files that change what a user runs.

@@ -300,3 +300,32 @@ func TestStalenessShipped(t *testing.T) {
 		t.Errorf("shipped %q, want %q", got, want)
 	}
 }
+
+func TestStalenessShippedSince(t *testing.T) {
+	bump := strings.Replace(changelogGoMod, "a v1.0.0", "a v1.1.0", 1)
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  []string
+	}{
+		{"a dependency bump", map[string]string{"go.mod": bump}, nil},
+		{"a dependency bump with code", map[string]string{"go.mod": bump, "internal/x/x.go": "package x // changed\n"},
+			[]string{"internal/x/x.go"}},
+		{"a go directive change", map[string]string{"go.mod": strings.Replace(changelogGoMod, "go 1.27.2", "go 1.27.3", 1)},
+			[]string{"go.mod"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := gitRepo(t, map[string]string{"go.mod": changelogGoMod, "internal/x/x.go": "package x\n"})
+			gitDo(t, dir, "tag", "v0.1.0")
+			gitCommit(t, dir, "work", tc.files)
+			got, err := stalenessShippedSince(dir, "v0.1.0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("shipped since the tag %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

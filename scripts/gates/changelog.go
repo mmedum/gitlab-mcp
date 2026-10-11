@@ -61,8 +61,17 @@ func changelogCheck(out io.Writer, root, base, head string) error {
 	if err != nil {
 		return err
 	}
-	watched := changelogTouched(files)
-	if len(watched) == 0 {
+	touched := changelogTouched(files)
+	watched, err := withoutGoModBump(root, from, head, touched)
+	if err != nil {
+		return err
+	}
+	switch {
+	case len(watched) == 0 && len(touched) > 0:
+		_, _ = fmt.Fprintf(out, "changelog: %d files changed, the only shipped one go.mod and only in the modules it requires; "+
+			"a dependency bump needs no entry\n", len(files))
+		return nil
+	case len(watched) == 0:
 		_, _ = fmt.Fprintf(out, "changelog: %d files changed, none of them shipped source; no entry needed\n", len(files))
 		return nil
 	}
@@ -104,6 +113,73 @@ func changelogTouched(files []string) []string {
 		}
 	}
 	return out
+}
+
+// changelogNotedModules need an entry whenever their version moves: the
+// MCP SDK decides what the protocol does, and a client sees that.
+var changelogNotedModules = []string{"github.com/modelcontextprotocol/go-sdk"}
+
+// withoutGoModBump drops go.mod from the shipped files when it changed
+// between from and to only in the modules it requires: the bump
+// Dependabot opens every week. It changes no code and no build directive,
+// and a line naming it tells nobody deciding whether to upgrade anything.
+// A bump that fixes an advisory is found at release time
+// (docs/release.md).
+func withoutGoModBump(root, from, to string, files []string) ([]string, error) {
+	if !slices.Contains(files, "go.mod") {
+		return files, nil
+	}
+	before, err := gitx.Show(root, from, "go.mod")
+	if err != nil {
+		return nil, err
+	}
+	after, err := gitx.Show(root, to, "go.mod")
+	if err != nil {
+		return nil, err
+	}
+	was, wasRead := goModOutsideRequires(string(before))
+	is, isRead := goModOutsideRequires(string(after))
+	if !wasRead || !isRead || was != is {
+		return files, nil
+	}
+	return slices.DeleteFunc(slices.Clone(files), func(f string) bool { return f == "go.mod" }), nil
+}
+
+// goModOutsideRequires is go.mod with its require entries and blank lines
+// taken out. A line is read with its comment cut, since the go command
+// keeps a comment after `require (` and after `)` (docs/architecture.md
+// §18). Only a line shaped like a require entry is taken out, so anything
+// else stays in wherever it sits. read is false unless the module line was
+// seen and every require block closed: a comparison that read less waives
+// nothing.
+func goModOutsideRequires(gomod string) (outside string, read bool) {
+	var b strings.Builder
+	inRequire, sawModule := false, false
+	for line := range strings.Lines(gomod) {
+		t := strings.TrimSpace(line)
+		code, _, _ := strings.Cut(t, "//")
+		f := strings.Fields(code)
+		sawModule = sawModule || (len(f) == 2 && f[0] == "module")
+		switch {
+		case inRequire && len(f) == 1 && f[0] == ")":
+			inRequire = false
+		case inRequire && goModBumpable(f):
+		case len(f) == 2 && f[0] == "require" && f[1] == "(":
+			inRequire = true
+		case len(f) == 3 && f[0] == "require" && goModBumpable(f[1:]):
+		case t == "":
+		default:
+			b.WriteString(t + "\n")
+		}
+	}
+	return b.String(), sawModule && !inRequire
+}
+
+// goModBumpable is a require entry, a module and its version, whose
+// version may move without an entry.
+func goModBumpable(f []string) bool {
+	return len(f) == 2 && strings.HasPrefix(f[1], "v") &&
+		!slices.Contains(changelogNotedModules, strings.Trim(f[0], `"`))
 }
 
 // changelogAddedUnderUnreleased counts added lines under [Unreleased].
