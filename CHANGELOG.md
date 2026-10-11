@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Changed
+
+- Built with `golang.org/x/sys` 0.49.0.
+
 ## [2.4.0] - 2026-10-10
 
 ### Changed
