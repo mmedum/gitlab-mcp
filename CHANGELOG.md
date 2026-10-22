@@ -33,6 +33,10 @@ lifted verbatim.
 
 - **Breaking:** `GITLAB_MCP_REQUIRE_PROMPT` and `--require-prompt`. Set to anything but false, the server refuses to start rather than ignore it. `status` no longer shows it, and `status --json` drops `require_prompt` and reports `schema_version` 2.
 
+### Security
+
+- Built with Go 1.27.3, which fixes GO-2026-6809 in `crypto/x509`, which `govulncheck` found reachable from this server: intermediate certificates known to be compromised are no longer trusted.
+
 ## [2.4.0] - 2026-10-10
 
 ### Changed
