@@ -101,27 +101,30 @@ func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset in
 }
 
 // GetMergeRequest reads a merge request with its approval state, each
-// reviewer's state, a summary of its threads and the issues linked to it
-// (§7.2). The reads are independent and run at once. The approval,
-// reviewer and link reads are best effort: an instance that refuses them still has a merge request to
-// show. A read that continues the description from an offset leaves the
-// links out.
+// reviewer's state, a summary of its threads, the issues linked to it
+// and the merge requests it waits for or holds (§7.2). The reads are
+// independent and run at once. The approval, reviewer, link and
+// dependency reads are best effort: an instance that refuses them still
+// has a merge request to show. A read that continues the description
+// from an offset leaves the links and dependencies out.
 func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, offset int) (model.MergeRequest, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
 		return model.MergeRequest{}, err
 	}
 	var (
-		wg                    sync.WaitGroup
-		mr                    *gitlab.MergeRequest
-		approvals             *gitlab.Approvals
-		approvalsErr          error
-		reviewers             *model.ReviewerStates
-		reviewersErr          error
-		summary               model.DiscussionSummary
-		summaryErr            error
-		closes, related       *model.LinkedItems
-		closesErr, relatedErr error
+		wg                      sync.WaitGroup
+		mr                      *gitlab.MergeRequest
+		approvals               *gitlab.Approvals
+		approvalsErr            error
+		reviewers               *model.ReviewerStates
+		reviewersErr            error
+		summary                 model.DiscussionSummary
+		summaryErr              error
+		closes, related         *model.LinkedItems
+		closesErr, relatedErr   error
+		blockedBy, blocks       *model.Dependencies
+		blockedByErr, blocksErr error
 	)
 	wg.Go(func() { mr, err = s.client.GetMergeRequest(ctx, p, iid) })
 	wg.Go(func() { approvals, approvalsErr = s.client.GetMergeRequestApprovals(ctx, p, iid) })
@@ -138,6 +141,16 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 				return s.client.ListMergeRequestRelatedIssues(ctx, p, iid, opts)
 			}, s.linkedIssue)
 		})
+		wg.Go(func() {
+			blockedBy, blockedByErr = dependencies(func(opts gapi.ListOptions) ([]gitlab.MergeRequestDependency, gapi.Page, error) {
+				return s.client.ListMergeRequestBlocks(ctx, p, iid, opts)
+			}, func(d gitlab.MergeRequestDependency) *gitlab.LinkedMergeRequest { return d.BlockingMergeRequest })
+		})
+		wg.Go(func() {
+			blocks, blocksErr = dependencies(func(opts gapi.ListOptions) ([]gitlab.MergeRequestDependency, gapi.Page, error) {
+				return s.client.ListMergeRequestBlockees(ctx, p, iid, opts)
+			}, func(d gitlab.MergeRequestDependency) *gitlab.LinkedMergeRequest { return d.BlockedMergeRequest })
+		})
 	}
 	wg.Wait()
 	if err != nil {
@@ -146,7 +159,7 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 	if approvalsErr != nil && !soft(approvalsErr) {
 		return model.MergeRequest{}, approvalsErr
 	}
-	for _, err := range []error{reviewersErr, summaryErr, closesErr, relatedErr} {
+	for _, err := range []error{reviewersErr, summaryErr, closesErr, relatedErr, blockedByErr, blocksErr} {
 		if err != nil {
 			return model.MergeRequest{}, err
 		}
@@ -164,7 +177,8 @@ func (s *Service) GetMergeRequest(ctx context.Context, raw string, iid int64, of
 		HasConflicts: mr.HasConflicts, ChangesCount: mr.ChangesCount, CreatedAt: mr.CreatedAt, UpdatedAt: mr.UpdatedAt,
 		MergedAt: mr.MergedAt, ClosedAt: mr.ClosedAt, UntrustedTitle: title, UntrustedDescription: desc,
 		DescriptionBudget: budget, Discussions: summary, ClosesIssues: closes, RelatedIssues: related,
-		TimeStats: timeStats(mr.TimeStats), Upvotes: mr.Upvotes, Downvotes: mr.Downvotes, ReviewerStates: reviewers,
+		BlockedBy: blockedBy, Blocks: blocks, TimeStats: timeStats(mr.TimeStats), Upvotes: mr.Upvotes,
+		Downvotes: mr.Downvotes, ReviewerStates: reviewers,
 	}
 	if mr.MergeUser != nil {
 		u := user(*mr.MergeUser)
@@ -236,6 +250,31 @@ func linked[T any](read func(gapi.ListOptions) ([]T, gapi.Page, error), item fun
 		out.Items = append(out.Items, item(r))
 	}
 	return out, nil
+}
+
+// dependencies reads the first page of one side of a merge request's
+// dependencies, best effort as linked is. other picks the merge request
+// on the far side of a row; GitLab leaves it out when the account cannot
+// read it, and the row is counted as hidden.
+func dependencies(read func(gapi.ListOptions) ([]gitlab.MergeRequestDependency, gapi.Page, error),
+	other func(gitlab.MergeRequestDependency) *gitlab.LinkedMergeRequest) (*model.Dependencies, error) {
+	hidden := 0
+	l, err := linked(func(opts gapi.ListOptions) ([]gitlab.LinkedMergeRequest, gapi.Page, error) {
+		rows, page, err := read(opts)
+		shown := make([]gitlab.LinkedMergeRequest, 0, len(rows))
+		for _, r := range rows {
+			if mr := other(r); mr != nil {
+				shown = append(shown, *mr)
+			} else {
+				hidden++
+			}
+		}
+		return shown, page, err
+	}, linkedMergeRequest)
+	if l == nil {
+		return nil, err
+	}
+	return &model.Dependencies{Items: l.Items, Hidden: hidden, More: l.More, Total: l.Total}, nil
 }
 
 func linkedMergeRequest(mr gitlab.LinkedMergeRequest) model.LinkedItem {

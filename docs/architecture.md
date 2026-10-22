@@ -390,14 +390,16 @@ instructions name the flags and what they add, which answers that
 without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
-`deployments`, `activity` and `planning` are off by default so the
-default surface, sixty-three tools, stays under the 64-tool point where one
-client starts regrouping tools. A read joins the default when it answers a
-question a default tool acts on: `list_boards` did, beside `list_labels`
-and `list_milestones`, since a board's columns are read with
-`search_issues` (maintainer, 2026-09-30). With Ship and Destructive both
-on, the surface is seventy-eight tools, past the 64-tool point; both flags
-are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
+`deployments`, `activity` and `planning` are off by default, so the
+default surface, sixty-five tools, holds the work inside a project's
+issues, merge requests, reviews, repository and CI. A read joins the
+default when it answers a question a default tool acts on: `list_boards`
+did, beside `list_labels` and `list_milestones`, since a board's columns
+are read with `search_issues` (maintainer, 2026-09-30). The count is not
+held under a client's grouping point: VS Code groups by the whole
+request's tools, its own built-ins included, and the only hard cap found
+is 128 tools per request (§18 row 123). With Ship and Destructive both
+on, the surface is eighty tools; both flags are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
 
@@ -983,6 +985,13 @@ and says when GitLab has more. A read continued from an offset does not
 read the lists again and leaves them null without comment. GitLab leaves out what the account cannot read, confidential
 issues included, and lists closing merge requests from the issue's own
 project only, so no list claims to be complete (§18 row 97).
+`get_merge_request` also lists its dependencies: `blocked_by`, the
+merge requests that must merge before it, and `blocks`, those that wait
+for it, each GitLab's first page of 20 by the same rules. A dependency
+on a merge request the account cannot read is counted as `hidden` and
+not named, since GitLab keeps the row and leaves the merge request out.
+A merged blocker no longer blocks and a closed one still does; the
+state is shown so the reader can tell (§18 row 122).
 Both carry the item's `time_stats`: the estimate and the time spent,
 in seconds and in GitLab's short form, which gitlab.com writes in hours
 and minutes, and empty at zero. Both carry `upvotes` and `downvotes`,
@@ -1017,7 +1026,19 @@ history is GitLab's and says so; a deleted label's event is kept and
 shown as one. Label names are shown as names, milestone titles inside
 the boundary. Iteration events (Premium) are not read (§18 row 99).
 `link_issues` and `unlink_issues` relate two issues, both projects held
-to the write allow-list since a link shows on both. `move_issue` (Ship)
+to the write allow-list since a link shows on both.
+`link_merge_requests` and `unlink_merge_requests` add and remove a merge
+request dependency, with the same inputs and a required `link_type`,
+`blocks` or `is_blocked_by` from the first merge request's side, since
+both directions can hold at once. Both projects are held to the
+allow-list: GitLab notes the dependency on both merge requests. GitLab
+writes and removes it through the merge request that waits, by the
+other's number and project, so no global id reaches the model. Each
+reads that merge request's dependencies first and reports one that is
+already there, or not there, as unchanged; the create is never
+repeated, and a lost answer is settled by reading them again. The
+routes check no license, so on Free GitLab records the dependency and
+does not hold the merge; the descriptions say so (§18 row 122). `move_issue` (Ship)
 takes the issue's `updated_at`, holds both projects to the allow-list,
 and refuses a project more people can see than the one the issue is in.
 `track_time` sets or resets an issue's or a merge request's estimate
@@ -1464,9 +1485,9 @@ the path, the name or the bytes (§9.2).
 
 ## 8. Tool surface
 
-101 tools. With the default toolsets: sixty-three by default,
-thirty-nine in read-only mode, seventy-eight with Ship and Destructive
-both enabled. Every toolset and flag on registers all 101.
+103 tools. With the default toolsets: sixty-five by default,
+thirty-nine in read-only mode, eighty with Ship and Destructive
+both enabled. Every toolset and flag on registers all 103.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people:
 every write but `add_todo`, `subscribe`, `mark_todos_done` and
@@ -1496,8 +1517,10 @@ does not get it on a tool that asks the person before every write
 | `resolve_discussion` | Write | default | `PUT …/issues|merge_requests/:iid/discussions/:id` |
 | `link_issues` | Write | default | `GET`/`POST …/issues/:iid/links` |
 | `unlink_issues` | Write | default | `DELETE …/issues/:iid/links/:id` |
+| `link_merge_requests` | Write | default | `GET`/`POST …/merge_requests/:iid/blocks` |
+| `unlink_merge_requests` | Write | default | `DELETE …/merge_requests/:iid/blocks/:id` |
 | `search_merge_requests` | Read | default | `GET /merge_requests`, `/projects/:id/merge_requests` |
-| `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals`, `/reviewers`, `/closes_issues`, `/related_issues` |
+| `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals`, `/reviewers`, `/closes_issues`, `/related_issues`, `/blocks`, `/blockees` |
 | `list_mr_files` | Read | default | `GET …/merge_requests/:iid/diffs` |
 | `get_mr_diff` | Read | default | `GET …/merge_requests/:iid/diffs` |
 | `list_mr_commits` | Read | default | `GET …/merge_requests/:iid/commits` |
@@ -1605,7 +1628,7 @@ operations it covers. The gate fails on an operation with neither, a
 client call with no row, and a row or rule matching nothing.
 
 The committed snapshot is v19.4.1-ee, 1,856 operations; the TSV holds
-365 exact rows and 219 prefix rules (2026-10-07), and the gate reports
+368 exact rows and 219 prefix rules (2026-10-22), and the gate reports
 the counts.
 The groups below are the design's verdicts; the TSV is the record.
 
@@ -1614,7 +1637,7 @@ The groups below are the design's verdicts; the TSV is the record.
 | user, metadata, version | Used: `get_me`, login, `doctor`. `/version` written off as deprecated for `/metadata`. Personal access token `self` routes written off with the token path (§10) |
 | projects (read), groups (read), members (read), users (search) | Used for navigation. Project create, update, fork, transfer, archive, share, import and export written off: administration |
 | issues, issue notes and discussions | Used, starting and resolving threads, links, moves (Ship), time tracking, subscribing, to-dos, emoji reactions, resource events and linked items included. Clone deferred; delete written off (Owner-only, permanent) |
-| merge requests, notes, discussions | Used, time tracking, subscribing, to-dos, emoji reactions, resource events and linked items included; rebase and running a merge request pipeline gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
+| merge requests, notes, discussions | Used, time tracking, subscribing, to-dos, emoji reactions, resource events, linked items and dependencies included; rebase and running a merge request pipeline gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
 | draft notes | Used: the review path |
 | approvals (merge-request level) | Used: approve, unapprove, state. Approval rules and project approval settings written off: governance configuration, Premium |
 | repository files, tree, commits, branches, tags, compare | Used, blame included. Cherry-pick and revert used as Write behind the protected-branch guard (§17.13); tag create gated under `releases`, tag delete Destructive. Raw archive deferred; commit statuses written off (a CI integration's surface); "delete merged branches" written off |
@@ -2575,6 +2598,15 @@ timeout's wording was corrected with them:
 |---|---|
 | For a client that can ask, a Claude Code `Elicitation` hook that accepts, or any client that accepts an empty form by itself, now makes the twelve writes that lost the mark with no person asked; the mark used to stop them in the client first | The maintainer's chosen cost, 2026-10-09 (§14); a person has to configure such a hook. `docs/security.md` and the CHANGELOG say so, and §18 row 119 cites the hooks reference |
 
+**Merge request dependencies (issue #62).** The security review found
+nothing. The code review found:
+
+| Found | Resolved |
+|---|---|
+| The dependency read stopped at its bound and called a dependency past it absent, so `unlink_merge_requests` could report unchanged, and a lost create be settled as not created, while it existed | The read says when it stopped short. Unlink refuses `[unsupported]`; link sends its create, which GitLab answers 409 when the pair exists; the settle verdict is unknown |
+| With rows the account cannot read and more pages, the text counted them twice | They are counted within what was read, and a list with none renders as the other linked lists do |
+| Two more reads on every `get_merge_request` | The maintainer's choice, 2026-10-22 |
+
 ### Closing a phase
 
 1. `make check` green; the live driver run and its transcript read.
@@ -2926,3 +2958,5 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 119 | A tool the server asks about itself should carry the `requiresUserInteraction` mark too | code.claude.com/docs/en/mcp, "Require approval for a specific tool" and "Respond to MCP elicitation requests", and /docs/en/hooks, "Elicitation output", read 2026-10-10; the maintainer's decision for every server of his, 2026-10-09, after one delete asked twice in Claude Code; this repository's tests on three protocols and three kinds of client | **Refuted (tier 1 for the documents; one prompt not yet seen live).** Claude Code shows a marked tool's prompt on every call, which an allow rule does not skip, and scopes the mark to "tools whose permission prompt is itself the point". With the server's question as well, the person answered twice for one call. So `tools/list` drops the mark, for a client that can ask, from the twelve Ship and Destructive tools that ask before every write (§4.12 item 12). Claude Code declares `elicitation: {form: {}, url: {}}` on 2026-07-28, so it gets the question instead. A tool that asks only sometimes, or never, keeps the mark. The cost: the mark stopped these calls in the client first. Now an `Elicitation` hook that accepts confirms them alone, since such a hook answers "for the user" and "no dialog appears"; so does a client that accepts by itself (§4.12 item 2) |
 | 120 | `tools/list` and `tools/call` see the same client capabilities | MCP Go SDK v1.8.0 `mcp/shared.go` L712-724 (`ClientCapabilities` reads the request's `_meta` before the session's), read 2026-10-10 | **Refuted from 2026-07-28 (tier 1); kept as a known limit.** A client sends its capabilities with each request there, so it can declare form elicitation to `tools/list` and none to `tools/call`, and get neither the mark nor a question. That gains it nothing it lacked: a client that declares form elicitation can accept the question itself. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses such a call. The setting does not change the mark: it decides only what a call does when the client cannot ask |
 | 121 | go.mod writes require two ways, `require path version` and a bare `require (` … `)` block | `go mod edit -fmt` with Go 1.27.2 on a scratch module, 2026-10-11 | **Refined (tier 1).** A comment after `require (` and after `)` survives formatting when the block holds two or more entries. A one-entry block becomes a single `require` line and loses its paren comments, and `require(` becomes `require (`. Read as bare, a block closed by `) // comment` never closes, and a `replace` after it goes unread. So `changelog` and `staleness` cut a line's comment before reading it, take out only lines shaped like a require entry, and waive no entry unless the module line was read and every block closed |
+| 122 | GitLab's merge request dependencies are Premium, addressed by global id, and limited to ten each way | At v19.4.1-ee: `ee/lib/api/merge_request_dependencies.rb` L26-36 (list), L54-77 (delete: `find_merge_request_with_access(…, :update_merge_request)`, the row found only among those the merge request waits for, then `authorize! :read_merge_request` on the blocking one), L79-124 (create: exactly one of `blocking_merge_request_id` and `blocking_merge_request_iid`, the latter with an optional `blocking_project_id`), L126-144 (blockees); `ee/lib/api/entities/merge_request_dependency.rb` (each merge request exposed only `if` the account may read it); `ee/app/services/merge_requests/create_block_service.rb` (403 without `update_merge_request` on the waiting one or `read_merge_request` on the other, 409 "Block already exists"); `destroy_block_service.rb`; `ee/app/models/merge_request_block.rb` L10-63 (unique pair, self-reference refused, the caps); `ee/app/models/ee/merge_request.rb` L383-389 and L812-814 (`merge_blocked_by_other_mrs?` checks the `blocking_merge_requests` license on the waiting merge request's project and releases only on `merged?`); `ee/app/services/ee/system_notes/issuables_service.rb` L243-265 (a note on both merge requests) | **Refuted (tier 1; the routes on Free, live).** The routes check no license: on Free they list, add and remove as on Premium, and only the merge check ignores the dependency. The create takes the other merge request by number and project, so `link_merge_requests` never handles a global id. A repeat answers 409 and writes nothing. A closed blocker still blocks; a merged one does not. Cycles are allowed. The caps count the wrong sides: a merge request's own blockers are not counted against it, so it can wait for more than ten. A dependency on a merge request the account cannot read is listed without it, and cannot be removed through the API. Both merge requests get a system note, so both projects are held to the write allow-list. A live run on gitlab.com, 2026-10-22, in a Free group, made one merge request wait for the other, found it again from the other side as unchanged, read it from both in `get_merge_request`, and removed it |
+| 123 | The default surface must stay under 64 tools, where one client starts regrouping them | microsoft/vscode-copilot-chat at `5863f5a` (2026-05-20): `src/extension/tools/common/virtualTools/virtualToolsConstants.ts` L9 (`START_GROUPING_AFTER_TOOL_COUNT = HARD_TOOL_LIMIT / 2`, 64), L11 (built-ins grouped above 20) and L26 (`GROUP_WITHIN_TOOLSET`, 16); `virtualToolGrouper.ts` L55-65; `src/extension/prompt/node/defaultIntentRequestHandler.ts` `getAvailableTools` (every tool of the request, and no grouping for an Anthropic model with tool search on); `src/platform/configuration/common/configurationService.ts` (`HARD_TOOL_LIMIT = 128`, the default of `chat.virtualTools.threshold`); code.visualstudio.com/docs/copilot/chat/chat-tools (128 tools per request), read 2026-10-22 | **Refuted (tier 1).** VS Code counts the request's tools together, its own built-ins and every server's, so this server's default count decides nothing there: with the built-ins the request passes 64 either way, and any server of more than 16 tools is grouped within. Claude Code defers tools behind tool search by context share, with no count. The one hard limit found is VS Code's 128 tools per request. So the default holds what a project's work needs, and §4.3 no longer counts against 64 |

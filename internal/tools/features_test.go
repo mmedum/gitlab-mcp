@@ -71,6 +71,94 @@ func TestLinkAndUnlinkIssues(t *testing.T) {
 	}
 }
 
+func TestLinkAndUnlinkMergeRequests(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	waits := map[string]any{"project": alpha, "iid": 1, "target_iid": 2, "link_type": "is_blocked_by"}
+	text, out := h.ok("link_merge_requests", waits)
+	if get(out, "outcome") != "linked" || h.gl.MergeRequestBlocks() != 1 ||
+		!strings.Contains(text, "Added the dependency: !1 is_blocked_by example-group/alpha!2.") {
+		t.Fatalf("link: %v\n%s", out, text)
+	}
+	if _, again := h.ok("link_merge_requests", waits); get(again, "outcome") != "unchanged" {
+		t.Errorf("again: %v", again)
+	}
+	// The same dependency, named from the other merge request's side.
+	if _, other := h.ok("link_merge_requests", map[string]any{"project": alpha, "iid": 2, "target_iid": 1, "link_type": "blocks"}); get(other, "outcome") != "unchanged" {
+		t.Errorf("from the other side: %v", other)
+	}
+	// The reverse dependency is another one.
+	if _, dry := h.ok("link_merge_requests", map[string]any{"project": alpha, "iid": 1, "target_iid": 2, "link_type": "blocks",
+		"dry_run": true}); get(dry, "outcome") != "dry_run" || h.gl.MergeRequestBlocks() != 1 {
+		t.Errorf("reverse dry run: %v, %d dependencies", dry, h.gl.MergeRequestBlocks())
+	}
+
+	_, first := h.ok("get_merge_request", map[string]any{"project": alpha, "iid": 1})
+	if get(first, "blocked_by", "items", 0, "iid") != 2.0 || len(get(first, "blocks", "items").([]any)) != 0 {
+		t.Errorf("!1 reads %v and %v", get(first, "blocked_by"), get(first, "blocks"))
+	}
+	_, second := h.ok("get_merge_request", map[string]any{"project": alpha, "iid": 2})
+	if get(second, "blocks", "items", 0, "iid") != 1.0 || len(get(second, "blocked_by", "items").([]any)) != 0 {
+		t.Errorf("!2 reads %v and %v", get(second, "blocked_by"), get(second, "blocks"))
+	}
+
+	// A dependency on a merge request in a project dave cannot read is
+	// counted for him and not named.
+	beta, ok := h.gl.AddMergeRequest(gitlabtest.ProjectBeta, "Private change", "alice")
+	if !ok {
+		t.Fatal("no merge request in beta")
+	}
+	h.ok("link_merge_requests", map[string]any{"project": alpha, "iid": 1, "target_project": gitlabtest.ProjectBeta,
+		"target_iid": beta, "link_type": "is_blocked_by"})
+	dave := newHarness(t, harnessOptions{over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
+	_, seen := dave.ok("get_merge_request", map[string]any{"project": alpha, "iid": 1})
+	if get(seen, "blocked_by", "hidden") != 1.0 || get(seen, "blocked_by", "total") != 2.0 ||
+		len(get(seen, "blocked_by", "items").([]any)) != 1 {
+		t.Errorf("dave reads %v", get(seen, "blocked_by"))
+	}
+
+	if _, un := h.ok("unlink_merge_requests", waits); get(un, "outcome") != "unlinked" || h.gl.MergeRequestBlocks() != 1 {
+		t.Errorf("unlink: %v, %d dependencies", un, h.gl.MergeRequestBlocks())
+	}
+	if _, un := h.ok("unlink_merge_requests", waits); get(un, "outcome") != "unchanged" {
+		t.Errorf("unlink again: %v", un)
+	}
+	// Refused before anything is read, so a dry run is refused too.
+	h.fails("link_merge_requests", map[string]any{"project": alpha, "iid": 1, "target_iid": 1, "link_type": "blocks", "dry_run": true},
+		"invalid")
+	h.fails("link_merge_requests", map[string]any{"project": alpha, "iid": 1, "target_iid": 2, "link_type": "relates_to"}, "invalid")
+	h.fails("link_merge_requests", map[string]any{"project": alpha, "iid": 1, "target_iid": 2}, "invalid")
+	// Both projects are held to the allow-list: GitLab notes the
+	// dependency on both merge requests.
+	confined := newHarness(t, harnessOptions{cfg: config.Config{WriteNamespaces: []string{alpha}}})
+	confined.fails("link_merge_requests", map[string]any{"project": alpha, "iid": 1, "target_project": gitlabtest.ProjectBeta,
+		"target_iid": 1, "link_type": "blocks"}, "blocked")
+}
+
+// A merge request can wait for more than one read covers, since GitLab's
+// caps count the other sides. Past the read, a dependency is not called
+// absent: unlink refuses, and link sends its create for GitLab to answer.
+func TestMergeRequestDependenciesPastTheRead(t *testing.T) {
+	h := newHarness(t, harnessOptions{gl: gitlabtest.Options{AlphaMergeRequests: 303}})
+	blocking := make([]int64, 0, 301)
+	for iid := int64(2); iid <= 302; iid++ {
+		blocking = append(blocking, iid)
+	}
+	if !h.gl.AddMergeRequestBlocks(alpha, 1, blocking...) {
+		t.Fatal("no dependencies added")
+	}
+	waits := func(iid int) map[string]any {
+		return map[string]any{"project": alpha, "iid": 1, "target_iid": iid, "link_type": "is_blocked_by"}
+	}
+	h.fails("unlink_merge_requests", waits(302), "unsupported")
+	h.fails("link_merge_requests", waits(302), "conflict")
+	if _, out := h.ok("link_merge_requests", waits(303)); get(out, "outcome") != "linked" || h.gl.MergeRequestBlocks() != 302 {
+		t.Errorf("a new one past the read: %v, %d dependencies", out, h.gl.MergeRequestBlocks())
+	}
+	if _, un := h.ok("unlink_merge_requests", waits(2)); get(un, "outcome") != "unlinked" {
+		t.Errorf("one the read covers: %v", un)
+	}
+}
+
 func TestLabelWrites(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: full})
 	_, out := h.ok("create_label", map[string]any{"project": alpha, "name": "triage", "color": "#aa0000", "description": "Needs a look",

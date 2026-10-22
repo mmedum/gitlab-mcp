@@ -297,8 +297,11 @@ GET /projects/{id}/merge_requests/{merge_request_iid}/reviewers	used	1	Client.Li
 GET /projects/{id}/merge_requests/{merge_request_iid}/merge_ref	deferred	1	the merge ref commit; no task in §8 needs it
 GET /projects/{id}/merge_requests/{merge_request_iid}/pipelines	deferred	1	a merge request's pipelines; list_pipelines by ref covers it (§17a)
 POST /projects/{id}/merge_requests/{merge_request_iid}/pipelines	gated	1	Client.CreateMergeRequestPipeline: run_merge_request_pipeline, Ship; a lost answer is settled by the pipelines listing (§4.5)
-GET /projects/{id}/merge_requests/{merge_request_iid}/blockees	deferred	1	merge request dependencies, Premium (§17a)
-* /projects/{id}/merge_requests/{merge_request_iid}/blocks*	deferred	4	merge request dependencies, Premium (§17a)
+GET /projects/{id}/merge_requests/{merge_request_iid}/blockees	used	1	Client.ListMergeRequestBlockees: get_merge_request shows the merge requests that wait for it
+GET /projects/{id}/merge_requests/{merge_request_iid}/blocks	used	1	Client.ListMergeRequestBlocks: get_merge_request shows what it waits for; link_merge_requests and unlink_merge_requests find the dependency first
+POST /projects/{id}/merge_requests/{merge_request_iid}/blocks	used	1	Client.CreateMergeRequestBlock: link_merge_requests
+DELETE /projects/{id}/merge_requests/{merge_request_iid}/blocks/{block_id}	used	1	Client.DeleteMergeRequestBlock: unlink_merge_requests
+* /projects/{id}/merge_requests/{merge_request_iid}/blocks*	deferred	1	one dependency by id; the listing carries it (§17a)
 * /projects/{id}/merge_requests/{merge_request_iid}/context_commits*	deferred	3	context commits (§17a)
 GET /projects/{id}/merge_requests/{merge_request_iid}/award_emoji	used	1	Client.ListAwards: react reads your reactions on the merge request first, since GitLab refuses one already there with 404 (§18 row 106)
 POST /projects/{id}/merge_requests/{merge_request_iid}/award_emoji	used	1	Client.CreateAward: react; every refusal is 404, worded in the account's language, so a refusal is followed by a read; never repeated (§4.5, §18 row 106)

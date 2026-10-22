@@ -58,6 +58,47 @@ func (c *Client) DeleteIssueLink(ctx context.Context, p Project, iid, linkID int
 		Args: []string{p.segment(), idArg(iid), idArg(linkID)}, Name: "unlink_issues"}, nil)
 }
 
+// ----------------------------------------------------------- merge request dependencies
+
+// ListMergeRequestBlocks lists the dependencies a merge request waits
+// for, oldest first.
+func (c *Client) ListMergeRequestBlocks(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.MergeRequestDependency, Page, error) {
+	var out []gitlab.MergeRequestDependency
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/blocks",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_merge_request_blocks"}, opts, &out)
+	return out, page, err
+}
+
+// ListMergeRequestBlockees lists the dependencies that wait for a merge
+// request, oldest first.
+func (c *Client) ListMergeRequestBlockees(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.MergeRequestDependency, Page, error) {
+	var out []gitlab.MergeRequestDependency
+	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/blockees",
+		Args: []string{p.segment(), idArg(iid)}, Name: "list_merge_request_blockees"}, opts, &out)
+	return out, page, err
+}
+
+// MergeRequestBlockCreate is POST …/merge_requests/:iid/blocks' request:
+// the merge request to wait for, by its number and project.
+type MergeRequestBlockCreate struct {
+	BlockingMergeRequestIID int64 `json:"blocking_merge_request_iid"`
+	BlockingProjectID       int64 `json:"blocking_project_id"`
+}
+
+// CreateMergeRequestBlock makes a merge request wait for another. It is
+// never repeated.
+func (c *Client) CreateMergeRequestBlock(ctx context.Context, p Project, iid int64, in MergeRequestBlockCreate) error {
+	return c.Do(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/blocks", Args: []string{p.segment(), idArg(iid)},
+		Body: in, Name: "link_merge_requests"}, nil)
+}
+
+// DeleteMergeRequestBlock removes a dependency, through the merge request
+// that waits: GitLab finds the row only from that side.
+func (c *Client) DeleteMergeRequestBlock(ctx context.Context, p Project, iid, blockID int64) error {
+	return c.Do(ctx, Call{Method: "DELETE", Path: "projects/{}/merge_requests/{}/blocks/{}",
+		Args: []string{p.segment(), idArg(iid), idArg(blockID)}, Name: "unlink_merge_requests"}, nil)
+}
+
 // ----------------------------------------------------------- planning
 
 // LabelCreate is POST …/labels' request.

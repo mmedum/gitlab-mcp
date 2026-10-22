@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `link_merge_requests` and `unlink_merge_requests` make one merge request wait for another to merge, in one project or two, and remove that dependency. `get_merge_request` shows both sides as `blocked_by` and `blocks`. GitLab holds the merge only on Premium.
+
 ### Changed
 
 - Built with `golang.org/x/sys` 0.49.0.

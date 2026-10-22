@@ -342,13 +342,26 @@ type MergeRequest struct {
 	UntrustedTitle       string            `json:"untrusted_title"`
 	UntrustedDescription string            `json:"untrusted_description"`
 	DescriptionBudget    Budget            `json:"description_budget"`
-	// ClosesIssues and RelatedIssues are null when GitLab refused the
-	// read, and when offset continues the description.
-	ClosesIssues  *LinkedItems `json:"closes_issues" jsonschema:"Issues GitLab closes when this merges, the first 20. GitLab leaves out confidential or unreadable issues and those in projects that do not close issues automatically. Null when they could not be read, and on a read with an offset, which does not read them again"`
-	RelatedIssues *LinkedItems `json:"related_issues" jsonschema:"Issues the title, description, comments or commits mention, the first 20. GitLab leaves out confidential or unreadable issues. Null when they could not be read, and on a read with an offset, which does not read them again"`
-	TimeStats     TimeStats    `json:"time_stats"`
-	Upvotes       int          `json:"upvotes" jsonschema:"How many reacted with thumbsup; GitLab counts no other emoji here"`
-	Downvotes     int          `json:"downvotes" jsonschema:"How many reacted with thumbsdown"`
+	// ClosesIssues, RelatedIssues, BlockedBy and Blocks are null when
+	// GitLab refused the read, and when offset continues the description.
+	ClosesIssues  *LinkedItems  `json:"closes_issues" jsonschema:"Issues GitLab closes when this merges, the first 20. GitLab leaves out confidential or unreadable issues and those in projects that do not close issues automatically. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	RelatedIssues *LinkedItems  `json:"related_issues" jsonschema:"Issues the title, description, comments or commits mention, the first 20. GitLab leaves out confidential or unreadable issues. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	BlockedBy     *Dependencies `json:"blocked_by" jsonschema:"Merge requests that must merge before this one, the first 20; a closed one still blocks it, and GitLab holds the merge only on Premium. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	Blocks        *Dependencies `json:"blocks" jsonschema:"Merge requests that wait for this one to merge, the first 20. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	TimeStats     TimeStats     `json:"time_stats"`
+	Upvotes       int           `json:"upvotes" jsonschema:"How many reacted with thumbsup; GitLab counts no other emoji here"`
+	Downvotes     int           `json:"downvotes" jsonschema:"How many reacted with thumbsdown"`
+}
+
+// Dependencies is one side of a merge request's dependencies.
+type Dependencies struct {
+	Items []LinkedItem `json:"items"`
+	// Hidden counts rows whose merge request the account cannot read:
+	// GitLab lists the dependency and leaves the merge request out.
+	Hidden int  `json:"hidden" jsonschema:"Dependencies on merge requests the account cannot read, which GitLab counts without naming them"`
+	More   bool `json:"more" jsonschema:"True when GitLab has more than are shown"`
+	// Total is GitLab's count, null when GitLab did not say.
+	Total *int `json:"total" jsonschema:"GitLab's count, hidden ones included, or null when it did not say"`
 }
 
 // DiffRefs are the three SHAs a diff position is computed against.
@@ -1880,6 +1893,17 @@ type IssueLinkWrite struct {
 	TargetIID     int64      `json:"target_iid"`
 	LinkID        int64      `json:"link_id" jsonschema:"The link's id; 0 when there is none"`
 	LinkType      string     `json:"link_type" jsonschema:"relates_to, blocks or is_blocked_by, from the first issue's side"`
+}
+
+// MergeRequestLinkWrite is link_merge_requests' and
+// unlink_merge_requests' result.
+type MergeRequestLinkWrite struct {
+	Outcome string `json:"outcome" jsonschema:"linked, unlinked, unchanged or dry_run"`
+	Write
+	IID           int64      `json:"iid"`
+	TargetProject ProjectRef `json:"target_project"`
+	TargetIID     int64      `json:"target_iid"`
+	LinkType      string     `json:"link_type" jsonschema:"blocks or is_blocked_by, from the first merge request's side"`
 }
 
 // LabelWrite is create_label's, update_label's and delete_label's result.

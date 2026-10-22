@@ -78,6 +78,8 @@ type Server struct {
 	// take, and the rebases asked for.
 	issueLinks      []issueLink
 	nextLinkID      int64
+	mrBlocks        []mrBlock
+	nextBlockID     int64
 	nextLabelID     int64
 	nextMilestoneID int64
 	rebases         int

@@ -53,8 +53,10 @@ contract: tools keep their names and output fields.
 | `resolve_discussion` | Resolve or reopen a thread on a merge request or an issue |
 | `link_issues` | Link two issues, in one project or two |
 | `unlink_issues` | Remove the link between two issues |
+| `link_merge_requests` | Make one merge request wait for another to merge, in one project or two |
+| `unlink_merge_requests` | Remove a dependency between two merge requests |
 | `search_merge_requests` | Find merge requests across gitlab.com or a project |
-| `get_merge_request` | One merge request with its approvals, reviewer states and linked issues |
+| `get_merge_request` | One merge request with its approvals, reviewer states, linked issues and dependencies |
 | `list_mr_files` | The files a merge request changes, with line counts and GitLab's markers |
 | `get_mr_diff` | A merge request's diffs, file by file, bounded |
 | `list_mr_commits` | A merge request's commits |

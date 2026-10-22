@@ -51,6 +51,8 @@ var toolPhrases = []phrase{
 	{lead: "", tools: []string{"upload_file"}, tail: " uploads an image from a directory " + config.EnvUploadDirs + " names and returns " +
 		"the Markdown that shows it in a comment or a description in the same project."},
 	{lead: "Relate issues with ", tools: []string{"link_issues", "unlink_issues"}, tail: "."},
+	{lead: "Make a merge request wait for another to merge with ", tools: []string{"link_merge_requests", "unlink_merge_requests"},
+		tail: "."},
 	{lead: "Review in drafts with ", tools: []string{"add_review_comment", "update_review_comment", "delete_review_comment",
 		"publish_review_comment", "submit_review"},
 		tail: ": drafts are yours alone until publish_review_comment publishes one or submit_review all together."},

@@ -39,6 +39,22 @@ func IssueLinkWrite(w model.IssueLinkWrite, _ Boundary) string {
 	return b.String()
 }
 
+// MergeRequestLinkWrite renders link_merge_requests and
+// unlink_merge_requests.
+func MergeRequestLinkWrite(w model.MergeRequestLinkWrite, _ Boundary) string {
+	var b strings.Builder
+	relation := fmt.Sprintf("!%d %s %s!%d", w.IID, Ident(w.LinkType), Ident(w.TargetProject.Path), w.TargetIID)
+	head := "Added the dependency"
+	switch w.Outcome {
+	case "unlinked":
+		head = "Removed the dependency"
+	case "unchanged":
+		head = "Nothing changed"
+	}
+	writeHead(&b, fmt.Sprintf("%s: %s.", head, relation), w.Write)
+	return b.String()
+}
+
 // LabelWrite renders create_label, update_label and delete_label.
 func LabelWrite(w model.LabelWrite, bd Boundary) string {
 	var b strings.Builder
