@@ -3,9 +3,9 @@ package tools
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
-	"github.com/mmedum/gitlab-mcp/v2/internal/render"
-	"github.com/mmedum/gitlab-mcp/v2/internal/service"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/render"
+	"github.com/mmedum/gitlab-mcp/v3/internal/service"
 )
 
 // The Ship and Destructive tools of phase 3 (docs/architecture.md §4.3,
@@ -33,7 +33,7 @@ type mergeMergeRequestIn struct {
 
 func mergeMergeRequest() definition {
 	return tool[mergeMergeRequestIn, model.MergeWrite]{
-		sp: spec{Name: "merge_merge_request", Asks: "before it merges or sets a merge request to merge", AsksEveryCall: true, Kind: Ship,
+		sp: spec{Name: "merge_merge_request", Kind: Ship,
 			Description: "Merge a merge request into its target branch, or with auto_merge set it to merge when its pipeline " +
 				"succeeds. sha is required: the head you reviewed, so nothing pushed after your read is merged. A merge request " +
 				"GitLab will not merge now is refused [conflict] naming its detailed_merge_status. The result names the merge " +
@@ -56,7 +56,7 @@ type approveMergeRequestIn struct {
 
 func approveMergeRequest() definition {
 	return tool[approveMergeRequestIn, model.ApprovalWrite]{
-		sp: spec{Name: "approve_merge_request", Asks: "before it approves", AsksEveryCall: true, Kind: Ship, Idempotent: true,
+		sp: spec{Name: "approve_merge_request", Kind: Ship, Idempotent: true,
 			Description: "Approve a merge request as the signed-in account: a sign-off other people's merge rules count. sha is " +
 				"required, the head you reviewed. An approval already given is reported unchanged. The result says whether " +
 				"the approval rules are met." + shipNote + visibleNote},
@@ -106,28 +106,36 @@ func cancelAutoMerge() definition {
 	}
 }
 
+type suggestionIn struct {
+	ID   int64  `json:"id" jsonschema:"The suggestion's id, as list_discussions gives it"`
+	Text string `json:"text" jsonschema:"What applying it commits, exactly as list_discussions shows it in untrusted_to_content; refused [stale] when it is not what GitLab holds"`
+}
+
 type applySuggestionsIn struct {
-	Project       idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
-	IID           int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
-	IDs           []int64  `json:"ids" jsonschema:"The suggestions to apply, by the ids list_discussions gives each diff comment's suggestions; all go in one commit, and none may overlap another's lines"`
-	CommitMessage string   `json:"commit_message,omitempty" jsonschema:"The commit's message; the project's suggestion message or GitLab's default when omitted. GitLab fills in placeholders such as %{branch_name}, %{files_count}, %{suggestions_count}, %{username} and %{co_authored_by} in it"`
-	DryRun        bool     `json:"dry_run,omitempty" jsonschema:"Check the suggestions and the branch, and return what would be sent without committing"`
+	Project       idOrPath       `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	IID           int64          `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	Suggestions   []suggestionIn `json:"suggestions" jsonschema:"The suggestions to apply, each by its id and the text it commits; all go in one commit, and none may overlap another's lines"`
+	CommitMessage string         `json:"commit_message,omitempty" jsonschema:"The commit's message; the project's suggestion message or GitLab's default when omitted. GitLab fills in placeholders such as %{branch_name}, %{files_count}, %{suggestions_count}, %{username} and %{co_authored_by} in it"`
+	DryRun        bool           `json:"dry_run,omitempty" jsonschema:"Check the suggestions and the branch, and return what would be sent without committing"`
 }
 
 func applySuggestions() definition {
 	return tool[applySuggestionsIn, model.SuggestionsApply]{
-		sp: spec{Name: "apply_suggestions", Asks: "before it commits the suggestions", AsksEveryCall: true, Kind: Ship,
+		sp: spec{Name: "apply_suggestions", Kind: Ship,
 			Description: "Apply suggestions from a merge request's diff comments: GitLab commits them, in one commit as the " +
 				"signed-in account, to the source branch. The default branch and a protected source branch are refused " +
 				"[blocked], and so is a suggestion whose text holds hidden or bidirectional characters; every id must be on " +
-				"this merge request. list_discussions shows each suggestion's exact text. Suggestions already applied are " +
-				"reported unchanged. " +
+				"this merge request. Each comes with its text as list_discussions shows it, so what is committed is what was " +
+				"read, and a client that asks before the call shows it. Suggestions already applied are reported unchanged. " +
 				"GitLab refuses one whose lines changed since, and every one right after a push until it has caught up, so " +
 				"try again shortly then. Never repeated after a lost answer: the result then says what a read found. The " +
 				"result gives the branch's new head." + shipNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in applySuggestionsIn) (model.SuggestionsApply, error) {
-			return svc.ApplySuggestions(ctx, service.SuggestionsApplication{Project: string(in.Project), IID: in.IID, IDs: in.IDs,
-				CommitMessage: in.CommitMessage})
+			req := service.SuggestionsApplication{Project: string(in.Project), IID: in.IID, CommitMessage: in.CommitMessage}
+			for _, sg := range in.Suggestions {
+				req.Suggestions = append(req.Suggestions, service.SuggestionRead(sg))
+			}
+			return svc.ApplySuggestions(ctx, req)
 		},
 		text: render.SuggestionsApply,
 	}
@@ -151,7 +159,7 @@ type runPipelineIn struct {
 
 func runPipeline() definition {
 	return tool[runPipelineIn, model.PipelineWrite]{
-		sp: spec{Name: "run_pipeline", Asks: "before it runs a pipeline on the default branch or a protected branch or tag", Kind: Ship,
+		sp: spec{Name: "run_pipeline", Kind: Ship,
 			Description: "Run a CI pipeline for a branch or tag, with variables and inputs. It runs the project's jobs with " +
 				"the account's permissions, including deployment jobs a protected branch allows. Variable values are sent and " +
 				"never shown; the result names their keys and gives the new pipeline's id and status. Never repeated after a " +
@@ -175,8 +183,7 @@ type runMRPipelineIn struct {
 
 func runMergeRequestPipeline() definition {
 	return tool[runMRPipelineIn, model.MergeRequestPipelineWrite]{
-		sp: spec{Name: "run_merge_request_pipeline", Asks: "before it runs a pipeline for a merge request whose source and target " +
-			"branches are both protected", Kind: Ship,
+		sp: spec{Name: "run_merge_request_pipeline", Kind: Ship,
 			Description: "Run a merge request pipeline, the one merge request rules select: merged results where the project " +
 				"has them on, the source branch's head otherwise; GitLab decides, and the result names the kind. It runs the " +
 				"project's jobs with the account's permissions. A merge request from a fork is refused. Never repeated after " +
@@ -253,7 +260,7 @@ type playJobIn struct {
 
 func playJob() definition {
 	return tool[playJobIn, model.JobWrite]{
-		sp: spec{Name: "play_job", Asks: "before it runs the job", AsksEveryCall: true, Kind: Ship,
+		sp: spec{Name: "play_job", Kind: Ship,
 			Description: "Start a manual job, such as a deployment a person has to trigger, with values for its inputs when " +
 				"given. A job that is not waiting to be started is refused [conflict]. Never repeated after a lost answer." + shipNote},
 		run: func(ctx context.Context, svc *service.Service, in playJobIn) (model.JobWrite, error) {
@@ -284,7 +291,7 @@ type deleteBranchIn struct {
 
 func deleteBranch() definition {
 	return tool[deleteBranchIn, model.BranchDelete]{
-		sp: spec{Name: "delete_branch", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Idempotent: true,
+		sp: spec{Name: "delete_branch", Kind: Destructive, Idempotent: true,
 			Description: "Delete a branch. It refuses the default branch and every protected one [blocked], and one GitLab does " +
 				"not count merged into the default branch unless unmerged is true. sha, the head you read, is required. The " +
 				"result is read back." + destructiveNote + visibleNote},
@@ -307,7 +314,7 @@ type deleteCommentIn struct {
 
 func deleteComment() definition {
 	return tool[deleteCommentIn, model.CommentDelete]{
-		sp: spec{Name: "delete_comment", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+		sp: spec{Name: "delete_comment", Kind: Destructive, Idempotent: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
 			Description: "Delete one of your own comments on an issue or a merge request. Another person's comment is refused " +
 				"[blocked], even where GitLab would allow it. updated_at from your read is required. The result is read " +
 				"back." + destructiveNote + visibleNote},

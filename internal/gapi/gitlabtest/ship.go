@@ -7,7 +7,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
 )
 
 // The Ship and Destructive half of the instance: merging and approving,

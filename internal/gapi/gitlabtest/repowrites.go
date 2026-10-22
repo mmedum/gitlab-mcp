@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
 )
 
 // Branches and commits. A commit applies its actions atomically, checks

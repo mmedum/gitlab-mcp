@@ -39,7 +39,7 @@ In the order the `check:` target lists them:
 | `make classes` | `gates classes`: the error vocabulary in the code and in `docs/architecture.md` §6.5, equal both ways |
 | `make api-coverage` | `gates api-coverage`: every operation in the OpenAPI snapshot has a verdict in `testdata/api-coverage.tsv`, and every client call a `used` row |
 | `make api-fields` | `gates api-fields`: every parameter sent and every field decoded exists on its operation, or carries a verified omission in `testdata/api-fields.tsv` |
-| `make schema-diff` | `gates schema-diff`: the tool surface against the last tag, else `testdata/schema-baseline.json`; fails on a removed tool, a lost field or a new required input |
+| `make schema-diff` | `gates schema-diff`: the tool surface against the last tag, else `testdata/schema-baseline.json`; fails on a removed tool, a lost field or a new required input, unless the CHANGELOG declares it for a major release (`CONTRIBUTING.md`) |
 | `make descriptions` | `gates descriptions`: every tool and input is described, and every witness input says it is NOT a retry signal |
 | `make bodies` | `gates bodies`: every string a write sends goes through `internal/quickaction` or is listed as a plain field with a reason |
 | `make smoke` | `gates smoke`: the built binary over stdio at two protocol revisions, stdout carrying only frames, `[auth]` with no credentials, a clean exit on disconnect |

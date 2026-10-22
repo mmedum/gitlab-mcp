@@ -97,10 +97,10 @@ func stalenessFixture() stalenessInputs {
 
 	return stalenessInputs{
 		docs: map[string]string{
-			"README.md":             readme.String(),
+			"README.md":             readme.String() + "\n```json\n{\"permissions\": {\"ask\": [\"mcp__gitlab__get_issue\"]}}\n```\n",
 			"CLAUDE.md":             "# CLAUDE\n\n## Where things go\n\n" + strings.Join(bullets, "\n") + "\n\n## Next\n",
 			stalenessArch:           arch,
-			stalenessConfigDoc:      configDoc.String(),
+			stalenessConfigDoc:      configDoc.String() + "GITLAB_MCP_GONE was removed.\n",
 			stalenessDevDoc:         devDoc.String(),
 			stalenessSetupDoc:       setup.String(),
 			"CONTRIBUTING.md":       "See `Makefile` and `ci.yml`.\n",
@@ -109,16 +109,17 @@ func stalenessFixture() stalenessInputs {
 			"docs/extra.md":         "Nothing.\n",
 			"docs/linked.md#ignore": "",
 		},
-		exists:     func(rel string) bool { return files[rel] },
-		topLevel:   map[string]bool{"cmd": true, "internal": true, "scripts": true, "docs": true},
-		packages:   packages,
-		hasGo:      func(rel string) bool { return rel != "scripts/internal" },
-		configVars: vars,
-		devVars:    []string{"GITLAB_MCP_TEST_INSTANCE"},
-		modes:      modes,
-		commands:   commandNames,
-		built:      true,
-		tools:      slices.Clone(stalenessTestTools),
+		exists:      func(rel string) bool { return files[rel] },
+		topLevel:    map[string]bool{"cmd": true, "internal": true, "scripts": true, "docs": true},
+		packages:    packages,
+		hasGo:       func(rel string) bool { return rel != "scripts/internal" },
+		configVars:  vars,
+		devVars:     []string{"GITLAB_MCP_TEST_INSTANCE"},
+		removedVars: []string{"GITLAB_MCP_GONE"},
+		modes:       modes,
+		commands:    commandNames,
+		built:       true,
+		tools:       slices.Clone(stalenessTestTools),
 	}
 }
 
@@ -176,6 +177,9 @@ func TestStalenessRefuses(t *testing.T) {
 		{"an undocumented variable", func(in *stalenessInputs) {
 			in.configVars = append(in.configVars, "GITLAB_MCP_NEW")
 		}, "docs/configuration.md does not document GITLAB_MCP_NEW"},
+		{"a permission rule for no tool", func(in *stalenessInputs) {
+			in.docs["README.md"] = strings.Replace(in.docs["README.md"], "mcp__gitlab__get_issue", "mcp__gitlab__get_issues", 1)
+		}, "README.md gives a permission rule for get_issues, which the binary does not register"},
 		{"a documented variable nothing reads", func(in *stalenessInputs) {
 			in.docs[stalenessConfigDoc] += "| `GITLAB_MCP_OLD` | x |\n"
 		}, "documents GITLAB_MCP_OLD, which the server does not read"},

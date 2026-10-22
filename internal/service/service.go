@@ -11,12 +11,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
-	"github.com/mmedum/gitlab-mcp/v2/internal/render"
-	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/render"
+	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
 )
 
 // Options are what the service needs.

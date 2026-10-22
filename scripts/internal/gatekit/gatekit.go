@@ -20,7 +20,7 @@ import (
 
 const (
 	// ModulePath is this module, as go.mod declares it.
-	ModulePath = "github.com/mmedum/gitlab-mcp/v2"
+	ModulePath = "github.com/mmedum/gitlab-mcp/v3"
 	// BinaryName is the server's command and archive name.
 	BinaryName = "gitlab-mcp"
 	// MainPackage is what `go build` builds for the server.

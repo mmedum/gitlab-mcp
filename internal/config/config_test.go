@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v2/internal/userconfig"
+	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v3/internal/userconfig"
 )
 
 // envMap is a lookup over a fixed map. The config directory is pointed
@@ -413,7 +413,6 @@ func TestVarsList(t *testing.T) {
 		"GITLAB_MCP_READ_ONLY":                     {"read-only", "false"},
 		"GITLAB_MCP_ENABLE_SHIP":                   {"enable-ship", "false"},
 		"GITLAB_MCP_ENABLE_DESTRUCTIVE":            {"enable-destructive", "false"},
-		"GITLAB_MCP_REQUIRE_PROMPT":                {"require-prompt", "false"},
 		"GITLAB_MCP_TOOLSETS":                      {"toolsets", ""},
 		"GITLAB_MCP_WRITE_NAMESPACES":              {"write-namespaces", ""},
 		"GITLAB_MCP_UPLOAD_DIRS":                   {"upload-dirs", ""},
@@ -453,9 +452,30 @@ func TestVarsList(t *testing.T) {
 	}
 }
 
-// TestDefineReadsExactlyVars: every variable Define looks up is in Vars
-// and every flag it binds is one Vars names, so the list cannot fall
-// behind the code.
+// A configuration that still turns the removed GITLAB_MCP_REQUIRE_PROMPT
+// on is refused: it meant writes nobody could be asked about to be
+// refused, and the server asks nobody now. Off, it is ignored.
+func TestRemovedRequirePrompt(t *testing.T) {
+	for v, refused := range map[string]bool{"true": true, "1": true, "enabled": true, "false": false, "": false} {
+		_, err := Load(nil, func(k string) string {
+			if k == "GITLAB_MCP_REQUIRE_PROMPT" {
+				return v
+			}
+			return ""
+		})
+		if got := err != nil; got != refused || (refused && !errors.Is(err, ErrInvalid)) {
+			t.Errorf("GITLAB_MCP_REQUIRE_PROMPT=%q: err = %v, want refused %v", v, err, refused)
+		}
+	}
+	if _, err := Load([]string{"--require-prompt"}, func(string) string { return "" }); err == nil {
+		t.Error("the removed --require-prompt flag was accepted")
+	}
+}
+
+// TestDefineReadsExactlyVars: every variable Define looks up is in Vars,
+// but the removed GITLAB_MCP_REQUIRE_PROMPT it reads to refuse, and
+// every flag it binds is one Vars names, so the list cannot fall behind
+// the code.
 func TestDefineReadsExactlyVars(t *testing.T) {
 	var read []string
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
@@ -463,6 +483,7 @@ func TestDefineReadsExactlyVars(t *testing.T) {
 	Define(fs, func(k string) string { read = append(read, k); return "" })
 	slices.Sort(read)
 	all := append(EnvVars(), DevVars()...)
+	all = append(all, RemovedVars()...)
 	slices.Sort(all)
 	if !slices.Equal(read, all) {
 		t.Errorf("Define read %v, Vars lists %v", read, all)

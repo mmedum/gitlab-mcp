@@ -53,8 +53,10 @@ contract: tools keep their names and output fields.
 | `resolve_discussion` | Resolve or reopen a thread on a merge request or an issue |
 | `link_issues` | Link two issues, in one project or two |
 | `unlink_issues` | Remove the link between two issues |
+| `link_merge_requests` | Make one merge request wait for another to merge, in one project or two |
+| `unlink_merge_requests` | Remove a dependency between two merge requests |
 | `search_merge_requests` | Find merge requests across gitlab.com or a project |
-| `get_merge_request` | One merge request with its approvals, reviewer states and linked issues |
+| `get_merge_request` | One merge request with its approvals, reviewer states, linked issues and dependencies |
 | `list_mr_files` | The files a merge request changes, with line counts and GitLab's markers |
 | `get_mr_diff` | A merge request's diffs, file by file, bounded |
 | `list_mr_commits` | A merge request's commits |
@@ -150,7 +152,7 @@ Download an archive for your platform from the
 [releases](https://github.com/mmedum/gitlab-mcp/releases) page, or:
 
 ```bash
-go install github.com/mmedum/gitlab-mcp/v2/cmd/gitlab-mcp@latest
+go install github.com/mmedum/gitlab-mcp/v3/cmd/gitlab-mcp@latest
 ```
 
 Claude Desktop users can open the `.mcpb` bundle from the same release.
@@ -228,12 +230,31 @@ scope cannot separate any of it:
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds merging, approving, running CI and releases |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds deletion, and each call must pass `confirm: true` |
 
-When your MCP client supports elicitation, the server also asks you
-before it merges, approves, runs a manual job or a pipeline on a
-protected ref or for a merge request between protected branches, publishes a release or a tag, makes a confidential issue
-public, uploads an image, or deletes anything. Only your accept writes.
-Where it asks on every call, it does not also tell Claude Code to prompt
-you first, so you answer once.
+Your MCP client approves each call; the server does not ask you
+itself. A client that prompts by a tool's annotations, as claude.ai,
+Codex and VS Code do, prompts for the Ship and Destructive tools, which
+are marked destructive. In Claude Code, list the calls you want to
+approve one by one under `permissions.ask` in your settings, with the
+name you gave the server in place of `gitlab`. For example, the writes
+that ship, publish, upload or delete:
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "mcp__gitlab__merge_merge_request", "mcp__gitlab__approve_merge_request",
+      "mcp__gitlab__apply_suggestions", "mcp__gitlab__run_pipeline",
+      "mcp__gitlab__run_merge_request_pipeline", "mcp__gitlab__play_job",
+      "mcp__gitlab__create_release", "mcp__gitlab__create_tag", "mcp__gitlab__move_issue",
+      "mcp__gitlab__upload_file",
+      "mcp__gitlab__delete_branch", "mcp__gitlab__delete_comment",
+      "mcp__gitlab__delete_wiki_page", "mcp__gitlab__delete_label",
+      "mcp__gitlab__delete_milestone", "mcp__gitlab__delete_tag",
+      "mcp__gitlab__delete_snippet"
+    ]
+  }
+}
+```
 
 - **No quick actions.** GitLab runs `/merge`, `/close` and the rest from
   a description or comment. Every body this server sends is checked, and

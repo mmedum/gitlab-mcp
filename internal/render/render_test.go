@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
 )
 
 func TestMarkdownRemovesHiddenText(t *testing.T) {

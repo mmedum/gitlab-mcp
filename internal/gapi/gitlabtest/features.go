@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
 )
 
 // The phase 6 routes: issue moves and links, label and milestone writes,
@@ -31,7 +31,8 @@ type issueLink struct {
 // serveFeatures serves the phase 6 routes; it reports whether the path
 // was one of them.
 func (s *Server) serveFeatures(w http.ResponseWriter, r *http.Request, p *project, user string, seg []string) bool {
-	return s.serveIssueFeatures(w, r, p, user, seg) || s.servePlanningFeatures(w, r, p, seg) || s.serveRepoFeatures(w, r, p, user, seg)
+	return s.serveIssueFeatures(w, r, p, user, seg) || s.serveMRDependencies(w, r, p, user, seg) ||
+		s.servePlanningFeatures(w, r, p, seg) || s.serveRepoFeatures(w, r, p, user, seg)
 }
 
 func (s *Server) serveIssueFeatures(w http.ResponseWriter, r *http.Request, p *project, user string, seg []string) bool {
@@ -228,6 +229,227 @@ func (s *Server) IssueLinks() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.issueLinks)
+}
+
+// ----------------------------------------------------------- merge request dependencies
+
+// mrBlock is a merge request dependency: the blocked merge request waits
+// for the blocking one to merge.
+type mrBlock struct {
+	id                           int64
+	blockedProject, blockedIID   int64
+	blockingProject, blockingIID int64
+}
+
+// mrBlockRow is ee/lib/api/entities/merge_request_dependency.rb: each
+// merge request only when the account may read it, and project_id the
+// blocking merge request's project.
+type mrBlockRow struct {
+	ID        int64                `json:"id"`
+	Blocking  *gitlab.MergeRequest `json:"blocking_merge_request,omitempty"`
+	Blocked   *gitlab.MergeRequest `json:"blocked_merge_request,omitempty"`
+	ProjectID int64                `json:"project_id"`
+}
+
+// serveMRDependencies serves ee/lib/api/merge_request_dependencies.rb. The
+// routes check no license: on Free they answer as on Premium, and only
+// the merge check ignores them.
+func (s *Server) serveMRDependencies(w http.ResponseWriter, r *http.Request, p *project, user string, seg []string) bool {
+	switch {
+	case r.Method == http.MethodGet && match(seg, "merge_requests", "*", "blocks"):
+		s.listMRBlocks(w, r, p, user, seg[1], true)
+	case r.Method == http.MethodGet && match(seg, "merge_requests", "*", "blockees"):
+		s.listMRBlocks(w, r, p, user, seg[1], false)
+	case r.Method == http.MethodPost && match(seg, "merge_requests", "*", "blocks"):
+		s.createMRBlock(w, r, p, user, seg[1])
+	case r.Method == http.MethodDelete && match(seg, "merge_requests", "*", "blocks", "*"):
+		s.deleteMRBlock(w, p, user, seg[1], seg[3])
+	default:
+		return false
+	}
+	return true
+}
+
+// mrUpdatable is update_merge_request: Developer and above, the author,
+// or an assignee.
+func (s *Server) mrUpdatable(p *project, mr *gitlab.MergeRequest, user string) bool {
+	return s.accessLevel(p, user) >= developerAccess || mr.Author.Username == user || has(usernames(mr.Assignees), user)
+}
+
+// mrsReadable reports whether user may read the merge requests of the
+// project with this id.
+func (s *Server) mrsReadable(projectID int64, user string) bool {
+	p := s.projectByID(projectID)
+	return p != nil && s.visible(p, user) && s.mrReadable(p, user)
+}
+
+// blockRow shows a dependency to user.
+func (s *Server) blockRow(b mrBlock, user string) mrBlockRow {
+	row := mrBlockRow{ID: b.id, ProjectID: b.blockingProject}
+	side := func(projectID, iid int64) *gitlab.MergeRequest {
+		if !s.mrsReadable(projectID, user) {
+			return nil
+		}
+		return findMR(s.projectByID(projectID), itoa(iid))
+	}
+	row.Blocking, row.Blocked = side(b.blockingProject, b.blockingIID), side(b.blockedProject, b.blockedIID)
+	return row
+}
+
+// listMRBlocks is GET …/blocks when blocked, the dependencies the merge
+// request waits for, and …/blockees otherwise, those that wait for it;
+// in id order.
+func (s *Server) listMRBlocks(w http.ResponseWriter, r *http.Request, p *project, user, iid string, blocked bool) {
+	mr := findMR(p, iid)
+	switch {
+	case mr == nil:
+		message(w, http.StatusNotFound, "404 Merge Request Not Found")
+		return
+	case !s.mrReadable(p, user):
+		message(w, http.StatusForbidden, "403 Forbidden")
+		return
+	}
+	rows := []mrBlockRow{}
+	for _, b := range s.mrBlocks {
+		if (blocked && b.blockedProject == p.ID && b.blockedIID == mr.IID) ||
+			(!blocked && b.blockingProject == p.ID && b.blockingIID == mr.IID) {
+			rows = append(rows, s.blockRow(b, user))
+		}
+	}
+	writePage(s, w, r, rows)
+}
+
+// createMRBlock is POST …/blocks by blocking_merge_request_iid and
+// blocking_project_id, with CreateBlockService's checks and
+// MergeRequestBlock's validations, its caps counted as the model counts
+// them.
+func (s *Server) createMRBlock(w http.ResponseWriter, r *http.Request, p *project, user, iid string) {
+	mr := findMR(p, iid)
+	if mr == nil || !s.mrReadable(p, user) {
+		message(w, http.StatusNotFound, "404 Not found")
+		return
+	}
+	b, ok := readBody(w, r)
+	if !ok || !b.require(w, "blocking_merge_request_iid") {
+		return
+	}
+	other := p
+	if id, ok := b.integer("blocking_project_id"); ok {
+		other = s.projectByID(id)
+		if other == nil || !s.visible(other, user) {
+			message(w, http.StatusNotFound, "404 Project Not Found")
+			return
+		}
+	}
+	biid, _ := b.str("blocking_merge_request_iid")
+	blocking := findMR(other, biid)
+	switch {
+	case blocking == nil:
+		message(w, http.StatusNotFound, "Blocking merge request not found")
+		return
+	case !s.mrUpdatable(p, mr, user):
+		message(w, http.StatusForbidden, "Lacking permissions to update the merge request")
+		return
+	case !s.mrReadable(other, user):
+		message(w, http.StatusForbidden, "Lacking permissions to the blocking merge request")
+		return
+	case other.ID == p.ID && blocking.IID == mr.IID:
+		message(w, http.StatusBadRequest, "This block is self-referential")
+		return
+	}
+	var blocks, blockedBy int
+	for _, x := range s.mrBlocks {
+		if x.blockingProject == p.ID && x.blockingIID == mr.IID {
+			blocks++
+		}
+		if x.blockedProject == other.ID && x.blockedIID == blocking.IID {
+			blockedBy++
+		}
+		if x.blockedProject == p.ID && x.blockedIID == mr.IID && x.blockingProject == other.ID && x.blockingIID == blocking.IID {
+			message(w, http.StatusConflict, "Block already exists")
+			return
+		}
+	}
+	switch {
+	case blocks >= 10:
+		message(w, http.StatusBadRequest, "Merge request blocks the maximum number of merge requests (10)")
+		return
+	case blockedBy >= 10:
+		message(w, http.StatusBadRequest, "Merge request is blocked by the maximum number of merge requests (10)")
+		return
+	}
+	s.nextBlockID++
+	block := mrBlock{id: s.nextBlockID, blockedProject: p.ID, blockedIID: mr.IID, blockingProject: other.ID,
+		blockingIID: blocking.IID}
+	s.mrBlocks = append(s.mrBlocks, block)
+	writeJSON(w, http.StatusCreated, s.blockRow(block, user))
+}
+
+// deleteMRBlock is DELETE …/blocks/:block_id, found only among the
+// dependencies the merge request waits for; the blocking merge request
+// must be readable.
+func (s *Server) deleteMRBlock(w http.ResponseWriter, p *project, user, iid, id string) {
+	mr := findMR(p, iid)
+	switch {
+	case mr == nil:
+		message(w, http.StatusNotFound, "404 Merge Request Not Found")
+		return
+	case !s.mrReadable(p, user) || !s.mrUpdatable(p, mr, user):
+		message(w, http.StatusForbidden, "403 Forbidden")
+		return
+	}
+	i := slices.IndexFunc(s.mrBlocks, func(b mrBlock) bool {
+		return itoa(b.id) == id && b.blockedProject == p.ID && b.blockedIID == mr.IID
+	})
+	if i < 0 {
+		message(w, http.StatusNotFound, "404 Not found")
+		return
+	}
+	if !s.mrsReadable(s.mrBlocks[i].blockingProject, user) {
+		message(w, http.StatusForbidden, "403 Forbidden")
+		return
+	}
+	s.mrBlocks = slices.Delete(s.mrBlocks, i, i+1)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddMergeRequest opens a merge request from a new branch at the
+// project's main, by author, and returns its iid.
+func (s *Server) AddMergeRequest(projectPath, title, author string) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil || len(p.commits["main"]) == 0 {
+		return 0, false
+	}
+	head := p.commits["main"][0].ID
+	mr := s.addMR(p, title, fmt.Sprintf("topic-%d", len(p.mrs)+1), "main", author, head, head)
+	return mr.IID, true
+}
+
+// AddMergeRequestBlocks makes a merge request of a project wait for
+// others of the same project, as many POST …/blocks would.
+func (s *Server) AddMergeRequestBlocks(projectPath string, blocked int64, blocking ...int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	for _, iid := range blocking {
+		s.nextBlockID++
+		s.mrBlocks = append(s.mrBlocks, mrBlock{id: s.nextBlockID, blockedProject: p.ID, blockedIID: blocked,
+			blockingProject: p.ID, blockingIID: iid})
+	}
+	return true
+}
+
+// MergeRequestBlocks counts the merge request dependencies the instance
+// holds.
+func (s *Server) MergeRequestBlocks() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.mrBlocks)
 }
 
 // ----------------------------------------------------------- labels

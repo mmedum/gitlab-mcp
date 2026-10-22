@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
 )
 
 // The phase 6 renderers (§17.13).
@@ -36,6 +36,22 @@ func IssueLinkWrite(w model.IssueLinkWrite, _ Boundary) string {
 	if w.LinkID != 0 {
 		fmt.Fprintf(&b, "\nLink %d: #%d %s %s.", w.LinkID, w.IID, Ident(w.LinkType), other)
 	}
+	return b.String()
+}
+
+// MergeRequestLinkWrite renders link_merge_requests and
+// unlink_merge_requests.
+func MergeRequestLinkWrite(w model.MergeRequestLinkWrite, _ Boundary) string {
+	var b strings.Builder
+	relation := fmt.Sprintf("!%d %s %s!%d", w.IID, Ident(w.LinkType), Ident(w.TargetProject.Path), w.TargetIID)
+	head := "Added the dependency"
+	switch w.Outcome {
+	case "unlinked":
+		head = "Removed the dependency"
+	case "unchanged":
+		head = "Nothing changed"
+	}
+	writeHead(&b, fmt.Sprintf("%s: %s.", head, relation), w.Write)
 	return b.String()
 }
 

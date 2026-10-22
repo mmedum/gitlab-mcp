@@ -9,11 +9,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
-	"github.com/mmedum/gitlab-mcp/v2/internal/redact"
-	"github.com/mmedum/gitlab-mcp/v2/internal/render"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v3/internal/render"
 )
 
 // The phase 6 tools (§17.13): moving and linking issues, label and
@@ -111,24 +111,25 @@ type IssueLinkRequest struct {
 	LinkType      string
 }
 
-// linkTargets resolves both issues' projects as write targets: a link
-// shows on both issues.
-func (s *Service) linkTargets(ctx context.Context, in IssueLinkRequest) (target, target, error) {
-	if in.IID < 1 || in.TargetIID < 1 {
-		return target{}, target{}, gapi.Errf(gapi.ClassInvalid, "iid and target_iid are issue numbers, 1 or more")
+// linkTargets resolves both items' projects as write targets: a link, or
+// a dependency, shows on both items. kind names them in a refusal.
+func (s *Service) linkTargets(ctx context.Context, project string, iid int64, targetProject string, targetIID int64,
+	kind string) (target, target, error) {
+	if iid < 1 || targetIID < 1 {
+		return target{}, target{}, gapi.Errf(gapi.ClassInvalid, "iid and target_iid are %s numbers, 1 or more", kind)
 	}
-	from, err := s.writeTarget(ctx, in.Project)
+	from, err := s.writeTarget(ctx, project)
 	if err != nil {
 		return target{}, target{}, err
 	}
 	to := from
-	if in.TargetProject != "" {
-		if to, err = s.writeTarget(ctx, in.TargetProject); err != nil {
+	if targetProject != "" {
+		if to, err = s.writeTarget(ctx, targetProject); err != nil {
 			return target{}, target{}, err
 		}
 	}
-	if to.project.ID == from.project.ID && in.TargetIID == in.IID {
-		return target{}, target{}, gapi.Errf(gapi.ClassInvalid, "an issue is not linked to itself")
+	if to.project.ID == from.project.ID && targetIID == iid {
+		return target{}, target{}, gapi.Errf(gapi.ClassInvalid, "both name the same %s, which is not linked to itself", kind)
 	}
 	return from, to, nil
 }
@@ -150,7 +151,7 @@ func (s *Service) LinkIssues(ctx context.Context, in IssueLinkRequest) (model.Is
 	if !slices.Contains(IssueLinkTypes, in.LinkType) {
 		return model.IssueLinkWrite{}, gapi.Errf(gapi.ClassInvalid, "link_type is one of %s", strings.Join(IssueLinkTypes, ", "))
 	}
-	from, to, err := s.linkTargets(ctx, in)
+	from, to, err := s.linkTargets(ctx, in.Project, in.IID, in.TargetProject, in.TargetIID, "issue")
 	if err != nil {
 		return model.IssueLinkWrite{}, err
 	}
@@ -190,7 +191,7 @@ func (s *Service) LinkIssues(ctx context.Context, in IssueLinkRequest) (model.Is
 // UnlinkIssues removes the link between two issues. With no link, the
 // result is unchanged.
 func (s *Service) UnlinkIssues(ctx context.Context, in IssueLinkRequest) (model.IssueLinkWrite, error) {
-	from, to, err := s.linkTargets(ctx, in)
+	from, to, err := s.linkTargets(ctx, in.Project, in.IID, in.TargetProject, in.TargetIID, "issue")
 	if err != nil {
 		return model.IssueLinkWrite{}, err
 	}
@@ -212,6 +213,148 @@ func (s *Service) UnlinkIssues(ctx context.Context, in IssueLinkRequest) (model.
 	}
 	if err := s.client.DeleteIssueLink(ctx, from.p, in.IID, l.IssueLinkID); err != nil {
 		return model.IssueLinkWrite{}, err
+	}
+	return out, nil
+}
+
+// ----------------------------------------------------------- merge request dependencies
+
+// MergeRequestLinkTypes are the directions of a dependency, from the
+// first merge request's side: it blocks the other, or the other blocks
+// it.
+var MergeRequestLinkTypes = []string{"blocks", "is_blocked_by"}
+
+// MergeRequestLinkRequest is link_merge_requests' and
+// unlink_merge_requests' request.
+type MergeRequestLinkRequest struct {
+	Project       string
+	IID           int64
+	TargetProject string
+	TargetIID     int64
+	LinkType      string
+}
+
+// dependency is a dependency resolved: the merge request that waits, and
+// the one it waits for. GitLab writes and removes it through the one that
+// waits.
+type dependency struct {
+	first, other            target
+	blocked, blocking       target
+	blockedIID, blockingIID int64
+}
+
+// dependencyTargets resolves both merge requests' projects as write
+// targets, since GitLab adds a system note to both, and orients the
+// dependency by its link type.
+func (s *Service) dependencyTargets(ctx context.Context, in MergeRequestLinkRequest) (dependency, error) {
+	if !slices.Contains(MergeRequestLinkTypes, in.LinkType) {
+		return dependency{}, gapi.Errf(gapi.ClassInvalid, "link_type is one of %s", strings.Join(MergeRequestLinkTypes, ", "))
+	}
+	first, other, err := s.linkTargets(ctx, in.Project, in.IID, in.TargetProject, in.TargetIID, "merge request")
+	if err != nil {
+		return dependency{}, err
+	}
+	d := dependency{first: first, other: other, blocked: first, blockedIID: in.IID, blocking: other, blockingIID: in.TargetIID}
+	if in.LinkType == "blocks" {
+		d.blocked, d.blockedIID, d.blocking, d.blockingIID = other, in.TargetIID, first, in.IID
+	}
+	return d, nil
+}
+
+// maxDependencyPages bounds the read for one dependency. GitLab's caps
+// do not count a merge request's own blockers against it (§18 row 122),
+// so the bound is a read's, not GitLab's.
+const maxDependencyPages = 3
+
+// findDependency reads what the waiting merge request waits for and finds
+// the row for the other one. A merge request the account cannot read is
+// not in its row, so it is never found. complete is false when the read
+// stopped at the bound without finding it: it may be further on.
+func (s *Service) findDependency(ctx context.Context, d dependency) (row gitlab.MergeRequestDependency, found, complete bool, err error) {
+	other := func(r gitlab.MergeRequestDependency) bool {
+		mr := r.BlockingMergeRequest
+		return mr != nil && mr.ProjectID == d.blocking.project.ID && mr.IID == d.blockingIID
+	}
+	rows, complete, err := readPagesUntil(maxDependencyPages, func(opts gapi.ListOptions) ([]gitlab.MergeRequestDependency, gapi.Page, error) {
+		return s.client.ListMergeRequestBlocks(ctx, d.blocked.p, d.blockedIID, opts)
+	}, func(rows []gitlab.MergeRequestDependency) bool { return slices.ContainsFunc(rows, other) })
+	if err != nil {
+		return gitlab.MergeRequestDependency{}, false, false, err
+	}
+	if i := slices.IndexFunc(rows, other); i >= 0 {
+		return rows[i], true, true, nil
+	}
+	return gitlab.MergeRequestDependency{}, false, complete, nil
+}
+
+// LinkMergeRequests makes one merge request wait for another. A
+// dependency that exists is reported unchanged.
+func (s *Service) LinkMergeRequests(ctx context.Context, in MergeRequestLinkRequest) (model.MergeRequestLinkWrite, error) {
+	d, err := s.dependencyTargets(ctx, in)
+	if err != nil {
+		return model.MergeRequestLinkWrite{}, err
+	}
+	out := model.MergeRequestLinkWrite{Outcome: "linked", Write: model.Write{Target: d.first.ref}, IID: in.IID,
+		TargetProject: d.other.ref.Project, TargetIID: in.TargetIID, LinkType: in.LinkType}
+	// A read cut at its bound that did not find it sends the create
+	// anyway: GitLab answers a pair it holds with 409.
+	_, found, _, err := s.findDependency(ctx, d)
+	if err != nil {
+		return model.MergeRequestLinkWrite{}, err
+	}
+	if found {
+		out.Outcome, out.Notes = "unchanged", []string{"The dependency was already there."}
+		return out, nil
+	}
+	body := gapi.MergeRequestBlockCreate{BlockingMergeRequestIID: d.blockingIID, BlockingProjectID: d.blocking.project.ID}
+	if gapi.IsDryRun(ctx) {
+		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("POST", "make the merge request wait", fieldsOf(body))
+		return out, nil
+	}
+	if err := s.client.CreateMergeRequestBlock(ctx, d.blocked.p, d.blockedIID, body); err != nil {
+		return model.MergeRequestLinkWrite{}, settle(err, "dependency", func() (string, error) {
+			row, found, complete, err := s.findDependency(ctx, d)
+			switch {
+			case err != nil:
+				return "", err
+			case !found && !complete:
+				return "", errors.New("the read stopped before the end of the dependencies")
+			case !found:
+				return "", nil
+			}
+			return fmt.Sprintf("dependency %d", row.ID), nil
+		})
+	}
+	return out, nil
+}
+
+// UnlinkMergeRequests removes a dependency in the direction its link
+// type names. With no such dependency, the result is unchanged.
+func (s *Service) UnlinkMergeRequests(ctx context.Context, in MergeRequestLinkRequest) (model.MergeRequestLinkWrite, error) {
+	d, err := s.dependencyTargets(ctx, in)
+	if err != nil {
+		return model.MergeRequestLinkWrite{}, err
+	}
+	out := model.MergeRequestLinkWrite{Outcome: "unlinked", Write: model.Write{Target: d.first.ref}, IID: in.IID,
+		TargetProject: d.other.ref.Project, TargetIID: in.TargetIID, LinkType: in.LinkType}
+	row, found, complete, err := s.findDependency(ctx, d)
+	switch {
+	case err != nil:
+		return model.MergeRequestLinkWrite{}, err
+	case !found && !complete:
+		return model.MergeRequestLinkWrite{}, gapi.Errf(gapi.ClassUnsupported, "the merge request waits for more merge "+
+			"requests than one read covers, so whether it waits for this one is not known; nothing was sent. Remove it in "+
+			"GitLab's own page")
+	case !found:
+		out.Outcome, out.Notes = "unchanged", []string{"There was no such dependency."}
+		return out, nil
+	}
+	if gapi.IsDryRun(ctx) {
+		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "remove the dependency", nil)
+		return out, nil
+	}
+	if err := s.client.DeleteMergeRequestBlock(ctx, d.blocked.p, d.blockedIID, row.ID); err != nil {
+		return model.MergeRequestLinkWrite{}, err
 	}
 	return out, nil
 }
@@ -394,9 +537,6 @@ func (s *Service) DeleteLabel(ctx context.Context, raw string, id int64, version
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the label", nil)
 		return out, nil
-	}
-	if err := ask(ctx, render.AskDeleteLabel(t.ref.Project.Path, l.Name, l.OpenIssuesCount)); err != nil {
-		return model.LabelWrite{}, err
 	}
 	err = s.client.DeleteLabel(ctx, t.p, id)
 	_, readErr := s.client.GetLabel(ctx, t.p, id)
@@ -592,9 +732,6 @@ func (s *Service) DeleteMilestone(ctx context.Context, raw string, id int64, upd
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the milestone", nil)
 		return out, nil
-	}
-	if err := ask(ctx, render.AskDeleteMilestone(t.ref.Project.Path, m.Title)); err != nil {
-		return model.MilestoneWrite{}, err
 	}
 	err = s.client.DeleteMilestone(ctx, t.p, id)
 	_, readErr := s.client.GetMilestone(ctx, t.p, id)
@@ -941,9 +1078,6 @@ func (s *Service) CreateTag(ctx context.Context, raw, name, ref, message string)
 		out.WouldSend = preview("POST", "create a tag", names(field{"tag_name", true}, field{"ref", true}, field{"message", message != ""}))
 		return out, nil
 	}
-	if err := ask(ctx, render.AskCreateTag(t.ref.Project.Path, name, ref)); err != nil {
-		return model.TagWrite{}, err
-	}
 	tag, err := s.client.CreateTag(ctx, t.p, name, ref, message)
 	if err != nil {
 		return model.TagWrite{}, settle(err, "tag", func() (string, error) {
@@ -989,9 +1123,6 @@ func (s *Service) DeleteTag(ctx context.Context, raw, name, sha string) (model.T
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the tag", nil)
 		return out, nil
-	}
-	if err := ask(ctx, render.AskDeleteTag(t.ref.Project.Path, name, tag.Commit.ID, tag.Release != nil)); err != nil {
-		return model.TagWrite{}, err
 	}
 	err = s.client.DeleteTag(ctx, t.p, name)
 	_, readErr := s.client.GetTag(ctx, t.p, name)

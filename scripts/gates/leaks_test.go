@@ -34,7 +34,7 @@ func TestLeaksAllowListHasReasons(t *testing.T) {
 		}
 	}
 	// The count is stated, so a new exemption changes this test too.
-	if want := 12 + len(leaksPublicHosts) + len(leaksGitLabPaths) + len(leaksSkip) + len(leaksBinaryAllowed); entries != want {
+	if want := 13 + len(leaksPublicHosts) + len(leaksGitLabPaths) + len(leaksSkip) + len(leaksBinaryAllowed); entries != want {
 		t.Errorf("%d exemptions, want %d", entries, want)
 	}
 	if len(leaksPublicHosts) != 24 || len(leaksGitLabPaths) != 6 || len(leaksSkip) != 4 || len(leaksBinaryAllowed) != 0 {
@@ -55,7 +55,9 @@ func TestLeaksFind(t *testing.T) {
 		{"a reserved label inside a real domain", "mail carol@corp.test" + ".com today", "an address at a domain somebody could own"},
 		{"a reserved name as a prefix", "mail carol@notexample" + ".com today", "an address at a domain somebody could own"},
 		{"the co-author trailer", "Co-Authored-By: Claude <noreply@anthropic.com>", ""},
-		{"another vendor address", "ask support@" + "anthropic.com", "an address at a vendor's no-reply domain"},
+		{"another vendor address", "ask support@" + "anthropic.com", "an address at a vendor's domain"},
+		{"Dependabot's sign-off", "Signed-off-by: dependabot[bot] <support@" + "github.com>", ""},
+		{"another GitHub address", "mail carol@" + "github.com", "an address at a vendor's domain"},
 		{"a GitHub no-reply", "12345+someone@users.noreply.github.com", ""},
 		{"a reserved host", "https://gitlab.example.com:8443/api/v4 and http://[::1]:8080/x and http://127.0.0.1:3000/", ""},
 		{"a public host", "see https://docs.gitlab.com/security/tokens/ and https://github.com/mmedum/gitlab-mcp", ""},

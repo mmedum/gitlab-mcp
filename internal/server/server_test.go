@@ -11,9 +11,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v2/internal/tools"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v3/internal/tools"
 )
 
 func TestDescriptionFitsTheRegistry(t *testing.T) {
@@ -40,7 +40,7 @@ func TestDumpSchemas(t *testing.T) {
 	if d.Server != "gitlab-mcp" || d.Version != "v0.0.0-test" || d.SDK != "v1.8.0" {
 		t.Errorf("header = %q %q %q", d.Server, d.Version, d.SDK)
 	}
-	if len(d.Tools) != 101 || len(d.ResourceTemplates) != 3 {
+	if len(d.Tools) != 103 || len(d.ResourceTemplates) != 3 {
 		t.Fatalf("%d tools, templates %v", len(d.Tools), d.ResourceTemplates)
 	}
 	var names []string

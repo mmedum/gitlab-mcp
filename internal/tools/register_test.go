@@ -11,12 +11,12 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
-	"github.com/mmedum/gitlab-mcp/v2/internal/render"
-	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v2/internal/service"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/render"
+	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v3/internal/service"
 )
 
 // register's rules, held with fake tools of every kind, so a rule is
@@ -36,17 +36,9 @@ type fakeOut struct {
 
 var fixedTime = time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
 
-// fakeAsks is what every Destructive tool must say about asking.
-func fakeAsks(k Kind) string {
-	if k == Destructive {
-		return "before it deletes"
-	}
-	return ""
-}
-
 func fake(name string, k Kind, toolset string) definition {
 	return tool[fakeIn, fakeOut]{
-		sp: spec{Name: name, Kind: k, Toolset: toolset, Description: "A fake.", Asks: fakeAsks(k)},
+		sp: spec{Name: name, Kind: k, Toolset: toolset, Description: "A fake."},
 		run: func(ctx context.Context, _ *service.Service, in fakeIn) (fakeOut, error) {
 			switch in.Fail {
 			case "hinted":
@@ -152,12 +144,11 @@ func TestAnnotationsAndMeta(t *testing.T) {
 	cases := []struct {
 		name                         string
 		readOnly, destructive, world bool
-		interactive                  bool
 	}{
-		{"fake_read", true, false, false, false},
-		{"fake_write", false, false, true, false},
-		{"fake_ship", false, true, true, true},
-		{"fake_delete", false, true, true, true},
+		{"fake_read", true, false, false},
+		{"fake_write", false, false, true},
+		{"fake_ship", false, true, true},
+		{"fake_delete", false, true, true},
 	}
 	for _, c := range cases {
 		tl := tools[c.name]
@@ -166,9 +157,10 @@ func TestAnnotationsAndMeta(t *testing.T) {
 			a.OpenWorldHint == nil || *a.OpenWorldHint != c.world {
 			t.Errorf("%s annotations = %+v", c.name, a)
 		}
-		_, interactive := tl.Meta["anthropic/requiresUserInteraction"]
-		if interactive != c.interactive {
-			t.Errorf("%s requiresUserInteraction = %v, want %v", c.name, interactive, c.interactive)
+		// Per-call approval is the client's to decide (§4.12): no tool
+		// carries a mark a client's allow rule cannot override.
+		if _, marked := tl.Meta["anthropic/requiresUserInteraction"]; marked {
+			t.Errorf("%s carries requiresUserInteraction", c.name)
 		}
 	}
 	// Times are date-time in the output schema, pointers nullable.
@@ -429,16 +421,6 @@ func TestRegisterRefusesAWriteMissingARule(t *testing.T) {
 		"no such input":  tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"nope"}, Description: "x"}, run: run, text: text},
 		"a non-string":   tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"dry_run"}, Description: "x"}, run: run, text: text},
 		"a guarded read": tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Read, Guarded: []string{"body"}, Description: "x"}, run: run, text: text},
-		"asks on every call, saying nothing of when": func() definition {
-			def := fake("x", Ship, "").(tool[fakeIn, fakeOut])
-			def.sp.AsksEveryCall = true
-			return def
-		}(),
-		"asks on every call, with no mark": func() definition {
-			def := fake("x", Write, "before it writes").(tool[fakeIn, fakeOut])
-			def.sp.AsksEveryCall = true
-			return def
-		}(),
 		"no model.Write": tool[fakeIn, time.Time]{sp: spec{Name: "x", Kind: Write, Description: "x"}, run: func(context.Context, *service.Service, fakeIn) (time.Time, error) { return time.Time{}, nil }, text: func(time.Time, render.Boundary) string { return "" }},
 	} {
 		func() {

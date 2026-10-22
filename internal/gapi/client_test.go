@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
 )
 
 // sleeps records the waits between attempts without waiting.

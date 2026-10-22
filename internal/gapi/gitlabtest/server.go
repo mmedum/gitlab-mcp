@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
 )
 
 // Options shape the instance. Zero values take the defaults.
@@ -78,6 +78,8 @@ type Server struct {
 	// take, and the rebases asked for.
 	issueLinks      []issueLink
 	nextLinkID      int64
+	mrBlocks        []mrBlock
+	nextBlockID     int64
 	nextLabelID     int64
 	nextMilestoneID int64
 	rebases         int

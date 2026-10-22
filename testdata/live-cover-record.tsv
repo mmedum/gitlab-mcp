@@ -1,5 +1,5 @@
 # Written by scripts/livegitlab at the end of a run; do not edit.
-# run of 2026-10-08 against a gitlab.com instance
+# run of 2026-10-22 against a gitlab.com instance
 # Columns: tool.option (tool.* for the call itself), times sent.
 add_comment.*	18
 add_comment.body	18
@@ -34,9 +34,9 @@ add_todo.type	6
 apply_suggestions.*	7
 apply_suggestions.commit_message	2
 apply_suggestions.dry_run	1
-apply_suggestions.ids	7
 apply_suggestions.iid	7
 apply_suggestions.project	7
+apply_suggestions.suggestions	7
 approve_merge_request.*	3
 approve_merge_request.dry_run	1
 approve_merge_request.iid	3
@@ -162,12 +162,12 @@ delete_comment.note_id	3
 delete_comment.project	3
 delete_comment.type	3
 delete_comment.updated_at	3
-delete_label.*	3
-delete_label.confirm	3
+delete_label.*	2
+delete_label.confirm	2
 delete_label.dry_run	1
-delete_label.label_id	3
-delete_label.project	3
-delete_label.version	3
+delete_label.label_id	2
+delete_label.project	2
+delete_label.version	2
 delete_milestone.*	2
 delete_milestone.confirm	2
 delete_milestone.dry_run	1
@@ -234,10 +234,10 @@ get_job_log.failed_only	1
 get_job_log.job_id	4
 get_job_log.project	4
 get_me.*	1
-get_merge_request.*	8
-get_merge_request.iid	8
+get_merge_request.*	10
+get_merge_request.iid	10
 get_merge_request.offset	1
-get_merge_request.project	8
+get_merge_request.project	10
 get_mr_diff.*	5
 get_mr_diff.diff_offset	1
 get_mr_diff.file_offset	2
@@ -274,6 +274,13 @@ link_issues.link_type	1
 link_issues.project	3
 link_issues.target_iid	3
 link_issues.target_project	1
+link_merge_requests.*	3
+link_merge_requests.dry_run	1
+link_merge_requests.iid	3
+link_merge_requests.link_type	3
+link_merge_requests.project	3
+link_merge_requests.target_iid	3
+link_merge_requests.target_project	1
 lint_ci.*	4
 lint_ci.content	2
 lint_ci.include_jobs	2
@@ -441,9 +448,9 @@ list_tree.recursive	2
 list_tree.ref	2
 list_wiki_pages.*	1
 list_wiki_pages.project	1
-mark_todos_done.*	4
+mark_todos_done.*	3
 mark_todos_done.dry_run	1
-mark_todos_done.ids	4
+mark_todos_done.ids	3
 merge_merge_request.*	5
 merge_merge_request.auto_merge	2
 merge_merge_request.dry_run	1
@@ -508,10 +515,10 @@ revert_commit.branch	2
 revert_commit.commit	2
 revert_commit.dry_run	1
 revert_commit.project	2
-run_merge_request_pipeline.*	3
+run_merge_request_pipeline.*	2
 run_merge_request_pipeline.dry_run	1
-run_merge_request_pipeline.iid	3
-run_merge_request_pipeline.project	3
+run_merge_request_pipeline.iid	2
+run_merge_request_pipeline.project	2
 run_pipeline.*	2
 run_pipeline.dry_run	1
 run_pipeline.inputs	1
@@ -618,6 +625,13 @@ unlink_issues.iid	2
 unlink_issues.project	2
 unlink_issues.target_iid	2
 unlink_issues.target_project	1
+unlink_merge_requests.*	3
+unlink_merge_requests.dry_run	1
+unlink_merge_requests.iid	3
+unlink_merge_requests.link_type	3
+unlink_merge_requests.project	3
+unlink_merge_requests.target_iid	3
+unlink_merge_requests.target_project	1
 update_comment.*	7
 update_comment.body	7
 update_comment.dry_run	1
@@ -707,7 +721,7 @@ update_snippet.project	8
 update_snippet.snippet_id	8
 update_snippet.title	5
 update_snippet.updated_at	8
-upload_file.*	5
+upload_file.*	4
 upload_file.dry_run	1
-upload_file.path	5
-upload_file.project	5
+upload_file.path	4
+upload_file.project	4

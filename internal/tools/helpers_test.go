@@ -10,11 +10,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
-	"github.com/mmedum/gitlab-mcp/v2/internal/service"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v3/internal/service"
 )
 
 // harness is a client session against the tools registered over an
@@ -37,15 +37,6 @@ type harnessOptions struct {
 	defs     []definition // nil: every definition
 	// token signs in as someone other than alice.
 	token func(*gitlabtest.Server) string
-	// person, when set, is a client that declares form elicitation and
-	// answers the server's questions (§4.12); protocol is the version it
-	// connects with, the SDK's newest when empty, and client adjusts it
-	// further.
-	person   *answerer
-	protocol string
-	client   func(*mcp.ClientOptions)
-	// middleware is added to the server after AskFailures.
-	middleware []mcp.Middleware
 	// over is an in-memory GitLab another harness already made, to serve
 	// the same state under another configuration.
 	over *gitlabtest.Server
@@ -86,17 +77,15 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	deps := Deps{Service: svc, Config: cfg, Granted: o.granted, Logger: o.logger}
 	reg := register(s, deps, defs)
 	RegisterResources(s, deps)
-	s.AddReceivingMiddleware(append([]mcp.Middleware{AskFailures()}, o.middleware...)...)
 	ct := connectTo(t, s)
-	co := &mcp.ClientOptions{}
-	if o.person != nil {
-		co.ElicitationHandler = o.person.handle
-	}
-	if o.client != nil {
-		o.client(co)
-	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, co).Connect(t.Context(), ct,
-		&mcp.ClientSessionOptions{ProtocolVersion: o.protocol})
+	// The client can ask the person, and the server asks nobody (§4.12):
+	// every tool is called through such a client, so a question from any
+	// of them fails the test that made the call.
+	co := &mcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		t.Errorf("the server asked the person: %q", req.Params.Message)
+		return &mcp.ElicitResult{Action: "decline"}, nil
+	}}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, co).Connect(t.Context(), ct, nil)
 	if err != nil {
 		t.Fatalf("connect client: %v", err)
 	}

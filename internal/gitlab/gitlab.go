@@ -801,6 +801,16 @@ type LinkedMergeRequest struct {
 	References References `json:"references"`
 }
 
+// MergeRequestDependency is one row of GET /projects/:id/merge_requests/
+// :iid/blocks and …/blockees: the merge request that must merge first and
+// the one that waits for it. GitLab keeps the row and leaves out a merge
+// request the account cannot read.
+type MergeRequestDependency struct {
+	ID                   int64               `json:"id"`
+	BlockingMergeRequest *LinkedMergeRequest `json:"blocking_merge_request"`
+	BlockedMergeRequest  *LinkedMergeRequest `json:"blocked_merge_request"`
+}
+
 // LinkedIssue is one row of GET /projects/:id/merge_requests/:iid/
 // closes_issues and …/related_issues. A row is an issue, or an issue in
 // an external tracker: {title, id} with a string id such as "PROJ-123".

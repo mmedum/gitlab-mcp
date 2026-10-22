@@ -15,8 +15,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
 )
 
 type statusJSON struct {
@@ -69,7 +69,7 @@ func TestStatusAfterLogin(t *testing.T) {
 		t.Fatalf("status: %+v", r)
 	}
 	s := statusOf(t, r)
-	if s.SchemaVersion != 1 || s.Profile != "default" || !s.Credentials.Resolved ||
+	if s.SchemaVersion != 2 || s.Profile != "default" || !s.Credentials.Resolved ||
 		deref0(s.Credentials.TokenStore) != "keyring" || !s.Probe.Ran || !s.Probe.OK {
 		t.Errorf("status %+v", s)
 	}

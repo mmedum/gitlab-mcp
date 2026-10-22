@@ -256,10 +256,14 @@ func TestSchemaDiffAgainstTheLastTagInAWorktree(t *testing.T) {
 	r.commit(dumpJSON(manyTools()), "drop list_tree")
 	bin := r.build()
 	t.Chdir(r.root)
+	if err := os.WriteFile(filepath.Join(r.root, "CHANGELOG.md"), []byte("# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-01-01\n"),
+		0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	err := schemaDiff(&out, []string{bin})
-	if err == nil || !strings.Contains(err.Error(), "breaking change(s) to the tool surface since v0.1.0") {
+	if err == nil || !strings.Contains(err.Error(), "breaking change(s) to the tool surface since v0.1.0 that the CHANGELOG does not declare") {
 		t.Fatalf("err = %v\n%s", err, out.String())
 	}
 	if !strings.Contains(out.String(), "BREAKING  tool removed: list_tree") {
@@ -267,6 +271,62 @@ func TestSchemaDiffAgainstTheLastTagInAWorktree(t *testing.T) {
 	}
 	if n := r.worktrees(); n != 1 {
 		t.Errorf("%d worktrees after the diff; the scratch one was not removed", n)
+	}
+}
+
+// A break passes once the unreleased CHANGELOG declares it under
+// **Breaking:**, naming its tool.
+func TestSchemaDiffAcceptsADeclaredBreak(t *testing.T) {
+	r := newFakeRepo(t)
+	r.commit(dumpJSON(manyTools("list_tree")), "first")
+	r.git("tag", "v1.4.0")
+	r.commit(dumpJSON(manyTools()), "drop list_tree")
+	bin := r.build()
+	t.Chdir(r.root)
+	changelog := "# Changelog\n\n## [Unreleased]\n\n### Removed\n\n- **Breaking:** `list_tree` is gone.\n\n## [1.4.0] - 2026-01-01\n"
+	if err := os.WriteFile(filepath.Join(r.root, "CHANGELOG.md"), []byte(changelog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := schemaDiff(&out, []string{bin}); err != nil {
+		t.Fatalf("err = %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "1 breaking change(s) since v1.4.0, each declared") {
+		t.Errorf("out = %s", out.String())
+	}
+}
+
+func TestUndeclaredBreaks(t *testing.T) {
+	c := surfaceChanges{Breaking: []string{"tool removed: list_tree", "apply_suggestions: input now required: suggestions",
+		"resource template removed: gitlab://projects/{id}/wiki"}}
+	all := "`list_tree`, `apply_suggestions` and `gitlab://projects/{id}/wiki`"
+	released := "\n## [1.4.0] - 2026-01-01\n\n- **Breaking:** " + all + ".\n"
+	for _, tc := range []struct {
+		name, changelog string
+		want            []string
+	}{
+		{"every one declared", "## [Unreleased]\n\n- **Breaking:** " + all + ".\n" + released, nil},
+		{"one not named", "## [Unreleased]\n\n- **Breaking:** `list_tree` and `gitlab://projects/{id}/wiki`.\n" + released,
+			[]string{"apply_suggestions: input now required: suggestions"}},
+		{"named outside a Breaking entry", "## [Unreleased]\n\n- " + all + " changed.\n" + released, c.Breaking},
+		{"declared only in a release made", "## [Unreleased]\n" + released, c.Breaking},
+		{"a release that raises the major", "## [2.0.0] - 2026-02-01\n\n- **Breaking:** " + all + ".\n" + released, nil},
+		{"a release that does not", "## [1.5.0] - 2026-02-01\n\n- **Breaking:** " + all + ".\n" + released,
+			[]string{"release 1.5.0 breaks the surface without raising the major version from 1.4.0"}},
+		{"a prerelease that does not", "## [1.5.0-rc.1] - 2026-02-01\n\n- **Breaking:** " + all + ".\n" + released,
+			[]string{"release 1.5.0-rc.1 breaks the surface without raising the major version from 1.4.0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := undeclaredBreaks(c, "# Changelog\n\n"+tc.changelog, "v1.4.0")
+			if err != nil || fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("undeclared = %v, %v, want %v", got, err, tc.want)
+			}
+		})
+	}
+	// Without the tag's own heading nothing is known to be unreleased.
+	if _, err := undeclaredBreaks(c, "# Changelog\n\n## [Unreleased]\n\n- **Breaking:** "+all+".\n", "v1.4.0"); err == nil ||
+		!strings.Contains(err.Error(), "no ## [1.4.0] heading") {
+		t.Errorf("no heading for the tag: err = %v", err)
 	}
 }
 

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
-	"github.com/mmedum/gitlab-mcp/v2/internal/render"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/render"
 )
 
 // The snippets toolset (§7.8). Snippets this server creates are private,
@@ -561,9 +561,6 @@ func (s *Service) DeleteSnippet(ctx context.Context, raw string, id int64, updat
 	if gapi.IsDryRun(ctx) {
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the snippet", nil)
 		return out, nil
-	}
-	if err := ask(ctx, render.AskDeleteSnippet(t.ref.Project.Path, id, sn.Title, snippetFiles(*sn))); err != nil {
-		return model.SnippetDelete{}, err
 	}
 	// GitLab refuses the delete with 412 when the snippet changed after
 	// the time read, as it does a comment's.

@@ -15,9 +15,27 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-22
+
+### Added
+
+- `link_merge_requests` and `unlink_merge_requests` make one merge request wait for another to merge, in one project or two, and remove that dependency. `get_merge_request` shows both sides as `blocked_by` and `blocks`. GitLab holds the merge only on Premium.
+
 ### Changed
 
+- **Breaking:** The server no longer asks you before a write. Your MCP client approves each call: Ship and Destructive tools are marked destructive, which claude.ai, Codex and VS Code prompt for, and in Claude Code an `ask` rule per tool does it, as the README shows. Registration, `confirm: true`, the guards and the witnesses are unchanged. A client that runs with nobody watching can now make every write its flags register, so leave `GITLAB_MCP_ENABLE_SHIP` and `GITLAB_MCP_ENABLE_DESTRUCTIVE` off for one.
+- **Breaking:** `apply_suggestions` takes `suggestions`, each an `id` with the `text` that `list_discussions` shows for it, in place of `ids`. A text that differs from GitLab's, indentation included, is refused `[stale]`, so what is committed is what was read, and your client's prompt shows it. A suggestion longer than `list_discussions` shows is refused.
+- No tool carries Claude Code's `requiresUserInteraction` mark, so your own allow and ask rules decide each call.
+- **Breaking:** the Go module path is now `github.com/mmedum/gitlab-mcp/v3`, as Go requires from v3 on; install with `go install github.com/mmedum/gitlab-mcp/v3/cmd/gitlab-mcp@latest`.
 - Built with `golang.org/x/sys` 0.49.0.
+
+### Removed
+
+- **Breaking:** `GITLAB_MCP_REQUIRE_PROMPT` and `--require-prompt`. Set to anything but false, the server refuses to start rather than ignore it. `status` no longer shows it, and `status --json` drops `require_prompt` and reports `schema_version` 2.
+
+### Security
+
+- Built with Go 1.27.3, which fixes GO-2026-6809 in `crypto/x509`, which `govulncheck` found reachable from this server: intermediate certificates known to be compromised are no longer trusted.
 
 ## [2.4.0] - 2026-10-10
 
@@ -175,7 +193,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.4.0...v3.0.0
 [2.4.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.0...v2.2.1

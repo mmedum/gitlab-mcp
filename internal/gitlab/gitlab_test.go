@@ -72,7 +72,7 @@ var byName = map[string]reflect.Type{
 	"Bridge": reflect.TypeFor[Bridge](), "ReleaseLink": reflect.TypeFor[ReleaseLink](),
 	"IssueLink": reflect.TypeFor[IssueLink](), "IssueBasic": reflect.TypeFor[IssueBasic](),
 	"RelatedIssue": reflect.TypeFor[RelatedIssue](), "ProtectedTag": reflect.TypeFor[ProtectedTag](),
-	"LinkedMergeRequest": reflect.TypeFor[LinkedMergeRequest](), "LinkedIssue": reflect.TypeFor[LinkedIssue](),
+	"LinkedMergeRequest": reflect.TypeFor[LinkedMergeRequest](), "LinkedIssue": reflect.TypeFor[LinkedIssue](), "MergeRequestDependency": reflect.TypeFor[MergeRequestDependency](),
 	"LabelEvent": reflect.TypeFor[LabelEvent](), "EventLabel": reflect.TypeFor[EventLabel](),
 	"StateEvent": reflect.TypeFor[StateEvent](), "MilestoneEvent": reflect.TypeFor[MilestoneEvent](), "WeightEvent": reflect.TypeFor[WeightEvent](),
 	"BlameRange": reflect.TypeFor[BlameRange](), "BlameCommit": reflect.TypeFor[BlameCommit](),

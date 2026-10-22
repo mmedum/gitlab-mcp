@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/redact"
 )
 
 // The pure half of the live driver: the run's name, the plan of calls,
@@ -93,9 +93,6 @@ type step struct {
 	// name just before the step goes out. A write needs what only a read
 	// can give it: a witness, a thread id, a draft id.
 	save map[string]string
-	// declines answers the step's question to the person with decline
-	// rather than accept; the step expects the refusal that follows.
-	declines bool
 	// until resends the step first, until a value of its result moves:
 	// work GitLab finishes in the background, after the answer.
 	until *waitFor
@@ -550,17 +547,18 @@ func phase2(s scratch) []step {
 		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo_issue}}"}}},
 		{tool: "add_todo", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}, save: map[string]string{"todo_mr": "todo_id"}},
 		{tool: "add_todo", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}},
-		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo_mr}}"}}},
+		// To-do items: the run's own, found in the scratch project while
+		// the one just added is pending.
+		{tool: "list_todos", args: map[string]any{"project": p, "state": "pending"}, save: map[string]string{"todo": "todos.0.id"}},
+		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}"}, "dry_run": true}},
+		// The one listed and the one added, which may be the same: ids
+		// are marked once each.
+		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}", "{{todo_mr}}"}}},
 
 		// The history the writes above made: labels swapped, the milestone
 		// set and cleared, closed and reopened.
 		{tool: "list_item_events", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "max": 2}, paged: true},
 		{tool: "list_item_events", args: map[string]any{"project": s.ID, "type": "merge_request", "iid": "{{mr}}"}},
-
-		// To-do items: the run's own, found in the scratch project.
-		{tool: "list_todos", args: map[string]any{"project": p, "state": "pending"}, save: map[string]string{"todo": "todos.0.id"}},
-		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}"}, "dry_run": true}},
-		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}"}}},
 
 		// Reactions on the scratch issue, merge request and comments. One
 		// already there, or none to remove, sends nothing; thumbs_up is an
@@ -601,11 +599,8 @@ func phase2(s scratch) []step {
 		// An image for a comment, read from the run's own directory, which
 		// the server is started with in GITLAB_MCP_UPLOAD_DIRS; its
 		// Markdown is posted on the scratch issue, after the reactions and
-		// the to-do steps that a comment would disturb. The person is asked
-		// before an upload: declined, nothing goes; accepted, it does.
+		// the to-do steps that a comment would disturb.
 		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image, "dry_run": true}},
-		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image}, declines: true, expectError: true,
-			why: "the person declines the question"},
 		{tool: "upload_file", args: map[string]any{"project": p, "path": s.Image}, save: map[string]string{"image_md": "markdown"}},
 		{tool: "upload_file", args: map[string]any{"project": p, "path": s.NotImage}, expectError: true,
 			why: "a text file, which is no image"},
@@ -617,6 +612,12 @@ func phase2(s scratch) []step {
 		{tool: "lint_ci", args: map[string]any{"project": p, "content": "include:\n  - local: other.yml\n"}, expectError: true,
 			why: "supplied content with an include, which GitLab would fetch"},
 	}
+}
+
+// sg names a suggestion for apply_suggestions by what a read saved: its
+// id under name and its text under name_text.
+func sg(name string) map[string]any {
+	return map[string]any{"id": "{{" + name + "}}", "text": "{{" + name + "_text}}"}
 }
 
 // planShip is phase 3 (§16), sent to a second server with Ship,
@@ -690,12 +691,10 @@ func planShip(s scratch) []step {
 		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "dry_run": true},
 			pause: 20 * time.Second},
 		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}"}},
-		// Both branches protected, so it asks; the person declines and
-		// nothing runs with the protected variables such a pipeline sees.
+		// A merge request from the default branch, which apply_suggestions
+		// does not commit to.
 		{tool: "create_merge_request", args: map[string]any{"project": p, "source_branch": s.Default, "target_branch": guardBranch(s),
 			"title": "Default into a protected branch " + s.Name}, save: map[string]string{"mrguard_mr": "iid"}},
-		{tool: "run_merge_request_pipeline", args: map[string]any{"project": p, "iid": "{{mrguard_mr}}"}, pause: 20 * time.Second,
-			declines: true, expectError: true, why: "both branches are protected, and the person declines the question"},
 
 		// Suggestions on the merge request pipeline's merge request: two
 		// applied in one commit, then one more alone once GitLab has moved
@@ -707,28 +706,33 @@ func planShip(s scratch) []step {
 			"body": "Another suggestion.\n\n```suggestion:-0+0\nthird, suggested\n```\n", "file": "ship/mr-pipeline.txt",
 			"line": 3, "side": "new"}},
 		{tool: "list_discussions", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}"},
-			save: map[string]string{"sg_third": "threads.0.notes.0.suggestions.0.id", "sg_first": "threads.1.notes.0.suggestions.0.id"}},
-		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrguard_mr}}", "ids": []any{"{{sg_first}}"}},
+			save: map[string]string{"sg_third": "threads.0.notes.0.suggestions.0.id",
+				"sg_third_text": "threads.0.notes.0.suggestions.0.untrusted_to_content",
+				"sg_first":      "threads.1.notes.0.suggestions.0.id", "sg_first_text": "threads.1.notes.0.suggestions.0.untrusted_to_content"}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrguard_mr}}", "suggestions": []any{sg("sg_first")}},
 			expectError: true, why: "a merge request whose source is the default branch"},
-		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_first}}"}},
-			expectError: true, why: "an id given twice"},
-		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_third}}"},
-			"commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}", "dry_run": true}},
-		// The question quotes each text; declined, nothing is committed,
-		// and accepted, the batch lands.
-		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_third}}"}},
-			declines: true, expectError: true, why: "the person declines the question"},
-		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}", "{{sg_third}}"},
-			"commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}"}},
-		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_first}}"}}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_first"),
+			sg("sg_first")}}, expectError: true, why: "an id given twice"},
+		// Each text is held against GitLab's: one that differs is refused,
+		// and the batch with the texts read lands.
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{
+			map[string]any{"id": "{{sg_first}}", "text": "not what was suggested\n"}}}, expectError: true,
+			why: "a text that is not the suggestion's"},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_first"),
+			sg("sg_third")}, "commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}", "dry_run": true}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_first"),
+			sg("sg_third")}, "commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}"}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_first")}}},
 		{tool: "get_file", args: map[string]any{"project": p, "path": "ship/mr-pipeline.txt", "ref": mrBranch}},
 		{tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}",
 			"body": "One more.\n\n```suggestion:-0+0\nsecond, suggested\n```\n", "file": "ship/mr-pipeline.txt", "line": 2, "side": "new"},
 			pause: 20 * time.Second},
 		{tool: "list_discussions", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}"},
-			save: map[string]string{"sg_second": "threads.0.notes.0.suggestions.0.id"}},
-		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "ids": []any{"{{sg_second}}"}}, anyOutcome: true,
-			why: "GitLab refuses a suggestion until it has moved the comments to the branch's new head, which takes a moment"},
+			save: map[string]string{"sg_second": "threads.0.notes.0.suggestions.0.id",
+				"sg_second_text": "threads.0.notes.0.suggestions.0.untrusted_to_content"}},
+		{tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_second")}},
+			anyOutcome: true,
+			why:        "GitLab refuses a suggestion until it has moved the comments to the branch's new head, which takes a moment"},
 
 		// An auto-merge set while the merge request's pipeline runs, then
 		// canceled; a pipeline that already passed merges it instead,
@@ -894,6 +898,22 @@ func phase6(s scratch) []step {
 		{tool: "unlink_issues", args: map[string]any{"project": p, "iid": s.Issue, "target_project": p, "target_iid": s.Issue2, "dry_run": true}},
 		{tool: "unlink_issues", args: map[string]any{"project": p, "iid": s.Issue, "target_iid": s.Issue2}},
 
+		// Making the run's draft wait for its other merge request; the
+		// scratch group is on Free, where GitLab records the dependency
+		// and does not hold the merge.
+		{tool: "link_merge_requests", args: map[string]any{"project": p, "iid": s.MR2, "target_project": p, "target_iid": s.MR,
+			"link_type": "is_blocked_by", "dry_run": true}},
+		{tool: "link_merge_requests", args: map[string]any{"project": p, "iid": s.MR2, "target_iid": s.MR, "link_type": "is_blocked_by"}},
+		// The same dependency, from the other side: unchanged.
+		{tool: "link_merge_requests", args: map[string]any{"project": p, "iid": s.MR, "target_iid": s.MR2, "link_type": "blocks"}},
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": s.MR2}},
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": s.MR}},
+		{tool: "unlink_merge_requests", args: map[string]any{"project": p, "iid": s.MR2, "target_project": p, "target_iid": s.MR,
+			"link_type": "is_blocked_by", "dry_run": true}},
+		{tool: "unlink_merge_requests", args: map[string]any{"project": p, "iid": s.MR2, "target_iid": s.MR, "link_type": "is_blocked_by"}},
+		// Gone: unchanged.
+		{tool: "unlink_merge_requests", args: map[string]any{"project": p, "iid": s.MR, "target_iid": s.MR2, "link_type": "blocks"}},
+
 		// Blame.
 		{tool: "get_blame", args: map[string]any{"project": p, "path": s.File}},
 		{tool: "get_blame", args: map[string]any{"project": p, "path": s.File, "ref": s.Feature, "start_line": 2, "end_line": 3}},
@@ -950,8 +970,6 @@ func phase6(s scratch) []step {
 			"clear_priority": true}, save: map[string]string{"label_v3": "label.version"}},
 		{tool: "delete_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v3}}", "confirm": true,
 			"dry_run": true}},
-		{tool: "delete_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v3}}", "confirm": true},
-			declines: true, expectError: true, why: "the person declines the question"},
 		{tool: "delete_label", args: map[string]any{"project": p, "label_id": "{{label}}", "version": "{{label_v3}}", "confirm": true}},
 		{tool: "create_milestone", args: map[string]any{"project": p, "title": "Live made " + s.Name, "dry_run": true}},
 		{tool: "create_milestone", args: map[string]any{"project": p, "title": "Live made " + s.Name, "description": "A milestone the live run made",
@@ -1089,6 +1107,8 @@ var rules = map[string]rule{
 	},
 	"link_issues":           linkRule,
 	"unlink_issues":         linkRule,
+	"link_merge_requests":   linkRule,
+	"unlink_merge_requests": linkRule,
 	"search_projects":       searchRule,
 	"search_issues":         searchRule,
 	"search_merge_requests": searchRule,
@@ -1119,7 +1139,7 @@ func init() {
 // linkRule: both issues are the run's.
 func linkRule(st step, s scratch) error {
 	if t, ok := st.args["target_project"]; ok && t != s.Path {
-		return fmt.Errorf("%s: the other issue is the scratch project's", st.tool)
+		return fmt.Errorf("%s: the other item is the scratch project's", st.tool)
 	}
 	return inProject(st, s)
 }

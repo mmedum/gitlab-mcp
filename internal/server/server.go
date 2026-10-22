@@ -14,11 +14,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/service"
-	"github.com/mmedum/gitlab-mcp/v2/internal/tools"
-	"github.com/mmedum/gitlab-mcp/v2/internal/version"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/service"
+	"github.com/mmedum/gitlab-mcp/v3/internal/tools"
+	"github.com/mmedum/gitlab-mcp/v3/internal/version"
 )
 
 // Name is the MCP server name.
@@ -57,7 +57,6 @@ func New(opts Options) *mcp.Server {
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: Name, Version: opts.Version}, so)
 	s.AddReceivingMiddleware(logMethods(logger))
-	s.AddReceivingMiddleware(tools.AskFailures())
 	svc := service.New(service.Options{Client: opts.Client, Config: opts.Config, Granted: opts.Granted})
 	deps := tools.Deps{Service: svc, Config: opts.Config, Granted: opts.Granted, Logger: logger}
 	tools.Register(s, deps)

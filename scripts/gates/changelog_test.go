@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gitx"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gitx"
 )
 
 // gitRepo makes a throwaway repository with a fixed identity, so a test

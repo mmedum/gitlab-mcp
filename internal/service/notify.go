@@ -6,9 +6,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
 )
 
 // The signed-in account's own notifications and to-do items on an issue

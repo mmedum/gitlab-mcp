@@ -26,9 +26,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
-	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v2/internal/userconfig"
+	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v3/internal/userconfig"
 )
 
 // EnvPrefix is prepended to every environment variable name. Not
@@ -69,11 +69,13 @@ type Var struct {
 
 // Variable names.
 const (
-	EnvProfile                   = EnvPrefix + "PROFILE"
-	EnvClientID                  = EnvPrefix + "CLIENT_ID"
-	EnvReadOnly                  = EnvPrefix + "READ_ONLY"
-	EnvEnableShip                = EnvPrefix + "ENABLE_SHIP"
-	EnvEnableDestructive         = EnvPrefix + "ENABLE_DESTRUCTIVE"
+	EnvProfile           = EnvPrefix + "PROFILE"
+	EnvClientID          = EnvPrefix + "CLIENT_ID"
+	EnvReadOnly          = EnvPrefix + "READ_ONLY"
+	EnvEnableShip        = EnvPrefix + "ENABLE_SHIP"
+	EnvEnableDestructive = EnvPrefix + "ENABLE_DESTRUCTIVE"
+	// EnvRequirePrompt was removed with the server's question (§4.12);
+	// it is read only to refuse it set.
 	EnvRequirePrompt             = EnvPrefix + "REQUIRE_PROMPT"
 	EnvToolsets                  = EnvPrefix + "TOOLSETS"
 	EnvWriteNamespaces           = EnvPrefix + "WRITE_NAMESPACES"
@@ -106,8 +108,6 @@ var Vars = []Var{
 		Doc: "register merging, approving, running CI and creating releases"},
 	{Name: EnvEnableDestructive, Flag: "enable-destructive", Default: "false", Switch: true,
 		Doc: "register deletions, each of which also needs confirm: true"},
-	{Name: EnvRequirePrompt, Flag: "require-prompt", Default: "false", Switch: true,
-		Doc: "refuse the writes that ask the person when the client cannot ask them"},
 	{Name: EnvToolsets, Flag: "toolsets",
 		Doc: "comma-separated optional toolsets: " + strings.Join(Toolsets, ", ") + ", or all"},
 	{Name: EnvWriteNamespaces, Flag: "write-namespaces",
@@ -136,6 +136,10 @@ func EnvVars() []string { return names(false) }
 
 // DevVars is every development override, sorted.
 func DevVars() []string { return names(true) }
+
+// RemovedVars are variables a release removed that the server still
+// reads, only to refuse one turned on, sorted.
+func RemovedVars() []string { return []string{EnvRequirePrompt} }
 
 func names(dev bool) []string {
 	var out []string
@@ -207,9 +211,6 @@ type Config struct {
 	// EnableDestructive registers the Destructive kind. It changes no
 	// scope either.
 	EnableDestructive bool
-	// RequirePrompt refuses the writes that ask the person when the
-	// client cannot ask (§4.12).
-	RequirePrompt bool
 	// Toolsets are the optional toolsets turned on, sorted, with "all"
 	// expanded.
 	Toolsets []string
@@ -244,7 +245,8 @@ func (c Config) Scopes() []string { return scopes.ForMode(c.Mode()) }
 // ToolsetEnabled reports whether an optional toolset is on.
 func (c Config) ToolsetEnabled(name string) bool { return slices.Contains(c.Toolsets, name) }
 
-// Settings holds the raw values before validation, keyed by variable.
+// Settings holds the raw values before validation, keyed by variable,
+// the removed ones included.
 type Settings struct {
 	values map[string]*string
 }
@@ -254,6 +256,10 @@ type Settings struct {
 // environment-only variables.
 func Define(fs *flag.FlagSet, env func(string) string) *Settings {
 	s := &Settings{values: map[string]*string{}}
+	for _, name := range RemovedVars() {
+		v := env(name)
+		s.values[name] = &v
+	}
 	for _, v := range Vars {
 		val := env(v.Name)
 		if val == "" {
@@ -345,8 +351,14 @@ func (s *Settings) Build() (Config, error) {
 	add(err)
 	c.EnableDestructive, err = parseBool(EnvEnableDestructive, s.get(EnvEnableDestructive))
 	add(err)
-	c.RequirePrompt, err = parseBool(EnvRequirePrompt, s.get(EnvRequirePrompt))
-	add(err)
+	// The removed setting refused writes no person could be asked about.
+	// Ignored, it would quietly allow what its owner meant to stop, so
+	// anything but off is refused, a value it never took included.
+	if on, err := parseBool(EnvRequirePrompt, s.get(EnvRequirePrompt)); on || err != nil {
+		add(fmt.Errorf("%w: %s was removed: the server no longer asks the person, and the client's own approval "+
+			"decides each call. Unset it, and leave %s and %s off for a client that runs with nobody watching",
+			ErrInvalid, EnvRequirePrompt, EnvEnableShip, EnvEnableDestructive))
+	}
 	// Read-only with an enable flag has no coherent meaning, and guessing
 	// which was meant would drop either a guard or a tool.
 	for _, on := range []struct {

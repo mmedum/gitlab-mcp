@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/localimage"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/localimage"
 )
 
 // Each refusal internal/localimage gives carries the class the caller

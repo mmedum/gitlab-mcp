@@ -10,16 +10,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
 )
 
 // upload_file against the in-memory instance: what it sends, who the
 // result says can open the image, where it may read from, and that a
 // lost answer is not sent again (§7.10). Which files it refuses is
 // internal/localimage's test; here one refusal shows the check runs
-// before anything is sent. These clients declare no elicitation, so
-// nothing is asked; the question is ask_test.go's.
+// before anything is sent.
 
 // firstSecret is the secret the in-memory instance gives its first
 // upload.
@@ -54,7 +53,7 @@ func uploadPosts(h *harness) int {
 // directory, beside cfg, and that directory.
 func uploadHarness(t *testing.T, cfg config.Config) (*harness, string) {
 	t.Helper()
-	cfg = withUploads(t, cfg)
+	cfg.UploadDirs = []string{t.TempDir()}
 	return newHarness(t, harnessOptions{cfg: cfg}), cfg.UploadDirs[0]
 }
 

@@ -23,3 +23,6 @@ Issues it closes when merged: 1 shown of 21; the rest are not shown.
 Related issues: 2 shown.
 - external issue EXT-7; title <<<0123456789abcdef>>>External Issue EXT-7<<</0123456789abcdef>>>
 - external issue; title <<<0123456789abcdef>>>External Issue not an id<<</0123456789abcdef>>>
+Blocked by (these merge first): 2 of 25 read, 1 shown and 1 you cannot read; the rest are not shown.
+- example-group/beta!4 (project id 2002, iid 4): merged, https://gitlab.example.com/example-group/beta/-/merge_requests/4; title <<<0123456789abcdef>>>Add the login API<<</0123456789abcdef>>>
+Blocks (these wait for it): none.

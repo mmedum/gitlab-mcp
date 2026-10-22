@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
 )
 
 // The review and history reads against the in-memory instance. Every

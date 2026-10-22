@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
 )
 
 // The Ship and Destructive tools against the in-memory instance: that
@@ -720,6 +720,19 @@ func suggest(h *harness, iid int64, from, to int, replacement string) (int64, in
 	return note, id
 }
 
+// sgs names suggestions for apply_suggestions, each with the text the
+// in-memory GitLab holds for it, as a caller copies it from
+// list_discussions.
+func sgs(h *harness, ids ...int64) []any {
+	h.t.Helper()
+	out := []any{}
+	for _, id := range ids {
+		sg, _ := h.gl.Suggestion(id)
+		out = append(out, map[string]any{"id": id, "text": sg.ToContent})
+	}
+	return out
+}
+
 // applyPuts counts the applies sent.
 func applyPuts(h *harness) int {
 	n := 0
@@ -777,7 +790,7 @@ func TestSuggestionsWithHiddenCharacters(t *testing.T) {
 		t.Errorf("text:\n%s", text)
 	}
 
-	refused := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}, "blocked")
+	refused := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id)}, "blocked")
 	if !strings.Contains(refused, "U+202E") || applyPuts(h) != 0 {
 		t.Errorf("refusal: %s; %d sent", refused, applyPuts(h))
 	}
@@ -805,23 +818,35 @@ func TestSuggestionTextCountsAgainstTheBudget(t *testing.T) {
 	}
 }
 
-// The person is asked with each suggestion's exact text; a decline
-// sends nothing.
-func TestApplySuggestionsAsksWithTheText(t *testing.T) {
-	p := &answerer{answer: declines}
-	h := askingHarness(t, "2025-11-25", p, harnessOptions{})
-	_, first := suggest(h, 1, 1, 1, "package login\n")
-	_, second := suggest(h, 1, 3, 3, "// login signs a user in.\n")
-	h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{first, second}}, "blocked")
-	if applyPuts(h) != 0 {
-		t.Fatalf("declined, and %d applies were sent", applyPuts(h))
-	}
-	q := p.asked()[0].Message
-	for _, want := range []string{fmt.Sprintf("suggestion %d on `src/login[.]go` line 1 puts in `package login`", first),
-		fmt.Sprintf("suggestion %d on `src/login[.]go` line 3 puts in `/[/] login signs a user in.`", second)} {
-		if !strings.Contains(q, want) {
-			t.Errorf("the question does not show %q:\n%s", want, q)
+// Each suggestion comes with its text, which is held against GitLab's
+// exactly, line endings and a final newline aside: a text that differs,
+// even in indentation, is refused before anything is sent, and one
+// longer than list_discussions shows was never read whole and is refused.
+func TestApplySuggestionsHoldsTheText(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	_, id := suggest(h, 1, 3, 3, "    return login()\n")
+	for _, text := range []string{"    return logout()\n", "return login()\n"} {
+		refused := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1,
+			"suggestions": []any{map[string]any{"id": id, "text": text}}}, "stale")
+		if !strings.Contains(refused, "untrusted_to_content") || applyPuts(h) != 0 {
+			t.Errorf("%q: %s; %d sent", text, refused, applyPuts(h))
 		}
+	}
+	_, long := suggest(h, 2, 3, 3, strings.Repeat("x", 2001)+"\n")
+	for _, text := range []string{strings.Repeat("x", 2000), strings.Repeat("x", 2001) + "\n"} {
+		h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 2,
+			"suggestions": []any{map[string]any{"id": long, "text": text}}}, "unsupported")
+	}
+	_, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1,
+		"suggestions": []any{map[string]any{"id": id, "text": "    return login()\r\n\n"}}})
+	if get(out, "outcome") != "applied" || applyPuts(h) != 1 {
+		t.Errorf("the same text, another line ending: %v; %d sent", out, applyPuts(h))
+	}
+	// 2,000 characters, the most list_discussions shows whole.
+	_, whole := suggest(h, 3, 3, 3, strings.Repeat("y", 1999)+"\n")
+	if _, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 3,
+		"suggestions": []any{map[string]any{"id": whole, "text": strings.Repeat("y", 1999) + "\n"}}}); get(out, "outcome") != "applied" {
+		t.Errorf("2,000 characters: %v", out)
 	}
 }
 
@@ -830,12 +855,12 @@ func TestApplySuggestion(t *testing.T) {
 	note, id := suggest(h, 1, 3, 3, "// login signs a user in.\n")
 	before := branchHead(h, "feature/login")
 
-	_, dry := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}, "dry_run": true})
+	_, dry := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id), "dry_run": true})
 	if get(dry, "outcome") != "dry_run" || get(dry, "head_before") != before || applyPuts(h) != 0 {
 		t.Errorf("dry run = %v, %d sent", dry, applyPuts(h))
 	}
 
-	text, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id},
+	text, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id),
 		"commit_message": "Apply %{suggestions_count} suggestion on %{branch_name}"})
 	head := branchHead(h, "feature/login")
 	if get(out, "outcome") != "applied" || get(out, "head_before") != before || get(out, "head") != head || head == before ||
@@ -863,7 +888,7 @@ func TestApplySuggestion(t *testing.T) {
 	}
 
 	// Applied already: nothing is sent, and the head is reported.
-	_, again := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}})
+	_, again := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id)})
 	if get(again, "outcome") != "unchanged" || get(again, "head") != head || applyPuts(h) != 1 {
 		t.Errorf("again = %v, %d sent", again, applyPuts(h))
 	}
@@ -875,7 +900,7 @@ func TestApplySuggestionsInOneCommit(t *testing.T) {
 	_, first := suggest(h, 1, 1, 1, "package login\n")
 	_, second := suggest(h, 1, 3, 4, "// login is real now.\nfunc login() { return }\n")
 	before := branchHead(h, "feature/login")
-	_, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{second, first}})
+	_, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, second, first)})
 	if get(out, "outcome") != "applied" || get(out, "suggestions", 0, "applied") != true || get(out, "suggestions", 1, "applied") != true {
 		t.Errorf("applied = %v", out)
 	}
@@ -904,7 +929,7 @@ func TestApplySuggestionsRefusedBeforeSending(t *testing.T) {
 	_, id := suggest(h, 1, 3, 3, "// one\n")
 	_, onTwo := suggest(h, 2, 3, 3, "// two\n")
 	_, applied := suggest(h, 1, 1, 1, "package login\n")
-	h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{applied}})
+	h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, applied)})
 	sent := applyPuts(h)
 	for _, c := range []struct {
 		name  string
@@ -919,13 +944,13 @@ func TestApplySuggestionsRefusedBeforeSending(t *testing.T) {
 		{"no such suggestion", 1, []int64{999999}, "not_found"},
 		{"one applied among others", 1, []int64{id, applied}, "conflict"},
 	} {
-		text, _, isErr := h.call("apply_suggestions", map[string]any{"project": alpha, "iid": c.iid, "ids": c.ids})
+		text, _, isErr := h.call("apply_suggestions", map[string]any{"project": alpha, "iid": c.iid, "suggestions": sgs(h, c.ids...)})
 		if !isErr || !strings.HasPrefix(text, "["+c.class+"]") {
 			t.Errorf("%s: %s", c.name, text)
 		}
 	}
 	h.ok("update_merge_request", map[string]any{"project": alpha, "iid": 2, "updated_at": mrWitness(h, 2), "state": "close"})
-	h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 2, "ids": []int64{onTwo}}, "conflict")
+	h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 2, "suggestions": sgs(h, onTwo)}, "conflict")
 	if applyPuts(h) != sent {
 		t.Errorf("%d applies sent by refused calls", applyPuts(h)-sent)
 	}
@@ -942,7 +967,7 @@ func TestApplySuggestionsRefusesAProtectedSourceBranch(t *testing.T) {
 	if !ok {
 		t.Fatal("no suggestion")
 	}
-	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": iid, "ids": []int64{id}}, "blocked")
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": iid, "suggestions": sgs(h, id)}, "blocked")
 	if !strings.Contains(text, "protected") || applyPuts(h) != 0 {
 		t.Errorf("refusal: %s; %d sent", text, applyPuts(h))
 	}
@@ -954,7 +979,7 @@ func TestApplySuggestionsHoldsTheForkToTheAllowList(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: config.Config{EnableShip: true, WriteNamespaces: []string{alpha}}})
 	_, id := suggest(h, 1, 3, 3, "// one\n")
 	h.gl.SetMRSourceProject(alpha, 1, gitlabtest.ProjectBeta)
-	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}, "blocked")
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id)}, "blocked")
 	if !strings.Contains(text, config.EnvWriteNamespaces) || applyPuts(h) != 0 {
 		t.Errorf("refusal: %s; %d sent", text, applyPuts(h))
 	}
@@ -968,14 +993,14 @@ func TestApplySuggestionsRefusedByGitLab(t *testing.T) {
 	if _, ok := h.gl.PushTo(alpha, "feature/login"); !ok {
 		t.Fatal("push")
 	}
-	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}, "conflict")
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id)}, "conflict")
 	if !strings.Contains(text, "A file has been changed.") || !strings.Contains(text, "try again shortly") {
 		t.Errorf("after a push: %s", text)
 	}
 
 	_, other := suggest(h, 1, 3, 3, "// two\n")
 	dave := newHarness(t, harnessOptions{cfg: ship, over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
-	text = dave.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{other}}, "forbidden")
+	text = dave.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, other)}, "forbidden")
 	if !strings.Contains(text, "may push to the source branch") {
 		t.Errorf("no push rights: %s", text)
 	}
@@ -992,13 +1017,13 @@ func TestApplySuggestionsKeepsTheRefusalsClass(t *testing.T) {
 	path := fmt.Sprintf("/suggestions/%d/apply", id)
 	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: path, Status: 403,
 		Body: `{"error":"insufficient_scope","error_description":"The request requires higher privileges.","scope":"api"}`})
-	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}, "auth")
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id)}, "auth")
 	if !strings.Contains(text, "gitlab-mcp login") || strings.Contains(text, "push") {
 		t.Errorf("scope: %s", text)
 	}
 	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: path, Status: 404,
 		Body: `{"message":"Suggestion is not applicable as the suggestion was not found."}`})
-	text = h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}}, "not_found")
+	text = h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id)}, "not_found")
 	if !strings.Contains(text, "Suggestion is not applicable as the suggestion was not found.") {
 		t.Errorf("404: %s", text)
 	}
@@ -1010,7 +1035,7 @@ func TestApplySuggestionsWhoseAnswerWasLost(t *testing.T) {
 	_, id := suggest(h, 1, 3, 3, "// one\n")
 	path := fmt.Sprintf("/suggestions/%d/apply", id)
 	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: path, Status: 500, AfterApply: true, Body: `{"message":"500 Internal Server Error"}`})
-	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "ids": []int64{id}, "commit_message": "Apply it"},
+	text := h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 1, "suggestions": sgs(h, id), "commit_message": "Apply it"},
 		"ambiguous_outcome")
 	if !strings.Contains(text, "a read shows every suggestion applied, and the source branch's head "+branchHead(h, "feature/login")+
 		" is one commit on from where it was, by this account") || !strings.Contains(text, "Do not repeat the call") || applyPuts(h) != 1 {
@@ -1022,7 +1047,7 @@ func TestApplySuggestionsWhoseAnswerWasLost(t *testing.T) {
 	_, other := suggest(h, 2, 3, 3, "// two\n")
 	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: fmt.Sprintf("/suggestions/%d/apply", other), Status: 502,
 		Body: `{"message":"502 Bad Gateway"}`, Before: func() { h.gl.ApplySuggestionAs("bob", other) }})
-	text = h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 2, "ids": []int64{other}}, "ambiguous_outcome")
+	text = h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 2, "suggestions": sgs(h, other)}, "ambiguous_outcome")
 	if !strings.Contains(text, "by this call or another") || strings.Contains(text, "by this account") {
 		t.Errorf("applied by someone: %s", text)
 	}
@@ -1032,7 +1057,7 @@ func TestApplySuggestionsWhoseAnswerWasLost(t *testing.T) {
 	_, third := suggest(h, 3, 3, 3, "// three\n")
 	h.gl.Inject(gitlabtest.Fault{Method: "PUT", Path: fmt.Sprintf("/suggestions/%d/apply", third), Status: 502,
 		Body: `{"message":"502 Bad Gateway"}`})
-	text = h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 3, "ids": []int64{third}}, "ambiguous_outcome")
+	text = h.fails("apply_suggestions", map[string]any{"project": alpha, "iid": 3, "suggestions": sgs(h, third)}, "ambiguous_outcome")
 	if !strings.Contains(text, "0 of 1 applied") || !strings.Contains(text, "may still be committing") ||
 		strings.Contains(text, "calling again is safe") || applyPuts(h) != 3 {
 		t.Errorf("unknown: %s; %d sent", text, applyPuts(h))

@@ -7,8 +7,8 @@ package tools
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/service"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/service"
 )
 
 // definitions is every tool this server has, in the order §8 lists
@@ -18,7 +18,7 @@ func definitions() []definition {
 		getMe(), resolveURL(),
 		searchProjects(), getProject(), listMembers(), findUsers(),
 		searchIssues(), getIssue(), createIssue(), updateIssue(), listDiscussions(), listItemEvents(), addComment(), updateComment(),
-		resolveDiscussion(), linkIssues(), unlinkIssues(),
+		resolveDiscussion(), linkIssues(), unlinkIssues(), linkMergeRequests(), unlinkMergeRequests(),
 		searchMergeRequests(), getMergeRequest(), listMRFiles(), getMRDiff(), listMRCommits(), listMRVersions(),
 		compareMRVersions(),
 		createMergeRequest(), updateMergeRequest(), trackTime(), addReviewComment(), listReviewComments(), deleteReviewComment(),
@@ -55,27 +55,15 @@ func FullSurface(cfg config.Config) config.Config {
 
 // Register adds every tool the configuration allows and returns what it
 // registered, which it also tells the service, so get_me and resolve_url
-// report the surface that exists. It adds interactionHint as well, which
-// lists a tool that asks on every call without the mark to a client
-// that can ask.
+// report the surface that exists.
 func Register(s *mcp.Server, d Deps) []service.Registered {
 	return register(s, d, definitions())
 }
 
 func register(s *mcp.Server, d Deps, defs []definition) []service.Registered {
-	if d.asking == nil {
-		d.asking = newAsking(d.logger())
-	}
 	defs = allowed(defs, d.Config, d.Granted)
-	always := map[string]bool{}
 	for _, def := range defs {
 		def.add(s, d)
-		if sp := def.spec(); sp.AsksEveryCall {
-			always[sp.Name] = true
-		}
-	}
-	if len(always) > 0 {
-		s.AddReceivingMiddleware(interactionHint(always))
 	}
 	out := registered(defs)
 	if d.Service != nil {

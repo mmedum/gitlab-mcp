@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
 )
 
 // The readable half of each result. It carries the same facts as the
@@ -438,6 +438,8 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 		b.WriteString("\nLinked issues are as GitLab returned them: it leaves out confidential issues and any you cannot read.")
 		b.WriteString("\n" + linkedItems("Issues it closes when merged", mr.ClosesIssues, bd))
 		b.WriteString("\n" + linkedItems("Related issues", mr.RelatedIssues, bd))
+		b.WriteString("\n" + dependencyList("Blocked by (these merge first)", mr.BlockedBy, bd))
+		b.WriteString("\n" + dependencyList("Blocks (these wait for it)", mr.Blocks, bd))
 	}
 	return b.String()
 }
@@ -492,8 +494,47 @@ func linkedItems(heading string, l *model.LinkedItems, bd Boundary) string {
 			fmt.Fprintf(&b, "\n- external issue; title %s", bd.Inline(it.UntrustedTitle))
 			continue
 		}
-		fmt.Fprintf(&b, "\n- %s (project id %d, iid %d): %s, %s; title %s", Ident(it.Reference), it.ProjectID, it.IID,
-			Ident(it.State), Ident(it.WebURL), bd.Inline(it.UntrustedTitle))
+		b.WriteString("\n" + linkedItem(it, bd))
+	}
+	return b.String()
+}
+
+// linkedItem is one GitLab issue or merge request of a list, on a line.
+func linkedItem(it model.LinkedItem, bd Boundary) string {
+	return fmt.Sprintf("- %s (project id %d, iid %d): %s, %s; title %s", Ident(it.Reference), it.ProjectID, it.IID,
+		Ident(it.State), Ident(it.WebURL), bd.Inline(it.UntrustedTitle))
+}
+
+// dependencyList renders one side of a merge request's dependencies
+// under heading, counting those whose merge request the account cannot
+// read.
+func dependencyList(heading string, d *model.Dependencies, bd Boundary) string {
+	if d == nil {
+		return heading + ": could not be read."
+	}
+	if d.Hidden == 0 {
+		return linkedItems(heading, &model.LinkedItems{Items: d.Items, More: d.More, Total: d.Total}, bd)
+	}
+	// Hidden rows are rows of the page read, and GitLab's total counts
+	// them, so they are told apart within it.
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s: %d", heading, len(d.Items)+d.Hidden)
+	if d.More && d.Total != nil {
+		fmt.Fprintf(&b, " of %d", *d.Total)
+	}
+	fmt.Fprintf(&b, " read, %d shown", len(d.Items))
+	if d.Hidden > 0 {
+		fmt.Fprintf(&b, " and %d you cannot read", d.Hidden)
+	}
+	switch {
+	case d.More && d.Total != nil:
+		b.WriteString("; the rest are not shown")
+	case d.More:
+		b.WriteString("; GitLab has more, not shown")
+	}
+	b.WriteString(".")
+	for _, it := range d.Items {
+		b.WriteString("\n" + linkedItem(it, bd))
 	}
 	return b.String()
 }

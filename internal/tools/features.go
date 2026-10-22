@@ -3,9 +3,9 @@ package tools
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
-	"github.com/mmedum/gitlab-mcp/v2/internal/render"
-	"github.com/mmedum/gitlab-mcp/v2/internal/service"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/render"
+	"github.com/mmedum/gitlab-mcp/v3/internal/service"
 )
 
 // The phase 6 tools, with the kinds and toolsets §17.13 decided.
@@ -76,6 +76,50 @@ func unlinkIssues() definition {
 	}
 }
 
+// ----------------------------------------------------------- merge request dependencies
+
+type mergeRequestLinkIn struct {
+	Project       idOrPath `json:"project" jsonschema:"The project the first merge request is in: its numeric id, its full path such as group/sub/project, or its web URL"`
+	IID           int64    `json:"iid" jsonschema:"The first merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	TargetProject idOrPath `json:"target_project,omitempty" jsonschema:"The project the other merge request is in; the first one's project when omitted"`
+	TargetIID     int64    `json:"target_iid" jsonschema:"The other merge request's number in its project"`
+	LinkType      string   `json:"link_type" jsonschema:"From the first merge request's side: blocks, it must merge before the other can; is_blocked_by, the other must merge before it can"`
+	DryRun        bool     `json:"dry_run,omitempty" jsonschema:"Return what would be sent without writing anything"`
+}
+
+func (in mergeRequestLinkIn) request() service.MergeRequestLinkRequest {
+	return service.MergeRequestLinkRequest{Project: string(in.Project), IID: in.IID, TargetProject: string(in.TargetProject),
+		TargetIID: in.TargetIID, LinkType: in.LinkType}
+}
+
+func linkMergeRequests() definition {
+	return tool[mergeRequestLinkIn, model.MergeRequestLinkWrite]{
+		sp: spec{Name: "link_merge_requests", Kind: Write, Enums: map[string][]string{"link_type": service.MergeRequestLinkTypes},
+			Description: "Make one merge request wait for another to merge, in one project or two. GitLab notes it on both, " +
+				"so both projects must be ones writes are allowed in. A closed merge request still holds the one waiting for " +
+				"it. GitLab holds the merge only on Premium; on Free it records the dependency and does not hold the merge. " +
+				"get_merge_request shows both sides. A dependency that exists is reported unchanged. Never repeated after a " +
+				"lost answer." + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in mergeRequestLinkIn) (model.MergeRequestLinkWrite, error) {
+			return svc.LinkMergeRequests(ctx, in.request())
+		},
+		text: render.MergeRequestLinkWrite,
+	}
+}
+
+func unlinkMergeRequests() definition {
+	return tool[mergeRequestLinkIn, model.MergeRequestLinkWrite]{
+		sp: spec{Name: "unlink_merge_requests", Kind: Write, Idempotent: true,
+			Enums: map[string][]string{"link_type": service.MergeRequestLinkTypes},
+			Description: "Remove the dependency link_merge_requests made, in the direction link_type names. With no such " +
+				"dependency, the result is unchanged." + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in mergeRequestLinkIn) (model.MergeRequestLinkWrite, error) {
+			return svc.UnlinkMergeRequests(ctx, in.request())
+		},
+		text: render.MergeRequestLinkWrite,
+	}
+}
+
 // ----------------------------------------------------------- planning
 
 type createLabelIn struct {
@@ -136,7 +180,7 @@ type deleteLabelIn struct {
 
 func deleteLabel() definition {
 	return tool[deleteLabelIn, model.LabelWrite]{
-		sp: spec{Name: "delete_label", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Toolset: "planning", Idempotent: true,
+		sp: spec{Name: "delete_label", Kind: Destructive, Toolset: "planning", Idempotent: true,
 			Description: "Delete a project label, which takes it off every issue and merge request. A group's label is refused " +
 				"[blocked]. version from list_labels is required." + destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteLabelIn) (model.LabelWrite, error) {
@@ -207,7 +251,7 @@ type deleteMilestoneIn struct {
 
 func deleteMilestone() definition {
 	return tool[deleteMilestoneIn, model.MilestoneWrite]{
-		sp: spec{Name: "delete_milestone", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Toolset: "planning", Idempotent: true,
+		sp: spec{Name: "delete_milestone", Kind: Destructive, Toolset: "planning", Idempotent: true,
 			Description: "Delete a project milestone, which takes it off every issue and merge request. updated_at from " +
 				"list_milestones is required." + destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteMilestoneIn) (model.MilestoneWrite, error) {
@@ -358,7 +402,7 @@ type createTagIn struct {
 
 func createTag() definition {
 	return tool[createTagIn, model.TagWrite]{
-		sp: spec{Name: "create_tag", Asks: "before it creates the tag", Kind: Write, Toolset: "releases",
+		sp: spec{Name: "create_tag", Kind: Write, Toolset: "releases",
 			Description: "Create a tag at a ref. It starts the project's tag pipelines. A name a protected-tag rule covers is " +
 				"refused [blocked], and a tag that exists [conflict]. Never repeated after a lost answer." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in createTagIn) (model.TagWrite, error) {
@@ -378,7 +422,7 @@ type deleteTagIn struct {
 
 func deleteTag() definition {
 	return tool[deleteTagIn, model.TagWrite]{
-		sp: spec{Name: "delete_tag", Asks: "before it deletes", AsksEveryCall: true, Kind: Destructive, Toolset: "releases", Idempotent: true,
+		sp: spec{Name: "delete_tag", Kind: Destructive, Toolset: "releases", Idempotent: true,
 			Description: "Delete a tag. A protected tag is refused [blocked]. sha, the commit you read it at, is required." +
 				destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteTagIn) (model.TagWrite, error) {

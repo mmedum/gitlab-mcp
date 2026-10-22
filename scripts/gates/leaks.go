@@ -17,9 +17,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
-	core "github.com/mmedum/gitlab-mcp/v2/internal/redact"
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gitx"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
+	core "github.com/mmedum/gitlab-mcp/v3/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gitx"
 )
 
 // leaks looks for anything from a real instance or account in the files
@@ -130,17 +130,19 @@ var leaksRules = []leaksRule{
 		},
 		allow: []leaksAllow{
 			{regexp.MustCompile(leaksReserved), "RFC 2606 and RFC 6761 reserve these domains; they can never deliver"},
-			{regexp.MustCompile(`^(?:anthropic\.com|users\.noreply\.github\.com)$`), "held by the no-reply rule below, address by address"},
+			{regexp.MustCompile(`^(?:anthropic\.com|users\.noreply\.github\.com|github\.com)$`), "held by the vendor rule below, address by address"},
 		},
 	},
 	{
-		name: "an address at a vendor's no-reply domain",
-		re:   regexp.MustCompile(`[A-Za-z0-9._%+\-=]+@(?:anthropic\.com|users\.noreply\.github\.com)\b`),
+		name: "an address at a vendor's domain",
+		re:   regexp.MustCompile(`[A-Za-z0-9._%+\-=]+@(?:anthropic\.com|users\.noreply\.github\.com|github\.com)\b`),
 		allow: []leaksAllow{
 			{regexp.MustCompile(`^noreply@anthropic\.com$`),
 				"the Co-Authored-By trailer on commits; a vendor's no-reply address that identifies nobody"},
 			{regexp.MustCompile(`^(?:[0-9]+\+)?[A-Za-z0-9\-]+@users\.noreply\.github\.com$`),
 				"GitHub's no-reply addresses, which exist so a commit carries no real address"},
+			{regexp.MustCompile(`^support@github\.com$`),
+				"the Signed-off-by trailer Dependabot puts on its version bumps: GitHub's own support address, which identifies nobody"},
 		},
 	},
 	{
