@@ -550,17 +550,18 @@ func phase2(s scratch) []step {
 		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo_issue}}"}}},
 		{tool: "add_todo", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}, save: map[string]string{"todo_mr": "todo_id"}},
 		{tool: "add_todo", args: map[string]any{"project": p, "type": "merge_request", "iid": s.MR}},
-		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo_mr}}"}}},
+		// To-do items: the run's own, found in the scratch project while
+		// the one just added is pending.
+		{tool: "list_todos", args: map[string]any{"project": p, "state": "pending"}, save: map[string]string{"todo": "todos.0.id"}},
+		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}"}, "dry_run": true}},
+		// The one listed and the one added, which may be the same: ids
+		// are marked once each.
+		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}", "{{todo_mr}}"}}},
 
 		// The history the writes above made: labels swapped, the milestone
 		// set and cleared, closed and reopened.
 		{tool: "list_item_events", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "max": 2}, paged: true},
 		{tool: "list_item_events", args: map[string]any{"project": s.ID, "type": "merge_request", "iid": "{{mr}}"}},
-
-		// To-do items: the run's own, found in the scratch project.
-		{tool: "list_todos", args: map[string]any{"project": p, "state": "pending"}, save: map[string]string{"todo": "todos.0.id"}},
-		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}"}, "dry_run": true}},
-		{tool: "mark_todos_done", args: map[string]any{"ids": []any{"{{todo}}"}}},
 
 		// Reactions on the scratch issue, merge request and comments. One
 		// already there, or none to remove, sends nothing; thumbs_up is an
@@ -894,6 +895,22 @@ func phase6(s scratch) []step {
 		{tool: "unlink_issues", args: map[string]any{"project": p, "iid": s.Issue, "target_project": p, "target_iid": s.Issue2, "dry_run": true}},
 		{tool: "unlink_issues", args: map[string]any{"project": p, "iid": s.Issue, "target_iid": s.Issue2}},
 
+		// Making the run's draft wait for its other merge request; the
+		// scratch group is on Free, where GitLab records the dependency
+		// and does not hold the merge.
+		{tool: "link_merge_requests", args: map[string]any{"project": p, "iid": s.MR2, "target_project": p, "target_iid": s.MR,
+			"link_type": "is_blocked_by", "dry_run": true}},
+		{tool: "link_merge_requests", args: map[string]any{"project": p, "iid": s.MR2, "target_iid": s.MR, "link_type": "is_blocked_by"}},
+		// The same dependency, from the other side: unchanged.
+		{tool: "link_merge_requests", args: map[string]any{"project": p, "iid": s.MR, "target_iid": s.MR2, "link_type": "blocks"}},
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": s.MR2}},
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": s.MR}},
+		{tool: "unlink_merge_requests", args: map[string]any{"project": p, "iid": s.MR2, "target_project": p, "target_iid": s.MR,
+			"link_type": "is_blocked_by", "dry_run": true}},
+		{tool: "unlink_merge_requests", args: map[string]any{"project": p, "iid": s.MR2, "target_iid": s.MR, "link_type": "is_blocked_by"}},
+		// Gone: unchanged.
+		{tool: "unlink_merge_requests", args: map[string]any{"project": p, "iid": s.MR, "target_iid": s.MR2, "link_type": "blocks"}},
+
 		// Blame.
 		{tool: "get_blame", args: map[string]any{"project": p, "path": s.File}},
 		{tool: "get_blame", args: map[string]any{"project": p, "path": s.File, "ref": s.Feature, "start_line": 2, "end_line": 3}},
@@ -1089,6 +1106,8 @@ var rules = map[string]rule{
 	},
 	"link_issues":           linkRule,
 	"unlink_issues":         linkRule,
+	"link_merge_requests":   linkRule,
+	"unlink_merge_requests": linkRule,
 	"search_projects":       searchRule,
 	"search_issues":         searchRule,
 	"search_merge_requests": searchRule,
@@ -1119,7 +1138,7 @@ func init() {
 // linkRule: both issues are the run's.
 func linkRule(st step, s scratch) error {
 	if t, ok := st.args["target_project"]; ok && t != s.Path {
-		return fmt.Errorf("%s: the other issue is the scratch project's", st.tool)
+		return fmt.Errorf("%s: the other item is the scratch project's", st.tool)
 	}
 	return inProject(st, s)
 }
