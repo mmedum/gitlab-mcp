@@ -31,7 +31,6 @@ func fakeServer(mode string) {
 		raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 		fmt.Println(string(raw))
 	}
-	elicits := false
 	for in.Scan() {
 		var req map[string]any
 		if json.Unmarshal(in.Bytes(), &req) != nil {
@@ -54,8 +53,6 @@ func fakeServer(mode string) {
 		switch method {
 		case "initialize":
 			params, _ := req["params"].(map[string]any)
-			caps, _ := params["capabilities"].(map[string]any)
-			_, elicits = caps["elicitation"]
 			reply(id, map[string]any{"protocolVersion": params["protocolVersion"],
 				"leaked_env": os.Getenv("GITLAB_MCP_TEST_INSTANCE"), "extra_env": os.Getenv("EXTRA")})
 		case "tools/list":
@@ -69,21 +66,18 @@ func fakeServer(mode string) {
 				"inputSchema": map[string]any{"properties": map[string]any{}}}}})
 		case "tools/call":
 			if params, _ := req["params"].(map[string]any); params["name"] == "ask" {
-				if !elicits {
-					reply(id, map[string]any{"content": []any{map[string]any{"type": "text", "text": "no elicitation declared"}}})
-					continue
-				}
-				// The question carries id 1, as the client's own first
-				// request did: a reader that filed it as a reply would lose it.
-				fmt.Println(`{"jsonrpc":"2.0","id":1,"method":"elicitation/create","params":{"mode":"form","message":"Delete it?","requestedSchema":{"type":"object","properties":{}}}}`)
+				// A request of the server's own, carrying id 1 as the
+				// client's first request did: a reader that filed it as a
+				// reply would lose it.
+				fmt.Println(`{"jsonrpc":"2.0","id":1,"method":"roots/list","params":{}}`)
 				var answer map[string]any
 				for in.Scan() {
 					if json.Unmarshal(in.Bytes(), &answer) == nil && answer["id"] == float64(1) && answer["method"] == nil {
 						break
 					}
 				}
-				result, _ := answer["result"].(map[string]any)
-				reply(id, map[string]any{"content": []any{map[string]any{"type": "text", "text": fmt.Sprint("q1 ", result["action"])}}})
+				e, _ := answer["error"].(map[string]any)
+				reply(id, map[string]any{"content": []any{map[string]any{"type": "text", "text": fmt.Sprint("q1 ", e["code"])}}})
 				continue
 			}
 			reply(id, map[string]any{"isError": true,
@@ -217,29 +211,15 @@ func TestSessionChattyServerAndOutOfOrderReplies(t *testing.T) {
 	}
 }
 
-// A session that answers questions declares so, and answers the one the
-// server puts in the middle of a call before the call's own reply, even
-// when the question's id is one of the client's own.
-func TestElicitationIsDeclaredAndAnswered(t *testing.T) {
+// A request the server sends in the middle of a call is answered before
+// the call's own reply, even when its id is one of the client's own; one
+// the client does not take gets method-not-found.
+func TestServerRequestsAreAnswered(t *testing.T) {
 	s := start(t, "normal", Config{})
-	var asked []string
-	s.OnElicit(func(message string) string {
-		asked = append(asked, message)
-		return "accept"
-	})
 	if _, err := s.Initialize("", "test"); err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.CallTool("ask", nil)
-	if text := res.Text; err != nil || text != "q1 accept" || !slices.Equal(asked, []string{"Delete it?"}) {
-		t.Errorf("ask = %q, %v; asked %v", res.Text, err, asked)
-	}
-
-	quiet := start(t, "normal", Config{})
-	if _, err := quiet.Initialize("", "test"); err != nil {
-		t.Fatal(err)
-	}
-	if res, _ := quiet.CallTool("ask", nil); res.Text != "no elicitation declared" {
-		t.Errorf("without OnElicit: %q", res.Text)
+	if res, err := s.CallTool("ask", nil); err != nil || res.Text != "q1 -32601" {
+		t.Errorf("ask = %q, %v", res.Text, err)
 	}
 }

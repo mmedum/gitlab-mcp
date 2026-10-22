@@ -96,30 +96,29 @@ Every tool has one kind, and the kind decides whether it is registered:
 A review that would approve counts as Ship, and so does making a
 confidential issue public: without the flag the call is `[blocked]`.
 
-**The person confirms what ships or deletes.** A registered tool can
-still be called by a model a comment has persuaded, and `confirm: true`
-is an argument the model writes. So when the client supports MCP
-elicitation, the server asks you itself before a merge, an approval,
-applying review suggestions, a manual job, a release, a new tag, a pipeline on a protected ref or for
-a merge request between two protected branches,
-publishing a confidential issue, an image upload and every delete. Text from GitLab in
-the question stands in backticks or code style, on one line, with no
-link drawn. Only an accept writes. The answer is bound to the call it
-was asked for, spent once, and void after 5 minutes. An accept is still
-not proof that you read the question: a client may answer by itself, as
-Codex does for a question with no fields when it runs with no approvals
-and full access, and VS Code when you skip the question. A tool that
-asks on every call does not also carry Claude Code's
-`requiresUserInteraction` mark for a client that can ask, so you answer
-once. The question is then that call's only prompt: a Claude Code
-`Elicitation` hook that accepts by itself confirms such a write with
-nobody asked. A client that cannot ask gets no question; `GITLAB_MCP_REQUIRE_PROMPT=true` refuses
-those writes there. `upload_file` has no flag of its own, so with such a
-client and `GITLAB_MCP_REQUIRE_PROMPT` off, its only guards are the
-upload directories and `GITLAB_MCP_WRITE_NAMESPACES`: an instruction
-planted in a comment could upload an image from those directories to a
-public project the comment's author maintains. With a client that cannot
-ask, set `GITLAB_MCP_REQUIRE_PROMPT=true` or a write allow-list.
+**Your client approves each call.** The server asks you nothing. A
+registered tool can be called by a model a comment has persuaded, and
+`confirm: true` is an argument the model writes, so registration is the
+control that holds on every client: leave `GITLAB_MCP_ENABLE_SHIP` and
+`GITLAB_MCP_ENABLE_DESTRUCTIVE` off for a client that runs with nobody
+watching or approves by itself. Per call, your client decides. Ship and
+Destructive tools are marked destructive, which claude.ai, Codex and VS
+Code prompt for by default; in Claude Code an `ask` rule does it, and
+the README lists the rules. `apply_suggestions` takes each suggestion's
+text as an argument, held against GitLab's, so a client's prompt shows
+the code to be committed rather than only its ids.
+
+`upload_file` has no flag of its own, so its guards are the upload
+directories and `GITLAB_MCP_WRITE_NAMESPACES`. A client that runs it
+without asking you lets an instruction planted in a comment upload an
+image from those directories to a public project the comment's author
+maintains. Give it an `ask` rule, or confine writes with
+`GITLAB_MCP_WRITE_NAMESPACES`.
+
+The server used to ask you itself, through MCP elicitation, and
+`GITLAB_MCP_REQUIRE_PROMPT=true` refused those writes on a client that
+could not ask. A configuration that still sets it is refused at
+start.
 
 **The default token can merge, approve and run pipelines.** GitLab's
 `api` scope covers every write, and it has no narrower scope that
@@ -164,8 +163,10 @@ replace it with a `read_api` one.
   applies only suggestions on the merge request you name, and refuses
   one whose text holds hidden or bidirectional characters, which can
   make code read otherwise than it runs. `list_discussions` shows each
-  suggestion's exact text with such characters written out, and you are
-  asked with the text before anything is committed under your name.
+  suggestion's exact text with such characters written out, and the call
+  carries that text, held exactly against GitLab's, so what is committed
+  under your name is what was read and your client's prompt shows it. A
+  suggestion longer than `list_discussions` shows is refused.
 - **`lint_ci` sends nothing GitLab would fetch.** Configuration you pass
   to it may not use `include:`, since GitLab fetches what an include
   names while linting.
@@ -238,8 +239,7 @@ replace it with a `read_api` one.
   not start as a PNG, JPEG, GIF or WebP; SVG is refused because it is
   text that can carry script. That check keeps out what is not an image;
   it does not prove the whole file is one. Only the file's base name goes
-  to GitLab, never its directory. When your client can ask, you are
-  asked before each upload. In a public project anyone with the link can
+  to GitLab, never its directory. In a public project anyone with the link can
   open the upload, and in a private or internal one too unless the
   project requires sign-in to view media files; the result says which.
   The project's Maintainers can list and download every upload by its

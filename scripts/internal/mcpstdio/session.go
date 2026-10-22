@@ -66,13 +66,6 @@ type Session struct {
 	onCall  func(tool string, args map[string]any)
 	options map[string][]string
 
-	// descriptions are the published tools' descriptions, by name.
-	descriptions map[string]string
-
-	// onElicit answers the server's questions to the person; when set,
-	// Initialize declares form elicitation.
-	onElicit func(message string) (action string)
-
 	// wmu serializes writes to stdin: the reader answers the server's
 	// own requests while a caller may be sending.
 	wmu sync.Mutex
@@ -152,7 +145,7 @@ func (s *Session) readStdout(r io.Reader) {
 			// a question to the person, a ping — is answered here; a
 			// notification or a log needs nothing.
 			if rid, hasID := frame["id"]; hasID {
-				if err := s.answer(rid, method, frame["params"]); err != nil {
+				if err := s.answer(rid, method); err != nil {
 					s.mu.Lock()
 					s.readErr = err
 					s.mu.Unlock()
@@ -243,37 +236,16 @@ func (s *Session) Send(frame any) error {
 }
 
 // answer replies to one request the server sent: ping with an empty
-// result, elicitation/create through onElicit, anything else with
-// method-not-found.
-func (s *Session) answer(id any, method string, params any) error {
+// result, anything else with method-not-found.
+func (s *Session) answer(id any, method string) error {
 	frame := map[string]any{"jsonrpc": "2.0", "id": id}
-	switch {
-	case method == "ping":
+	if method == "ping" {
 		frame["result"] = map[string]any{}
-	case method == "elicitation/create" && s.onElicit != nil:
-		p, _ := params.(map[string]any)
-		message, _ := p["message"].(string)
-		result := map[string]any{"action": s.onElicit(message)}
-		if result["action"] == "accept" {
-			// The question's form has no fields (docs/architecture.md
-			// §4.12): the accept is the answer.
-			result["content"] = map[string]any{}
-		}
-		frame["result"] = result
-	default:
+	} else {
 		frame["error"] = map[string]any{"code": -32601, "message": "this client does not take " + method}
 	}
 	return s.Send(frame)
 }
-
-// Description is a published tool's description, "" for none.
-func (s *Session) Description(tool string) string { return s.descriptions[tool] }
-
-// OnElicit makes the session a client that can ask the person: it
-// declares form elicitation at Initialize, so it is set before, and f
-// answers each question the server puts with an action: accept,
-// decline or cancel.
-func (s *Session) OnElicit(f func(message string) (action string)) { s.onElicit = f }
 
 // Notify sends a notification, which has no reply.
 func (s *Session) Notify(method string, params any) error {
@@ -365,13 +337,9 @@ func (s *Session) Initialize(protocol, clientName string) (map[string]any, error
 	if protocol == "" {
 		protocol = Protocol
 	}
-	capabilities := map[string]any{}
-	if s.onElicit != nil {
-		capabilities["elicitation"] = map[string]any{"form": map[string]any{}}
-	}
 	result, err := s.Request("initialize", map[string]any{
 		"protocolVersion": protocol,
-		"capabilities":    capabilities,
+		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": clientName, "version": "0"},
 	})
 	if err != nil {
@@ -385,12 +353,8 @@ func (s *Session) Initialize(protocol, clientName string) (map[string]any, error
 		return nil, err
 	}
 	s.options = map[string][]string{}
-	s.descriptions = map[string]string{}
 	for _, t := range tools {
 		s.options[t.Name] = t.Options
-		if d, _ := t.Raw["description"].(string); d != "" {
-			s.descriptions[t.Name] = d
-		}
 	}
 	return result, nil
 }

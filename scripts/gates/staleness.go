@@ -67,6 +67,9 @@ type stalenessInputs struct {
 	// running the server may set; devVars are its development
 	// overrides.
 	configVars, devVars []string
+	// removedVars are variables a release removed, which the document
+	// may name to say so.
+	removedVars []string
 	// modes are the scope modes, each with the setup block
 	// internal/scopes generates for it.
 	modes []stalenessMode
@@ -110,7 +113,7 @@ func stalenessCheck(in stalenessInputs) stalenessReport {
 	n, p = stalenessPaths(in.docs, in.exists, in.topLevel)
 	r.add(fmt.Sprintf("paths: %d repository paths named", n), p)
 
-	n, p = stalenessEnv(in.docs[stalenessConfigDoc], in.docs[stalenessDevDoc], in.configVars, in.devVars)
+	n, p = stalenessEnv(in.docs[stalenessConfigDoc], in.docs[stalenessDevDoc], in.configVars, in.devVars, in.removedVars)
 	r.add(fmt.Sprintf("settings: %d variables", n), p)
 
 	n, p = stalenessGates(in.docs[stalenessDevDoc], in.commands)
@@ -187,6 +190,7 @@ func stalenessGather(root string, args []string) (stalenessInputs, error) {
 	in.built = stalenessBuilt(root)
 	in.configVars = config.EnvVars()
 	in.devVars = config.DevVars()
+	in.removedVars = config.RemovedVars()
 	for _, m := range scopes.Modes() {
 		in.modes = append(in.modes, stalenessMode{Name: string(m.Mode), Block: scopes.SetupBlock(m.Mode)})
 	}
@@ -454,8 +458,9 @@ var stalenessEnvRef = regexp.MustCompile(`\b` + config.EnvPrefix + `[A-Z0-9_]*[A
 // stalenessEnv holds docs/configuration.md to the variables
 // internal/config says the server reads, both ways, and the development
 // overrides to docs/development.md alone: a person configuring the
-// server is never offered one.
-func stalenessEnv(doc, devDoc string, vars, devVars []string) (int, []string) {
+// server is never offered one. A removed variable may be named, to say
+// it is gone.
+func stalenessEnv(doc, devDoc string, vars, devVars, removed []string) (int, []string) {
 	if doc == "" {
 		return 0, []string{stalenessConfigDoc + " is missing, and it is where every setting is documented"}
 	}
@@ -478,7 +483,7 @@ func stalenessEnv(doc, devDoc string, vars, devVars []string) (int, []string) {
 		switch {
 		case slices.Contains(devVars, v):
 			problems = append(problems, stalenessConfigDoc+" documents "+v+", a development override that belongs in "+stalenessDevDoc+" only")
-		case !slices.Contains(vars, v):
+		case !slices.Contains(vars, v) && !slices.Contains(removed, v):
 			problems = append(problems, stalenessConfigDoc+" documents "+v+", which the server does not read")
 		}
 	}
@@ -730,8 +735,19 @@ func stalenessReadmeTools(readme string, tools []string) (int, []string) {
 			problems = append(problems, "README.md's tool table lists "+t+", which the binary does not register")
 		}
 	}
+	// A Claude Code permission rule for a tool that does not exist matches
+	// nothing, so the person it was meant to ask is never asked.
+	for _, m := range stalenessPermissionRule.FindAllStringSubmatch(readme, -1) {
+		if !slices.Contains(tools, m[1]) {
+			problems = append(problems, "README.md gives a permission rule for "+m[1]+", which the binary does not register")
+		}
+	}
 	return len(names), problems
 }
+
+// stalenessPermissionRule is a Claude Code permission rule for one of
+// this server's tools, under the server name the README uses.
+var stalenessPermissionRule = regexp.MustCompile(`"mcp__gitlab__([a-z0-9_]+)"`)
 
 // stalenessTable is the body rows of the first table whose header's
 // first cell is first.

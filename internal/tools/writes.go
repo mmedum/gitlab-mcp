@@ -72,7 +72,7 @@ type updateIssueIn struct {
 
 func updateIssue() definition {
 	return tool[updateIssueIn, model.IssueWrite]{
-		sp: spec{Name: "update_issue", Asks: "before it makes a confidential issue public", Kind: Write, Guarded: []string{"description"}, Enums: map[string][]string{"state": {"close", "reopen"}},
+		sp: spec{Name: "update_issue", Kind: Write, Guarded: []string{"description"}, Enums: map[string][]string{"state": {"close", "reopen"}},
 			Description: "Change an issue. Only the fields given change; labels and assignees are added and removed, never " +
 				"replaced by a list. updated_at from your latest read is required, and the call is refused [stale] if the issue " +
 				"changed since. The result reports the labels before and after, the fields that changed as GitLab read them back, " +
@@ -562,7 +562,7 @@ type uploadFileIn struct {
 
 func uploadFile() definition {
 	return tool[uploadFileIn, model.UploadWrite]{
-		sp: spec{Name: "upload_file", Kind: Write, Asks: "before it uploads the image",
+		sp: spec{Name: "upload_file", Kind: Write,
 			Description: "Upload an image from this machine to a project and get the Markdown that shows it, to put in a comment " +
 				"(add_comment), a review comment (add_review_comment) or a description (create_issue, update_issue, " +
 				"create_merge_request, update_merge_request) in the same project. The image is read only from the directories " +

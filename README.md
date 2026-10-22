@@ -230,12 +230,31 @@ scope cannot separate any of it:
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds merging, approving, running CI and releases |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds deletion, and each call must pass `confirm: true` |
 
-When your MCP client supports elicitation, the server also asks you
-before it merges, approves, runs a manual job or a pipeline on a
-protected ref or for a merge request between protected branches, publishes a release or a tag, makes a confidential issue
-public, uploads an image, or deletes anything. Only your accept writes.
-Where it asks on every call, it does not also tell Claude Code to prompt
-you first, so you answer once.
+Your MCP client approves each call; the server does not ask you
+itself. A client that prompts by a tool's annotations, as claude.ai,
+Codex and VS Code do, prompts for the Ship and Destructive tools, which
+are marked destructive. In Claude Code, list the calls you want to
+approve one by one under `permissions.ask` in your settings, with the
+name you gave the server in place of `gitlab`. For example, the writes
+that ship, publish, upload or delete:
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "mcp__gitlab__merge_merge_request", "mcp__gitlab__approve_merge_request",
+      "mcp__gitlab__apply_suggestions", "mcp__gitlab__run_pipeline",
+      "mcp__gitlab__run_merge_request_pipeline", "mcp__gitlab__play_job",
+      "mcp__gitlab__create_release", "mcp__gitlab__create_tag", "mcp__gitlab__move_issue",
+      "mcp__gitlab__upload_file",
+      "mcp__gitlab__delete_branch", "mcp__gitlab__delete_comment",
+      "mcp__gitlab__delete_wiki_page", "mcp__gitlab__delete_label",
+      "mcp__gitlab__delete_milestone", "mcp__gitlab__delete_tag",
+      "mcp__gitlab__delete_snippet"
+    ]
+  }
+}
+```
 
 - **No quick actions.** GitLab runs `/merge`, `/close` and the rest from
   a description or comment. Every body this server sends is checked, and

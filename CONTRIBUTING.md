@@ -53,7 +53,9 @@ and Destructive kinds, or reversing a decision §14 records.
 ## Changing the tool surface
 
 The released tool surface is a contract. `make schema-diff` fails on a
-removed tool, a lost field or a new required input. On a pull request,
+removed tool, a lost field or a new required input, unless a major
+release declares it: an entry under `[Unreleased]` that says
+`**Breaking:**` and names the tool in backticks. On a pull request,
 a changed surface also needs an acknowledgment on a commit the pull
 request adds, as an empty commit rather than an amend:
 

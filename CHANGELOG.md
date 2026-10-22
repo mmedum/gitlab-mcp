@@ -21,7 +21,15 @@ lifted verbatim.
 
 ### Changed
 
+- **Breaking:** The server no longer asks you before a write. Your MCP client approves each call: Ship and Destructive tools are marked destructive, which claude.ai, Codex and VS Code prompt for, and in Claude Code an `ask` rule per tool does it, as the README shows. Registration, `confirm: true`, the guards and the witnesses are unchanged. A client that runs with nobody watching can now make every write its flags register, so leave `GITLAB_MCP_ENABLE_SHIP` and `GITLAB_MCP_ENABLE_DESTRUCTIVE` off for one.
+- **Breaking:** `apply_suggestions` takes `suggestions`, each an `id` with the `text` that `list_discussions` shows for it, in place of `ids`. A text that differs from GitLab's, indentation included, is refused `[stale]`, so what is committed is what was read, and your client's prompt shows it. A suggestion longer than `list_discussions` shows is refused.
+- No tool carries Claude Code's `requiresUserInteraction` mark, so your own allow and ask rules decide each call.
+- **Breaking:** the Go module path is now `github.com/mmedum/gitlab-mcp/v3`, as Go requires from v3 on; install with `go install github.com/mmedum/gitlab-mcp/v3/cmd/gitlab-mcp@latest`.
 - Built with `golang.org/x/sys` 0.49.0.
+
+### Removed
+
+- **Breaking:** `GITLAB_MCP_REQUIRE_PROMPT` and `--require-prompt`. Set to anything but false, the server refuses to start rather than ignore it. `status` no longer shows it, and `status --json` drops `require_prompt` and reports `schema_version` 2.
 
 ## [2.4.0] - 2026-10-10
 

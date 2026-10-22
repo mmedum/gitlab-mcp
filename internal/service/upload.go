@@ -8,7 +8,6 @@ import (
 	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/v3/internal/localimage"
 	"github.com/mmedum/gitlab-mcp/v3/internal/model"
-	"github.com/mmedum/gitlab-mcp/v3/internal/render"
 )
 
 // Uploading an image for Markdown to embed (§7.10). The image is a local
@@ -27,8 +26,7 @@ type Upload struct {
 // UploadFile uploads a local image to a project and returns the Markdown
 // that embeds it. The project is read and held to the write allow-list
 // first, so a call aimed elsewhere reads nothing on this machine; then
-// the image is read and checked, a dry run included; then the person is
-// asked, since an upload discloses the image (§4.12).
+// the image is read and checked, a dry run included.
 func (s *Service) UploadFile(ctx context.Context, in Upload) (model.UploadWrite, error) {
 	t, err := s.writeTarget(ctx, in.Project)
 	if err != nil {
@@ -47,11 +45,6 @@ func (s *Service) UploadFile(ctx context.Context, in Upload) (model.UploadWrite,
 		out.Outcome, out.DryRun = "dry_run", true
 		out.WouldSend = preview("POST", "upload the image to the project", []string{"file"})
 		return out, nil
-	}
-	if asks(ctx) {
-		if err := ask(ctx, render.AskUploadFile(t.ref.Project.Path, img.Name, img.Type, notes, img.Data)); err != nil {
-			return model.UploadWrite{}, err
-		}
 	}
 	up, err := s.client.UploadFile(ctx, t.p, img.Name, img.Type, img.Data)
 	if gapi.IsClass(err, gapi.ClassAmbiguousOutcome) {

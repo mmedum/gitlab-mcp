@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gitx"
@@ -233,12 +234,87 @@ func schemaDiff(out io.Writer, args []string) error {
 	c := compareSurfaces(prev, cur)
 	c.write(out)
 	if len(c.Breaking) > 0 {
-		return fmt.Errorf("%d breaking change(s) to the tool surface since %s; a release that makes them says **Breaking:** in the CHANGELOG and bumps the major version",
+		// Before the first tag nothing was released, so no entry can
+		// declare a break.
+		if tag == "" {
+			return fmt.Errorf("%d breaking change(s) to the tool surface since %s", len(c.Breaking), against)
+		}
+		changelog, err := os.ReadFile(filepath.Join(root, changelogFile))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		problems, err := undeclaredBreaks(c, string(changelog), tag)
+		if err != nil {
+			return err
+		}
+		if len(problems) > 0 {
+			for _, p := range problems {
+				_, _ = fmt.Fprintln(out, "undeclared  "+p)
+			}
+			return fmt.Errorf("%d breaking change(s) to the tool surface since %s that the CHANGELOG does not declare; a release "+
+				"that makes one names its tool, in backticks, in a **Breaking:** entry above [%s], and bumps the major version",
+				len(problems), against, strings.TrimPrefix(tag, "v"))
+		}
+		_, _ = fmt.Fprintf(out, "%d breaking change(s) since %s, each declared under **Breaking:** for a major release\n",
 			len(c.Breaking), against)
 	}
 	_, _ = fmt.Fprintf(out, "schema diff ok against %s: %d tools, %d resource templates; %d additive, %d other change(s)\n",
 		against, len(cur.Tools), len(cur.ResourceTemplates), len(c.Additive), len(c.Other))
 	return nil
+}
+
+// undeclaredBreaks is each breaking change that the unreleased part of
+// the CHANGELOG, everything above the tag's own heading, does not
+// declare: a **Breaking:** entry there names its tool, or its resource
+// template, in backticks. A version heading there that does not raise
+// the tag's major version is one too, since only a major release may
+// break the surface (CLAUDE.md rule 17).
+func undeclaredBreaks(c surfaceChanges, changelog, tag string) ([]string, error) {
+	version := strings.TrimPrefix(tag, "v")
+	unreleased, _, found := strings.Cut(changelog, "\n## ["+version+"]")
+	if !found {
+		// Without the tag's heading nothing tells unreleased from
+		// released, so no entry can declare a break.
+		return nil, fmt.Errorf("%s has no ## [%s] heading for %s, so no break can be declared against it", changelogFile, version, tag)
+	}
+	named := map[string]bool{}
+	for line := range strings.Lines(unreleased) {
+		if !strings.Contains(line, "**Breaking:**") {
+			continue
+		}
+		for _, m := range stalenessCodeSpan.FindAllStringSubmatch(line, -1) {
+			named[m[1]] = true
+		}
+	}
+	var out []string
+	for _, b := range c.Breaking {
+		if !named[breakSubject(b)] {
+			out = append(out, b)
+		}
+	}
+	major := func(v string) int {
+		m, _, _ := strings.Cut(v, ".")
+		n, _ := strconv.Atoi(m)
+		return n
+	}
+	for _, m := range changelogVersionHeading.FindAllStringSubmatch(unreleased, -1) {
+		if major(m[1]) <= major(version) {
+			out = append(out, fmt.Sprintf("release %s breaks the surface without raising the major version from %s", m[1], version))
+		}
+	}
+	return out, nil
+}
+
+// breakSubject is what a breaking change is about: the tool, or the
+// resource template, a CHANGELOG entry names.
+func breakSubject(b string) string {
+	for _, prefix := range []string{"tool removed: ", "resource template removed: "} {
+		if rest, ok := strings.CutPrefix(b, prefix); ok {
+			return rest
+		}
+	}
+	name, _, _ := strings.Cut(b, ": ")
+	return name
 }
 
 // dumpAt builds the server at a revision in a scratch worktree and dumps

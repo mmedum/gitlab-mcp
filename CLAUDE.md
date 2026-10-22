@@ -127,7 +127,8 @@ or missed. Siblings are never named in this repository (rule 1).
     commit as the code. `scripts/gates classes` holds it both ways.
 17. **The released tool surface is a contract.** Tools keep their names
     and output fields; `scripts/gates schema-diff` fails on a rename, a
-    lost field or a new required input. Adding is fine.
+    lost field or a new required input, unless a major release declares
+    it: a `**Breaking:**` CHANGELOG entry names the tool. Adding is fine.
 18. **Every published API operation has a written verdict.** The
     OpenAPI v3 snapshot pinned in `testdata/` lists them; each is used,
     gated, deferred or written off with a reason, by row or by a

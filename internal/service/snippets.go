@@ -562,9 +562,6 @@ func (s *Service) DeleteSnippet(ctx context.Context, raw string, id int64, updat
 		out.Outcome, out.DryRun, out.WouldSend = "dry_run", true, preview("DELETE", "delete the snippet", nil)
 		return out, nil
 	}
-	if err := ask(ctx, render.AskDeleteSnippet(t.ref.Project.Path, id, sn.Title, snippetFiles(*sn))); err != nil {
-		return model.SnippetDelete{}, err
-	}
 	// GitLab refuses the delete with 412 when the snippet changed after
 	// the time read, as it does a comment's.
 	var readErr error
