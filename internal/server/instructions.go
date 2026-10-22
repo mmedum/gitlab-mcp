@@ -5,10 +5,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v2/internal/service"
-	"github.com/mmedum/gitlab-mcp/v2/internal/tools"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v3/internal/service"
+	"github.com/mmedum/gitlab-mcp/v3/internal/tools"
 )
 
 // The instructions are the first thing a client shows the model, so they

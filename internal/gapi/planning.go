@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
 )
 
 // The phase-1 reads for planning and navigation: labels, milestones,

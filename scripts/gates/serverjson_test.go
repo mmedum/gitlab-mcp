@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
 )
 
 // serverJSONRoot is a repository root with the good manifest and the
@@ -48,7 +48,7 @@ func TestServerJSONFixturePasses(t *testing.T) {
 func serverJSONBase(t *testing.T) string {
 	t.Helper()
 	root := mcpbRoot(t, mcpbFixture(t))
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/mmedum/gitlab-mcp/v2\n\ngo 1.27.1\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/mmedum/gitlab-mcp/v3\n\ngo 1.27.1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root

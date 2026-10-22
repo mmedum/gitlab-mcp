@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/tsv"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/tsv"
 )
 
 // The API-fields gate is api-coverage one level down (§8b): for every

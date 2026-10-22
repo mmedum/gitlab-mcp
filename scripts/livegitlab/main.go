@@ -43,12 +43,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/app"
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/credentials"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/mcpstdio"
-	"github.com/mmedum/gitlab-mcp/v2/scripts/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v3/internal/app"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/credentials"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/mcpstdio"
+	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/redact"
 )
 
 // options are what one run was asked to do.

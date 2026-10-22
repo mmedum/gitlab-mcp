@@ -6,11 +6,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v2/internal/instance"
-	"github.com/mmedum/gitlab-mcp/v2/internal/model"
-	"github.com/mmedum/gitlab-mcp/v2/internal/render"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v3/internal/render"
 )
 
 type gitlabUser = gitlab.UserBasic

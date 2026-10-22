@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
 )
 
 // Threads, replies and reviews on a merge request. A diff position is

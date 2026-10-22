@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
 )
 
 // upload_file against the in-memory instance: what it sends, who the

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v2/internal/userconfig"
+	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v3/internal/userconfig"
 )
 
 // envMap is a lookup over a fixed map. The config directory is pointed

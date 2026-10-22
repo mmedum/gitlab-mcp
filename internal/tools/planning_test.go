@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
 )
 
 // The planning and navigation reads against the in-memory instance

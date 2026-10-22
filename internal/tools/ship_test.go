@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/config"
-	"github.com/mmedum/gitlab-mcp/v2/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v3/internal/config"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
 )
 
 // The Ship and Destructive tools against the in-memory instance: that

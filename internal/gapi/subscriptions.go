@@ -3,7 +3,7 @@ package gapi
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/v2/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
 )
 
 // The signed-in account's own notifications and to-do items on an issue
