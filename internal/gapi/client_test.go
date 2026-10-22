@@ -1363,26 +1363,27 @@ func (s slowBody) RoundTrip(r *http.Request) (*http.Response, error) {
 func TestAWriteIsTimedByItsProgress(t *testing.T) {
 	newClient := func(rt http.RoundTripper) *Client {
 		cl, err := New(Options{Instance: mustInstance(t, "https://gitlab.example.com"), Tokens: StaticToken("t"),
-			HTTPClient: &http.Client{Transport: rt}, HeaderTimeout: 150 * time.Millisecond, MaxAttempts: 1})
+			HTTPClient: &http.Client{Transport: rt}, HeaderTimeout: 400 * time.Millisecond, MaxAttempts: 1})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return cl
 	}
-	// 1 MiB in 64 KiB pieces 40 ms apart: about 650 ms, each gap well
-	// inside the 150 ms timeout.
-	up, err := newClient(slowBody{piece: 64 << 10, gap: 40 * time.Millisecond, reply: `{"id":7,"markdown":"![a](/uploads/x/a.png)"}`}).
+	// 1 MiB in 32 KiB pieces 40 ms apart: about 1.3 s in all, three times
+	// the 400 ms timeout, and each gap a tenth of it, so a loaded runner
+	// does not stretch one past it.
+	up, err := newClient(slowBody{piece: 32 << 10, gap: 40 * time.Millisecond, reply: `{"id":7,"markdown":"![a](/uploads/x/a.png)"}`}).
 		UploadFile(context.Background(), ProjectByID(2001), "a.png", "image/png", make([]byte, 1<<20))
 	if err != nil || up.ID != 7 {
 		t.Fatalf("upload: %+v, %v", up, err)
 	}
 	issue := IssueCreate{Title: "a title long enough to take a while to send"}
-	got, err := newClient(slowBody{piece: 4, gap: 40 * time.Millisecond, reply: `{"iid":1}`}).
+	got, err := newClient(slowBody{piece: 2, gap: 40 * time.Millisecond, reply: `{"iid":1}`}).
 		CreateIssue(context.Background(), ProjectByID(2001), issue)
 	if err != nil || got.IID != 1 {
 		t.Fatalf("a slow JSON write: %+v, %v", got, err)
 	}
-	_, err = newClient(slowBody{piece: 4, gap: 40 * time.Millisecond, stallAfter: 2, reply: `{"iid":1}`}).
+	_, err = newClient(slowBody{piece: 2, gap: 40 * time.Millisecond, stallAfter: 2, reply: `{"iid":1}`}).
 		CreateIssue(context.Background(), ProjectByID(2001), issue)
 	wantClass(t, err, ClassAmbiguousOutcome)
 }
