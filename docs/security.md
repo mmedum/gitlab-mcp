@@ -166,7 +166,9 @@ replace it with a `read_api` one.
   suggestion's exact text with such characters written out, and the call
   carries that text, held exactly against GitLab's, so what is committed
   under your name is what was read and your client's prompt shows it. A
-  suggestion longer than `list_discussions` shows is refused.
+  suggestion longer than `list_discussions` shows is refused. The prompt
+  shows the text a suggestion puts in, not the lines it replaces;
+  `list_discussions` shows those.
 - **`lint_ci` sends nothing GitLab would fetch.** Configuration you pass
   to it may not use `include:`, since GitLab fetches what an include
   names while linting.

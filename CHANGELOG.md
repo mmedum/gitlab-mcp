@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-22
+
 ### Added
 
 - `link_merge_requests` and `unlink_merge_requests` make one merge request wait for another to merge, in one project or two, and remove that dependency. `get_merge_request` shows both sides as `blocked_by` and `blocks`. GitLab holds the merge only on Premium.
@@ -187,7 +189,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.4.0...v3.0.0
 [2.4.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.0...v2.2.1

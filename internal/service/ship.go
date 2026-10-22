@@ -891,7 +891,7 @@ func (in SuggestionsApplication) ids() []int64 {
 }
 
 // sameSuggestion compares the text a caller read with GitLab's. Line
-// endings and a final newline aside, it is exact: indentation is code.
+// endings and trailing newlines aside, it is exact: indentation is code.
 func sameSuggestion(read, held string) bool {
 	norm := func(s string) string { return strings.TrimRight(strings.ReplaceAll(s, "\r\n", "\n"), "\n") }
 	return norm(read) == norm(held)

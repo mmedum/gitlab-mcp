@@ -1,11 +1,13 @@
 # Architecture — gitlab-mcp
 
-**Status: 2.4.0, 2026-10-10, built with Go 1.27.2. Unreleased, a major
-release: the server asks the person nothing and per-call approval is
-the client's (§4.12, issue #63); `apply_suggestions` carries each
-suggestion's text as a witness (§7.3); merge request dependencies,
-`link_merge_requests` and `unlink_merge_requests` (§7.2, issue #62);
-the module path is `/v3`. 2.3.0: `upload_file` uploads an image from a
+**Status: 3.0.0, 2026-10-22, built with Go 1.27.2: the server asks the
+person nothing and per-call approval is the client's (§4.12, issue
+#63); `apply_suggestions` carries each suggestion's text as a witness
+(§7.3); merge request dependencies, `link_merge_requests` and
+`unlink_merge_requests` (§7.2, issue #62); the module path is `/v3`.
+Owed: the eight sibling servers still ask the person, and follow one
+at a time (`~/.claude/mcp-server-standard.md` §3). 2.4.0 asked once in
+Claude Code rather than twice. 2.3.0: `upload_file` uploads an image from a
 directory `GITLAB_MCP_UPLOAD_DIRS` names (§7.10), and every request
 body is timed by its progress (§11). 2.2.1: a repeated delete that may
 have landed is `[ambiguous_outcome]` (§4.5). Phases 0 to 7, 2.1.0's
@@ -1091,8 +1093,9 @@ after an emoji included. Each suggestion comes with its text as
 `list_discussions` shows it in `untrusted_to_content`, and a text that
 differs from GitLab's is refused `[stale]` before anything is sent: the commit is what was
 read, and a client's prompt for the call shows it (§4.12). The match is
-exact but for line endings and a final newline, since indentation is
-code. A suggestion longer than the 2,000 characters `list_discussions`
+exact but for line endings and trailing newlines, since indentation is
+code. The call carries the text put in, not the lines it replaces:
+`list_discussions` shows those, and a client's prompt does not. A suggestion longer than the 2,000 characters `list_discussions`
 shows was never read whole and is refused `[unsupported]`. GitLab's 400 names why a suggestion does not
 apply: applied already, its lines changed, the merge request closed.
 Right after a push it refuses every one with "A file has been changed."
@@ -2523,6 +2526,13 @@ nothing. The code review found:
 | The dependency read stopped at its bound and called a dependency past it absent, so `unlink_merge_requests` could report unchanged, and a lost create be settled as not created, while it existed | The read says when it stopped short. Unlink refuses `[unsupported]`; link sends its create, which GitLab answers 409 when the pair exists; the settle verdict is unknown |
 | With rows the account cannot read and more pages, the text counted them twice | They are counted within what was read, and a list with none renders as the other linked lists do |
 | Two more reads on every `get_merge_request` | The maintainer's choice, 2026-10-22 |
+
+**v3.0.0 release review.** The release security review
+(`audit/security-reviews/v3.0.0.md`) found one low finding:
+
+| Found | Resolved |
+|---|---|
+| `apply_suggestions`' witness covers the text a suggestion puts in, not the lines it replaces, so a client's prompt can show one plausible line for a suggestion that removes many; the 2.x question named the range | Recorded: the Ship flag, the protected-branch refusal and review before merge stay, and `list_discussions` shows the range. Carrying `from_line` and `to_line` as optional, checked inputs would close it without a break |
 
 **Per-call approval to the client (issue #63).** The code and security
 reviews found:
