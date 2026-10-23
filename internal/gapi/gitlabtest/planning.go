@@ -391,9 +391,10 @@ func noteHits(p *project, matches func(string) bool) []any {
 	return out
 }
 
-// blobHits finds the lines of a project's files at a ref that match, as
-// GitLab's blob search reports them: the path, the ref, the line the
-// excerpt starts at and the excerpt, one line either side.
+// blobHits finds a project's files at a ref that match, as GitLab's
+// basic blob search reports them: first each file whose path matches,
+// with the blob's SHA as its id and the start of the file, then the lines
+// that match, with a null id and the excerpt one line either side.
 func blobHits(p *project, ref string, matches func(string) bool) []any {
 	tree, _, ok := treeAt(p, ref)
 	if !ok {
@@ -408,6 +409,13 @@ func blobHits(p *project, ref string, matches func(string) bool) []any {
 	}
 	slices.Sort(paths)
 	var out []any
+	for _, path := range paths {
+		if matches(path) {
+			data := tree[path][:min(len(tree[path]), 1024)]
+			out = append(out, map[string]any{"basename": strings.TrimSuffix(path, pathExt(path)), "data": data,
+				"path": path, "filename": path, "id": fakeSHA("blob", path, tree[path]), "ref": ref, "startline": 1, "project_id": p.ID})
+		}
+	}
 	for _, path := range paths {
 		lines := strings.Split(tree[path], "\n")
 		for i, line := range lines {

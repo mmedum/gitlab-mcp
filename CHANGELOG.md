@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Fixed
+
+- `search` with `scope: blobs` or `wiki_blobs` no longer fails when the term matches a file's name; GitLab sends that row's blob id as a string, which the server tried to read as a number.
+
 ## [4.0.0] - 2026-10-23
 
 ### Added

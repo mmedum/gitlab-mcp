@@ -57,9 +57,9 @@ GET /projects/{id}/pipelines/{pipeline_id}/jobs	used	1	Client.ListPipelineJobs: 
 GET /projects/{id}/jobs/{job_id}	used	1	Client.GetJob: get_job_log and its resource name the job they show
 GET /projects/{id}/jobs/{job_id}/trace	used	1	Client.GetJobTrace: get_job_log and its resource, in ranges
 GET /projects/{id}/ci/lint	used	1	Client.LintCI: lint_ci on the project's own configuration at a ref
-GET /search	used	1	Client.Search and Client.SearchCommits: search across the instance
-GET /groups/{id}/(-/)search	used	1	Client.Search and Client.SearchCommits: search inside one group
-GET /projects/{id}/(-/)search	used	1	Client.Search and Client.SearchCommits: search inside one project
+GET /search	used	1	Client.Search, Client.SearchBlobs and Client.SearchCommits: search across the instance
+GET /groups/{id}/(-/)search	used	1	Client.Search, Client.SearchBlobs and Client.SearchCommits: search inside one group
+GET /projects/{id}/(-/)search	used	1	Client.Search, Client.SearchBlobs and Client.SearchCommits: search inside one project
 GET /projects/{id}/labels	used	1	Client.ListLabels: list_labels
 GET /projects/{id}/milestones	used	1	Client.ListMilestones: list_milestones in a project
 GET /groups/{id}/milestones	used	1	Client.ListMilestones: list_milestones in a group

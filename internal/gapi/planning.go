@@ -154,11 +154,30 @@ func (q SearchQuery) values(inProject bool) url.Values {
 	return v
 }
 
-// Search runs a search of any scope but commits, whose rows have another
-// shape (SearchCommits). The two stay separate methods, each with its own
-// Call literals and decoded type, so the API gates can read both.
+// Search runs a search of any scope but commits, blobs and wiki blobs,
+// whose rows have other shapes (SearchCommits, SearchBlobs). The three
+// stay separate methods, each with its own Call literals and decoded
+// type, so the API gates can read each.
 func (c *Client) Search(ctx context.Context, q SearchQuery, opts ListOptions) ([]gitlab.SearchHit, Page, error) {
 	var out []gitlab.SearchHit
+	var page Page
+	var err error
+	switch {
+	case !q.Project.IsZero():
+		page, err = c.list(ctx, Call{Method: "GET", Path: "projects/{}/search", Args: []string{q.Project.segment()},
+			Query: q.values(true), Name: "search"}, opts, &out)
+	case !q.Group.IsZero():
+		page, err = c.list(ctx, Call{Method: "GET", Path: "groups/{}/search", Args: []string{q.Group.segment()},
+			Query: q.values(false), Name: "search"}, opts, &out)
+	default:
+		page, err = c.list(ctx, Call{Method: "GET", Path: "search", Query: q.values(false), Name: "search"}, opts, &out)
+	}
+	return out, page, advancedSearch(err)
+}
+
+// SearchBlobs runs a search of the blobs or wiki_blobs scope.
+func (c *Client) SearchBlobs(ctx context.Context, q SearchQuery, opts ListOptions) ([]gitlab.SearchBlob, Page, error) {
+	var out []gitlab.SearchBlob
 	var page Page
 	var err error
 	switch {

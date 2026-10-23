@@ -999,8 +999,9 @@ type DraftNote struct {
 }
 
 // SearchHit is one row of GET /search and its group and project forms,
-// for every scope but commits. Its shape depends on the scope; this is
-// the union of the fields read, and each scope fills its own.
+// for every scope but commits, blobs and wiki blobs. Its shape depends on
+// the scope; this is the union of the fields read, and each scope fills
+// its own.
 type SearchHit struct {
 	// Issues, merge requests, milestones, projects, users, notes.
 	ID        int64      `json:"id"`
@@ -1017,15 +1018,21 @@ type SearchHit struct {
 	Name string `json:"name"`
 	// Users.
 	Username string `json:"username"`
-	// Blobs and wiki blobs.
-	Path      string `json:"path"`
-	Ref       string `json:"ref"`
-	Startline int    `json:"startline"`
-	Data      string `json:"data"`
 	// Notes.
 	Body         string `json:"body"`
 	NoteableType string `json:"noteable_type"` //nolint:misspell // GitLab's wire name
 	NoteableIID  *int64 `json:"noteable_iid"`  //nolint:misspell // GitLab's wire name
+}
+
+// SearchBlob is one row of a blobs or wiki blobs search: a file that
+// matched by its content or its name. Its id is not read: GitLab sends
+// the blob's SHA for a match by name and null otherwise (§18 row 129).
+type SearchBlob struct {
+	Path      string `json:"path"`
+	Ref       string `json:"ref"`
+	Startline int    `json:"startline"`
+	Data      string `json:"data"`
+	ProjectID int64  `json:"project_id"`
 }
 
 // SearchCommit is one row of a commits search: a commit, and the project

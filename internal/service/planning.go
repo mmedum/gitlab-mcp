@@ -451,7 +451,8 @@ func (s *Service) Search(ctx context.Context, q SearchQuery) (model.Search, erro
 		out.Where = "group"
 	}
 	var page gapi.Page
-	if q.Scope == "commits" {
+	switch q.Scope {
+	case "commits":
 		rows, pg, err := c.SearchCommits(ctx, sq, q.List)
 		if err != nil {
 			return model.Search{}, searchError(err, out.Where)
@@ -464,7 +465,16 @@ func (s *Service) Search(ctx context.Context, q SearchQuery) (model.Search, erro
 			out.Rows = append(out.Rows, model.SearchRow{Kind: "commit", ProjectID: positive(cm.ProjectID), SHA: cm.ID,
 				Author: author, UpdatedAt: &at, WebURL: cm.WebURL, UntrustedTitle: title})
 		}
-	} else {
+	case "blobs", "wiki_blobs":
+		rows, pg, err := c.SearchBlobs(ctx, sq, q.List)
+		if err != nil {
+			return model.Search{}, searchError(err, out.Where)
+		}
+		page = pg
+		for _, b := range rows {
+			out.Rows = append(out.Rows, blobRow(q.Scope, b))
+		}
+	default:
 		rows, pg, err := c.Search(ctx, sq, q.List)
 		if err != nil {
 			return model.Search{}, searchError(err, out.Where)
@@ -478,7 +488,19 @@ func (s *Service) Search(ctx context.Context, q SearchQuery) (model.Search, erro
 	return out, nil
 }
 
-// searchRow reads one hit of a scope other than commits.
+// blobRow reads one hit of a blobs or wiki_blobs search.
+func blobRow(scope string, b gitlab.SearchBlob) model.SearchRow {
+	row := model.SearchRow{Kind: strings.TrimSuffix(scope, "s"), ProjectID: positive(b.ProjectID), Path: b.Path, Ref: b.Ref}
+	if b.Startline > 0 {
+		line := b.Startline
+		row.StartLine = &line
+	}
+	text, _ := render.Code(b.Data)
+	row.UntrustedExcerpt, row.ExcerptCut = excerpt(text)
+	return row
+}
+
+// searchRow reads one hit of a scope other than commits and blobs.
 func (s *Service) searchRow(scope string, h gitlab.SearchHit) model.SearchRow {
 	row := model.SearchRow{ProjectID: positive(h.ProjectID), State: h.State, UpdatedAt: h.UpdatedAt, WebURL: h.WebURL}
 	if h.Author != nil {
@@ -496,14 +518,6 @@ func (s *Service) searchRow(scope string, h gitlab.SearchHit) model.SearchRow {
 		row.ProjectID = positive(h.ID)
 	case "users":
 		row.Kind, row.ID, row.Author, title = "user", positive(h.ID), h.Username, h.Name
-	case "blobs", "wiki_blobs":
-		row.Kind, row.Path, row.Ref = strings.TrimSuffix(scope, "s"), h.Path, h.Ref
-		if h.Startline > 0 {
-			line := h.Startline
-			row.StartLine = &line
-		}
-		text, _ := render.Code(h.Data)
-		row.UntrustedExcerpt, row.ExcerptCut = excerpt(text)
 	case "notes":
 		row.Kind, row.ID, row.IID = "note", positive(h.ID), h.NoteableIID
 		clean, _ := render.Markdown(h.Body, s.self())

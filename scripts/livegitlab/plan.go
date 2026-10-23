@@ -249,6 +249,8 @@ func phase1(s scratch) []step {
 			paged: true},
 		{tool: "search", args: map[string]any{"scope": "merge_requests", "search": s.Name, "project": p}},
 		{tool: "search", args: map[string]any{"scope": "blobs", "search": s.Name, "project": p, "ref": s.Feature}},
+		// A match by file name, whose row carries the blob's SHA as its id (§18 row 129).
+		{tool: "search", args: map[string]any{"scope": "blobs", "search": "main.txt", "project": p}},
 		{tool: "search", args: map[string]any{"scope": "commits", "search": "live file", "project": p}},
 		{tool: "search", args: map[string]any{"scope": "notes", "search": "synthetic comment", "project": p}},
 		{tool: "search", args: map[string]any{"scope": "milestones", "search": "live milestone", "project": p}},
