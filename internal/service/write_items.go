@@ -190,9 +190,14 @@ func (s *Service) updateIssue(ctx context.Context, in IssueUpdate, publish bool)
 	body.AssigneeIDs = assigneeSet(before.Assignees, addIDs, in.AddAssignees, in.RemoveAssignees)
 	var notes []string
 	body.StateEvent, notes = stateEvent(in.State, before.State)
-	if publish && !before.Confidential {
+	// An issue the read shows public is never sent confidential: false.
+	// Someone may have made it confidential since the read, and false
+	// would undo that unseen; nothing else is lost by leaving it out.
+	if in.Confidential != nil && !*in.Confidential && !before.Confidential {
 		body.Confidential = nil
-		notes = append(notes, "The issue is already public, so nothing was sent.")
+		if publish {
+			notes = append(notes, "The issue is already public, so nothing was sent.")
+		}
 	}
 
 	if gapi.IsDryRun(ctx) {
