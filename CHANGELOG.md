@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-10-24
+
 ### Fixed
 
 - The Claude Desktop bundle says that Read-only cannot be combined with the Ship or Destructive switch. The server refuses that combination at startup, and the bundle offered all three without saying so.
@@ -226,7 +228,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.1...HEAD
+[4.1.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.1...v4.1.0
 [4.0.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v3.0.0...v4.0.0
