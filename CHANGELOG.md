@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-24
+
 ### Added
 
 - The Claude Desktop bundle asks for the Ship and Destructive switches, the toolsets and the write namespaces, each off or empty unless you set it, names GitLab's privacy policy, and carries the README beside `LICENSE` and `NOTICE`.
@@ -220,7 +222,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.1...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.0...HEAD
+[4.1.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.1...v4.1.0
 [4.0.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.4.0...v3.0.0
