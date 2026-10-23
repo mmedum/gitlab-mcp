@@ -24,6 +24,9 @@
     "code-review",
     "ci"
   ],
+  "privacy_policies": [
+    "https://about.gitlab.com/privacy/"
+  ],
   "server": {
     "type": "binary",
     "entry_point": "server/gitlab-mcp-darwin",
@@ -34,6 +37,10 @@
         "GITLAB_MCP_CLIENT_ID": "${user_config.client_id}",
         "GITLAB_MCP_PROFILE": "${user_config.profile}",
         "GITLAB_MCP_READ_ONLY": "${user_config.read_only}",
+        "GITLAB_MCP_ENABLE_SHIP": "${user_config.enable_ship}",
+        "GITLAB_MCP_ENABLE_DESTRUCTIVE": "${user_config.enable_destructive}",
+        "GITLAB_MCP_TOOLSETS": "${user_config.toolsets}",
+        "GITLAB_MCP_WRITE_NAMESPACES": "${user_config.write_namespaces}",
         "GITLAB_MCP_UPLOAD_DIRS": "${user_config.upload_dirs}"
       },
       "platform_overrides": {
@@ -65,6 +72,34 @@
       "title": "Read-only",
       "description": "Register only the read tools and use a read_api token, so GitLab itself refuses a write. Needs a login made in read-only mode.",
       "default": false,
+      "required": false
+    },
+    "enable_ship": {
+      "type": "boolean",
+      "title": "Merging, approving, CI and releases",
+      "description": "Register the tools that merge, approve and rebase merge requests, run, retry, play and cancel CI, and, with the releases toolset, create releases. Off by default. This server asks nobody before a call, so Claude Desktop's approval of each tool is then the only check.",
+      "default": false,
+      "required": false
+    },
+    "enable_destructive": {
+      "type": "boolean",
+      "title": "Deleting and making issues public",
+      "description": "Register the delete tools and make_issue_public. Each call also needs confirm: true, and nothing deleted comes back. Off by default.",
+      "default": false,
+      "required": false
+    },
+    "toolsets": {
+      "type": "string",
+      "title": "Optional toolsets",
+      "description": "Comma-separated toolsets to add: activity, deployments, planning, releases, snippets, wiki, or all. Leave it empty for none.",
+      "default": "",
+      "required": false
+    },
+    "write_namespaces": {
+      "type": "string",
+      "title": "Write only to",
+      "description": "Comma-separated groups or projects that every write is confined to, such as my-group, other-group/project. Leave it empty and writes reach every project your account can write to.",
+      "default": "",
       "required": false
     },
     "upload_dirs": {

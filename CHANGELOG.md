@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- The Claude Desktop bundle asks for the Ship and Destructive switches, the toolsets and the write namespaces, each off or empty unless you set it, names GitLab's privacy policy, and carries the README beside `LICENSE` and `NOTICE`.
+
 ## [4.0.1] - 2026-10-23
 
 ### Fixed

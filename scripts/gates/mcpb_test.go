@@ -43,6 +43,7 @@ func mcpbRoot(t *testing.T, doc map[string]any) string {
 		mcpbManifestPath:            string(raw),
 		"LICENSE":                   "                                 Apache License\n",
 		"NOTICE":                    "gitlab-mcp\n",
+		"README.md":                 "# gitlab-mcp\n",
 		"internal/server/server.go": "package server\n\n// Description is shared.\nconst Description = " + mcpbQuote(mcpbTestDescription) + "\n",
 	})
 }
@@ -66,7 +67,7 @@ func TestMcpbFixturePasses(t *testing.T) {
 	if err := mcpbCheck(&out, mcpbRoot(t, mcpbFixture(t))); err != nil {
 		t.Fatalf("the fixture fails: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "7 staged files, 3 platforms, 4 user_config keys") {
+	if !strings.Contains(out.String(), "8 staged files, 3 platforms, 8 user_config keys") {
 		t.Errorf("the gate does not say what it read: %s", out.String())
 	}
 }
@@ -152,6 +153,18 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"wrong name", func(d map[string]any) { d["name"] = "gitlab" }, `name is "gitlab"`},
 		{"wrong license", func(d map[string]any) { d["license"] = "MIT" }, `license is "MIT" and LICENSE is Apache-2.0`},
 		{"no keywords", func(d map[string]any) { delete(d, "keywords") }, "keywords is empty"},
+		{"no privacy policy", func(d map[string]any) { delete(d, "privacy_policies") }, "privacy_policies is empty"},
+		{"a switch the bundle turns on", func(d map[string]any) {
+			mcpbDig(d, "user_config", "enable_ship")["default"] = true
+		}, "user_config.enable_ship is a boolean defaulting to true; GITLAB_MCP_ENABLE_SHIP is a switch the server defaults to false"},
+		{"a switch asked as text", func(d map[string]any) {
+			mcpbDig(d, "user_config", "enable_destructive")["type"] = "string"
+			mcpbDig(d, "user_config", "enable_destructive")["default"] = ""
+		}, `user_config.enable_destructive is a string defaulting to ""; GITLAB_MCP_ENABLE_DESTRUCTIVE is a switch`},
+		{"a setting the bundle no longer asks for", func(d map[string]any) {
+			delete(mcpbDig(d, "user_config"), "write_namespaces")
+			delete(mcpbDig(d, "server", "mcp_config", "env"), "GITLAB_MCP_WRITE_NAMESPACES")
+		}, "user_config does not ask for write_namespaces"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,14 +182,17 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 	}
 }
 
-func TestMcpbRefusesAMissingNotice(t *testing.T) {
-	root := mcpbRoot(t, mcpbFixture(t))
-	if err := os.Remove(filepath.Join(root, "NOTICE")); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := mcpbCheck(&out, root); err == nil || !strings.Contains(out.String(), "copies NOTICE") {
-		t.Errorf("a missing NOTICE passed: %v\n%s", err, out.String())
+// Each file the packer copies from the repository must be there.
+func TestMcpbRefusesAMissingRepositoryFile(t *testing.T) {
+	for _, name := range []string{"NOTICE", "README.md"} {
+		root := mcpbRoot(t, mcpbFixture(t))
+		if err := os.Remove(filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		if err := mcpbCheck(&out, root); err == nil || !strings.Contains(out.String(), "copies "+name) {
+			t.Errorf("a missing %s passed: %v\n%s", name, err, out.String())
+		}
 	}
 }
 

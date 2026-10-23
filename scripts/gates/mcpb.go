@@ -82,6 +82,8 @@ var mcpbFiles = []mcpbStaged{
 	// bundle redistributes the binaries as the archives do.
 	{path: "LICENSE", repo: "LICENSE"},
 	{path: "NOTICE", repo: "NOTICE"},
+	// The README goes with the binaries, as in the archives.
+	{path: "README.md", repo: "README.md"},
 }
 
 // mcpbManifest is the part of the manifest the checks read. The whole
@@ -97,6 +99,7 @@ type mcpbManifest struct {
 	License         string   `json:"license"`
 	Documentation   string   `json:"documentation"`
 	Keywords        []string `json:"keywords"`
+	PrivacyPolicies []string `json:"privacy_policies"`
 	Author          struct {
 		Name string `json:"name"`
 	} `json:"author"`
@@ -189,6 +192,10 @@ func mcpbDocumentProblems(m mcpbManifest, raw []byte) []string {
 	}
 	if m.Name != gatekit.BinaryName {
 		problems = append(problems, fmt.Sprintf("name is %q, want %q", m.Name, gatekit.BinaryName))
+	}
+	if len(m.PrivacyPolicies) == 0 {
+		problems = append(problems, "privacy_policies is empty; the manifest specification requires one for a "+
+			"server that connects to a service processing user data, as this one does to gitlab.com")
 	}
 	return problems
 }
@@ -406,13 +413,49 @@ func mcpbLicense(root string) string {
 }
 
 // mcpbUserConfig is what the bundle asks for at install, each key with
-// the variable it sets. §5a: client_id, profile, read_only and
-// upload_dirs.
+// the variable it sets: what a person sets in their client's own
+// configuration, the instance aside (§12).
 var mcpbUserConfig = map[string]string{
-	"client_id":   config.EnvClientID,
-	"profile":     config.EnvProfile,
-	"read_only":   config.EnvReadOnly,
-	"upload_dirs": config.EnvUploadDirs,
+	"client_id":          config.EnvClientID,
+	"profile":            config.EnvProfile,
+	"read_only":          config.EnvReadOnly,
+	"enable_ship":        config.EnvEnableShip,
+	"enable_destructive": config.EnvEnableDestructive,
+	"toolsets":           config.EnvToolsets,
+	"write_namespaces":   config.EnvWriteNamespaces,
+	"upload_dirs":        config.EnvUploadDirs,
+}
+
+// mcpbSwitchProblems holds every switch the bundle asks for to the
+// server's own default, so a bundle install turns on nothing an
+// unconfigured server leaves off. The defaults are compared as JSON, so
+// a text "false" is refused. In Claude Desktop the only other guard is
+// its approval of each tool, which a person can set to always allow
+// (§18 row 130).
+func mcpbSwitchProblems(userConfig map[string]json.RawMessage) []string {
+	var problems []string
+	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
+		raw, asked := userConfig[key]
+		i := slices.IndexFunc(config.Vars, func(v config.Var) bool { return v.Name == mcpbUserConfig[key] })
+		if !asked || i < 0 || !config.Vars[i].Switch {
+			continue
+		}
+		v := config.Vars[i]
+		var opt struct {
+			Type    string          `json:"type"`
+			Default json.RawMessage `json:"default"`
+		}
+		if err := json.Unmarshal(raw, &opt); err != nil {
+			problems = append(problems, fmt.Sprintf("user_config.%s is not an object: %v", key, err))
+			continue
+		}
+		if string(opt.Default) != v.Default {
+			problems = append(problems, fmt.Sprintf("user_config.%s is a %s defaulting to %s; %s is a switch the "+
+				"server defaults to %s, and a bundle install may turn on nothing an unconfigured server leaves off",
+				key, cmp.Or(opt.Type, "field"), cmp.Or(string(opt.Default), "nothing"), v.Name, v.Default))
+		}
+	}
+	return problems
 }
 
 // mcpbServerPackage is where the one description constant lives, which
@@ -461,6 +504,7 @@ func mcpbRepoProblems(root string, m mcpbManifest) []string {
 			problems = append(problems, fmt.Sprintf("mcp_config.env.%s is %q, want %q", mcpbUserConfig[key], got, want))
 		}
 	}
+	problems = append(problems, mcpbSwitchProblems(m.UserConfig)...)
 	for _, f := range mcpbFiles {
 		if f.repo == "" {
 			continue

@@ -37,8 +37,8 @@ func TestLeaksAllowListHasReasons(t *testing.T) {
 	if want := 13 + len(leaksPublicHosts) + len(leaksGitLabPaths) + len(leaksSkip) + len(leaksBinaryAllowed); entries != want {
 		t.Errorf("%d exemptions, want %d", entries, want)
 	}
-	if len(leaksPublicHosts) != 24 || len(leaksGitLabPaths) != 6 || len(leaksSkip) != 4 || len(leaksBinaryAllowed) != 0 {
-		t.Errorf("exemption lists are %d hosts, %d paths, %d skipped files, %d binaries; want 24, 6, 4, 0",
+	if len(leaksPublicHosts) != 25 || len(leaksGitLabPaths) != 6 || len(leaksSkip) != 4 || len(leaksBinaryAllowed) != 0 {
+		t.Errorf("exemption lists are %d hosts, %d paths, %d skipped files, %d binaries; want 25, 6, 4, 0",
 			len(leaksPublicHosts), len(leaksGitLabPaths), len(leaksSkip), len(leaksBinaryAllowed))
 	}
 }

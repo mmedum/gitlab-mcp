@@ -85,6 +85,7 @@ func leaksFixtureNamespaces() string {
 var leaksPublicHosts = map[string]string{
 	"gitlab.com":                          "the public instance; the namespace after it is its own rule",
 	"docs.gitlab.com":                     "GitLab's public documentation",
+	"about.gitlab.com":                    "GitLab's privacy statement, which the bundle's privacy_policies names",
 	"github.com":                          "this repository's home and its actions; the maintainer's other repositories are their own rule",
 	"raw.githubusercontent.com":           "the pinned upstream schema files the bundle manifest names",
 	"token.actions.githubusercontent.com": "the OIDC issuer every signature verification names",

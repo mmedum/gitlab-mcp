@@ -56,7 +56,7 @@ func TestMcpbPackWritesAndReadsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pack: %v\n%s", err, out.String())
 	}
-	mustSay(t, out.String(), "8 entries, version 1.2.3, read back")
+	mustSay(t, out.String(), "9 entries, version 1.2.3, read back")
 
 	zr, err := zip.OpenReader(bundle)
 	if err != nil {
@@ -70,7 +70,7 @@ func TestMcpbPackWritesAndReadsBack(t *testing.T) {
 			t.Errorf("%s stamped %v, want %v", f.Name, f.Modified, fixed)
 		}
 		wantMode := os.FileMode(0o755)
-		if f.Name == "LICENSE" || f.Name == "NOTICE" {
+		if f.Name == "LICENSE" || f.Name == "NOTICE" || f.Name == "README.md" {
 			wantMode = 0o644
 		}
 		if f.Name != "manifest.json" && f.Mode().Perm() != wantMode {
