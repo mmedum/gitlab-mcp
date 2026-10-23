@@ -513,6 +513,9 @@ func phase2(s scratch) []step {
 		// The run's account, the merge request's only reviewer, is asked
 		// for a new review, through GraphQL. Before the time-tracking
 		// witness is read, since a re-request may move updated_at.
+		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User,
+			"reviewer_state": "unreviewed"}, expectError: true, why: "a reviewer who has not reviewed yet"},
+		{tool: "submit_review", args: map[string]any{"project": p, "iid": "{{mr}}", "reviewer_state": "reviewed"}},
 		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}"},
 			save: map[string]string{"mr_review": "reviewer_states.reviewers.0.state"}},
 		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User, "reviewer_state": "approved"},

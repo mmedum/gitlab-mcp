@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -43,29 +44,51 @@ func TestRerequestReviewAsksAReviewerAgain(t *testing.T) {
 
 // A refused re-request sends nothing.
 func TestRerequestReviewRefuses(t *testing.T) {
+	approvedInRead := gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/merge_requests/1/approvals", alphaID),
+		Status: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: `{"approved":true,"approved_by":[{"user":{"id":1003,"username":"carol","name":"Carol Example","state":"active"}}]}`}
 	cases := []struct {
 		name, username, state, class, says string
-		approved                           bool
+		iid                                int
+		setup                              func(*testing.T) *harness
 	}{
-		{"a state that moved since the read", "carol", "reviewed", "stale", "requested_changes now, not reviewed", false},
-		{"a reviewer who approved", "carol", "approved", "blocked", "never takes away another person's approval", true},
-		{"someone who is not a reviewer", "bob", "requested_changes", "invalid", "bob is not a reviewer of !1", false},
+		{"a state that moved since the read", "carol", "reviewed", "stale", "requested_changes now, not reviewed", 1, carolRequestsChanges},
+		{"a state GitLab does not report", "carol", "changes_requested", "invalid", `"changes_requested" is not a review state`, 1,
+			carolRequestsChanges},
+		{"a reviewer whose state is approved", "carol", "approved", "blocked", "never takes away another person's approval", 1,
+			func(t *testing.T) *harness { return newHarness(t, harnessOptions{}) }}, // carol approved !1
+		{"a reviewer the approvals list, whatever their state", "carol", "requested_changes", "blocked",
+			"never takes away another person's approval", 1, func(t *testing.T) *harness {
+				h := carolRequestsChanges(t)
+				h.gl.Inject(approvedInRead)
+				return h
+			}},
+		{"a reviewer who has not reviewed", "carol", "unreviewed", "conflict", "carol has not reviewed !2 since being asked", 2,
+			func(t *testing.T) *harness { return newHarness(t, harnessOptions{}) }}, // carol is asked on !2
+		{"someone who is not a reviewer", "bob", "requested_changes", "invalid", "bob is not a reviewer of !1", 1, carolRequestsChanges},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var h *harness
-			if c.approved {
-				h = newHarness(t, harnessOptions{}) // carol approved !1
-			} else {
-				h = carolRequestsChanges(t)
-			}
+			h := c.setup(t)
 			sent := writesSent(h)
-			text := h.fails("rerequest_review", map[string]any{"project": alpha, "iid": 1, "username": c.username,
+			text := h.fails("rerequest_review", map[string]any{"project": alpha, "iid": c.iid, "username": c.username,
 				"reviewer_state": c.state}, c.class)
 			if !strings.Contains(text, c.says) || writesSent(h) != sent {
 				t.Errorf("%s: %s, %d writes sent", c.name, text, writesSent(h)-sent)
 			}
 		})
+	}
+}
+
+// A payload means the mutation ran, even beside a top-level error, so
+// the call is not reported as refused and repeated.
+func TestARerequestPayloadWinsOverTopLevelErrors(t *testing.T) {
+	h := carolRequestsChanges(t)
+	h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/graphql", Status: http.StatusOK,
+		Header: http.Header{"Content-Type": {"application/json"}},
+		Body:   `{"data":{"mergeRequestReviewerRereview":{"errors":[]}},"errors":[{"message":"a field failed"}]}`})
+	if _, out := h.ok("rerequest_review", askCarolAgain()); get(out, "outcome") != "rerequested" {
+		t.Errorf("rerequest_review = %v", out)
 	}
 }
 

@@ -41,20 +41,21 @@ func (c *Client) mutate(ctx context.Context, name, field, what, query string, va
 		Body: map[string]any{"query": query, "variables": vars}, Name: name}, &answer); err != nil {
 		return err
 	}
+	// A payload means the mutation ran, whatever else the answer says,
+	// so it is read before any top-level error.
+	if payload := answer.Data[field]; len(payload) > 0 && string(payload) != "null" {
+		if err := json.Unmarshal(payload, out); err != nil {
+			return Wrap(ClassAmbiguousOutcome, err, "GitLab ran %s, and its answer could not be read", name)
+		}
+		return nil
+	}
 	for _, e := range answer.Errors {
 		if strings.Contains(e.Message, noAccess) {
 			return Errf(ClassNotFound, "GitLab found no %s there that this account may change: it does not say whether it "+
 				"is missing or the token may not change it; nothing was changed", what)
 		}
 	}
-	payload := answer.Data[field]
-	if len(answer.Errors) > 0 || len(payload) == 0 || string(payload) == "null" {
-		return Errf(ClassUnexpected, "GitLab refused %s with an error this server does not know; nothing was changed", name)
-	}
-	if err := json.Unmarshal(payload, out); err != nil {
-		return Wrap(ClassUnexpected, err, "GitLab's answer to %s could not be read", name)
-	}
-	return nil
+	return Errf(ClassUnexpected, "GitLab refused %s with an error this server does not know; nothing was changed", name)
 }
 
 // gid is a GraphQL global id, such as gid://gitlab/User/1001.

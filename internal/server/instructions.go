@@ -114,7 +114,7 @@ func flags(cfg config.Config) []flag {
 			func(c config.Config) config.Config { c.ReadOnly = false; return c }},
 		{config.EnvEnableShip + "=true", "merging, approving and running CI",
 			func(c config.Config) config.Config { c.EnableShip = true; return c }},
-		{config.EnvEnableDestructive + "=true", "deleting",
+		{config.EnvEnableDestructive + "=true", "deleting and making a confidential issue public",
 			func(c config.Config) config.Config { c.EnableDestructive = true; return c }},
 	}
 	for _, ts := range config.Toolsets {

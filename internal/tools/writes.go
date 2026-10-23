@@ -328,7 +328,8 @@ func rerequestReview() definition {
 				"GitLab sets their review state back to unreviewed, notifies them, and adds a to-do and a system note. " +
 				"Changes they requested that block the merge stay until they review again; removing and adding them as a " +
 				"reviewer does not clear those either. reviewer_state from your latest read is required. A " +
-				"reviewer who approved is refused [blocked], since GitLab would remove their approval. Each call notifies " +
+				"reviewer who approved is refused [blocked], since GitLab would remove their approval, and one who has not " +
+				"reviewed since being asked is refused [conflict]. Each call notifies " +
 				"the reviewer, so it is never sent twice." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in rerequestReviewIn) (model.RereviewWrite, error) {
 			return svc.RerequestReview(ctx, service.Rereview{Project: string(in.Project), IID: in.IID, Username: in.Username,

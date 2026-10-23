@@ -325,6 +325,11 @@ func (s *Server) updateReviewerState(p *project, mr *gitlab.MergeRequest, user, 
 		state != "unapproved" {
 		return
 	}
+	// Requesting changes takes back an approval the reviewer gave
+	// (MergeRequests::UpdateReviewerStateService).
+	if a := p.approvals[mr.IID]; state == "requested_changes" && a != nil {
+		dropApproval(a, user)
+	}
 	s.setReviewerState(p, mr, user, state)
 }
 

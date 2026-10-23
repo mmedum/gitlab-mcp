@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"regexp"
 	"slices"
 	"strings"
@@ -24,15 +25,41 @@ const graphQLFloor = 1
 // span, then its kind.
 var operationCell = regexp.MustCompile("^`([A-Za-z]+)` \\((mutation|query)\\)$")
 
+// rootField is the first field an operation's text selects: the
+// operation it sends.
+var rootField = regexp.MustCompile(`^\s*(?:mutation|query)\b[^{]*\{\s*([A-Za-z]+)`)
+
 // graphQLOperations reads the root field every mutate call in dir sends:
-// its third argument, which must be a string literal.
+// its third argument, a string literal that must name the first field of
+// the query it sends, a string constant. A Call to the GraphQL endpoint
+// anywhere but mutate is a problem, since nothing here would read it.
 func graphQLOperations(dir string) ([]string, []string, error) {
 	pkg, err := parsePackageDir(dir)
 	if err != nil {
 		return nil, nil, err
 	}
+	consts := stringConsts(pkg)
 	var ops, problems []string
 	for _, f := range pkg.files {
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || funcName(fn) == "Client.mutate" {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				lit, ok := n.(*ast.CompositeLit)
+				if !ok || !isCallType(lit.Type) {
+					return true
+				}
+				if p, ok := keyValue(lit, "Path"); ok {
+					if path, _ := stringLit(p); path == "api/graphql" {
+						problems = append(problems, pkg.fset.Position(lit.Pos()).String()+": a Call to api/graphql in "+
+							funcName(fn)+"; send GraphQL through mutate, which the gate reads")
+					}
+				}
+				return true
+			})
+		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			ce, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -54,10 +81,57 @@ func graphQLOperations(dir string) ([]string, []string, error) {
 				return true
 			}
 			ops = append(ops, field)
+			query, ok := "", len(ce.Args) > 4
+			if ok {
+				query, ok = constString(ce.Args[4], consts)
+			}
+			switch m := rootField.FindStringSubmatch(query); {
+			case !ok:
+				problems = append(problems, pos+": a mutate call whose query is not a string constant; the gate reads it")
+			case m == nil || m[1] != field:
+				problems = append(problems, fmt.Sprintf("%s: a mutate call names %s, and its query does not select it first", pos, field))
+			}
 			return true
 		})
 	}
 	return ops, problems, nil
+}
+
+// stringConsts are a package's string constants by name.
+func stringConsts(pkg parsedPackage) map[string]string {
+	out := map[string]string{}
+	for _, f := range pkg.files {
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, name := range vs.Names {
+					if i < len(vs.Values) {
+						if v, ok := stringLit(vs.Values[i]); ok {
+							out[name.Name] = v
+						}
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// constString is e's value when it is a string literal or names a
+// string constant.
+func constString(e ast.Expr, consts map[string]string) (string, bool) {
+	if v, ok := stringLit(e); ok {
+		return v, true
+	}
+	if id, ok := e.(*ast.Ident); ok {
+		v, ok := consts[id.Name]
+		return v, ok
+	}
+	return "", false
 }
 
 // listedGraphQL reads the operations §8a's GraphQL table lists.

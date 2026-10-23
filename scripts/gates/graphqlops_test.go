@@ -11,31 +11,43 @@ import (
 const graphQLDoc = "### 8a\n\n" + graphQLHeader + "\n|---|---|---|\n" +
 	"| `mergeRequestReviewerRereview` (mutation) | `rerequest_review` | no REST route |\n\nAfter.\n"
 
-// The gate reads each mutate call's root field, and refuses one it cannot
-// read.
+// The gate reads each mutate call's root field and the query it sends,
+// and refuses what it cannot read or what disagrees.
 func TestGraphQLOperationsReadsMutateCalls(t *testing.T) {
-	dir := t.TempDir()
-	src := `package gapi
-
-type Client struct{}
-func (c *Client) mutate(_ any, name, field, what, query string, _ map[string]any, _ any) error { return nil }
-
-func (c *Client) Rereview() error { return c.mutate(nil, "rerequest_review", "mergeRequestReviewerRereview", "", "", nil, nil) }
-func (c *Client) Other() error { return c.mutate(nil, "other", "issueSetSomething", "", "", nil, nil) }
-func (c *Client) Computed(f string) error { return c.mutate(nil, "x", "prefix"+f, "", "", nil, nil) }
-`
-	if err := os.WriteFile(filepath.Join(dir, "graphql.go"), []byte(src), 0o600); err != nil {
-		t.Fatal(err)
+	read := func(t *testing.T, body string) ([]string, []string) {
+		t.Helper()
+		dir := t.TempDir()
+		src := "package gapi\n\ntype Call struct{ Method, Path string; Root int; Body any }\ntype Client struct{}\n" +
+			"func (c *Client) Do(_ any, _ Call, _ any) error { return nil }\n" +
+			"func (c *Client) mutate(_ any, name, field, what, query string, _ map[string]any, _ any) error {\n" +
+			"\treturn c.Do(nil, Call{Method: \"POST\", Path: \"api/graphql\"}, nil)\n}\n" +
+			"const rereview = `mutation($a: ID!) {\n  mergeRequestReviewerRereview(input: {a: $a}) { errors }\n}`\n" + body
+		if err := os.WriteFile(filepath.Join(dir, "graphql.go"), []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ops, problems, err := graphQLOperations(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ops, problems
 	}
-	ops, problems, err := graphQLOperations(dir)
-	if err != nil {
-		t.Fatal(err)
+	ops, problems := read(t, `func (c *Client) Rereview() error { return c.mutate(nil, "x", "mergeRequestReviewerRereview", "", rereview, nil, nil) }`)
+	if !slices.Equal(ops, []string{"mergeRequestReviewerRereview"}) || len(problems) != 0 {
+		t.Errorf("a well-formed mutate call: operations %v, problems %v", ops, problems)
 	}
-	if want := []string{"mergeRequestReviewerRereview", "issueSetSomething"}; !slices.Equal(ops, want) {
-		t.Errorf("operations = %v, want %v", ops, want)
-	}
-	if len(problems) != 1 || !strings.Contains(problems[0], "root field is not a string literal") {
-		t.Errorf("problems = %v, want one about the computed root field", problems)
+	for name, c := range map[string]struct{ body, want string }{
+		"a computed root field": {`func (c *Client) X(f string) error { return c.mutate(nil, "x", "a"+f, "", rereview, nil, nil) }`,
+			"root field is not a string literal"},
+		"a root field the query does not select": {`func (c *Client) X() error { return c.mutate(nil, "x", "issueSetSomething", "", rereview, nil, nil) }`,
+			"names issueSetSomething, and its query does not select it first"},
+		"a query that is not a constant": {`func (c *Client) X(q string) error { return c.mutate(nil, "x", "mergeRequestReviewerRereview", "", q, nil, nil) }`,
+			"query is not a string constant"},
+		"a Call to the endpoint outside mutate": {`func (c *Client) X() error { return c.Do(nil, Call{Method: "POST", Path: "api/graphql"}, nil) }`,
+			"a Call to api/graphql in Client.X"},
+	} {
+		if _, problems := read(t, c.body); len(problems) != 1 || !strings.Contains(problems[0], c.want) {
+			t.Errorf("%s: problems = %v, want one containing %q", name, problems, c.want)
+		}
 	}
 }
 

@@ -11,12 +11,20 @@ import (
 )
 
 // Re-requesting a review (§7.3, §8a). The REST API has no route for it,
-// so the reviewers are read over REST and the one GraphQL mutation goes
-// out after. The caller's reviewer_state is the witness. A reviewer who
-// approved is refused: GitLab would remove that approval, a sign-off
-// this server never takes away from another person. A lost answer is
-// settled by the reviewer's state after: back to unreviewed is the
-// re-request's. It is never sent twice, since each one notifies.
+// so the reviewers and the approvals are read over REST and the one
+// GraphQL mutation goes out after. The caller's reviewer_state is the
+// witness. A reviewer who approved, by their state or in the approvals,
+// is refused: GitLab would remove that approval, a sign-off this server
+// never takes away from another person. One still unreviewed is refused
+// too: there is no review to ask for again, and from unreviewed no read
+// could settle a lost answer. A lost answer is settled by the reviewer's
+// state after: back to unreviewed is the re-request's. It is never sent
+// twice, since each one notifies.
+
+// reviewStates are the review states GitLab reports; a witness outside
+// them is a mistake, not a state that moved. GitLab adds values between
+// releases, so one the read itself shows is taken as it is.
+var reviewStates = []string{"unreviewed", "review_started", "reviewed", "requested_changes", "approved", "unapproved"}
 
 // maxReviewerPages bounds the read of a merge request's reviewers:
 // GitLab allows 200 (Issuable::MAX_NUMBER_OF_ASSIGNEES_OR_REVIEWERS).
@@ -41,17 +49,32 @@ func (s *Service) RerequestReview(ctx context.Context, in Rereview) (model.Rerev
 	if err != nil {
 		return model.RereviewWrite{}, err
 	}
-	before, err := s.reviewer(ctx, t.p, in.IID, username)
-	if err != nil {
+	var before gitlab.MergeRequestReviewer
+	var approvals *gitlab.Approvals
+	if err := parallel(
+		func() (err error) { before, err = s.reviewer(ctx, t.p, in.IID, username); return err },
+		func() (err error) { approvals, err = s.client.GetMergeRequestApprovals(ctx, t.p, in.IID); return err },
+	); err != nil {
 		return model.RereviewWrite{}, err
+	}
+	if in.ReviewerState != before.State && !slices.Contains(reviewStates, in.ReviewerState) {
+		return model.RereviewWrite{}, gapi.Errf(gapi.ClassInvalid, "%q is not a review state: pass the one get_merge_request "+
+			"shows for %s, such as requested_changes; nothing was sent", in.ReviewerState, username)
 	}
 	if before.State != in.ReviewerState {
 		return model.RereviewWrite{}, gapi.Errf(gapi.ClassStale, "%s's review state on !%d is %s now, not %s; nothing was sent. "+
 			"Read the merge request again before deciding", username, in.IID, before.State, in.ReviewerState)
 	}
-	if before.State == "approved" {
+	approved := slices.ContainsFunc(approvals.ApprovedBy, func(a gitlab.Approver) bool {
+		return strings.EqualFold(a.User.Username, username)
+	})
+	if before.State == "approved" || approved {
 		return model.RereviewWrite{}, gapi.Errf(gapi.ClassBlocked, "%s approved !%d, and GitLab removes that approval when "+
 			"it asks for a new review; this server never takes away another person's approval, so nothing was sent", username, in.IID)
+	}
+	if before.State == "unreviewed" {
+		return model.RereviewWrite{}, gapi.Errf(gapi.ClassConflict, "%s has not reviewed !%d since being asked, so there is "+
+			"no review to ask for again; nothing was sent", username, in.IID)
 	}
 	if gapi.IsDryRun(ctx) {
 		out := rereviewWrite("dry_run", t, in.IID, before)
@@ -76,15 +99,11 @@ func (s *Service) RerequestReview(ctx context.Context, in Rereview) (model.Rerev
 }
 
 // settleRereview settles a re-request whose answer was lost by the
-// reviewer's state after it. From any state but unreviewed, unreviewed
-// after is the re-request's; from unreviewed, no read can tell.
+// reviewer's state after it: the state before was never unreviewed, so
+// unreviewed after is the re-request's.
 func (s *Service) settleRereview(ctx context.Context, t target, iid int64, before gitlab.MergeRequestReviewer,
 	sendErr error) (model.RereviewWrite, error) {
 	username := before.User.Username
-	if before.State == "unreviewed" {
-		return model.RereviewWrite{}, gapi.Wrap(gapi.ClassAmbiguousOutcome, sendErr, "GitLab did not confirm the re-request, "+
-			"and %s was already unreviewed, so a read cannot tell whether it was made: %s", username, settledUnknown)
-	}
 	after, err := s.reviewer(ctx, t.p, iid, username)
 	switch {
 	case err != nil:

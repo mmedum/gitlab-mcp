@@ -101,6 +101,10 @@ func TestCreateIssueGuardsItsDescription(t *testing.T) {
 
 func TestDryRunsSendNothing(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
+	// carol requests changes on !2, so rerequest_review has a review to
+	// ask for again.
+	carol := newHarness(t, harnessOptions{over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("carol", "api") }})
+	carol.ok("submit_review", map[string]any{"project": alpha, "iid": 2, "reviewer_state": "requested_changes"})
 	before := writesSent(h)
 	for _, c := range []struct {
 		tool string
@@ -111,7 +115,7 @@ func TestDryRunsSendNothing(t *testing.T) {
 		{"add_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "body": "x", "file": "README.md", "line": 3, "side": "new"}},
 		{"add_review_comment", map[string]any{"project": alpha, "iid": 1, "body": "x"}},
 		{"submit_review", map[string]any{"project": alpha, "iid": 1, "summary": "x"}},
-		{"rerequest_review", map[string]any{"project": alpha, "iid": 2, "username": "carol", "reviewer_state": "unreviewed"}},
+		{"rerequest_review", map[string]any{"project": alpha, "iid": 2, "username": "carol", "reviewer_state": "requested_changes"}},
 		{"update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft, "body": "x", "note_sha256": hash(lineText)}},
 		{"publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft}},
 		{"create_merge_request", map[string]any{"project": alpha, "source_branch": "release/1.0", "title": "x"}},
