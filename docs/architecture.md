@@ -1,13 +1,15 @@
 # Architecture — gitlab-mcp
 
-**Status: 4.0.0, 2026-10-23, built with Go 1.27.3: `rerequest_review`
+**Status: 4.0.1, 2026-10-23, built with Go 1.27.3: a blobs or wiki
+blobs search whose term matches a file's name reads again (§18 row 129).
+Owed: one sibling server's port to `~/.claude/mcp-server-standard.md`
+§3 awaits its release. 4.0.0: `rerequest_review`
 asks a reviewer for a new review through the server's first GraphQL
 call, one fixed mutation (§4.10, §8a); `make_issue_public` publishes a
 confidential issue behind the destructive flag, and `update_issue`
 never does (§4.3); `make_issue_public`, `delete_label` and
 `delete_milestone` carry `requiresUserInteraction` (§4.12); the module
-path is `/v4`. Owed: the eight sibling servers still ask the person, and
-follow one at a time (`~/.claude/mcp-server-standard.md` §3). 3.0.0 left
+path is `/v4`. 3.0.0 left
 per-call approval to the client (§4.12, issue #63), carried each
 suggestion's text as a witness (§7.3) and added merge request
 dependencies (§7.2, issue #62). 2.4.0 asked once in
