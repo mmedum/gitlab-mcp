@@ -18,14 +18,14 @@ import (
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/auth"
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/credentials"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
-	"github.com/mmedum/gitlab-mcp/v3/internal/server"
-	"github.com/mmedum/gitlab-mcp/v3/internal/userconfig"
+	"github.com/mmedum/gitlab-mcp/v4/internal/auth"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/credentials"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v4/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v4/internal/server"
+	"github.com/mmedum/gitlab-mcp/v4/internal/userconfig"
 )
 
 // memKeyring is an in-memory keyring. The real one is never reached

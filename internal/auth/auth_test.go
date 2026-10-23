@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v4/internal/instance"
 )
 
 // clock is a settable time shared by the instance and the code under

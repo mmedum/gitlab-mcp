@@ -7,7 +7,7 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/credentials"
+	"github.com/mmedum/gitlab-mcp/v4/internal/credentials"
 )
 
 // TestMain makes it impossible for a test in this package to reach the

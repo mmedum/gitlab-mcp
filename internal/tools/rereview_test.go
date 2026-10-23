@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
 )
 
 // carolRequestsChanges makes carol, !1's reviewer, request changes, and

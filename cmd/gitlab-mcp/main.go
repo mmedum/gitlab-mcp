@@ -26,11 +26,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/app"
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/redact"
-	"github.com/mmedum/gitlab-mcp/v3/internal/server"
-	"github.com/mmedum/gitlab-mcp/v3/internal/version"
+	"github.com/mmedum/gitlab-mcp/v4/internal/app"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v4/internal/server"
+	"github.com/mmedum/gitlab-mcp/v4/internal/version"
 )
 
 func main() {

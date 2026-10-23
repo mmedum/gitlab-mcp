@@ -3,7 +3,7 @@ package gapi
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
 // Emoji reactions on an issue, a merge request or a comment on either

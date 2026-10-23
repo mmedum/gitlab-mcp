@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/auth"
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/v3/internal/userconfig"
+	"github.com/mmedum/gitlab-mcp/v4/internal/auth"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v4/internal/userconfig"
 )
 
 // signedIn is a home, an instance and a completed login.

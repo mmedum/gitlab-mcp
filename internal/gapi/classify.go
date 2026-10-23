@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v4/internal/redact"
 )
 
 // envelope is what GitLab's error body said, from any of its four

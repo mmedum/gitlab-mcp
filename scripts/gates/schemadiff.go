@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gitx"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/mcpstdio"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gitx"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/mcpstdio"
 )
 
 // The released tool surface is a contract (CLAUDE.md rule 17). A client

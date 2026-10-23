@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
-	"github.com/mmedum/gitlab-mcp/v3/internal/render"
-	"github.com/mmedum/gitlab-mcp/v3/internal/service"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/render"
+	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
 // The phase-0 reads. An input that recurs is described in the same words

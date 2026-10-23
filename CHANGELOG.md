@@ -22,6 +22,7 @@ lifted verbatim.
 
 ### Changed
 
+- **Breaking:** the Go module path is now `github.com/mmedum/gitlab-mcp/v4`, as Go requires for a new major version; install with `go install github.com/mmedum/gitlab-mcp/v4/cmd/gitlab-mcp@latest`.
 - **Breaking:** `update_issue` no longer makes a confidential issue public, whatever the flags; `confidential: false` on one is refused `[blocked]`. Use `make_issue_public`, which needs `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` where this needed `GITLAB_MCP_ENABLE_SHIP=true`. Your client's approval of `update_issue` no longer covers publishing an issue.
 - **Breaking:** `delete_label` and `delete_milestone` carry Claude Code's `requiresUserInteraction` mark, since each takes what it deletes off every issue and merge request for good. Claude Code now asks on every such call whatever your allow rules say, and refuses it in a run that cannot ask (`-p`, dontAsk). Other clients are unchanged.
 

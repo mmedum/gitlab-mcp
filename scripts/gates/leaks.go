@@ -17,9 +17,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
-	core "github.com/mmedum/gitlab-mcp/v3/internal/redact"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gitx"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
+	core "github.com/mmedum/gitlab-mcp/v4/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gitx"
 )
 
 // leaks looks for anything from a real instance or account in the files

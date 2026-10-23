@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
 // The optional toolsets of phase 3 (docs/architecture.md §7.8): project

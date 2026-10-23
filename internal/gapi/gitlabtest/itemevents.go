@@ -5,7 +5,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
 // The resource events of issues and merge requests. GitLab records one

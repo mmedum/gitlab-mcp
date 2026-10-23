@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/tsv"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/tsv"
 )
 
 // The API-coverage gate (docs/architecture.md §8a, CLAUDE.md rule 18).

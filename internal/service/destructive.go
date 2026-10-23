@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
 // The Destructive kind (§4.3): what GitLab cannot restore. The tools

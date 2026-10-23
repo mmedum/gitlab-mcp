@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/fileperm"
+	"github.com/mmedum/gitlab-mcp/v4/internal/fileperm"
 )
 
 // TestRestrictToOwnerNarrowsAWideFile is the case the Unix path exists
