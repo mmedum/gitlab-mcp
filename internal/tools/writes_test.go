@@ -148,6 +148,18 @@ func TestDryRunsSendNothing(t *testing.T) {
 	}
 }
 
+// confidential: false on an issue the read shows public is left out of
+// the PUT: someone may have made it confidential since, and sending false
+// would undo that.
+func TestUpdateIssueNeverSendsPublicForAPublicIssue(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	sent := writesSent(h)
+	_, out := h.ok("update_issue", map[string]any{"project": alpha, "iid": 1, "updated_at": issueWitness(h, 1), "confidential": false})
+	if get(out, "outcome") != "unchanged" || writesSent(h) != sent {
+		t.Errorf("update_issue confidential: false on a public issue = %v, %d writes sent", out, writesSent(h)-sent)
+	}
+}
+
 // Making a confidential issue public widens who can read it, so only
 // make_issue_public does it, behind the destructive flag (§4.12).
 // update_issue refuses it whatever the flags, and still makes an issue

@@ -190,8 +190,8 @@ func (s *Service) updateIssue(ctx context.Context, in IssueUpdate, publish bool)
 	body.AssigneeIDs = assigneeSet(before.Assignees, addIDs, in.AddAssignees, in.RemoveAssignees)
 	var notes []string
 	body.StateEvent, notes = stateEvent(in.State, before.State)
+	body.Confidential = confidentialChange(in.Confidential, before)
 	if publish && !before.Confidential {
-		body.Confidential = nil
 		notes = append(notes, "The issue is already public, so nothing was sent.")
 	}
 
@@ -223,6 +223,17 @@ func (s *Service) updateIssue(ctx context.Context, in IssueUpdate, publish bool)
 		out.DescriptionRemoved = removedFrom(before.Description, after.Description)
 	}
 	return out, nil
+}
+
+// confidentialChange is the confidential value to send. An issue the
+// read shows public is never sent false: someone may have made it
+// confidential since the read, and false would undo that unseen, while
+// leaving it out loses nothing.
+func confidentialChange(asked *bool, before *gitlab.Issue) *bool {
+	if asked != nil && !*asked && !before.Confidential {
+		return nil
+	}
+	return asked
 }
 
 // assigneeSet is the assignee or reviewer ids after adding and removing,

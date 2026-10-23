@@ -91,10 +91,13 @@ Every tool has one kind, and the kind decides whether it is registered:
 | Read | every GET | always |
 | Write | issues and their links, comments, reviews, branches, commits, cherry-picks and reverts to unprotected branches, merge requests, todos, wiki, snippets, labels, milestones, unprotected tags | unless `GITLAB_MCP_READ_ONLY=true` |
 | Ship | merge, cancel an auto-merge, approve, unapprove, rebase, apply review suggestions, run, retry, play and cancel CI, create a release, move an issue to another project | only with `GITLAB_MCP_ENABLE_SHIP=true` |
-| Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
+| Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet; make a confidential issue public | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
 
-A review that would approve counts as Ship, and so does making a
-confidential issue public: without the flag the call is `[blocked]`.
+A review that would approve counts as Ship: without the flag the call
+is `[blocked]`. Making a confidential issue public is
+`make_issue_public`'s alone; `update_issue` refuses it whatever the
+flags, so a client's standing approval of `update_issue` never covers
+it.
 
 **Your client approves each call.** The server asks you nothing. A
 registered tool can be called by a model a comment has persuaded, and
@@ -102,9 +105,12 @@ registered tool can be called by a model a comment has persuaded, and
 control that holds on every client: leave `GITLAB_MCP_ENABLE_SHIP` and
 `GITLAB_MCP_ENABLE_DESTRUCTIVE` off for a client that runs with nobody
 watching or approves by itself. Per call, your client decides. Ship and
-Destructive tools are marked destructive, which claude.ai, Codex and VS
-Code prompt for by default; in Claude Code an `ask` rule does it, and
-the README lists the rules. `apply_suggestions` takes each suggestion's
+Destructive tools are marked destructive, which claude.ai and Codex
+prompt for by default, and VS Code prompts for every tool that writes.
+In Claude Code, `delete_label`, `delete_milestone` and
+`make_issue_public` ask on every call whatever your rules say, since
+each reaches past one item and cannot be undone; for the rest an `ask`
+rule does it, and the README lists the rules. `apply_suggestions` takes each suggestion's
 text as an argument, held against GitLab's, so a client's prompt shows
 the code to be committed rather than only its ids.
 
