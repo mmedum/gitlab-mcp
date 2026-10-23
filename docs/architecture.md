@@ -1,7 +1,8 @@
 # Architecture — gitlab-mcp
 
-**Status: 4.1.0, 2026-10-24, built with Go 1.27.3: the Claude Desktop
-bundle asks for every setting another client sets, each switch off by
+**Status: 4.1.1, 2026-10-24, built with Go 1.27.3: the Claude Desktop
+bundle says Read-only excludes the two switches. 4.1.0: the bundle asks
+for every setting another client sets, each switch off by
 default, and names GitLab's privacy statement (§12, §18 rows 130 and
 131). Owed: the siblings' bundles follow the same shape
 (`~/.claude/mcp-server-standard.md` §10b), one at a time. 4.0.1: a
