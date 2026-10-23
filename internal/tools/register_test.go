@@ -400,8 +400,6 @@ func TestTheGuardedInputsAreDeclared(t *testing.T) {
 	}
 }
 
-// A write that forgets a rule fails when the server starts, not when a
-// person first calls it.
 // TestOnlyWritesThatReachBeyondTheItemPrompt holds the marked set
 // (§4.12): a label or milestone deleted comes off every issue and merge
 // request, and an issue made public is read by everyone; none can be
@@ -420,6 +418,8 @@ func TestOnlyWritesThatReachBeyondTheItemPrompt(t *testing.T) {
 	}
 }
 
+// A write that forgets a rule fails when the server starts, not when a
+// person first calls it.
 func TestRegisterRefusesAWriteMissingARule(t *testing.T) {
 	type noDryIn struct {
 		Body           string `json:"body" jsonschema:"A body"`

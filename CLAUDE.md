@@ -77,7 +77,8 @@ or missed. Siblings are never named in this repository (rule 1).
    holds that every body input is routed through it. §4.2.
 6. **The Ship and Destructive kinds are unregistered unless enabled.**
    Merging, approving, running, retrying, playing or cancelling CI and
-   creating a release need `GITLAB_MCP_ENABLE_SHIP=true`; deletion needs
+   creating a release need `GITLAB_MCP_ENABLE_SHIP=true`; deletion and
+   making a confidential issue public need
    `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` and `confirm: true` on the call.
    The `api` scope cannot separate any of this, so registration is the
    only control, and it is not to be replaced by an annotation, a prompt

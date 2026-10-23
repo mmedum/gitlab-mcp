@@ -14,8 +14,7 @@ import (
 // mergeRequestReviewerRereview. As GitLab does, it answers 200 with a
 // top-level error for a project or merge request the user may not change,
 // whichever it is, and with the mutation's own error for a user who is
-// not a reviewer. A re-request sets the reviewer back to unreviewed and
-// removes their approval (MergeRequests::RequestReviewService).
+// not a reviewer. What a re-request does is rerequestReview's.
 
 // graphQLNoAccess is GitLab's top-level error for a resource the user
 // may not reach.
@@ -33,7 +32,7 @@ func (s *Server) serveGraphQL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !tok.has("api") {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "insufficient_scope", "scope": "api"})
+		insufficientScope(w)
 		return
 	}
 	var req struct {
@@ -75,14 +74,7 @@ func (s *Server) serveGraphQL(w http.ResponseWriter, r *http.Request) {
 			"mergeRequestReviewerRereview": map[string]any{"errors": []string{"Reviewer not found"}}}})
 		return
 	}
-	if a := p.approvals[mr.IID]; a != nil {
-		a.ApprovedBy = slices.DeleteFunc(a.ApprovedBy, func(ap gitlab.Approver) bool { return ap.User.ID == reviewer.ID })
-		a.Approved = len(a.ApprovedBy) > 0
-	}
-	if s.reviewerStates == nil {
-		s.reviewerStates = map[string]string{}
-	}
-	s.reviewerStates[reviewerKey(p.PathWithNamespace, mr.IID, reviewer.Username)] = "unreviewed"
+	s.rerequestReview(p, mr, reviewer.Username)
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 		"mergeRequestReviewerRereview": map[string]any{"errors": []string{}}}})
 }

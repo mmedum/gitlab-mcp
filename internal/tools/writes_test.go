@@ -111,6 +111,7 @@ func TestDryRunsSendNothing(t *testing.T) {
 		{"add_comment", map[string]any{"project": alpha, "type": "merge_request", "iid": 1, "body": "x", "file": "README.md", "line": 3, "side": "new"}},
 		{"add_review_comment", map[string]any{"project": alpha, "iid": 1, "body": "x"}},
 		{"submit_review", map[string]any{"project": alpha, "iid": 1, "summary": "x"}},
+		{"rerequest_review", map[string]any{"project": alpha, "iid": 2, "username": "carol", "reviewer_state": "unreviewed"}},
 		{"update_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": lineDraft, "body": "x", "note_sha256": hash(lineText)}},
 		{"publish_review_comment", map[string]any{"project": alpha, "iid": 1, "draft_id": replyDraft}},
 		{"create_merge_request", map[string]any{"project": alpha, "source_branch": "release/1.0", "title": "x"}},
@@ -170,6 +171,12 @@ func TestOnlyMakeIssuePublicMakesAnIssuePublic(t *testing.T) {
 	if _, out = h.ok("make_issue_public", map[string]any{"project": alpha, "iid": 2, "updated_at": witness,
 		"confirm": true}); get(out, "confidential") != false {
 		t.Errorf("make_issue_public = %v", out)
+	}
+	sent = writesSent(h)
+	text, again := h.ok("make_issue_public", map[string]any{"project": alpha, "iid": 2, "updated_at": get(out, "updated_at"),
+		"confirm": true})
+	if get(again, "outcome") != "unchanged" || writesSent(h) != sent || !strings.Contains(text, "already public, so nothing was sent") {
+		t.Errorf("make_issue_public on a public issue = %v, %d writes sent\n%s", again, writesSent(h)-sent, text)
 	}
 }
 

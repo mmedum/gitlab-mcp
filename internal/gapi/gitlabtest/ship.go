@@ -126,8 +126,7 @@ func (s *Server) unapprove(w http.ResponseWriter, p *project, mr *gitlab.MergeRe
 		message(w, http.StatusNotFound, "404 Not Found")
 		return
 	}
-	a.ApprovedBy = slices.DeleteFunc(a.ApprovedBy, func(ap gitlab.Approver) bool { return ap.User.Username == user })
-	a.Approved = len(a.ApprovedBy) > 0
+	dropApproval(a, user)
 	s.updateReviewerState(p, mr, user, "unapproved")
 	writeJSON(w, http.StatusCreated, approvalsFor(a, user))
 }

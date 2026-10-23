@@ -18,17 +18,18 @@ func carolRequestsChanges(t *testing.T) *harness {
 	return h
 }
 
+// askCarolAgain is rerequest_review's arguments for carol on !1, as a
+// read after carolRequestsChanges shows her.
+func askCarolAgain() map[string]any {
+	return map[string]any{"project": alpha, "iid": 1, "username": "carol", "reviewer_state": "requested_changes"}
+}
+
 // A reviewer who requested changes is asked again: GitLab sets them back
 // to unreviewed, which removing and re-adding them would not.
 func TestRerequestReviewAsksAReviewerAgain(t *testing.T) {
 	h := carolRequestsChanges(t)
-	args := map[string]any{"project": alpha, "iid": 1, "username": "carol", "reviewer_state": "requested_changes"}
-	sent := writesSent(h)
-	_, out := h.ok("rerequest_review", map[string]any{"project": alpha, "iid": 1, "username": "@carol",
-		"reviewer_state": "requested_changes", "dry_run": true})
-	if get(out, "outcome") != "dry_run" || writesSent(h) != sent {
-		t.Errorf("dry run = %v, %d writes sent", out, writesSent(h)-sent)
-	}
+	args := askCarolAgain()
+	args["username"] = "@carol"
 	text, out := h.ok("rerequest_review", args)
 	if get(out, "outcome") != "rerequested" || get(out, "state_before") != "requested_changes" ||
 		get(out, "state_after") != "unreviewed" || !strings.Contains(text, "Asked @carol for a new review of !1.") {
@@ -71,7 +72,7 @@ func TestRerequestReviewRefuses(t *testing.T) {
 // A lost answer is settled by the reviewer's state, and the mutation is
 // sent once either way: each one notifies the reviewer.
 func TestALostRerequestIsSettledByReading(t *testing.T) {
-	args := map[string]any{"project": alpha, "iid": 1, "username": "carol", "reviewer_state": "requested_changes"}
+	args := askCarolAgain()
 	lost := gitlabtest.Fault{Method: http.MethodPost, Path: "/graphql", Status: http.StatusBadGateway, Body: `{"message":"502 Bad Gateway"}`}
 
 	h := carolRequestsChanges(t)
@@ -113,13 +114,14 @@ func TestRerequestReviewMapsGraphQLErrors(t *testing.T) {
 		{"not a reviewer after all", `{"data":{"mergeRequestReviewerRereview":{"errors":["Reviewer not found"]}}}`, "invalid"},
 		{"an error this server does not know", `{"errors":[{"message":"Field 'x' doesn't exist"}]}`, "unexpected"},
 	}
+	// Each fault answers one mutation and changes nothing, so one
+	// harness serves every case.
+	h := carolRequestsChanges(t)
 	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			h := carolRequestsChanges(t)
-			h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/graphql", Status: http.StatusOK,
-				Header: http.Header{"Content-Type": {"application/json"}}, Body: c.body})
-			h.fails("rerequest_review", map[string]any{"project": alpha, "iid": 1, "username": "carol",
-				"reviewer_state": "requested_changes"}, c.class)
-		})
+		h.gl.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/graphql", Status: http.StatusOK,
+			Header: http.Header{"Content-Type": {"application/json"}}, Body: c.body})
+		if text, _, isErr := h.call("rerequest_review", askCarolAgain()); !isErr || !strings.HasPrefix(text, "["+c.class+"]") {
+			t.Errorf("%s: rerequest_review = %q, want class [%s]", c.name, text, c.class)
+		}
 	}
 }

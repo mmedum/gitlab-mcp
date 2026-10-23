@@ -16,6 +16,15 @@ import (
 )
 
 // serveAPI authenticates, then routes a request under /api/v4.
+// insufficientScope is GitLab's refusal of a write by a token without
+// the api scope.
+func insufficientScope(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", `Bearer realm="GitLab", error="insufficient_scope", `+
+		`error_description="The request requires higher privileges than provided by the access token.", scope="api"`)
+	writeJSON(w, http.StatusForbidden, map[string]any{"error": "insufficient_scope",
+		"error_description": "The request requires higher privileges than provided by the access token.", "scope": "api"})
+}
+
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, rest string) {
 	tok, status, body := s.authenticate(r)
 	if tok == nil {
@@ -23,10 +32,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, rest string) {
 		return
 	}
 	if r.Method != http.MethodGet && !tok.has("api") {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="GitLab", error="insufficient_scope", `+
-			`error_description="The request requires higher privileges than provided by the access token.", scope="api"`)
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "insufficient_scope",
-			"error_description": "The request requires higher privileges than provided by the access token.", "scope": "api"})
+		insufficientScope(w)
 		return
 	}
 	seg, ok := segments(rest)

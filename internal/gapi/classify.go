@@ -19,6 +19,7 @@ import (
 //	{"message": {"title": ["can't be blank"]}}
 //	{"message": {"error": "This endpoint has been requested too many times."}}
 //	{"error": "404 Not Found"}  // also parameter validation, and OAuth errors
+//	{"errors": [{"message": "Invalid token"}]}  // the GraphQL endpoint
 type envelope struct {
 	// message is the "message" key flattened to text.
 	message string
@@ -30,6 +31,9 @@ type envelope struct {
 	scope string
 	// json is false for a body that did not parse as a JSON object.
 	json bool
+	// graphQL is set when message came from the GraphQL endpoint's
+	// {"errors":[{"message":…}]}.
+	graphQL bool
 }
 
 // maxDetail bounds how much of GitLab's own text a message quotes.
@@ -47,6 +51,16 @@ func parseEnvelope(body []byte) envelope {
 	_ = json.Unmarshal(raw["error"], &env.topError)
 	_ = json.Unmarshal(raw["error_description"], &env.description)
 	_ = json.Unmarshal(raw["scope"], &env.scope)
+	var errs []struct {
+		Message string `json:"message"`
+	}
+	if _, ok := raw["message"]; !ok && json.Unmarshal(raw["errors"], &errs) == nil && len(errs) > 0 {
+		texts := make([]string, len(errs))
+		for i, e := range errs {
+			texts[i] = e.Message
+		}
+		env.message, env.graphQL = strings.Join(texts, "; "), true
+	}
 	return env
 }
 
@@ -312,7 +326,10 @@ func (a answer) clientError() verdict {
 // invalidToken reports a refusal of the token itself, which GitLab marks
 // invalid_token in the body or the challenge.
 func invalidToken(env envelope, h http.Header) bool {
-	if strings.EqualFold(env.topError, "invalid_token") {
+	// The GraphQL endpoint answers a token that resolves to no user with
+	// 401 and this message alone, without WWW-Authenticate
+	// (GraphqlController#authorize_access_api!).
+	if strings.EqualFold(env.topError, "invalid_token") || env.graphQL && env.message == "Invalid token" {
 		return true
 	}
 	return strings.Contains(strings.ToLower(h.Get("WWW-Authenticate")), "invalid_token")

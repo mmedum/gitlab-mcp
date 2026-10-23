@@ -190,6 +190,10 @@ func (s *Service) updateIssue(ctx context.Context, in IssueUpdate, publish bool)
 	body.AssigneeIDs = assigneeSet(before.Assignees, addIDs, in.AddAssignees, in.RemoveAssignees)
 	var notes []string
 	body.StateEvent, notes = stateEvent(in.State, before.State)
+	if publish && !before.Confidential {
+		body.Confidential = nil
+		notes = append(notes, "The issue is already public, so nothing was sent.")
+	}
 
 	if gapi.IsDryRun(ctx) {
 		out := issueWrite("dry_run", t, before)

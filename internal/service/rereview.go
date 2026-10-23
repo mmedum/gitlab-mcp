@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
@@ -31,7 +32,7 @@ type Rereview struct {
 
 // RerequestReview asks a reviewer of a merge request for a new review.
 func (s *Service) RerequestReview(ctx context.Context, in Rereview) (model.RereviewWrite, error) {
-	username := strings.TrimPrefix(strings.TrimSpace(in.Username), "@")
+	username := bareUsername(in.Username)
 	if username == "" {
 		return model.RereviewWrite{}, gapi.Errf(gapi.ClassInvalid, "username is empty: pass the reviewer's username as "+
 			"get_merge_request shows it")
@@ -82,22 +83,22 @@ func (s *Service) settleRereview(ctx context.Context, t target, iid int64, befor
 	username := before.User.Username
 	if before.State == "unreviewed" {
 		return model.RereviewWrite{}, gapi.Wrap(gapi.ClassAmbiguousOutcome, sendErr, "GitLab did not confirm the re-request, "+
-			"and %s was already unreviewed, so a read cannot tell whether it was made; do not send it again unless the person "+
-			"asks", username)
+			"and %s was already unreviewed, so a read cannot tell whether it was made: %s", username, settledUnknown)
 	}
 	after, err := s.reviewer(ctx, t.p, iid, username)
 	switch {
 	case err != nil:
 		return model.RereviewWrite{}, gapi.Wrap(gapi.ClassAmbiguousOutcome, sendErr, "GitLab did not confirm the re-request, "+
-			"and reading the reviewer to settle it failed; read the merge request before deciding to send it again")
+			"and reading the reviewer to settle it failed, so it is unknown: %s", settledUnknown)
 	case after.State == "unreviewed":
 		out := rereviewWrite("rerequested", t, iid, before)
 		out.StateAfter = &after.State
-		out.Notes = []string{"GitLab did not confirm the re-request, but a read shows the reviewer back at unreviewed, so it was made."}
+		out.Notes = []string{"GitLab did not confirm the re-request, but a read shows the reviewer back at unreviewed, so it was " +
+			"made. " + settledLanded}
 		return out, nil
 	}
 	return model.RereviewWrite{}, gapi.Wrap(gapi.ClassAmbiguousOutcome, sendErr, "GitLab did not confirm the re-request, and "+
-		"a read shows %s still at %s, so it was not made; calling again is safe", username, after.State)
+		"a read shows %s still at %s, so it was not made. %s", username, after.State, settledNotLanded)
 }
 
 // rereviewWrite is the result for the reviewer as read before the call.
@@ -108,21 +109,15 @@ func rereviewWrite(outcome string, t target, iid int64, before gitlab.MergeReque
 
 // reviewer finds one reviewer of a merge request by username.
 func (s *Service) reviewer(ctx context.Context, p gapi.Project, iid int64, username string) (gitlab.MergeRequestReviewer, error) {
-	opts := gapi.ListOptions{PerPage: gapi.MaxPerPage}
-	for range maxReviewerPages {
-		rows, page, err := s.client.ListMergeRequestReviewers(ctx, p, iid, opts)
-		if err != nil {
-			return gitlab.MergeRequestReviewer{}, err
-		}
-		for _, r := range rows {
-			if strings.EqualFold(r.User.Username, username) {
-				return r, nil
-			}
-		}
-		if page.NextToken == "" {
-			break
-		}
-		opts.PageToken = page.NextToken
+	named := func(r gitlab.MergeRequestReviewer) bool { return strings.EqualFold(r.User.Username, username) }
+	rows, _, err := readPagesUntil(maxReviewerPages, func(o gapi.ListOptions) ([]gitlab.MergeRequestReviewer, gapi.Page, error) {
+		return s.client.ListMergeRequestReviewers(ctx, p, iid, o)
+	}, func(rows []gitlab.MergeRequestReviewer) bool { return slices.ContainsFunc(rows, named) })
+	if err != nil {
+		return gitlab.MergeRequestReviewer{}, err
+	}
+	if i := slices.IndexFunc(rows, named); i >= 0 {
+		return rows[i], nil
 	}
 	return gitlab.MergeRequestReviewer{}, gapi.Errf(gapi.ClassInvalid, "%s is not a reviewer of !%d; get_merge_request lists "+
 		"its reviewers", username, iid)

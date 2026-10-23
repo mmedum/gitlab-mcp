@@ -43,9 +43,9 @@ const (
 	// approval, a pipeline run. Registered only with
 	// GITLAB_MCP_ENABLE_SHIP=true.
 	Ship
-	// Destructive deletes. Registered only with
-	// GITLAB_MCP_ENABLE_DESTRUCTIVE=true, and refused per call without
-	// confirm: true.
+	// Destructive cannot be undone: a delete, or making a confidential
+	// issue public. Registered only with GITLAB_MCP_ENABLE_DESTRUCTIVE=true,
+	// and refused per call without confirm: true.
 	Destructive
 )
 
@@ -210,6 +210,7 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 	if t.sp.Kind != Read && c.write < 0 {
 		panic("tools: " + t.sp.Name + " writes and its result does not carry model.Write")
 	}
+	meta := mcp.Meta{}
 	if len(t.sp.Guarded) > 0 {
 		if t.sp.Kind == Read {
 			panic("tools: " + t.sp.Name + " is a read and declares guarded inputs")
@@ -217,19 +218,16 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 		if c.escape < 0 {
 			panic("tools: " + t.sp.Name + " guards inputs and has no escape_commands input")
 		}
-		if mt.Meta == nil {
-			mt.Meta = mcp.Meta{}
-		}
-		mt.Meta[quickActionMeta] = slices.Clone(t.sp.Guarded)
+		meta[quickActionMeta] = slices.Clone(t.sp.Guarded)
 	}
 	if t.sp.PromptEveryCall {
 		if t.sp.Kind != Destructive {
 			panic("tools: " + t.sp.Name + " prompts on every call and is not Destructive")
 		}
-		if mt.Meta == nil {
-			mt.Meta = mcp.Meta{}
-		}
-		mt.Meta[promptMeta] = true
+		meta[promptMeta] = true
+	}
+	if len(meta) > 0 {
+		mt.Meta = meta
 	}
 	s.AddTool(mt, c.handle)
 }
@@ -285,7 +283,7 @@ func (c *caller[In, Out]) handle(ctx context.Context, req *mcp.CallToolRequest) 
 		ctx = gapi.WithDryRun(ctx)
 	}
 	if c.t.sp.Kind == Destructive && !dry && !v.Field(c.confirm).Bool() {
-		err := refuse(c.t.sp.Name+" deletes something GitLab cannot restore, so every call has to say so", "confirm: true")
+		err := refuse(c.t.sp.Name+" does what cannot be undone, so every call has to say so", "confirm: true")
 		outcome = classOf(err)
 		return errorResult(err), nil
 	}

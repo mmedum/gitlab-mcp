@@ -787,7 +787,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `staleness` | prose counts held against the lists beside them, spelled-out numbers included; the package map against `go list`; every repository path a document names exists, with a floor; the README tool table and every env var and gate documented, both ways; the status line against the newest tag or CHANGELOG heading; no version in prose; if Go changed since the last tag, a dependency bump aside **(10-11)**, the CHANGELOG has entries; **the OAuth application setup block in `docs/setup.md` generated from `internal/scopes` and `internal/auth` for every mode and compared exactly** |
 | `changelog`, `changelog-links` | a PR adds an entry unless it is a release cut or changes go.mod only in the modules it requires, the MCP SDK excepted **(10-11)**; every version heading has a link reference |
 | `release-notes` | the CHANGELOG section lifted verbatim, refusing an empty one |
-| `api-coverage` | offline against the committed OpenAPI snapshot, three directions (§8a); each row bound to its operation by verb and path from the client's AST; a `used` row names a real client method and no operation is claimed twice; prefix write-offs carry a reason of minimum length and a count of what they cover, and an operation matched by two rules fails; floors on operations, verdicts and client calls |
+| `api-coverage` | offline against the committed OpenAPI snapshot, three directions (§8a); each row bound to its operation by verb and path from the client's AST; a `used` row names a real client method and no operation is claimed twice; prefix write-offs carry a reason of minimum length and a count of what they cover, and an operation matched by two rules fails; floors on operations, verdicts and client calls; **every GraphQL root field a `mutate` call sends listed in §8a's GraphQL table and every row sent, a field that is not a string literal refused, with a floor (2026-10-23)** |
 | `api-diff` (manual) | fetches the OpenAPI file at a named GitLab release tag; one fetch for operations and fields; written through a temp file and rename; a fetch below the operation floor or a network failure leaves the snapshot untouched, **held by a test against a closed port**; the snapshot records source URL, tag, SHA-256 and date |
 | `api-fields` | request **and** response sides: every query parameter and body field the client sends exists on that operation, and every response field a wire struct decodes exists in its schema or carries a verified omission; recursive over inline objects; the Go kind can hold the declared type; floors on published and modeled fields |
 | `schema-diff` | a committed baseline so it works before the first tag; the full surface with every flag and toolset on; the previous tag built in a git worktree that is always removed; tools **and resources**; fails on a removed tool, a lost input or output field, or a new required input, unless a **Breaking:** entry above the tag's own CHANGELOG heading names the tool in backticks and no version heading there keeps the tag's major; the whole `mcp.Tool` dumped, `_meta` and output schema included; a floor on tools |
@@ -1583,7 +1583,8 @@ The groups below are the design's verdicts; the TSV is the record.
 
 GraphQL operations sit outside the snapshot, since GitLab commits no
 GraphQL schema (§18 row 27). Each one used is listed here with why REST
-cannot do it (§4.10):
+cannot do it (§4.10), and `api-coverage` holds this table against the
+root field of every `mutate` call, both ways:
 
 | Operation | Tool | Why not REST |
 |---|---|---|

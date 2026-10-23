@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -95,10 +96,20 @@ func apiCoverage(out io.Writer, _ []string) error {
 	problems = append(problems, callProblems...)
 	report, more := checkCoverage(snap, rows, calls, realCoverageFloors)
 	problems = append(problems, more...)
+	ops, opProblems, err := graphQLOperations(clientDir)
+	if err != nil {
+		return err
+	}
+	doc, err := os.ReadFile(stalenessArch)
+	if err != nil {
+		return err
+	}
+	listed, docProblems := listedGraphQL(string(doc))
+	problems = slices.Concat(problems, opProblems, docProblems, checkGraphQL(ops, listed, graphQLFloor))
 	if err := gatekit.Problems(out, "API coverage", problems); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintln(out, report)
+	_, _ = fmt.Fprintf(out, "%s; %d GraphQL operations, each listed in §8a\n", report, len(ops))
 	return nil
 }
 
