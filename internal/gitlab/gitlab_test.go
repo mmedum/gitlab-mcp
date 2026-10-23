@@ -83,7 +83,7 @@ var byName = map[string]reflect.Type{
 	"BoardUser": reflect.TypeFor[BoardUser](), "BoardTimebox": reflect.TypeFor[BoardTimebox](),
 	"Todo": reflect.TypeFor[Todo](), "TodoProject": reflect.TypeFor[TodoProject](),
 	"TodoTarget": reflect.TypeFor[TodoTarget](), "DraftNote": reflect.TypeFor[DraftNote](),
-	"SearchHit": reflect.TypeFor[SearchHit](), "SearchCommit": reflect.TypeFor[SearchCommit](),
+	"SearchHit": reflect.TypeFor[SearchHit](), "SearchBlob": reflect.TypeFor[SearchBlob](), "SearchCommit": reflect.TypeFor[SearchCommit](),
 	"LineRange": reflect.TypeFor[LineRange](), "LineRangeEnd": reflect.TypeFor[LineRangeEnd](), "ItemSubscription": reflect.TypeFor[ItemSubscription](),
 	"AwardEmoji":           reflect.TypeFor[AwardEmoji](),
 	"MergeRequestReviewer": reflect.TypeFor[MergeRequestReviewer](), "MergeRequestVersion": reflect.TypeFor[MergeRequestVersion](),

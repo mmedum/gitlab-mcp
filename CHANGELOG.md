@@ -15,6 +15,12 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-10-23
+
+### Fixed
+
+- `search` with `scope: blobs` or `wiki_blobs` no longer fails when the term matches a file's name; GitLab sends that row's blob id as a string, which the server tried to read as a number.
+
 ## [4.0.0] - 2026-10-23
 
 ### Added
@@ -210,7 +216,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.1...HEAD
+[4.0.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.4.0...v3.0.0
 [2.4.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.3.0...v2.4.0

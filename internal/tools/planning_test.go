@@ -140,6 +140,11 @@ func TestSearch(t *testing.T) {
 	if !strings.Contains(text, "kind=search_blob item=src/util/strings.go") || !strings.Contains(text, "// Upper is a stub.") {
 		t.Errorf("text:\n%s", text)
 	}
+	// A match by file name carries the blob's SHA as its id, a string.
+	_, byName := h.ok("search", map[string]any{"scope": "blobs", "search": "strings.go", "project": gitlabtest.ProjectAlpha})
+	if column(byName, "rows", "path") != "src/util/strings.go" || get(byName, "rows", 0, "start_line") != float64(1) {
+		t.Errorf("by name = %v", get(byName, "rows"))
+	}
 	_, notes := h.ok("search", map[string]any{"scope": "notes", "search": "looks fine", "project": gitlabtest.ProjectAlpha, "max": 1})
 	if get(notes, "rows", 0, "kind") != "note" || get(notes, "rows", 0, "untrusted_excerpt") != "Looks fine to me." ||
 		get(notes, "listing", "complete") != false {
