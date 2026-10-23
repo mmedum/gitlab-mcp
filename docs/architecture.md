@@ -224,7 +224,8 @@ v5.9.3, RFCs, or a GitLab page; §18 has the row and marks which.
     operations at `19.5.0-pre`. It omits experimental work-item routes
     and most policy routes, includes 11 internal paths, and leaves 526
     operations without a response schema. The v2 file is deprecated.
-    The GraphQL schema is not committed. §8a.
+    The GraphQL schema is not committed, so the GraphQL operations
+    used are listed by hand in §8a.
 
 ### What the API cannot do (so we don't promise it)
 
@@ -396,7 +397,7 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default, so the
-default surface, sixty-five tools, holds the work inside a project's
+default surface, sixty-six tools, holds the work inside a project's
 issues, merge requests, reviews, repository and CI. A read joins the
 default when it answers a question a default tool acts on: `list_boards`
 did, beside `list_labels` and `list_milestones`, since a board's columns
@@ -404,7 +405,7 @@ are read with `search_issues` (maintainer, 2026-09-30). The count is not
 held under a client's grouping point: VS Code groups by the whole
 request's tools, its own built-ins included, and the only hard cap found
 is 128 tools per request (§18 row 123). With Ship and Destructive both
-on, the surface is eighty-one tools; both flags are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
+on, the surface is eighty-two tools; both flags are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
 
@@ -617,13 +618,23 @@ A profile records the instance it signed in to, and its token is sent
 nowhere else: a profile signed in to the test instance never sends its
 token to gitlab.com, and the reverse (§10).
 
-### 4.10 Own wire types, raw REST v4
+### 4.10 Own wire types, REST first
 
 Hand-written structs for the fields used, REST called directly. REST
 because it is the surface GitLab describes machine-readably (§2.19),
 because `read_api` maps onto it exactly (§2.6), and because every
 surveyed read-only bypass came through GraphQL. §8b records every field
 of every schema the tools touch with a verdict.
+
+GraphQL is used only for an operation REST has no route for (maintainer,
+2026-10-23, §14). Each operation is a literal in
+`internal/gapi/graphql.go`, sent through the same client path as REST:
+the token and its refresh, the rate model, no redirect followed, a write
+never repeated, and the dry-run context that refuses a write. There is
+no raw GraphQL tool and no GraphQL client library, so the bypass that
+made the design REST-only cannot arise, and no GraphQL operation is a
+read, so read-only mode, whose `read_api` token cannot mutate, registers
+none. §8a lists each operation and why REST cannot do it.
 
 ### 4.11 Results say what changed
 
@@ -1422,9 +1433,9 @@ the path, the name or the bytes (§9.2).
 
 ## 8. Tool surface
 
-104 tools. With the default toolsets: sixty-five by default,
-thirty-nine in read-only mode, eighty-one with Ship and Destructive
-both enabled. Every toolset and flag on registers all 104.
+105 tools. With the default toolsets: sixty-six by default,
+thirty-nine in read-only mode, eighty-two with Ship and Destructive
+both enabled. Every toolset and flag on registers all 105.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people:
 every write but `add_todo`, `subscribe`, `mark_todos_done` and
@@ -1471,6 +1482,7 @@ the client's own rules decide each call (§4.12).
 | `update_review_comment` | Write | default | `GET`/`PUT …/draft_notes/:id` (own draft) |
 | `publish_review_comment` | Write | default | `GET …/draft_notes/:id`, `PUT …/draft_notes/:id/publish` (own draft), `GET …/discussions` |
 | `submit_review` | Write | default | `POST …/draft_notes/bulk_publish` |
+| `rerequest_review` | Write | default | `GET …/reviewers`; GraphQL `mergeRequestReviewerRereview` (§4.10) |
 | `get_file` | Read | default | `GET …/repository/files/:path` |
 | `list_tree` | Read | default | `GET …/repository/tree` |
 | `list_branches` | Read | default | `GET …/repository/branches` |
@@ -1568,6 +1580,14 @@ The committed snapshot is v19.4.1-ee, 1,856 operations; the TSV holds
 368 exact rows and 219 prefix rules (2026-10-22), and the gate reports
 the counts.
 The groups below are the design's verdicts; the TSV is the record.
+
+GraphQL operations sit outside the snapshot, since GitLab commits no
+GraphQL schema (§18 row 27). Each one used is listed here with why REST
+cannot do it (§4.10):
+
+| Operation | Tool | Why not REST |
+|---|---|---|
+| `mergeRequestReviewerRereview` (mutation) | `rerequest_review` | No REST route re-requests a review: GitLab master `4119fde2` (2026-10-23) has none in `lib/api` or `ee/lib/api`, and the published merge request API documents only `GET …/reviewers` (§18 row 128) |
 
 | Group (path prefix) | Verdict |
 |---|---|
@@ -1873,7 +1893,8 @@ gated. It covers gitlab.com, the only instance.
 | Merging, approving and CI runs behind a Ship flag | this design | §4.3 |
 | Quick actions refused by default, never executed | this design | §4.2 |
 | Commits never to a protected branch | this design | §4.4 |
-| REST v4 only, no escape hatch | this design | §4.10, §8a |
+| REST v4 only, no escape hatch | this design; **narrowed 2026-10-23** | §4.10, §8a; GraphQL now for an operation REST lacks, as a literal behind one tool, never a raw GraphQL tool |
+| GraphQL for an operation REST has no route for: one literal per operation in `internal/gapi`, through the REST client's path, listed in §8a; no GraphQL client library and no raw GraphQL tool. First: `rerequest_review` | maintainer, 2026-10-23 | §4.10, §8a, §18 row 128 |
 | Unregistered, not registered-and-refusing, for gated tools | this design | §17b |
 | Release pipeline in phase 0 | this design | §12 |
 | The person asked before applying review suggestions | maintainer, 2026-10-01; **superseded 2026-10-22** | §4.12: the committed text is someone else's, under the person's name; from 3.0.0 the call carries the text, held as a witness |
@@ -2676,8 +2697,9 @@ fixed in its "Tighten … after review" commit:
     standing.**
 11. **Premium and Ultimate after 1.0.** Epics and iterations are
     work items, GraphQL-first, with the REST epics API deprecated for
-    v5. A post-1.0 `planning` toolset would be the first GraphQL use
-    and would need its own coverage source. **Deferred to after 1.0.**
+    v5. A post-1.0 `planning` toolset would need GraphQL reads and its
+    own coverage source; the first GraphQL use, one mutation, came with
+    `rerequest_review` (§4.10). **Deferred to after 1.0.**
 
 12. **Pipelines a Write starts.** A commit, a new branch or a new merge
     request on an unprotected branch starts the pipelines a push
@@ -2923,3 +2945,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 125 | Row 124's reading of practice: no widely used server confirms every write itself, and those that confirm anything do it for a few irreversible operations, each with an off switch | Read 2026-10-23, every quote re-read at its source. 110 servers: the top 100 by public usage signals (Claude's connector directory, npm, PyPI, Docker Hub, PulseMCP) and ten first-party servers built into a product, GitLab's among them. awslabs/mcp `b054d19` (the Redshift server asks before every statement it cannot recognize as a read, in read-write mode; `UNSAFE_SKIP_WRITE_CONFIRMATION`); github/github-mcp-server `f385262` (`delete_repository` needs form elicitation; no switch skips it); microsoft/mcp `130fc0f` (about 145 commands marked Destructive or Secret ask); GitLab MR !252995 ("Ask is advisory. Only Claude Code 2.1.199 and later honour the annotation … Deny is unaffected everywhere because the server refuses the call"); JetBrains commit `8edf5127f5` ("the same client inside the VS Code extension does not" render an elicitation); microsoft/powerbi-modeling-mcp 0.5.0-beta.11 (its question made opt-in) | **Refined (tier 2: documents and source, not probed live).** The first half holds: 83 of the 91 servers with risky writes never ask the person. The second does not. The 8 that ask pick their own scope, from one tool (GitHub) to every destructive or secret command (Azure) to every write in a write mode (AWS Redshift); GitHub, AWS's SAP server and Dynatrace have no off switch; only Supabase calls its question a guardrail. Row 124's verdict stands on the specification and the clients, and GitLab's own server draws the same line: Deny refused on the server, Ask passed to the client |
 | 126 | Deleting a label or a milestone loses more than the one item, and cannot be undone | GitLab master `b7d1bbc4` (2026-10-22): `app/services/milestones/destroy_service.rb` runs `Issues::UpdateService` with `milestone_id: nil` on every issue of the milestone, does the same for its merge requests, then destroys it; `doc/user/project/labels.md` L239–240: "If you delete a label, it is permanently deleted. All references to the label are removed from the system and you cannot undo the deletion." code.claude.com/docs/en/mcp: the mark is for "tools whose permission prompt is itself the point" | **Confirmed (tier 1).** Both take what they delete off every issue and merge request, with nothing to restore from, so both carry `requiresUserInteraction` (§4.12, §14). The other deletes remove one item: a branch or tag (a ref), a comment, a wiki page (kept in the wiki's history) or a snippet |
 | 127 | Widening access may be an argument of an ordinary write, as `update_issue`'s `confidential: false` was | Read 2026-10-23. GitLab master `b7d1bbc4`: its own MCP server's `update_work_item` takes `confidential` as a plain argument, ungated (`app/services/mcp/tools/work_items/update_work_item_tool.rb`). github/github-mcp-server `f385262`: `create_repository` takes `private` and asks nothing; repositories default to private. Notion, Slack, Canva, Figma, Asana and Airtable's servers offer no sharing tool; Box's sharing tools are off until an admin enables them. OpenAI's server guidance: "Split operations when they have different permissions, safety risks, or confirmation requirements". Clients remember approval per tool, never per argument value (claude.ai, Codex, VS Code, Copilot; Claude Code matches an MCP argument only in a command-line deny rule) | **Refuted for this server (tier 2: documents and source, not probed live).** Dev platforms carry it as an argument, but a client's standing approval of the tool then carries the widening unseen. The servers that keep it out of an ordinary tool either leave it out or give it its own tool behind an admin's switch. Here it is `make_issue_public`, Destructive, and `update_issue` refuses it (§4.3, §14) |
+| 128 | Re-requesting a review needs GraphQL, and does what removing and adding a reviewer does not | Read 2026-10-23. GitLab master `4119fde2`: `lib/api` and `ee/lib/api` have no re-request route; `app/graphql/mutations/merge_requests/reviewer_rereview.rb` (`projectPath`, `iid`, `userId`; fields `errors`, `mergeRequest`) runs `MergeRequests::RequestReviewService`, which sets the reviewer to `unreviewed`, removes their approval, notifies them and adds a to-do and a system note. `doc/api/graphql/reference/mutations.md`: the mutation is GA, only its `duoCodeReviewDepth` argument an experiment. `doc/api/graphql/_index.md`: endpoint `/api/graphql`, mutations need the `api` scope, a refused mutation answers 200 with a top-level error. A reviewer's requested changes (EE `merge_request_requested_changes`) are cleared only by that reviewer approving or publishing a `reviewed` review (`ee/lib/ee/api/draft_notes.rb`), by a push under a project setting (`ee/app/services/ee/merge_requests/refresh_service.rb`), or by their own removal; nothing clears them when a reviewer is removed and added again. docs.gitlab.com/api/merge_requests: only `GET …/reviewers` | **Confirmed (tier 1; the mutation not yet probed live).** `rerequest_review` sends the mutation after reading the reviewers over REST, with the reviewer's state as its witness, and refuses a reviewer who approved, since GitLab would remove that approval (§4.10, §8a, §14) |

@@ -1455,6 +1455,16 @@ type ReactionWrite struct {
 	Reacted *bool  `json:"reacted" jsonschema:"Whether your reaction with this emoji is there after the call; in a dry run, as read now. Null when unknown: past 1,000 reactions, a read cannot find yours"`
 }
 
+// RereviewWrite is rerequest_review's result.
+type RereviewWrite struct {
+	Outcome string `json:"outcome" jsonschema:"rerequested or dry_run"`
+	Write
+	IID         int64   `json:"iid" jsonschema:"The merge request's number in its project"`
+	Reviewer    User    `json:"reviewer"`
+	StateBefore string  `json:"state_before" jsonschema:"The reviewer's review state as read before the call"`
+	StateAfter  *string `json:"state_after" jsonschema:"The reviewer's review state read back after the call, unreviewed once it is made; null in a dry run or when the read back failed"`
+}
+
 // TodoWrite is add_todo's result.
 type TodoWrite struct {
 	Outcome string `json:"outcome" jsonschema:"created, unchanged (a pending to-do you added is already there) or dry_run"`

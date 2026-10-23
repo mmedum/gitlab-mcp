@@ -17,6 +17,7 @@ lifted verbatim.
 
 ### Added
 
+- `rerequest_review` asks a reviewer of a merge request for a new review, as after addressing the changes they requested: GitLab sets their review state back to unreviewed and notifies them. It takes the review state you read as a witness and refuses a reviewer who approved, since GitLab would remove that approval. GitLab has no REST route for it, so this is the server's first GraphQL call, a single fixed mutation.
 - `make_issue_public` makes a confidential issue public. It registers only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, needs `confirm: true` and the `updated_at` you read, and Claude Code asks on every call.
 
 ### Changed

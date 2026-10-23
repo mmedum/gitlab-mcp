@@ -313,6 +313,31 @@ func submitReview() definition {
 	}
 }
 
+type rerequestReviewIn struct {
+	Project       idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
+	IID           int64    `json:"iid" jsonschema:"The merge request's number in its project: the number shown as #12 for issues and !12 for merge requests; not the global id"`
+	Username      string   `json:"username" jsonschema:"The reviewer's username, as get_merge_request lists the reviewers"`
+	ReviewerState string   `json:"reviewer_state" jsonschema:"The reviewer's review state as get_merge_request showed it, such as requested_changes. The call is refused [stale] if it changed since. A [stale] refusal is NOT a retry signal: read the merge request again before deciding"`
+	DryRun        bool     `json:"dry_run,omitempty" jsonschema:"Check the reviewer and return what would be sent without sending it"`
+}
+
+func rerequestReview() definition {
+	return tool[rerequestReviewIn, model.RereviewWrite]{
+		sp: spec{Name: "rerequest_review", Kind: Write,
+			Description: "Ask a reviewer of a merge request for a new review, as after addressing the changes they requested. " +
+				"GitLab sets their review state back to unreviewed, notifies them, and adds a to-do and a system note. " +
+				"Changes they requested that block the merge stay until they review again; removing and adding them as a " +
+				"reviewer does not clear those either. reviewer_state from your latest read is required. A " +
+				"reviewer who approved is refused [blocked], since GitLab would remove their approval. Each call notifies " +
+				"the reviewer, so it is never sent twice." + visibleNote},
+		run: func(ctx context.Context, svc *service.Service, in rerequestReviewIn) (model.RereviewWrite, error) {
+			return svc.RerequestReview(ctx, service.Rereview{Project: string(in.Project), IID: in.IID, Username: in.Username,
+				ReviewerState: in.ReviewerState})
+		},
+		text: render.RereviewWrite,
+	}
+}
+
 // ------------------------------------------------------ merge requests
 
 type createMergeRequestIn struct {

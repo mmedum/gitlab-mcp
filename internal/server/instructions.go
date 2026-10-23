@@ -56,6 +56,8 @@ var toolPhrases = []phrase{
 	{lead: "Review in drafts with ", tools: []string{"add_review_comment", "update_review_comment", "delete_review_comment",
 		"publish_review_comment", "submit_review"},
 		tail: ": drafts are yours alone until publish_review_comment publishes one or submit_review all together."},
+	{lead: "Ask a reviewer for a new review with ", tools: []string{"rerequest_review"},
+		tail: ", once the changes they requested are addressed; it needs their review state from get_merge_request."},
 	{lead: "Change code on a branch with ", tools: []string{"create_branch", "create_commit", "cherry_pick_commit", "revert_commit",
 		"apply_suggestions"},
 		tail: ", never on the default or a protected branch; a merge request carries it there."},
@@ -71,6 +73,8 @@ var toolPhrases = []phrase{
 	{lead: "Delete with ", tools: []string{"delete_branch", "delete_comment", "delete_wiki_page", "delete_label", "delete_milestone",
 		"delete_tag", "delete_snippet"},
 		tail: ": each needs confirm: true and the witness from your read, and nothing deleted comes back."},
+	{lead: "", tools: []string{"make_issue_public"}, tail: " makes a confidential issue public, which update_issue never does; " +
+		"it needs confirm: true, and what anyone read cannot be taken back."},
 	{lead: "Wiki: ", tools: []string{"list_wiki_pages", "get_wiki_page", "save_wiki_page"},
 		tail: "; a change needs the content_sha256 of your read."},
 	{lead: "Snippets: ", tools: []string{"list_snippets", "get_snippet", "create_snippet", "update_snippet"},

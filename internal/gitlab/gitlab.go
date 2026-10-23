@@ -1240,3 +1240,22 @@ type WeightEvent struct {
 	CreatedAt time.Time  `json:"created_at"`
 	Weight    *int       `json:"weight"`
 }
+
+// ------------------------------------------------------------- graphql
+
+// GraphQLError is one entry of a GraphQL answer's top-level errors:
+// GitLab sends these, with status 200, for a mutation it refused before
+// running it, such as one on a resource the token may not change.
+type GraphQLError struct {
+	Message    string         `json:"message"`
+	Locations  []any          `json:"locations"`
+	Path       []any          `json:"path"`
+	Extensions map[string]any `json:"extensions"`
+}
+
+// ReviewerRereview is the payload of the GraphQL mutation
+// mergeRequestReviewerRereview. Errors are the mutation's own, such as
+// "Reviewer not found".
+type ReviewerRereview struct {
+	Errors []string `json:"errors"`
+}

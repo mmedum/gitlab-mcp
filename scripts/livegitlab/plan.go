@@ -510,6 +510,17 @@ func phase2(s scratch) []step {
 			"total_time_spent": "{{issue_spent3}}", "reset_spent": true}, save: map[string]string{"issue_tt4": "updated_at"}},
 		{tool: "track_time", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "updated_at": "{{issue_tt4}}",
 			"reset_estimate": true}},
+		// The run's account, the merge request's only reviewer, is asked
+		// for a new review, through GraphQL. Before the time-tracking
+		// witness is read, since a re-request may move updated_at.
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}"},
+			save: map[string]string{"mr_review": "reviewer_states.reviewers.0.state"}},
+		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User, "reviewer_state": "approved"},
+			expectError: true, why: "a review state no read showed"},
+		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User,
+			"reviewer_state": "{{mr_review}}", "dry_run": true}},
+		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User,
+			"reviewer_state": "{{mr_review}}"}},
 		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}"},
 			save: map[string]string{"mr_tt": "updated_at", "mr_spent": "time_stats.total_time_spent"}},
 		{tool: "track_time", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mr}}", "updated_at": "{{mr_tt}}",
@@ -1059,6 +1070,17 @@ type rule func(st step, s scratch) error
 var rules = map[string]rule{
 	"get_me":      anything,
 	"resolve_url": anything, // its url is checked with every step
+	// A re-request notifies the reviewer, so only the run's own account
+	// is asked.
+	"rerequest_review": func(st step, s scratch) error {
+		if err := inProject(st, s); err != nil {
+			return err
+		}
+		if st.args["username"] != s.User {
+			return fmt.Errorf("%s: only the run's own account is asked for a review", st.tool)
+		}
+		return nil
+	},
 	"find_users": func(st step, s scratch) error {
 		if st.args["username"] != nil && st.args["username"] != s.User || st.args["search"] != nil && st.args["search"] != s.Name {
 			return fmt.Errorf("%s: users are found by the run's own username or the run's word only", st.tool)

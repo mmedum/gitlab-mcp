@@ -50,6 +50,7 @@ var realCoverageFloors = coverageFloors{rows: 300, calls: 40, used: 40}
 // client no longer makes fails, like any stale row.
 var offSnapshotCalls = map[string]string{
 	"GET oauth/token/info": "Doorkeeper's token introspection, served under the web root; the REST OpenAPI file does not describe OAuth",
+	"POST api/graphql":     "the GraphQL endpoint, for an operation REST has no route for; GitLab commits no GraphQL schema, so docs/architecture.md §8a lists each operation by hand",
 }
 
 var verdicts = []string{"used", "gated", "deferred", "written-off"}

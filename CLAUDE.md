@@ -110,9 +110,12 @@ or missed. Siblings are never named in this repository (rule 1).
     moment it rotates. Refresh happens under a cross-process lock, and
     an `invalid_grant` re-reads the keyring before it asks anyone to log
     in again. §10.
-13. **Own wire types, raw REST v4.** Do not import a GitLab client
-    library or GraphQL client; hand-write the fields used in
-    `internal/gitlab`. No code is imported from any other project; the
+13. **Own wire types; REST v4, and GraphQL only where REST has no
+    route.** Do not import a GitLab client library or GraphQL client;
+    hand-write the fields used in `internal/gitlab`, and each GraphQL
+    operation as a literal in `internal/gapi`, sent through the same
+    client path as REST and listed in `docs/architecture.md` §8a. No raw
+    GraphQL tool. No code is imported from any other project; the
     siblings are copied from, never depended on.
 14. **Every tool goes through one `register`.** It decides the
     annotations, the kind and toolset gating, the dry-run context and
@@ -163,8 +166,9 @@ than the gate loosened.
   the refresh lock; `internal/scopes/` the scope per mode and what each
   tool needs; `internal/instance/` the base URL (gitlab.com, or the
   loopback test override) and parsing the version and edition.
-- `internal/gitlab/` wire types; `internal/gapi/` the raw REST client,
-  with `gitlabtest/` the in-memory instance used by tests.
+- `internal/gitlab/` wire types; `internal/gapi/` the client, REST and
+  the few GraphQL operations REST lacks, with `gitlabtest/` the
+  in-memory instance used by tests.
 - `internal/quickaction/` detecting and escaping quick-action lines, no
   network; `internal/model/` the server's view of an
   issue, merge request, discussion and pipeline; `internal/render/` text

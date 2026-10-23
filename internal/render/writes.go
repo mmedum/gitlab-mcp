@@ -362,6 +362,19 @@ func SubscriptionWrite(w model.SubscriptionWrite, _ Boundary) string {
 	return b.String()
 }
 
+// RereviewWrite is rerequest_review's text.
+func RereviewWrite(w model.RereviewWrite, _ Boundary) string {
+	var b strings.Builder
+	who := "@" + Ident(w.Reviewer.Username)
+	writeHead(&b, fmt.Sprintf("Asked %s for a new review of !%d.", who, w.IID), w.Write)
+	fmt.Fprintf(&b, "\n%s's review state was %s", who, Ident(w.StateBefore))
+	if w.StateAfter != nil {
+		fmt.Fprintf(&b, " and is %s now", Ident(*w.StateAfter))
+	}
+	b.WriteString(".")
+	return b.String()
+}
+
 // ReactionWrite renders react.
 func ReactionWrite(w model.ReactionWrite, _ Boundary) string {
 	var b strings.Builder
