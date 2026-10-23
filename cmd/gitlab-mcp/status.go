@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/app"
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/redact"
-	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v3/internal/version"
+	"github.com/mmedum/gitlab-mcp/v4/internal/app"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v4/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v4/internal/version"
 )
 
 // statusSchemaVersion changes only when a field of `status --json` is

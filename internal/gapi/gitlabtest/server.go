@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
 // Options shape the instance. Zero values take the defaults.
@@ -193,7 +193,8 @@ func (s *Server) Revoke(token string) {
 
 // Fault is an injected answer. It replaces the next Times requests whose
 // method (empty for any) and escaped path under /api/v4 (prefix match,
-// "/projects" matches "/projects/2001/issues") match.
+// "/projects" matches "/projects/2001/issues") match; "/graphql" is the
+// GraphQL endpoint.
 type Fault struct {
 	Method string
 	Path   string
@@ -343,27 +344,36 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serveOAuth(w, r)
 	case strings.HasPrefix(path, "/api/v4/"):
 		rest := strings.TrimPrefix(path, "/api/v4")
-		if f := s.takeFault(r.Method, rest, r.URL.RawQuery); f != nil {
-			if f.Before != nil {
-				f.Before()
-			}
-			if f.Pass {
-				time.Sleep(f.Delay)
-				s.serveAPI(w, r, rest)
-				return
-			}
-			if f.AfterApply {
-				s.serveAPI(httptest.NewRecorder(), r, rest)
-			}
-			writeFault(w, f)
-			return
-		}
-		s.serveAPI(w, r, rest)
+		s.faulted(w, r, rest, func(w http.ResponseWriter, r *http.Request) { s.serveAPI(w, r, rest) })
+	case path == "/api/graphql":
+		s.faulted(w, r, "/graphql", s.serveGraphQL)
 	default:
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("<html><body>Page Not Found</body></html>"))
 	}
+}
+
+// faulted serves r through the first fault matching key, or with serve
+// when none does.
+func (s *Server) faulted(w http.ResponseWriter, r *http.Request, key string, serve func(http.ResponseWriter, *http.Request)) {
+	f := s.takeFault(r.Method, key, r.URL.RawQuery)
+	if f == nil {
+		serve(w, r)
+		return
+	}
+	if f.Before != nil {
+		f.Before()
+	}
+	if f.Pass {
+		time.Sleep(f.Delay)
+		serve(w, r)
+		return
+	}
+	if f.AfterApply {
+		serve(httptest.NewRecorder(), r)
+	}
+	writeFault(w, f)
 }
 
 // segments splits an escaped path and unescapes each segment, so a

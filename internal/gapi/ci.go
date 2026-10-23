@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
 // The CI reads: pipelines, jobs, a job's log, test reports and the CI

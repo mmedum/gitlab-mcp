@@ -3,9 +3,9 @@ package tools
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
-	"github.com/mmedum/gitlab-mcp/v3/internal/render"
-	"github.com/mmedum/gitlab-mcp/v3/internal/service"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/render"
+	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
 // The phase 6 tools, with the kinds and toolsets §17.13 decided.
@@ -180,7 +180,7 @@ type deleteLabelIn struct {
 
 func deleteLabel() definition {
 	return tool[deleteLabelIn, model.LabelWrite]{
-		sp: spec{Name: "delete_label", Kind: Destructive, Toolset: "planning", Idempotent: true,
+		sp: spec{Name: "delete_label", Kind: Destructive, Toolset: "planning", Idempotent: true, PromptEveryCall: true,
 			Description: "Delete a project label, which takes it off every issue and merge request. A group's label is refused " +
 				"[blocked]. version from list_labels is required." + destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteLabelIn) (model.LabelWrite, error) {
@@ -251,7 +251,7 @@ type deleteMilestoneIn struct {
 
 func deleteMilestone() definition {
 	return tool[deleteMilestoneIn, model.MilestoneWrite]{
-		sp: spec{Name: "delete_milestone", Kind: Destructive, Toolset: "planning", Idempotent: true,
+		sp: spec{Name: "delete_milestone", Kind: Destructive, Toolset: "planning", Idempotent: true, PromptEveryCall: true,
 			Description: "Delete a project milestone, which takes it off every issue and merge request. updated_at from " +
 				"list_milestones is required." + destructiveNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in deleteMilestoneIn) (model.MilestoneWrite, error) {

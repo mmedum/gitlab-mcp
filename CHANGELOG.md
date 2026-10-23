@@ -15,6 +15,17 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `rerequest_review` asks a reviewer of a merge request for a new review, as after addressing the changes they requested: GitLab sets their review state back to unreviewed and notifies them. It takes the review state you read as a witness, refuses a reviewer who approved, since GitLab would remove that approval, and refuses one who has not reviewed since being asked. GitLab has no REST route for it, so this is the server's first GraphQL call, a single fixed mutation.
+- `make_issue_public` makes a confidential issue public. It registers only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, needs `confirm: true` and the `updated_at` you read, and Claude Code asks on every call.
+
+### Changed
+
+- **Breaking:** the Go module path is now `github.com/mmedum/gitlab-mcp/v4`, as Go requires for a new major version; install with `go install github.com/mmedum/gitlab-mcp/v4/cmd/gitlab-mcp@latest`.
+- **Breaking:** `update_issue` no longer makes a confidential issue public, whatever the flags; `confidential: false` on one is refused `[blocked]`. Use `make_issue_public`, which needs `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` where this needed `GITLAB_MCP_ENABLE_SHIP=true`. Your client's approval of `update_issue` no longer covers publishing an issue.
+- **Breaking:** `delete_label` and `delete_milestone` carry Claude Code's `requiresUserInteraction` mark, since each takes what it deletes off every issue and merge request for good. Claude Code now asks on every such call whatever your allow rules say, and refuses it in a run that cannot ask (`-p`, dontAsk). Other clients are unchanged.
+
 ## [3.0.0] - 2026-10-22
 
 ### Added

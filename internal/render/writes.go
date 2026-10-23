@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
 // The readable half of the writes. Every one opens with what happened
@@ -359,6 +359,19 @@ func SubscriptionWrite(w model.SubscriptionWrite, _ Boundary) string {
 		state = "subscribed"
 	}
 	fmt.Fprintf(&b, "\nYou are %s to %s.", state, item)
+	return b.String()
+}
+
+// RereviewWrite is rerequest_review's text.
+func RereviewWrite(w model.RereviewWrite, _ Boundary) string {
+	var b strings.Builder
+	who := "@" + Ident(w.Reviewer.Username)
+	writeHead(&b, fmt.Sprintf("Asked %s for a new review of !%d.", who, w.IID), w.Write)
+	fmt.Fprintf(&b, "\n%s's review state was %s", who, Ident(w.StateBefore))
+	if w.StateAfter != nil {
+		fmt.Fprintf(&b, " and is %s now", Ident(*w.StateAfter))
+	}
+	b.WriteString(".")
 	return b.String()
 }
 

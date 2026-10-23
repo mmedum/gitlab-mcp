@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
 // The readable half of the CI reads.

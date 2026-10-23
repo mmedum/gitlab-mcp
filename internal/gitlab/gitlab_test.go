@@ -88,6 +88,7 @@ var byName = map[string]reflect.Type{
 	"AwardEmoji":           reflect.TypeFor[AwardEmoji](),
 	"MergeRequestReviewer": reflect.TypeFor[MergeRequestReviewer](), "MergeRequestVersion": reflect.TypeFor[MergeRequestVersion](),
 	"ProjectUpload": reflect.TypeFor[ProjectUpload](),
+	"GraphQLError":  reflect.TypeFor[GraphQLError](), "ReviewerRereview": reflect.TypeFor[ReviewerRereview](),
 }
 
 // A field that is never declared is never decoded, so a token GitLab

@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/app"
-	"github.com/mmedum/gitlab-mcp/v3/internal/auth"
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/credentials"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
-	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v3/internal/version"
+	"github.com/mmedum/gitlab-mcp/v4/internal/app"
+	"github.com/mmedum/gitlab-mcp/v4/internal/auth"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/credentials"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v4/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v4/internal/version"
 )
 
 // keyringBackend is the credential store's keyring. A var so the tests

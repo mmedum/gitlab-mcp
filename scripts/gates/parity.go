@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
 // The parity gate holds `make check` and CI to the same set, and every

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
 // depsStaleAfter is how far behind a direct dependency may fall before

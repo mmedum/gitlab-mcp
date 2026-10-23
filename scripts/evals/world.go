@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/instance"
 )
 
 // A world is one task's instance: gitlabtest as generated, plus the

@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
 // The bundle gate. Its checks are referential — does every name in the

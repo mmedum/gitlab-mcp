@@ -124,7 +124,8 @@ const (
 	// RootAPI is <instance>/api/v4/.
 	RootAPI Root = iota
 	// RootWeb is the instance's web base, for the OAuth endpoints
-	// Doorkeeper serves outside the API, such as /oauth/token/info.
+	// Doorkeeper serves outside the API, such as /oauth/token/info, and
+	// for the GraphQL endpoint, api/graphql, which only mutate calls.
 	RootWeb
 )
 

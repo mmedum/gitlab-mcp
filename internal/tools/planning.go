@@ -3,10 +3,10 @@ package tools
 import (
 	"context"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
-	"github.com/mmedum/gitlab-mcp/v3/internal/render"
-	"github.com/mmedum/gitlab-mcp/v3/internal/service"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/render"
+	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
 // The phase-1 reads for planning and navigation (§6.3, §7.1, §7.7).

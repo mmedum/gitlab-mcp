@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi/gitlabtest"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
 )
 
 // The reads against the in-memory instance. Expected values are the
@@ -27,7 +27,7 @@ func TestGetMe(t *testing.T) {
 		"instance.edition":          "Community",
 		"instance.known":            true,
 		"token.kind":                "oauth",
-		"registered.tools":          float64(65),
+		"registered.tools":          float64(66),
 		"registered.read_only":      false,
 		"write_namespaces.confined": false,
 	} {
@@ -781,11 +781,11 @@ func TestSurfaceCounts(t *testing.T) {
 		cfg  config.Config
 		want int
 	}{
-		{"default", config.Config{}, 65},
+		{"default", config.Config{}, 66},
 		{"read-only", config.Config{ReadOnly: true}, 39},
-		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 80},
+		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 82},
 		{"every toolset, read-only", config.Config{ReadOnly: true, Toolsets: config.Toolsets}, 48},
-		{"full", FullSurface(config.Config{}), 103},
+		{"full", FullSurface(config.Config{}), 105},
 	}
 	for _, c := range cases {
 		if got := len(Surface(c.cfg, nil)); got != c.want {

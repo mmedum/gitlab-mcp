@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
 // The phase 6 routes: issue moves and links, label and milestone writes,

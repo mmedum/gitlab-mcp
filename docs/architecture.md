@@ -224,7 +224,8 @@ v5.9.3, RFCs, or a GitLab page; §18 has the row and marks which.
     operations at `19.5.0-pre`. It omits experimental work-item routes
     and most policy routes, includes 11 internal paths, and leaves 526
     operations without a response schema. The v2 file is deprecated.
-    The GraphQL schema is not committed. §8a.
+    The GraphQL schema is not committed, so the GraphQL operations
+    used are listed by hand in §8a.
 
 ### What the API cannot do (so we don't promise it)
 
@@ -379,10 +380,14 @@ counts. §2.6 rules out the scope as the control, and the standard's §3
 already says an annotation is not a control and a registered tool can
 run unattended. A submitted review that would approve (`reviewer_state:
 approved`) is Ship-dependent: without the flag the call is `[blocked]`
-naming it. So is `update_issue` making a confidential issue public
-(`confidential: false`), which shows it to everyone who can see the
-project's issues, the widening `move_issue` refuses; an injected "it was
-confidential by mistake" asks for exactly that (1.0 security review).
+naming it. Making a confidential issue public shows it to everyone who
+can see the project's issues, the widening `move_issue` refuses, and an
+injected "it was confidential by mistake" asks for exactly that (1.0
+security review). From 2026-10-23 it is its own Destructive tool,
+`make_issue_public`, and `update_issue` refuses `confidential: false` on
+a confidential issue whatever the flags: a client's approval of
+`update_issue` would otherwise carry it unseen (standard §3, writes by
+class; §18 row 127).
 
 The standard's rule that destructive tools are unregistered is held.
 One sibling registers deletions and refuses per call, arguing that a
@@ -392,7 +397,7 @@ without registering the tool (§17b).
 
 Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
 `deployments`, `activity` and `planning` are off by default, so the
-default surface, sixty-five tools, holds the work inside a project's
+default surface, sixty-six tools, holds the work inside a project's
 issues, merge requests, reviews, repository and CI. A read joins the
 default when it answers a question a default tool acts on: `list_boards`
 did, beside `list_labels` and `list_milestones`, since a board's columns
@@ -400,7 +405,7 @@ are read with `search_issues` (maintainer, 2026-09-30). The count is not
 held under a client's grouping point: VS Code groups by the whole
 request's tools, its own built-ins included, and the only hard cap found
 is 128 tools per request (§18 row 123). With Ship and Destructive both
-on, the surface is eighty tools; both flags are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
+on, the surface is eighty-two tools; both flags are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
 
 ### 4.4 Code reaches a protected branch only through a merge request
 
@@ -613,13 +618,23 @@ A profile records the instance it signed in to, and its token is sent
 nowhere else: a profile signed in to the test instance never sends its
 token to gitlab.com, and the reverse (§10).
 
-### 4.10 Own wire types, raw REST v4
+### 4.10 Own wire types, REST first
 
 Hand-written structs for the fields used, REST called directly. REST
 because it is the surface GitLab describes machine-readably (§2.19),
 because `read_api` maps onto it exactly (§2.6), and because every
 surveyed read-only bypass came through GraphQL. §8b records every field
 of every schema the tools touch with a verdict.
+
+GraphQL is used only for an operation REST has no route for (maintainer,
+2026-10-23, §14). Each operation is a literal in
+`internal/gapi/graphql.go`, sent through the same client path as REST:
+the token and its refresh, the rate model, no redirect followed, a write
+never repeated, and the dry-run context that refuses a write. There is
+no raw GraphQL tool and no GraphQL client library, so the bypass that
+made the design REST-only cannot arise, and no GraphQL operation is a
+read, so read-only mode, whose `read_api` token cannot mutate, registers
+none. §8a lists each operation and why REST cannot do it.
 
 ### 4.11 Results say what changed
 
@@ -634,19 +649,25 @@ rather than reporting success.
 From 3.0.0 the server asks the person nothing. From 2.0.0 to 2.4.0 it
 put a form with no fields to the person, through MCP form elicitation,
 before seventeen writes. The maintainer removed it on 2026-10-22
-(issue #63, §14), on the evidence of §18 row 124:
+(issue #63, §14), on the evidence of §18 rows 124 and 125:
 
-- The specification gives the human in the loop to the client, which
-  "SHOULD prompt for user confirmation on sensitive operations" and
-  show a call's inputs before it is made.
-- No widely used server confirms every write itself. The few that
-  confirm anything do it for a handful of irreversible operations, each
-  with an off switch, and call it a guardrail rather than a guarantee.
+- The specification puts consent to each tool call on the host, whose
+  client "SHOULD prompt for user confirmation on sensitive operations"
+  and show a call's inputs before it is made. It lets a server ask
+  through elicitation but never makes the answer consent: the client
+  gathers it "from the user or other sources".
+- Most widely used servers confirm nothing themselves: 83 of the 91
+  with risky writes among the 110 most used. The 8 that ask each pick
+  their own scope, from one tool to every write, and most treat the
+  question as a control. GitLab's own MCP server draws the line this
+  server draws: it refuses a tool set to Deny and passes Ask to the
+  client as a mark it calls "advisory".
 - Clients answered the question with nobody there (a Claude Code
-  `Elicitation` hook, Codex with full access), declined it without
-  drawing it (Claude Desktop's Code tab, Cowork, the VS Code
-  extension), or cut it to three lines (the Claude Code terminal).
-  An operator's allow and ask rules could not govern it.
+  `Elicitation` hook once installed, Codex with full access), did not
+  draw it (Claude Code's VS Code extension, and by open user reports
+  Claude Desktop's Code tab), left it hanging (Cowork), or cut its
+  message to three lines (the Claude Code terminal, by an open user
+  report). No client's allow and ask rules match it.
 - A question on every call is answered without reading, and one
   expired while its person was away.
 
@@ -658,17 +679,23 @@ What stays is what holds on every client:
 3. **Guards and witnesses.** Protected branches (§4.4), the write
    allow-list (§4.7), the quick-action guard (§4.2), the `sha` and
    `updated_at` witnesses (§4.6), a confidential issue made public only
-   with `GITLAB_MCP_ENABLE_SHIP`, and `upload_file`'s directories
+   by `make_issue_public`, and `upload_file`'s directories
    (§7.10).
 4. **`dry_run`** on every write.
 5. **Annotations.** `destructiveHint` is true on the Ship and
    Destructive tools, so a client that prompts by annotation, as
-   claude.ai, Codex and VS Code do, prompts for them. No tool carries
-   Claude Code's `anthropic/requiresUserInteraction`: it makes Claude
-   Code prompt on every call whatever the operator's rules say. In
-   Claude Code the operator decides with `permissions.allow` and `ask`;
-   the README gives `ask` rules for the writes that ship, publish,
-   upload or delete.
+   claude.ai and Codex do, prompts for them. VS Code ignores
+   `destructiveHint` and prompts on every tool without `readOnlyHint`,
+   which only the Read tools carry.
+   Three tools carry Claude Code's `anthropic/requiresUserInteraction`:
+   `delete_label` and `delete_milestone`, whose loss reaches every
+   issue and merge request, and `make_issue_public`, which opens an
+   issue to everyone; none can be undone (§18 rows 126 and 127). It
+   makes Claude Code prompt on every call whatever the operator's rules
+   say, and deny the call where no prompt can be drawn (`-p`,
+   dontAsk). For every other tool, the operator decides in Claude Code
+   with `permissions.allow` and `ask`; the README gives `ask` rules for
+   the writes that ship, publish, upload or delete.
 6. **What a client's prompt shows.** A client's prompt shows the call's
    arguments. Where the question used to say what an argument means,
    the argument now carries it: `apply_suggestions` takes each
@@ -760,7 +787,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `staleness` | prose counts held against the lists beside them, spelled-out numbers included; the package map against `go list`; every repository path a document names exists, with a floor; the README tool table and every env var and gate documented, both ways; the status line against the newest tag or CHANGELOG heading; no version in prose; if Go changed since the last tag, a dependency bump aside **(10-11)**, the CHANGELOG has entries; **the OAuth application setup block in `docs/setup.md` generated from `internal/scopes` and `internal/auth` for every mode and compared exactly** |
 | `changelog`, `changelog-links` | a PR adds an entry unless it is a release cut or changes go.mod only in the modules it requires, the MCP SDK excepted **(10-11)**; every version heading has a link reference |
 | `release-notes` | the CHANGELOG section lifted verbatim, refusing an empty one |
-| `api-coverage` | offline against the committed OpenAPI snapshot, three directions (§8a); each row bound to its operation by verb and path from the client's AST; a `used` row names a real client method and no operation is claimed twice; prefix write-offs carry a reason of minimum length and a count of what they cover, and an operation matched by two rules fails; floors on operations, verdicts and client calls |
+| `api-coverage` | offline against the committed OpenAPI snapshot, three directions (§8a); each row bound to its operation by verb and path from the client's AST; a `used` row names a real client method and no operation is claimed twice; prefix write-offs carry a reason of minimum length and a count of what they cover, and an operation matched by two rules fails; floors on operations, verdicts and client calls; **every GraphQL root field a `mutate` call sends listed in §8a's GraphQL table and every row sent; the field a string literal and the first field its query, a string constant, selects; a Call to `api/graphql` outside `mutate` refused; a floor (2026-10-23)** |
 | `api-diff` (manual) | fetches the OpenAPI file at a named GitLab release tag; one fetch for operations and fields; written through a temp file and rename; a fetch below the operation floor or a network failure leaves the snapshot untouched, **held by a test against a closed port**; the snapshot records source URL, tag, SHA-256 and date |
 | `api-fields` | request **and** response sides: every query parameter and body field the client sends exists on that operation, and every response field a wire struct decodes exists in its schema or carries a verified omission; recursive over inline objects; the Go kind can hold the declared type; floors on published and modeled fields |
 | `schema-diff` | a committed baseline so it works before the first tag; the full surface with every flag and toolset on; the previous tag built in a git worktree that is always removed; tools **and resources**; fails on a removed tool, a lost input or output field, or a new required input, unless a **Breaking:** entry above the tag's own CHANGELOG heading names the tool in backticks and no version heading there keeps the tag's major; the whole `mcp.Tool` dumped, `_meta` and output schema included; a floor on tools |
@@ -798,7 +825,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `tools` | one `register` deciding annotations, kind, toolset and scope gating (no version gating: §4.9), `_meta`, the dry-run context and the rendering; `FullSurface(cfg)` for the schema dump; `dry_run` found by reflection; an explicit output schema with `date-time` for times; `Content` set so the SDK does not duplicate the JSON; an `unexpected` class for anything unclassified |
 | tool errors **(09-25)** | a `hinted{hint, err}` type with `Unwrap`, checked before the API-error branch, so a tool's guidance survives an upstream failure while the class still comes from the wrapped error; `refuse(protecting, unlock)` always naming what it protects and the exact argument to pass; enums named sorted in validation errors |
 | `gapi` | write and repeatability derived from the HTTP method, POST failing closed, declared exceptions only; a POST retried only on 429; `Retry-After` honored as a minimum; full-jitter backoff; the rate model of §11; **`CheckRedirect` returning `http.ErrUseLastResponse`**, a moved project's GET redirect resolved by re-reading the new path only when it is same-origin under the API root, with the request's query kept when the `Location` carries none; `Link: rel="next"` accepted only same-origin under the API root; every path segment escaped exactly once from typed parts, `..` refused; a headers deadline then a stall guard per read; a body cap; non-JSON bodies reported by status, content type and a prefix; transport errors stripped of path, query and host names; a create canceled after it may have been written `[ambiguous_outcome]`; a 401 `invalid_token` dropping the token and repeating a repeatable call once; **a context under which the client refuses every write**; a closed `Class` type with `Retryable()`; a `User-Agent`; unknown-field drift reported by path; a per-call counter |
-| `ask` (2026-09-29) | **removed in 3.0.0** (§4.12): the server asks nobody, and no tool carries `requiresUserInteraction`; the removed `*_REQUIRE_PROMPT` refused at start when on. Was: a form with no fields, `requestState` signed and single-use, every quoted value a code span (§18 rows 94–96, 124) |
+| `ask` (2026-09-29) | **removed in 3.0.0** (§4.12): the server asks nobody, and only `delete_label`, `delete_milestone` and `make_issue_public` carry `requiresUserInteraction` (from 2026-10-23); the removed `*_REQUIRE_PROMPT` refused at start when on. Was: a form with no fields, `requestState` signed and single-use, every quoted value a code span (§18 rows 94–96, 124) |
 | logging test | every registered tool driven with canary values at debug; asserts the logs are non-empty and contain no canary |
 
 ## 6. Addressing
@@ -1406,16 +1433,17 @@ the path, the name or the bytes (§9.2).
 
 ## 8. Tool surface
 
-103 tools. With the default toolsets: sixty-five by default,
-thirty-nine in read-only mode, eighty with Ship and Destructive
-both enabled. Every toolset and flag on registers all 103.
+105 tools. With the default toolsets: sixty-six by default,
+thirty-nine in read-only mode, eighty-two with Ship and Destructive
+both enabled. Every toolset and flag on registers all 105.
 Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
 `openWorldHint` is true where the result is visible to other people:
 every write but `add_todo`, `subscribe`, `mark_todos_done` and
 `update_review_comment`, whose effect only the account sees, marked `OwnOnly` on their spec in
 `register`.
-`_meta["anthropic/requiresUserInteraction"]` is set on no tool: the
-client's own rules decide each call (§4.12).
+`_meta["anthropic/requiresUserInteraction"]` is set on `delete_label`,
+`delete_milestone` and `make_issue_public` only; for every other tool
+the client's own rules decide each call (§4.12).
 
 | Tool | Kind | Toolset | Main operations |
 |---|---|---|---|
@@ -1454,6 +1482,7 @@ client's own rules decide each call (§4.12).
 | `update_review_comment` | Write | default | `GET`/`PUT …/draft_notes/:id` (own draft) |
 | `publish_review_comment` | Write | default | `GET …/draft_notes/:id`, `PUT …/draft_notes/:id/publish` (own draft), `GET …/discussions` |
 | `submit_review` | Write | default | `POST …/draft_notes/bulk_publish` |
+| `rerequest_review` | Write | default | `GET …/reviewers`; GraphQL `mergeRequestReviewerRereview` (§4.10) |
 | `get_file` | Read | default | `GET …/repository/files/:path` |
 | `list_tree` | Read | default | `GET …/repository/tree` |
 | `list_branches` | Read | default | `GET …/repository/branches` |
@@ -1499,6 +1528,7 @@ client's own rules decide each call (§4.12).
 | `cancel_pipeline` | Ship | default | `POST …/pipelines/:id/cancel` |
 | `delete_branch` | Destructive | default | `DELETE …/repository/branches/:branch` (refuses default, protected and unmerged unless `unmerged: true`) |
 | `delete_comment` | Destructive | default | `DELETE …/notes/:id` (own notes) |
+| `make_issue_public` | Destructive | default | `GET`, `PUT /projects/:id/issues/:iid` (`confidential: false`) |
 | `list_wiki_pages` | Read | wiki | `GET …/wikis` |
 | `get_wiki_page` | Read | wiki | `GET …/wikis/:slug` |
 | `save_wiki_page` | Write | wiki | `POST`/`PUT …/wikis` |
@@ -1550,6 +1580,15 @@ The committed snapshot is v19.4.1-ee, 1,856 operations; the TSV holds
 368 exact rows and 219 prefix rules (2026-10-22), and the gate reports
 the counts.
 The groups below are the design's verdicts; the TSV is the record.
+
+GraphQL operations sit outside the snapshot, since GitLab commits no
+GraphQL schema (§18 row 27). Each one used is listed here with why REST
+cannot do it (§4.10), and `api-coverage` holds this table against the
+root field of every `mutate` call, both ways:
+
+| Operation | Tool | Why not REST |
+|---|---|---|
+| `mergeRequestReviewerRereview` (mutation) | `rerequest_review` | No REST route re-requests a review: GitLab master `4119fde2` (2026-10-23) has none in `lib/api` or `ee/lib/api`, and the published merge request API documents only `GET …/reviewers` (§18 row 128) |
 
 | Group (path prefix) | Verdict |
 |---|---|
@@ -1855,7 +1894,8 @@ gated. It covers gitlab.com, the only instance.
 | Merging, approving and CI runs behind a Ship flag | this design | §4.3 |
 | Quick actions refused by default, never executed | this design | §4.2 |
 | Commits never to a protected branch | this design | §4.4 |
-| REST v4 only, no escape hatch | this design | §4.10, §8a |
+| REST v4 only, no escape hatch | this design; **narrowed 2026-10-23** | §4.10, §8a; GraphQL now for an operation REST lacks, as a literal behind one tool, never a raw GraphQL tool |
+| GraphQL for an operation REST has no route for: one literal per operation in `internal/gapi`, through the REST client's path, listed in §8a; no GraphQL client library and no raw GraphQL tool. First: `rerequest_review` | maintainer, 2026-10-23 | §4.10, §8a, §18 row 128 |
 | Unregistered, not registered-and-refusing, for gated tools | this design | §17b |
 | Release pipeline in phase 0 | this design | §12 |
 | The person asked before applying review suggestions | maintainer, 2026-10-01; **superseded 2026-10-22** | §4.12: the committed text is someone else's, under the person's name; from 3.0.0 the call carries the text, held as a witness |
@@ -1863,7 +1903,9 @@ gated. It covers gitlab.com, the only instance.
 | `upload_file` reads only from the directories `GITLAB_MCP_UPLOAD_DIRS` names; MCP roots are not used | maintainer, 2026-10-08 | §7.10; roots are deprecated (SEP-2577), so the setting, and the bundle's field for it, is the only way to allow a directory (§18 row 114) |
 | The person asked before a merge, an approval, a manual job, a release, a tag, a pipeline on a protected ref, publishing a confidential issue and every delete; the empty form; `GITLAB_MCP_REQUIRE_PROMPT` | maintainer, 2026-09-29; **superseded 2026-10-22** | §4.12; a client that declares elicitation and answers with nobody there cannot make these writes, which is why the release is a major one |
 | `requiresUserInteraction` only where the server's question does not stand in for it: a tool that asks before every write drops the mark for a client that can ask; one that asks sometimes or never keeps it; `destructiveHint` and the server's question stay | maintainer, 2026-10-09; **superseded 2026-10-22** | §4.12 item 12, §18 rows 119 and 120; a write the server asks about asks once in Claude Code, not twice, and a client's `Elicitation` hook that accepts confirms it alone |
-| The server asks the person nothing and no tool carries `requiresUserInteraction`: per-call approval is the client's; registration, `confirm`, the guards, the witnesses and `dry_run` stay; `apply_suggestions` carries each text as a witness; `GITLAB_MCP_REQUIRE_PROMPT` removed and refused when on | maintainer, 2026-10-22, issue #63 | §4.12, §18 row 124; a major release, 3.0.0: a client that could not write before can, and `apply_suggestions` takes a new required input |
+| The server asks the person nothing and no tool carries `requiresUserInteraction`: per-call approval is the client's; registration, `confirm`, the guards, the witnesses and `dry_run` stay; `apply_suggestions` carries each text as a witness; `GITLAB_MCP_REQUIRE_PROMPT` removed and refused when on | maintainer, 2026-10-22, issue #63; **narrowed 2026-10-23** | §4.12, §18 row 124; a major release, 3.0.0: a client that could not write before can, and `apply_suggestions` takes a new required input |
+| `delete_label` and `delete_milestone` carry `requiresUserInteraction`: each takes what it deletes off every issue and merge request, and neither can be undone. With `make_issue_public` (next row), no other tool carries it | maintainer, 2026-10-23 | §4.12, §18 rows 125 and 126; Claude Code prompts on every such call and denies it where no prompt can be drawn, so an unattended Claude Code run can no longer make them |
+| Making a confidential issue public is its own tool, `make_issue_public`: Destructive, `confirm: true`, the `updated_at` witness, and `requiresUserInteraction`. `update_issue` refuses `confidential: false` on a confidential issue whatever the flags | maintainer, 2026-10-23 | §4.3, §4.12, §18 row 127; it needed `GITLAB_MCP_ENABLE_SHIP` before and needs `GITLAB_MCP_ENABLE_DESTRUCTIVE` now, a breaking change |
 
 ## 15. What must be verified live
 
@@ -2447,7 +2489,7 @@ the release chain (`audit/security-reviews/v1.0.0.md`). It found:
 
 | Found | Fixed |
 |---|---|
-| Medium: `update_issue` with `confidential: false` made a confidential issue public, the widening `move_issue` refuses | Ship's to allow, as an approving review is (§4.3) |
+| Medium: `update_issue` with `confidential: false` made a confidential issue public, the widening `move_issue` refuses | Ship's to allow, as an approving review is (§4.3); from 2026-10-23 `make_issue_public`'s alone, behind the destructive flag (§18 row 127) |
 | Medium: a tool call canceled after GitLab rotated the pair dropped the only copy of the new one | The refresh runs on a context the caller cannot cancel, bounded by the HTTP timeout; a test cancels mid-answer |
 | A stored token under a profile that records no instance could reach the loopback test instance | Withheld unless the token came from the environment |
 | `logout` could revoke a pair a server had just replaced, and the server saved the new one after the delete | `logout` holds the profile's refresh lock |
@@ -2656,8 +2698,9 @@ fixed in its "Tighten … after review" commit:
     standing.**
 11. **Premium and Ultimate after 1.0.** Epics and iterations are
     work items, GraphQL-first, with the REST epics API deprecated for
-    v5. A post-1.0 `planning` toolset would be the first GraphQL use
-    and would need its own coverage source. **Deferred to after 1.0.**
+    v5. A post-1.0 `planning` toolset would need GraphQL reads and its
+    own coverage source; the first GraphQL use, one mutation, came with
+    `rerequest_review` (§4.10). **Deferred to after 1.0.**
 
 12. **Pipelines a Write starts.** A commit, a new branch or a new merge
     request on an unprotected branch starts the pipelines a push
@@ -2899,4 +2942,8 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 121 | go.mod writes require two ways, `require path version` and a bare `require (` … `)` block | `go mod edit -fmt` with Go 1.27.2 on a scratch module, 2026-10-11 | **Refined (tier 1).** A comment after `require (` and after `)` survives formatting when the block holds two or more entries. A one-entry block becomes a single `require` line and loses its paren comments, and `require(` becomes `require (`. Read as bare, a block closed by `) // comment` never closes, and a `replace` after it goes unread. So `changelog` and `staleness` cut a line's comment before reading it, take out only lines shaped like a require entry, and waive no entry unless the module line was read and every block closed |
 | 122 | GitLab's merge request dependencies are Premium, addressed by global id, and limited to ten each way | At v19.4.1-ee: `ee/lib/api/merge_request_dependencies.rb` L26-36 (list), L54-77 (delete: `find_merge_request_with_access(…, :update_merge_request)`, the row found only among those the merge request waits for, then `authorize! :read_merge_request` on the blocking one), L79-124 (create: exactly one of `blocking_merge_request_id` and `blocking_merge_request_iid`, the latter with an optional `blocking_project_id`), L126-144 (blockees); `ee/lib/api/entities/merge_request_dependency.rb` (each merge request exposed only `if` the account may read it); `ee/app/services/merge_requests/create_block_service.rb` (403 without `update_merge_request` on the waiting one or `read_merge_request` on the other, 409 "Block already exists"); `destroy_block_service.rb`; `ee/app/models/merge_request_block.rb` L10-63 (unique pair, self-reference refused, the caps); `ee/app/models/ee/merge_request.rb` L383-389 and L812-814 (`merge_blocked_by_other_mrs?` checks the `blocking_merge_requests` license on the waiting merge request's project and releases only on `merged?`); `ee/app/services/ee/system_notes/issuables_service.rb` L243-265 (a note on both merge requests) | **Refuted (tier 1; the routes on Free, live).** The routes check no license: on Free they list, add and remove as on Premium, and only the merge check ignores the dependency. The create takes the other merge request by number and project, so `link_merge_requests` never handles a global id. A repeat answers 409 and writes nothing. A closed blocker still blocks; a merged one does not. Cycles are allowed. The caps count the wrong sides: a merge request's own blockers are not counted against it, so it can wait for more than ten. A dependency on a merge request the account cannot read is listed without it, and cannot be removed through the API. Both merge requests get a system note, so both projects are held to the write allow-list. A live run on gitlab.com, 2026-10-22, in a Free group, made one merge request wait for the other, found it again from the other side as unchanged, read it from both in `get_merge_request`, and removed it |
 | 123 | The default surface must stay under 64 tools, where one client starts regrouping them | microsoft/vscode-copilot-chat at `5863f5a` (2026-05-20): `src/extension/tools/common/virtualTools/virtualToolsConstants.ts` L9 (`START_GROUPING_AFTER_TOOL_COUNT = HARD_TOOL_LIMIT / 2`, 64), L11 (built-ins grouped above 20) and L26 (`GROUP_WITHIN_TOOLSET`, 16); `virtualToolGrouper.ts` L55-65; `src/extension/prompt/node/defaultIntentRequestHandler.ts` `getAvailableTools` (every tool of the request, and no grouping for an Anthropic model with tool search on); `src/platform/configuration/common/configurationService.ts` (`HARD_TOOL_LIMIT = 128`, the default of `chat.virtualTools.threshold`); code.visualstudio.com/docs/copilot/chat/chat-tools (128 tools per request), read 2026-10-22 | **Refuted (tier 1).** VS Code counts the request's tools together, its own built-ins and every server's, so this server's default count decides nothing there: with the built-ins the request passes 64 either way, and any server of more than 16 tools is grouped within. Claude Code defers tools behind tool search by context share, with no count. The one hard limit found is VS Code's 128 tools per request. So the default holds what a project's work needs, and §4.3 no longer counts against 64 |
-| 124 | A server should confirm a write with the person itself, through MCP form elicitation, on the writes that ship, publish or delete | Read 2026-10-22. The MCP specification, `server/tools` at 2025-06-18, 2025-11-25 and 2026-07-28 ("there SHOULD always be a human in the loop with the ability to deny tool invocations"; clients "SHOULD … prompt for user confirmation on sensitive operations" and "show tool inputs to the user before calling the server"), `client/elicitation` (a way "to request additional information from users", with no consent rule), `basic/patterns/mrtr` (`requestState` attacker-controlled; SEP-2322 expects answers that take days); the annotations post of 2026-03-16 ("keep your actual safety guarantees in deterministic controls"). Servers: github/github-mcp-server PR #3076 (only `delete_repository` asks, by a typed name), Supabase's MCP guide ("a guardrail, not a guarantee of human review or approval"), awslabs/mcp PR #4627, microsoft/mcp `BaseToolLoader.cs`, the GitLab, Atlassian, Linear, Notion, Slack, Cloudflare and Sentry servers' documents (none asks). Clients: code.claude.com/docs/en/mcp and /hooks (an `Elicitation` hook answers with "no dialog"), anthropics/claude-code #89858, #96043, #94806, #88901, #102766 (declared and not drawn, hung, or cut to three lines), Codex PR #17164 (an empty form accepted under full access). claude.com/blog/auto-mode-default-in-claude-code, 2026-08-07: 97% of prompts approved; human review caught 13.6% of dangerous commands | **Refuted (tier 2: documents and source, not probed live).** The specification gives per-call approval to the client and never makes elicitation a consent control. Most servers confirm nothing themselves, and those that do confirm a few irreversible operations, with an off switch. A client may answer, decline, hang or truncate the question with nobody looking, and an operator cannot govern it with permission rules. So from 3.0.0 the server asks nobody and carries no `requiresUserInteraction`; registration, `confirm`, the guards, the witnesses and `dry_run` stay, and where the question showed what an argument meant, the argument carries it (§4.12). Rows 94–96, 105, 119 and 120 describe the question this replaces |
+| 124 | A server should confirm a write with the person itself, through MCP form elicitation, on the writes that ship, publish or delete | Read 2026-10-22. The MCP specification, `server/tools` at 2025-06-18, 2025-11-25 and 2026-07-28 ("there SHOULD always be a human in the loop with the ability to deny tool invocations"; clients "SHOULD … prompt for user confirmation on sensitive operations" and "show tool inputs to the user before calling the server"), `client/elicitation` (a way "to request additional information from users", with no consent rule), `basic/patterns/mrtr` (`requestState` attacker-controlled; SEP-2322 expects answers that take days); the annotations post of 2026-03-16 ("keep your actual safety guarantees in deterministic controls"). Servers: github/github-mcp-server PR #3076 (only `delete_repository` asks, by a typed name), Supabase's MCP guide ("a guardrail, not a guarantee of human review or approval"), awslabs/mcp PR #4627, microsoft/mcp `BaseToolLoader.cs`, the GitLab, Atlassian, Linear, Notion, Slack, Cloudflare and Sentry servers' documents (none asks). Clients: code.claude.com/docs/en/mcp and /hooks (an `Elicitation` hook answers with "no dialog"), anthropics/claude-code #89858, #96043, #94806, #88901, #102766 (declared and not drawn, hung, or cut to three lines), Codex PR #17164 (an empty form accepted under full access). claude.com/blog/auto-mode-default-in-claude-code, 2026-08-07: 97% of prompts approved; human review caught 13.6% of dangerous commands | **Refuted (tier 2: documents and source, not probed live).** The specification gives per-call approval to the client and never makes elicitation a consent control. Most servers confirm nothing themselves; those that do pick their own scope (row 125 corrects this row's first reading). A client may answer, decline, hang or truncate the question with nobody looking, and an operator cannot govern it with permission rules. So from 3.0.0 the server asks nobody and carries no `requiresUserInteraction`; registration, `confirm`, the guards, the witnesses and `dry_run` stay, and where the question showed what an argument meant, the argument carries it (§4.12). Rows 94–96, 105, 119 and 120 describe the question this replaces |
+| 125 | Row 124's reading of practice: no widely used server confirms every write itself, and those that confirm anything do it for a few irreversible operations, each with an off switch | Read 2026-10-23, every quote re-read at its source. 110 servers: the top 100 by public usage signals (Claude's connector directory, npm, PyPI, Docker Hub, PulseMCP) and ten first-party servers built into a product, GitLab's among them. awslabs/mcp `b054d19` (the Redshift server asks before every statement it cannot recognize as a read, in read-write mode; `UNSAFE_SKIP_WRITE_CONFIRMATION`); github/github-mcp-server `f385262` (`delete_repository` needs form elicitation; no switch skips it); microsoft/mcp `130fc0f` (about 145 commands marked Destructive or Secret ask); GitLab MR !252995 ("Ask is advisory. Only Claude Code 2.1.199 and later honour the annotation … Deny is unaffected everywhere because the server refuses the call"); JetBrains commit `8edf5127f5` ("the same client inside the VS Code extension does not" render an elicitation); microsoft/powerbi-modeling-mcp 0.5.0-beta.11 (its question made opt-in) | **Refined (tier 2: documents and source, not probed live).** The first half holds: 83 of the 91 servers with risky writes never ask the person. The second does not. The 8 that ask pick their own scope, from one tool (GitHub) to every destructive or secret command (Azure) to every write in a write mode (AWS Redshift); GitHub, AWS's SAP server and Dynatrace have no off switch; only Supabase calls its question a guardrail. Row 124's verdict stands on the specification and the clients, and GitLab's own server draws the same line: Deny refused on the server, Ask passed to the client |
+| 126 | Deleting a label or a milestone loses more than the one item, and cannot be undone | GitLab master `b7d1bbc4` (2026-10-22): `app/services/milestones/destroy_service.rb` runs `Issues::UpdateService` with `milestone_id: nil` on every issue of the milestone, does the same for its merge requests, then destroys it; `doc/user/project/labels.md` L239–240: "If you delete a label, it is permanently deleted. All references to the label are removed from the system and you cannot undo the deletion." code.claude.com/docs/en/mcp: the mark is for "tools whose permission prompt is itself the point" | **Confirmed (tier 1).** Both take what they delete off every issue and merge request, with nothing to restore from, so both carry `requiresUserInteraction` (§4.12, §14). The other deletes remove one item: a branch or tag (a ref), a comment, a wiki page (kept in the wiki's history) or a snippet |
+| 127 | Widening access may be an argument of an ordinary write, as `update_issue`'s `confidential: false` was | Read 2026-10-23. GitLab master `b7d1bbc4`: its own MCP server's `update_work_item` takes `confidential` as a plain argument, ungated (`app/services/mcp/tools/work_items/update_work_item_tool.rb`). github/github-mcp-server `f385262`: `create_repository` takes `private` and asks nothing; repositories default to private. Notion, Slack, Canva, Figma, Asana and Airtable's servers offer no sharing tool; Box's sharing tools are off until an admin enables them. OpenAI's server guidance: "Split operations when they have different permissions, safety risks, or confirmation requirements". Clients remember approval per tool, never per argument value (claude.ai, Codex, VS Code, Copilot; Claude Code matches an MCP argument only in a command-line deny rule) | **Refuted for this server (tier 2: documents and source, not probed live).** Dev platforms carry it as an argument, but a client's standing approval of the tool then carries the widening unseen. The servers that keep it out of an ordinary tool either leave it out or give it its own tool behind an admin's switch. Here it is `make_issue_public`, Destructive, and `update_issue` refuses it (§4.3, §14) |
+| 128 | Re-requesting a review needs GraphQL, and does what removing and adding a reviewer does not | Read 2026-10-23. GitLab master `4119fde2`: `lib/api` and `ee/lib/api` have no re-request route; `app/graphql/mutations/merge_requests/reviewer_rereview.rb` (`projectPath`, `iid`, `userId`; fields `errors`, `mergeRequest`) runs `MergeRequests::RequestReviewService`, which sets the reviewer to `unreviewed`, removes their approval, notifies them and adds a to-do and a system note. `doc/api/graphql/reference/mutations.md`: the mutation is GA, only its `duoCodeReviewDepth` argument an experiment. `doc/api/graphql/_index.md`: endpoint `/api/graphql`, mutations need the `api` scope, a refused mutation answers 200 with a top-level error. A reviewer's requested changes (EE `merge_request_requested_changes`) are cleared only by that reviewer approving or publishing a `reviewed` review (`ee/lib/ee/api/draft_notes.rb`), by a push under a project setting (`ee/app/services/ee/merge_requests/refresh_service.rb`), or by their own removal; nothing clears them when a reviewer is removed and added again. docs.gitlab.com/api/merge_requests: only `GET …/reviewers` | **Confirmed (tier 1; the mutation's success path probed live on gitlab.com 2026-10-23, the reviewer read back unreviewed; its error answers from source).** `rerequest_review` sends the mutation after reading the reviewers and the approvals over REST, with the reviewer's state as its witness. It refuses a reviewer who approved, by state or in the approvals, since GitLab would remove that approval, and one still unreviewed, since there is no review to ask for again and no read could settle a lost answer from that state (§4.10, §8a, §14) |

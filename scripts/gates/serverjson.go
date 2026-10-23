@@ -13,7 +13,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
 // The MCP registry entry, generated at publish time rather than

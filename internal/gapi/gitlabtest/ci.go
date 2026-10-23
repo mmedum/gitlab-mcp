@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
 // The CI half of the instance: pipelines, jobs, their stored logs and

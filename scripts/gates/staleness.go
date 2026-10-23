@@ -18,11 +18,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gitx"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/mcpstdio"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gitx"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/mcpstdio"
 )
 
 // staleness holds the documents to what the code defines. Each rule

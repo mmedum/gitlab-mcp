@@ -16,13 +16,13 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
-	"github.com/mmedum/gitlab-mcp/v3/internal/quickaction"
-	"github.com/mmedum/gitlab-mcp/v3/internal/render"
-	"github.com/mmedum/gitlab-mcp/v3/internal/scopes"
-	"github.com/mmedum/gitlab-mcp/v3/internal/service"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/quickaction"
+	"github.com/mmedum/gitlab-mcp/v4/internal/render"
+	"github.com/mmedum/gitlab-mcp/v4/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
 // Kind is what a tool does (docs/architecture.md §4.3). It is one field
@@ -43,9 +43,9 @@ const (
 	// approval, a pipeline run. Registered only with
 	// GITLAB_MCP_ENABLE_SHIP=true.
 	Ship
-	// Destructive deletes. Registered only with
-	// GITLAB_MCP_ENABLE_DESTRUCTIVE=true, and refused per call without
-	// confirm: true.
+	// Destructive cannot be undone: a delete, or making a confidential
+	// issue public. Registered only with GITLAB_MCP_ENABLE_DESTRUCTIVE=true,
+	// and refused per call without confirm: true.
 	Destructive
 )
 
@@ -99,10 +99,20 @@ type spec struct {
 	// internal/quickaction before the handler sees it and declares them
 	// under _meta, which `scripts/gates bodies` reads (§4.2).
 	Guarded []string
+	// PromptEveryCall marks a write that cannot be undone and reaches
+	// beyond the one item: a delete that takes what it deletes off every
+	// issue and merge request, or opening an issue to everyone. The tool
+	// carries Claude Code's requiresUserInteraction, so Claude Code
+	// prompts on every call whatever the operator's rules say (§4.12).
+	// Only a Destructive tool may set it.
+	PromptEveryCall bool
 }
 
 // quickActionMeta is the _meta key the guarded inputs are declared under.
 const quickActionMeta = "gitlab-mcp/quickaction"
+
+// promptMeta is the _meta key Claude Code prompts on every call for.
+const promptMeta = "anthropic/requiresUserInteraction"
 
 // Deps are what the tools need.
 type Deps struct {
@@ -200,6 +210,7 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 	if t.sp.Kind != Read && c.write < 0 {
 		panic("tools: " + t.sp.Name + " writes and its result does not carry model.Write")
 	}
+	meta := mcp.Meta{}
 	if len(t.sp.Guarded) > 0 {
 		if t.sp.Kind == Read {
 			panic("tools: " + t.sp.Name + " is a read and declares guarded inputs")
@@ -207,10 +218,16 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 		if c.escape < 0 {
 			panic("tools: " + t.sp.Name + " guards inputs and has no escape_commands input")
 		}
-		if mt.Meta == nil {
-			mt.Meta = mcp.Meta{}
+		meta[quickActionMeta] = slices.Clone(t.sp.Guarded)
+	}
+	if t.sp.PromptEveryCall {
+		if t.sp.Kind != Destructive {
+			panic("tools: " + t.sp.Name + " prompts on every call and is not Destructive")
 		}
-		mt.Meta[quickActionMeta] = slices.Clone(t.sp.Guarded)
+		meta[promptMeta] = true
+	}
+	if len(meta) > 0 {
+		mt.Meta = meta
 	}
 	s.AddTool(mt, c.handle)
 }
@@ -266,7 +283,7 @@ func (c *caller[In, Out]) handle(ctx context.Context, req *mcp.CallToolRequest) 
 		ctx = gapi.WithDryRun(ctx)
 	}
 	if c.t.sp.Kind == Destructive && !dry && !v.Field(c.confirm).Bool() {
-		err := refuse(c.t.sp.Name+" deletes something GitLab cannot restore, so every call has to say so", "confirm: true")
+		err := refuse(c.t.sp.Name+" does what cannot be undone, so every call has to say so", "confirm: true")
 		outcome = classOf(err)
 		return errorResult(err), nil
 	}

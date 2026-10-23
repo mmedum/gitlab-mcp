@@ -6,10 +6,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
 // Branches, commits and to-do items (§7.5, §7.7, §4.4).

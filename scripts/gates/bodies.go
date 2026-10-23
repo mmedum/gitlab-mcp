@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
 // The bodies gate holds §4.2 (CLAUDE.md rule 5): GitLab runs every
@@ -38,22 +38,24 @@ var plainInputs = map[string]string{
 	"file":           "a path the server looks up in the diff and sends as the position's old_path and new_path, which GitLab stores as a path, not Markdown",
 	"title": "GitLab interprets quick actions in the description alone (merge_quick_actions_into_params! in " +
 		"app/services/issuable_base_service.rb at 829b21d2); a title is stored as it is",
-	"labels":           "label names, each checked to exist and sent as the labels array, never as Markdown",
-	"add_labels":       "label names, each checked to exist and sent as the add_labels array, never as Markdown",
-	"remove_labels":    "label names sent as the remove_labels array, never as Markdown",
-	"assignees":        "usernames, each resolved to a user id before anything is sent",
-	"add_assignees":    "usernames, each resolved to a user id before anything is sent",
-	"remove_assignees": "usernames, each resolved to a user id before anything is sent",
-	"reviewers":        "usernames, each resolved to a user id before anything is sent",
-	"add_reviewers":    "usernames, each resolved to a user id before anything is sent",
-	"remove_reviewers": "usernames, each resolved to a user id before anything is sent",
-	"milestone":        "a milestone title, resolved to its id before anything is sent",
-	"due_date":         "a day, checked as YYYY-MM-DD and sent as a date",
-	"branch":           "a Git branch name, which GitLab takes as a ref, not Markdown",
-	"ref":              "a Git branch, tag or SHA, which GitLab takes as a ref, not Markdown",
-	"source_branch":    "a Git branch name, which GitLab takes as a ref, not Markdown",
-	"target_branch":    "a Git branch name, which GitLab takes as a ref, not Markdown",
-	"start_branch":     "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"labels":                          "label names, each checked to exist and sent as the labels array, never as Markdown",
+	"add_labels":                      "label names, each checked to exist and sent as the add_labels array, never as Markdown",
+	"remove_labels":                   "label names sent as the remove_labels array, never as Markdown",
+	"assignees":                       "usernames, each resolved to a user id before anything is sent",
+	"add_assignees":                   "usernames, each resolved to a user id before anything is sent",
+	"remove_assignees":                "usernames, each resolved to a user id before anything is sent",
+	"reviewers":                       "usernames, each resolved to a user id before anything is sent",
+	"add_reviewers":                   "usernames, each resolved to a user id before anything is sent",
+	"remove_reviewers":                "usernames, each resolved to a user id before anything is sent",
+	"milestone":                       "a milestone title, resolved to its id before anything is sent",
+	"due_date":                        "a day, checked as YYYY-MM-DD and sent as a date",
+	"branch":                          "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"ref":                             "a Git branch, tag or SHA, which GitLab takes as a ref, not Markdown",
+	"source_branch":                   "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"target_branch":                   "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"start_branch":                    "a Git branch name, which GitLab takes as a ref, not Markdown",
+	"rerequest_review.username":       "names the reviewer to find in the reviewers read; the server sends their numeric id, never the text",
+	"rerequest_review.reviewer_state": "the witness, compared with a fresh read of the reviewers and never sent",
 	"create_commit.message": "a commit message: the Commits API writes it into Git and runs no quick action from it; " +
 		"only issue and merge request descriptions and notes are interpreted",
 	"sha":            "a commit SHA, compared with the head GitLab reports and sent as the witness; GitLab takes it as a ref, not Markdown",

@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
 // What every write shares: where it may go (§4.7), what a dry run shows,
@@ -171,7 +171,7 @@ func (s *Service) userIDs(ctx context.Context, names []string) ([]int64, error) 
 	out := make([]int64, len(names))
 	lookups := make([]func() error, len(names))
 	for i, name := range names {
-		name = strings.TrimPrefix(strings.TrimSpace(name), "@")
+		name = bareUsername(name)
 		lookups[i] = func() error {
 			rows, _, err := s.client.ListUsers(ctx, gapi.UserQuery{Username: name}, gapi.ListOptions{PerPage: 1})
 			if err != nil {
@@ -247,6 +247,9 @@ func (s *Service) milestoneID(ctx context.Context, p gapi.Project, title string)
 }
 
 // ------------------------------------------------------------ settling
+
+// bareUsername is a username as a caller may type it, @alice or alice.
+func bareUsername(s string) string { return strings.TrimPrefix(strings.TrimSpace(s), "@") }
 
 // settleSkew is how far before the call's start a settling read looks,
 // for a clock that differs from GitLab's.
@@ -327,7 +330,7 @@ func usernames(us []gitlab.UserBasic) []string {
 func withSet(current []gitlab.UserBasic, add []int64, remove []string) []int64 {
 	removed := func(u gitlab.UserBasic) bool {
 		return slices.ContainsFunc(remove, func(n string) bool {
-			return strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(n), "@"), u.Username)
+			return strings.EqualFold(bareUsername(n), u.Username)
 		})
 	}
 	out := make([]int64, 0, len(current)+len(add))

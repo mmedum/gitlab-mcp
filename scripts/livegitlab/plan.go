@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/redact"
 )
 
 // The pure half of the live driver: the run's name, the plan of calls,
@@ -301,7 +301,7 @@ func phase2(s scratch) []step {
 			"state": "close"},
 			save: map[string]string{"issue_at2": "updated_at"}},
 		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{issue}}", "updated_at": "{{issue_at2}}", "confidential": false},
-			expectError: true, why: "making a confidential issue public, without GITLAB_MCP_ENABLE_SHIP"},
+			expectError: true, why: "update_issue making a confidential issue public, which only make_issue_public does"},
 		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{issue}}", "updated_at": "{{issue_at}}", "title": "Stale"},
 			expectError: true, why: "a witness from before the last update"},
 		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{issue}}", "updated_at": "{{issue_at2}}", "state": "reopen",
@@ -510,6 +510,20 @@ func phase2(s scratch) []step {
 			"total_time_spent": "{{issue_spent3}}", "reset_spent": true}, save: map[string]string{"issue_tt4": "updated_at"}},
 		{tool: "track_time", args: map[string]any{"project": p, "type": "issue", "iid": "{{issue}}", "updated_at": "{{issue_tt4}}",
 			"reset_estimate": true}},
+		// The run's account, the merge request's only reviewer, is asked
+		// for a new review, through GraphQL. Before the time-tracking
+		// witness is read, since a re-request may move updated_at.
+		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User,
+			"reviewer_state": "unreviewed"}, expectError: true, why: "a reviewer who has not reviewed yet"},
+		{tool: "submit_review", args: map[string]any{"project": p, "iid": "{{mr}}", "reviewer_state": "reviewed"}},
+		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}"},
+			save: map[string]string{"mr_review": "reviewer_states.reviewers.0.state"}},
+		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User, "reviewer_state": "approved"},
+			expectError: true, why: "a review state no read showed"},
+		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User,
+			"reviewer_state": "{{mr_review}}", "dry_run": true}},
+		{tool: "rerequest_review", args: map[string]any{"project": p, "iid": "{{mr}}", "username": s.User,
+			"reviewer_state": "{{mr_review}}"}},
 		{tool: "get_merge_request", args: map[string]any{"project": p, "iid": "{{mr}}"},
 			save: map[string]string{"mr_tt": "updated_at", "mr_spent": "time_stats.total_time_spent"}},
 		{tool: "track_time", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mr}}", "updated_at": "{{mr_tt}}",
@@ -636,11 +650,19 @@ func planShip(s scratch) []step {
 	now := time.Now().UTC()
 	yesterday, tomorrow := now.Add(-24*time.Hour).Format(time.RFC3339), now.Add(24*time.Hour).Format(time.RFC3339)
 	return slices.Concat([]step{
-		// Making a confidential issue public is Ship's to allow.
+		// Making a confidential issue public is make_issue_public's alone,
+		// even with every flag on.
 		{tool: "create_issue", args: map[string]any{"project": p, "title": "A confidential issue " + s.Name, "confidential": true},
 			save: map[string]string{"secret_issue": "iid", "secret_at": "updated_at"}},
 		{tool: "update_issue", args: map[string]any{"project": p, "iid": "{{secret_issue}}", "updated_at": "{{secret_at}}",
-			"confidential": false}},
+			"confidential": false},
+			expectError: true, why: "update_issue making a confidential issue public, with every flag on"},
+		{tool: "make_issue_public", args: map[string]any{"project": p, "iid": "{{secret_issue}}", "updated_at": "{{secret_at}}"},
+			expectError: true, why: "making an issue public without confirm"},
+		{tool: "make_issue_public", args: map[string]any{"project": p, "iid": "{{secret_issue}}", "updated_at": "{{secret_at}}",
+			"confirm": true, "dry_run": true}},
+		{tool: "make_issue_public", args: map[string]any{"project": p, "iid": "{{secret_issue}}", "updated_at": "{{secret_at}}",
+			"confirm": true}},
 		// A merge request to approve and merge.
 		{tool: "create_branch", args: map[string]any{"project": p, "branch": branch, "ref": s.Default}},
 		{tool: "create_commit", args: map[string]any{"project": p, "branch": branch, "message": "A change to merge",
@@ -1051,6 +1073,17 @@ type rule func(st step, s scratch) error
 var rules = map[string]rule{
 	"get_me":      anything,
 	"resolve_url": anything, // its url is checked with every step
+	// A re-request notifies the reviewer, so only the run's own account
+	// is asked.
+	"rerequest_review": func(st step, s scratch) error {
+		if err := inProject(st, s); err != nil {
+			return err
+		}
+		if st.args["username"] != s.User {
+			return fmt.Errorf("%s: only the run's own account is asked for a review", st.tool)
+		}
+		return nil
+	},
 	"find_users": func(st step, s scratch) error {
 		if st.args["username"] != nil && st.args["username"] != s.User || st.args["search"] != nil && st.args["search"] != s.Name {
 			return fmt.Errorf("%s: users are found by the run's own username or the run's word only", st.tool)
@@ -1124,7 +1157,7 @@ func init() {
 		"create_commit",
 		"merge_merge_request", "cancel_auto_merge", "approve_merge_request", "unapprove_merge_request", "apply_suggestions",
 		"run_pipeline", "run_merge_request_pipeline",
-		"retry_pipeline", "retry_job", "play_job", "cancel_pipeline", "delete_branch", "delete_comment", "list_wiki_pages", "get_wiki_page", "save_wiki_page",
+		"retry_pipeline", "retry_job", "play_job", "cancel_pipeline", "delete_branch", "delete_comment", "make_issue_public", "list_wiki_pages", "get_wiki_page", "save_wiki_page",
 		"delete_wiki_page", "list_releases", "get_release", "create_release", "list_environments", "list_deployments",
 		// Without a project these read or write the maintainer's own
 		// snippets and activity, which are not the run's.

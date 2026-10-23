@@ -28,8 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
-	"github.com/mmedum/gitlab-mcp/v3/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v4/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v4/internal/redact"
 )
 
 // Defaults for Options.

@@ -13,12 +13,12 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/config"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
-	"github.com/mmedum/gitlab-mcp/v3/internal/redact"
-	"github.com/mmedum/gitlab-mcp/v3/internal/render"
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/redact"
+	"github.com/mmedum/gitlab-mcp/v4/internal/render"
 	"gopkg.in/yaml.v3"
 )
 

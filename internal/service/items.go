@@ -14,11 +14,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gapi"
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
-	"github.com/mmedum/gitlab-mcp/v3/internal/instance"
-	"github.com/mmedum/gitlab-mcp/v3/internal/model"
-	"github.com/mmedum/gitlab-mcp/v3/internal/render"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/instance"
+	"github.com/mmedum/gitlab-mcp/v4/internal/model"
+	"github.com/mmedum/gitlab-mcp/v4/internal/render"
 )
 
 // maxDiscussionPages bounds the threads read for one call: ten pages of

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmedum/gitlab-mcp/v3/internal/gitlab"
+	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
 // The review and history half of the instance: a merge request's diffs,
@@ -321,14 +321,40 @@ func (s *Server) updateReviewerState(p *project, mr *gitlab.MergeRequest, user, 
 	if i < 0 {
 		return
 	}
-	key := reviewerKey(p.PathWithNamespace, mr.IID, user)
-	if s.reviewerStates[key] == "approved" && state != "requested_changes" && state != "unapproved" {
+	if s.reviewerStates[reviewerKey(p.PathWithNamespace, mr.IID, user)] == "approved" && state != "requested_changes" &&
+		state != "unapproved" {
 		return
 	}
+	// Requesting changes takes back an approval the reviewer gave
+	// (MergeRequests::UpdateReviewerStateService).
+	if a := p.approvals[mr.IID]; state == "requested_changes" && a != nil {
+		dropApproval(a, user)
+	}
+	s.setReviewerState(p, mr, user, state)
+}
+
+// setReviewerState records a reviewer's review state.
+func (s *Server) setReviewerState(p *project, mr *gitlab.MergeRequest, user, state string) {
 	if s.reviewerStates == nil {
 		s.reviewerStates = map[string]string{}
 	}
-	s.reviewerStates[key] = state
+	s.reviewerStates[reviewerKey(p.PathWithNamespace, mr.IID, user)] = state
+}
+
+// rerequestReview is what asking a reviewer for a new review does
+// (MergeRequests::RequestReviewService): their approval goes, and their
+// state goes back to unreviewed, whatever it was.
+func (s *Server) rerequestReview(p *project, mr *gitlab.MergeRequest, reviewer string) {
+	if a := p.approvals[mr.IID]; a != nil {
+		dropApproval(a, reviewer)
+	}
+	s.setReviewerState(p, mr, reviewer, "unreviewed")
+}
+
+// dropApproval removes user's approval, if they gave one.
+func dropApproval(a *gitlab.Approvals, user string) {
+	a.ApprovedBy = slices.DeleteFunc(a.ApprovedBy, func(ap gitlab.Approver) bool { return ap.User.Username == user })
+	a.Approved = len(a.ApprovedBy) > 0
 }
 
 // resetOnPush is what a push to the source branch does to approvals:
@@ -346,10 +372,7 @@ func (s *Server) resetOnPush(p *project, mr *gitlab.MergeRequest) {
 		if _, reviewer := s.reviewerStates[key]; reviewer || slices.ContainsFunc(mr.Reviewers, func(u gitlab.UserBasic) bool {
 			return u.Username == by.User.Username
 		}) {
-			if s.reviewerStates == nil {
-				s.reviewerStates = map[string]string{}
-			}
-			s.reviewerStates[key] = "unapproved"
+			s.setReviewerState(p, mr, by.User.Username, "unapproved")
 		}
 	}
 	a.ApprovedBy, a.Approved = []gitlab.Approver{}, false

@@ -47,6 +47,7 @@ func fixtureCalls() []clientCall {
 		{Method: "GET", Path: "projects/{}", Func: "Client.GetProject", Pos: "reads.go:1"},
 		{Method: "GET", Path: "groups/{}/search", Func: "Client.Search", Pos: "reads.go:2"},
 		{Method: "GET", Path: "oauth/token/info", Web: true, Func: "Client.TokenInfo", Pos: "reads.go:3"},
+		{Method: "POST", Path: "api/graphql", Web: true, Func: "Client.RereviewMergeRequest", Pos: "graphql.go:1"},
 	}
 }
 
@@ -57,7 +58,7 @@ func TestTheFixtureRecordHolds(t *testing.T) {
 	if len(problems) > 0 {
 		t.Fatalf("problems on a correct fixture:\n%s", strings.Join(problems, "\n"))
 	}
-	want := "6 operations at v1.0.0-ee (2 used, 0 gated, 0 deferred, 4 written off) from 4 rows and 1 rules; 3 client calls bound"
+	want := "6 operations at v1.0.0-ee (2 used, 0 gated, 0 deferred, 4 written off) from 4 rows and 1 rules; 4 client calls bound"
 	if !strings.Contains(report, want) {
 		t.Errorf("report = %q, want it to contain %q", report, want)
 	}
@@ -115,7 +116,7 @@ func TestTheCoverageGateFailsEveryWay(t *testing.T) {
 		}, "has 5 rows and the floor is 100"},
 		{"the floor on client calls", func(_ *apiSnapshot, _ *[]coverageRow, _ *[]clientCall, fl *coverageFloors) {
 			fl.calls = 100
-		}, "has 3 Call literals and the floor is 100"},
+		}, "has 4 Call literals and the floor is 100"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

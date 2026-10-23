@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/gatekit"
-	"github.com/mmedum/gitlab-mcp/v3/scripts/internal/tsv"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/tsv"
 )
 
 // The API-coverage gate (docs/architecture.md §8a, CLAUDE.md rule 18).
@@ -50,6 +51,7 @@ var realCoverageFloors = coverageFloors{rows: 300, calls: 40, used: 40}
 // client no longer makes fails, like any stale row.
 var offSnapshotCalls = map[string]string{
 	"GET oauth/token/info": "Doorkeeper's token introspection, served under the web root; the REST OpenAPI file does not describe OAuth",
+	"POST api/graphql":     "the GraphQL endpoint, for an operation REST has no route for; GitLab commits no GraphQL schema, so docs/architecture.md §8a lists each operation by hand",
 }
 
 var verdicts = []string{"used", "gated", "deferred", "written-off"}
@@ -94,10 +96,20 @@ func apiCoverage(out io.Writer, _ []string) error {
 	problems = append(problems, callProblems...)
 	report, more := checkCoverage(snap, rows, calls, realCoverageFloors)
 	problems = append(problems, more...)
+	ops, opProblems, err := graphQLOperations(clientDir)
+	if err != nil {
+		return err
+	}
+	doc, err := os.ReadFile(stalenessArch)
+	if err != nil {
+		return err
+	}
+	listed, docProblems := listedGraphQL(string(doc))
+	problems = slices.Concat(problems, opProblems, docProblems, checkGraphQL(ops, listed, graphQLFloor))
 	if err := gatekit.Problems(out, "API coverage", problems); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintln(out, report)
+	_, _ = fmt.Fprintf(out, "%s; %d GraphQL operations, each listed in §8a\n", report, len(ops))
 	return nil
 }
 
