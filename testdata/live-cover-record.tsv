@@ -1,5 +1,5 @@
 # Written by scripts/livegitlab at the end of a run; do not edit.
-# run of 2026-10-22 against a gitlab.com instance
+# run of 2026-10-23 against a gitlab.com instance
 # Columns: tool.option (tool.* for the call itself), times sent.
 add_comment.*	18
 add_comment.body	18
@@ -234,10 +234,10 @@ get_job_log.failed_only	1
 get_job_log.job_id	4
 get_job_log.project	4
 get_me.*	1
-get_merge_request.*	10
-get_merge_request.iid	10
+get_merge_request.*	11
+get_merge_request.iid	11
 get_merge_request.offset	1
-get_merge_request.project	10
+get_merge_request.project	11
 get_mr_diff.*	5
 get_mr_diff.diff_offset	1
 get_mr_diff.file_offset	2
@@ -448,6 +448,12 @@ list_tree.recursive	2
 list_tree.ref	2
 list_wiki_pages.*	1
 list_wiki_pages.project	1
+make_issue_public.*	3
+make_issue_public.confirm	2
+make_issue_public.dry_run	1
+make_issue_public.iid	3
+make_issue_public.project	3
+make_issue_public.updated_at	3
 mark_todos_done.*	3
 mark_todos_done.dry_run	1
 mark_todos_done.ids	3
@@ -492,6 +498,12 @@ rebase_merge_request.iid	3
 rebase_merge_request.project	3
 rebase_merge_request.sha	3
 rebase_merge_request.skip_ci	1
+rerequest_review.*	4
+rerequest_review.dry_run	1
+rerequest_review.iid	4
+rerequest_review.project	4
+rerequest_review.reviewer_state	4
+rerequest_review.username	4
 resolve_discussion.*	6
 resolve_discussion.discussion_id	6
 resolve_discussion.dry_run	1
@@ -591,12 +603,12 @@ search_projects.page_token	1
 search_projects.scope	3
 search_projects.search	3
 search_projects.visibility	1
-submit_review.*	3
+submit_review.*	4
 submit_review.dry_run	1
 submit_review.escape_commands	1
-submit_review.iid	3
-submit_review.project	3
-submit_review.reviewer_state	2
+submit_review.iid	4
+submit_review.project	4
+submit_review.reviewer_state	3
 submit_review.summary	2
 subscribe.*	9
 subscribe.dry_run	2
