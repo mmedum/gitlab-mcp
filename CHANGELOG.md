@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-23
+
 ### Added
 
 - `rerequest_review` asks a reviewer of a merge request for a new review, as after addressing the changes they requested: GitLab sets their review state back to unreviewed and notifies them. It takes the review state you read as a witness, refuses a reviewer who approved, since GitLab would remove that approval, and refuses one who has not reviewed since being asked. GitLab has no REST route for it, so this is the server's first GraphQL call, a single fixed mutation.
@@ -208,7 +210,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.4.0...v3.0.0
 [2.4.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/mmedum/gitlab-mcp/compare/v2.2.1...v2.3.0

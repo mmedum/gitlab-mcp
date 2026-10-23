@@ -1,12 +1,16 @@
 # Architecture — gitlab-mcp
 
-**Status: 3.0.0, 2026-10-22, built with Go 1.27.3: the server asks the
-person nothing and per-call approval is the client's (§4.12, issue
-#63); `apply_suggestions` carries each suggestion's text as a witness
-(§7.3); merge request dependencies, `link_merge_requests` and
-`unlink_merge_requests` (§7.2, issue #62); the module path is `/v3`.
-Owed: the eight sibling servers still ask the person, and follow one
-at a time (`~/.claude/mcp-server-standard.md` §3). 2.4.0 asked once in
+**Status: 4.0.0, 2026-10-23, built with Go 1.27.3: `rerequest_review`
+asks a reviewer for a new review through the server's first GraphQL
+call, one fixed mutation (§4.10, §8a); `make_issue_public` publishes a
+confidential issue behind the destructive flag, and `update_issue`
+never does (§4.3); `make_issue_public`, `delete_label` and
+`delete_milestone` carry `requiresUserInteraction` (§4.12); the module
+path is `/v4`. Owed: the eight sibling servers still ask the person, and
+follow one at a time (`~/.claude/mcp-server-standard.md` §3). 3.0.0 left
+per-call approval to the client (§4.12, issue #63), carried each
+suggestion's text as a witness (§7.3) and added merge request
+dependencies (§7.2, issue #62). 2.4.0 asked once in
 Claude Code rather than twice. 2.3.0: `upload_file` uploads an image from a
 directory `GITLAB_MCP_UPLOAD_DIRS` names (§7.10), and every request
 body is timed by its progress (§11). 2.2.1: a repeated delete that may
@@ -1152,6 +1156,15 @@ status that is neither `success` nor `error` is `[unexpected]`, never
 unchanged. Someone who may merge the merge request, or its author, can
 cancel; GitLab answers anyone else 401, which is `[forbidden]` here
 (§18 row 109).
+
+`rerequest_review` asks a reviewer for a new review through the one
+GraphQL mutation (§4.10, §8a). It reads the reviewers and the approvals
+first and refuses a reviewer who approved, by state or in the
+approvals, and one still unreviewed. The approval check is that read:
+the mutation carries no witness, so a reviewer who approves between the
+read and the mutation has that approval removed by GitLab, which writes
+a system note and asks them again. Only the reviewer can open that
+window (§16a).
 
 ### 7.4 Where an inline comment lands
 
@@ -2575,6 +2588,29 @@ nothing. The code review found:
 | Found | Resolved |
 |---|---|
 | `apply_suggestions`' witness covers the text a suggestion puts in, not the lines it replaces, so a client's prompt can show one plausible line for a suggestion that removes many; the 2.x question named the range | Recorded: the Ship flag, the protected-branch refusal and review before merge stay, and `list_discussions` shows the range. Carrying `from_line` and `to_line` as optional, checked inputs would close it without a break |
+
+**Re-requesting a review and publishing an issue (#67).** The
+`/simplify`, `/code-review high` and `/security-review` passes found, and
+#67 resolved:
+
+| Found | Resolved |
+|---|---|
+| `rerequest_review` refused a reviewer only by an `approved` state, so one the approvals listed under another state could lose that approval | The approvals are read too, and a reviewer in them is refused `[blocked]` |
+| A GraphQL answer with a payload and a top-level error was reported as refused, so the caller could send it again and notify twice | A payload is read first: it means the mutation ran |
+| A GraphQL 401 "Invalid token", sent without `WWW-Authenticate`, did not ask for a new token | The classifier reads GraphQL's `errors` body, and that message asks for one |
+| From unreviewed, no read could settle a lost re-request | An unreviewed reviewer is refused `[conflict]`: there is no review to ask for again |
+| A witness outside GitLab's review states read as `[stale]` | `[invalid]` |
+| `api-coverage` let any GraphQL operation through one row for the endpoint | It reads each `mutate` call's root field and the first field its query selects, holds both against §8a's table, and refuses a call to the endpoint outside `mutate` |
+| `make_issue_public` sent a PUT for an issue already public | Nothing is sent |
+| The in-memory GitLab kept an approval when its giver requested changes | It takes it back, as GitLab does |
+
+**v4.0.0 release review.** The release security review
+(`audit/security-reviews/v4.0.0.md`) found two low findings:
+
+| Found | Resolved |
+|---|---|
+| `update_issue` sent `confidential: false` for an issue its read showed public, so a person making it confidential between the read and the `PUT` was undone | `65c44f1`: the field is left out for a public issue, and a test holds that nothing is sent |
+| `rerequest_review`'s approval check is a read; the mutation carries no witness, so a reviewer who approves in between loses that approval | Recorded in §7.3: only the reviewer can open the window, and GitLab notes it and asks them again |
 
 **Per-call approval to the client (issue #63).** The code and security
 reviews found:
