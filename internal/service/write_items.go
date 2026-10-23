@@ -124,8 +124,20 @@ func (in IssueUpdate) empty() bool {
 		in.Milestone == nil && !in.ClearMilestone && in.State == "" && in.DueDate == nil && !in.ClearDueDate && in.Confidential == nil
 }
 
-// UpdateIssue changes the fields given, after checking the witness.
+// UpdateIssue changes the fields given, after checking the witness. It
+// never makes a confidential issue public: that is MakeIssuePublic's.
 func (s *Service) UpdateIssue(ctx context.Context, in IssueUpdate) (model.IssueWrite, error) {
+	return s.updateIssue(ctx, in, false)
+}
+
+// MakeIssuePublic makes a confidential issue public, after checking the
+// witness.
+func (s *Service) MakeIssuePublic(ctx context.Context, project string, iid int64, updatedAt string) (model.IssueWrite, error) {
+	public := false
+	return s.updateIssue(ctx, IssueUpdate{Project: project, IID: iid, UpdatedAt: updatedAt, Confidential: &public}, true)
+}
+
+func (s *Service) updateIssue(ctx context.Context, in IssueUpdate, publish bool) (model.IssueWrite, error) {
 	if in.empty() {
 		return model.IssueWrite{}, gapi.Errf(gapi.ClassInvalid, "nothing to change: pass at least one field to set")
 	}
@@ -169,10 +181,11 @@ func (s *Service) UpdateIssue(ctx context.Context, in IssueUpdate) (model.IssueW
 	// Making a confidential issue public shows it to everyone who can see
 	// the project's issues, as a move to a more visible project would,
 	// and an injected "it was confidential by mistake" asks for exactly
-	// that. It is Ship's to allow, as an approving review is.
-	if in.Confidential != nil && !*in.Confidential && before.Confidential && !s.cfg.EnableShip {
-		return model.IssueWrite{}, gapi.Errf(gapi.ClassBlocked, "making a confidential issue public shows it to everyone "+
-			"who can see the project's issues, which this server does only when %s=true; nothing was sent", config.EnvEnableShip)
+	// that. It is make_issue_public's alone, behind the destructive flag,
+	// so a client's approval of update_issue never covers it (§4.12).
+	if in.Confidential != nil && !*in.Confidential && before.Confidential && !publish {
+		return model.IssueWrite{}, gapi.Errf(gapi.ClassBlocked, "update_issue does not make a confidential issue public; "+
+			"make_issue_public does, when %s=true; nothing was sent", config.EnvEnableDestructive)
 	}
 	body.AssigneeIDs = assigneeSet(before.Assignees, addIDs, in.AddAssignees, in.RemoveAssignees)
 	var notes []string

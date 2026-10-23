@@ -157,9 +157,9 @@ func TestAnnotationsAndMeta(t *testing.T) {
 			a.OpenWorldHint == nil || *a.OpenWorldHint != c.world {
 			t.Errorf("%s annotations = %+v", c.name, a)
 		}
-		// Per-call approval is the client's to decide (§4.12): no tool
-		// carries a mark a client's allow rule cannot override.
-		if _, marked := tl.Meta["anthropic/requiresUserInteraction"]; marked {
+		// Per-call approval is the client's to decide (§4.12): a tool
+		// carries the mark only when its spec asks for it.
+		if _, marked := tl.Meta[promptMeta]; marked {
 			t.Errorf("%s carries requiresUserInteraction", c.name)
 		}
 	}
@@ -402,6 +402,24 @@ func TestTheGuardedInputsAreDeclared(t *testing.T) {
 
 // A write that forgets a rule fails when the server starts, not when a
 // person first calls it.
+// TestOnlyWritesThatReachBeyondTheItemPrompt holds the marked set
+// (§4.12): a label or milestone deleted comes off every issue and merge
+// request, and an issue made public is read by everyone; none can be
+// undone, so Claude Code prompts on every such call.
+func TestOnlyWritesThatReachBeyondTheItemPrompt(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: FullSurface(config.Config{})})
+	var got []string
+	for name, tl := range listed(t, h) {
+		if tl.Meta[promptMeta] == true {
+			got = append(got, name)
+		}
+	}
+	slices.Sort(got)
+	if want := []string{"delete_label", "delete_milestone", "make_issue_public"}; !slices.Equal(got, want) {
+		t.Errorf("tools carrying %s = %v, want %v", promptMeta, got, want)
+	}
+}
+
 func TestRegisterRefusesAWriteMissingARule(t *testing.T) {
 	type noDryIn struct {
 		Body           string `json:"body" jsonschema:"A body"`
@@ -418,10 +436,11 @@ func TestRegisterRefusesAWriteMissingARule(t *testing.T) {
 			run: func(context.Context, *service.Service, noDryIn) (guardedOut, error) { return guardedOut{}, nil }, text: text},
 		"no escape_commands": tool[noEscapeIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"body"}, Description: "x"},
 			run: func(context.Context, *service.Service, noEscapeIn) (guardedOut, error) { return guardedOut{}, nil }, text: text},
-		"no such input":  tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"nope"}, Description: "x"}, run: run, text: text},
-		"a non-string":   tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"dry_run"}, Description: "x"}, run: run, text: text},
-		"a guarded read": tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Read, Guarded: []string{"body"}, Description: "x"}, run: run, text: text},
-		"no model.Write": tool[fakeIn, time.Time]{sp: spec{Name: "x", Kind: Write, Description: "x"}, run: func(context.Context, *service.Service, fakeIn) (time.Time, error) { return time.Time{}, nil }, text: func(time.Time, render.Boundary) string { return "" }},
+		"no such input":     tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"nope"}, Description: "x"}, run: run, text: text},
+		"a non-string":      tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, Guarded: []string{"dry_run"}, Description: "x"}, run: run, text: text},
+		"a guarded read":    tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Read, Guarded: []string{"body"}, Description: "x"}, run: run, text: text},
+		"a prompting write": tool[guardedIn, guardedOut]{sp: spec{Name: "x", Kind: Write, PromptEveryCall: true, Description: "x"}, run: run, text: text},
+		"no model.Write":    tool[fakeIn, time.Time]{sp: spec{Name: "x", Kind: Write, Description: "x"}, run: func(context.Context, *service.Service, fakeIn) (time.Time, error) { return time.Time{}, nil }, text: func(time.Time, render.Boundary) string { return "" }},
 	} {
 		func() {
 			defer func() {

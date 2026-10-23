@@ -99,10 +99,20 @@ type spec struct {
 	// internal/quickaction before the handler sees it and declares them
 	// under _meta, which `scripts/gates bodies` reads (§4.2).
 	Guarded []string
+	// PromptEveryCall marks a write that cannot be undone and reaches
+	// beyond the one item: a delete that takes what it deletes off every
+	// issue and merge request, or opening an issue to everyone. The tool
+	// carries Claude Code's requiresUserInteraction, so Claude Code
+	// prompts on every call whatever the operator's rules say (§4.12).
+	// Only a Destructive tool may set it.
+	PromptEveryCall bool
 }
 
 // quickActionMeta is the _meta key the guarded inputs are declared under.
 const quickActionMeta = "gitlab-mcp/quickaction"
+
+// promptMeta is the _meta key Claude Code prompts on every call for.
+const promptMeta = "anthropic/requiresUserInteraction"
 
 // Deps are what the tools need.
 type Deps struct {
@@ -211,6 +221,15 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 			mt.Meta = mcp.Meta{}
 		}
 		mt.Meta[quickActionMeta] = slices.Clone(t.sp.Guarded)
+	}
+	if t.sp.PromptEveryCall {
+		if t.sp.Kind != Destructive {
+			panic("tools: " + t.sp.Name + " prompts on every call and is not Destructive")
+		}
+		if mt.Meta == nil {
+			mt.Meta = mcp.Meta{}
+		}
+		mt.Meta[promptMeta] = true
 	}
 	s.AddTool(mt, c.handle)
 }

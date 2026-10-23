@@ -116,6 +116,7 @@ contract: tools keep their names and output fields.
 | `cancel_pipeline` | Cancel a running pipeline (Ship) |
 | `delete_branch` | Delete a branch; never the default, a protected or an unmerged one unless asked (Destructive) |
 | `delete_comment` | Delete one of your own comments (Destructive) |
+| `make_issue_public` | Make a confidential issue public (Destructive) |
 | `list_wiki_pages` | A project wiki's pages (`wiki` toolset) |
 | `get_wiki_page` | One wiki page, bounded (`wiki` toolset) |
 | `save_wiki_page` | Create a wiki page, or change one unchanged since you read it (`wiki` toolset) |
@@ -228,15 +229,19 @@ scope cannot separate any of it:
 | `GITLAB_MCP_READ_ONLY=true` | Read tools only, with a `read_api` token |
 | default | Read and Write: issues, comments, reviews, branches, merge requests |
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds merging, approving, running CI and releases |
-| `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds deletion, and each call must pass `confirm: true` |
+| `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds deletion and making an issue public, and each call must pass `confirm: true` |
 
 Your MCP client approves each call; the server does not ask you
-itself. A client that prompts by a tool's annotations, as claude.ai,
-Codex and VS Code do, prompts for the Ship and Destructive tools, which
-are marked destructive. In Claude Code, list the calls you want to
-approve one by one under `permissions.ask` in your settings, with the
-name you gave the server in place of `gitlab`. For example, the writes
-that ship, publish, upload or delete:
+itself. claude.ai and Codex prompt for the Ship and Destructive tools,
+which are marked destructive, and VS Code prompts for every tool that
+writes. In Claude Code, `delete_label`, `delete_milestone` and
+`make_issue_public` ask on every call whatever your rules say, since
+none can be undone and each reaches past the one item: a label or
+milestone comes off every issue and merge request, and a public issue
+is read by everyone. For the rest, list the
+calls you want to approve one by one under `permissions.ask` in your
+settings, with the name you gave the server in place of `gitlab`. For
+example, the writes that ship, publish, upload or delete:
 
 ```json
 {

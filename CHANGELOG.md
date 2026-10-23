@@ -15,6 +15,15 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `make_issue_public` makes a confidential issue public. It registers only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, needs `confirm: true` and the `updated_at` you read, and Claude Code asks on every call.
+
+### Changed
+
+- **Breaking:** `update_issue` no longer makes a confidential issue public, whatever the flags; `confidential: false` on one is refused `[blocked]`. Use `make_issue_public`, which needs `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` where this needed `GITLAB_MCP_ENABLE_SHIP=true`. Your client's approval of `update_issue` no longer covers publishing an issue.
+- **Breaking:** `delete_label` and `delete_milestone` carry Claude Code's `requiresUserInteraction` mark, since each takes what it deletes off every issue and merge request for good. Claude Code now asks on every such call whatever your allow rules say, and refuses it in a run that cannot ask (`-p`, dontAsk). Other clients are unchanged.
+
 ## [3.0.0] - 2026-10-22
 
 ### Added

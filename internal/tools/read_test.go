@@ -783,9 +783,9 @@ func TestSurfaceCounts(t *testing.T) {
 	}{
 		{"default", config.Config{}, 65},
 		{"read-only", config.Config{ReadOnly: true}, 39},
-		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 80},
+		{"ship and destructive", config.Config{EnableShip: true, EnableDestructive: true}, 81},
 		{"every toolset, read-only", config.Config{ReadOnly: true, Toolsets: config.Toolsets}, 48},
-		{"full", FullSurface(config.Config{}), 103},
+		{"full", FullSurface(config.Config{}), 104},
 	}
 	for _, c := range cases {
 		if got := len(Surface(c.cfg, nil)); got != c.want {

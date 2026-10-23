@@ -30,7 +30,7 @@ func definitions() []definition {
 		uploadFile(),
 		mergeMergeRequest(), cancelAutoMerge(), approveMergeRequest(), unapproveMergeRequest(), applySuggestions(), rebaseMergeRequest(), moveIssue(),
 		runPipeline(), runMergeRequestPipeline(), retryPipeline(), retryJob(), playJob(), cancelPipeline(),
-		deleteBranch(), deleteComment(),
+		deleteBranch(), deleteComment(), makeIssuePublic(),
 		listWikiPages(), getWikiPage(), saveWikiPage(), deleteWikiPage(),
 		listSnippets(), getSnippet(), createSnippet(), updateSnippet(), deleteSnippet(),
 		listReleases(), getRelease(), createRelease(), createTag(), deleteTag(),

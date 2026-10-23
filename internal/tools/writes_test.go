@@ -143,27 +143,33 @@ func TestDryRunsSendNothing(t *testing.T) {
 	}
 }
 
-// Making a confidential issue public widens who can read it, so it is
-// Ship's to allow; making one confidential is not.
-func TestMakingAnIssuePublicNeedsShip(t *testing.T) {
-	h := newHarness(t, harnessOptions{})
+// Making a confidential issue public widens who can read it, so only
+// make_issue_public does it, behind the destructive flag (§4.12).
+// update_issue refuses it whatever the flags, and still makes an issue
+// confidential.
+func TestOnlyMakeIssuePublicMakesAnIssuePublic(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: FullSurface(config.Config{})})
 	_, out := h.ok("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": issueWitness(h, 2), "confidential": true})
 	if get(out, "confidential") != true {
 		t.Fatalf("result = %v", out)
 	}
+	witness := get(out, "updated_at")
 	sent := writesSent(h)
 	for _, dry := range []bool{true, false} {
-		text := h.fails("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": get(out, "updated_at"),
+		text := h.fails("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": witness,
 			"confidential": false, "dry_run": dry}, "blocked")
-		if !strings.Contains(text, "GITLAB_MCP_ENABLE_SHIP") || writesSent(h) != sent {
-			t.Errorf("dry run %v: %s", dry, text)
+		if !strings.Contains(text, "make_issue_public") || writesSent(h) != sent {
+			t.Errorf("update_issue, dry run %v: %s", dry, text)
 		}
 	}
-	s := newHarness(t, harnessOptions{cfg: ship})
-	_, out = s.ok("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": issueWitness(s, 2), "confidential": true})
-	if _, out = s.ok("update_issue", map[string]any{"project": alpha, "iid": 2, "updated_at": get(out, "updated_at"),
-		"confidential": false}); get(out, "confidential") != false {
-		t.Errorf("with Ship: %v", out)
+	h.fails("make_issue_public", map[string]any{"project": alpha, "iid": 2, "updated_at": "2020-01-01T00:00:00Z", "confirm": true}, "stale")
+	h.ok("make_issue_public", map[string]any{"project": alpha, "iid": 2, "updated_at": witness, "confirm": true, "dry_run": true})
+	if writesSent(h) != sent {
+		t.Errorf("a dry run of make_issue_public wrote")
+	}
+	if _, out = h.ok("make_issue_public", map[string]any{"project": alpha, "iid": 2, "updated_at": witness,
+		"confirm": true}); get(out, "confidential") != false {
+		t.Errorf("make_issue_public = %v", out)
 	}
 }
 
