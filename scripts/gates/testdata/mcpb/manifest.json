@@ -70,21 +70,21 @@
     "read_only": {
       "type": "boolean",
       "title": "Read-only",
-      "description": "Register only the read tools and use a read_api token, so GitLab itself refuses a write. Needs a login made in read-only mode.",
+      "description": "Register only the read tools and use a read_api token, so GitLab itself refuses a write. Needs a login made in read-only mode. It cannot be combined with either switch below: the server then refuses to start.",
       "default": false,
       "required": false
     },
     "enable_ship": {
       "type": "boolean",
       "title": "Merging, approving, CI and releases",
-      "description": "Register the tools that merge, approve and rebase merge requests, run, retry, play and cancel CI, and, with the releases toolset, create releases. Off by default. This server asks nobody before a call, so Claude Desktop's approval of each tool is then the only check.",
+      "description": "Register the tools that merge, approve and rebase merge requests, run, retry, play and cancel CI, and, with the releases toolset, create releases. Off by default, and not with Read-only. This server asks nobody before a call, so Claude Desktop's approval of each tool is then the only check.",
       "default": false,
       "required": false
     },
     "enable_destructive": {
       "type": "boolean",
       "title": "Deleting and making issues public",
-      "description": "Register the delete tools and make_issue_public. Each call also needs confirm: true, and nothing deleted comes back. Off by default.",
+      "description": "Register the delete tools and make_issue_public. Each call also needs confirm: true, and nothing deleted comes back. Off by default, and not with Read-only.",
       "default": false,
       "required": false
     },

@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Claude Desktop bundle says that Read-only cannot be combined with the Ship or Destructive switch. The server refuses that combination at startup, and the bundle offered all three without saying so.
+
 ## [4.1.0] - 2026-10-24
 
 ### Added
