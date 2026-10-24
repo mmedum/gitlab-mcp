@@ -99,9 +99,12 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"a refused field with no title", func(d map[string]any) {
 			mcpbDig(d, "user_config", "enable_ship")["title"] = ""
 		}, "user_config.enable_ship has no title"},
+		{"a command relative to the bundle", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config")["command"] = "server/gitlab-mcp-darwin"
+		}, `mcp_config.command is "server/gitlab-mcp-darwin"; a command starts with ${__dirname}/`},
 		{"a command from the root", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["command"] = "/server/gitlab-mcp.exe"
-		}, `platform_overrides.win32.command is "/server/gitlab-mcp.exe", which the packer does not stage`},
+		}, `platform_overrides.win32.command is "/server/gitlab-mcp.exe"; a command starts with ${__dirname}/`},
 		{"command not staged", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config")["command"] = "${__dirname}/server/typo"
 		}, "mcp_config.command is"},
