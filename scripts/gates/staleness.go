@@ -20,6 +20,7 @@ import (
 
 	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 	"github.com/mmedum/gitlab-mcp/v4/internal/scopes"
+	"github.com/mmedum/gitlab-mcp/v4/internal/userconfig"
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gitx"
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/mcpstdio"
@@ -115,6 +116,8 @@ func stalenessCheck(in stalenessInputs) stalenessReport {
 
 	n, p = stalenessEnv(in.docs[stalenessConfigDoc], in.docs[stalenessDevDoc], in.configVars, in.devVars, in.removedVars)
 	r.add(fmt.Sprintf("settings: %d variables", n), p)
+
+	r.add("profile rule: "+stalenessConfigDoc, stalenessProfileRule(in.docs[stalenessConfigDoc]))
 
 	n, p = stalenessGates(in.docs[stalenessDevDoc], in.commands)
 	r.add(fmt.Sprintf("gates: %d commands", n), p)
@@ -455,6 +458,19 @@ func stalenessPathLike(s string) (string, bool) {
 
 var stalenessEnvRef = regexp.MustCompile(`\b` + config.EnvPrefix + `[A-Z0-9_]*[A-Z0-9]\b`)
 
+// stalenessEnvNames is every variable a document names, each a whole
+// word: a letter of either case, a digit or _ on either side makes it
+// part of a longer word, and a * after it makes it a pattern.
+func stalenessEnvNames(doc string) []string {
+	var names []string
+	for _, at := range stalenessEnvRef.FindAllStringIndex(doc, -1) {
+		if !strings.HasPrefix(doc[at[1]:], "*") {
+			names = append(names, doc[at[0]:at[1]])
+		}
+	}
+	return names
+}
+
 // stalenessEnv holds docs/configuration.md to the variables
 // internal/config says the server reads, both ways, and the development
 // overrides to docs/development.md alone: a person configuring the
@@ -466,12 +482,12 @@ func stalenessEnv(doc, devDoc string, vars, devVars, removed []string) (int, []s
 	}
 	problems := gatekit.Floor("variables in internal/config.Vars", len(vars), 10)
 	for _, v := range devVars {
-		if !slices.Contains(stalenessEnvRef.FindAllString(devDoc, -1), v) {
+		if !slices.Contains(stalenessEnvNames(devDoc), v) {
 			problems = append(problems, stalenessDevDoc+" does not document the development override "+v)
 		}
 	}
 	documented := map[string]bool{}
-	for _, v := range stalenessEnvRef.FindAllString(doc, -1) {
+	for _, v := range stalenessEnvNames(doc) {
 		documented[v] = true
 	}
 	for _, v := range vars {
@@ -488,6 +504,16 @@ func stalenessEnv(doc, devDoc string, vars, devVars, removed []string) (int, []s
 		}
 	}
 	return len(vars) + len(devVars), problems
+}
+
+// stalenessProfileRule holds the configuration page to the words a
+// refused profile name's error gives, so the page cannot admit a name
+// the server stops at.
+func stalenessProfileRule(doc string) []string {
+	if doc == "" || strings.Contains(doc, userconfig.ProfileRule) {
+		return nil // a missing page is stalenessEnv's
+	}
+	return []string{fmt.Sprintf("%s does not say a profile name is %q", stalenessConfigDoc, userconfig.ProfileRule)}
 }
 
 var stalenessGateRef = regexp.MustCompile("`(?:go run \\./scripts/)?gates ([a-z][a-z0-9-]*)")

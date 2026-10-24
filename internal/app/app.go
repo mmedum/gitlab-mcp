@@ -137,7 +137,7 @@ func Resolve(cfg config.Config, o Options) (*Settings, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Settings{Config: cfg, Profile: p, Instance: cfg.Target()}
+	s := &Settings{Config: cfg, Profile: p, Instance: cfg.Target(), envToken: p.Store.EnvToken() != ""}
 	if cfg.TestInstance {
 		logger.Warn(config.EnvTestInstance + " is set: this server talks to a loopback test instance, not gitlab.com")
 	}
@@ -145,7 +145,7 @@ func Resolve(cfg config.Config, o Options) (*Settings, error) {
 	case !SameInstance(p.User.Instance, s.Instance):
 		s.CredentialsErr = fmt.Errorf("profile %q is signed in to another instance than %s; "+
 			"run `gitlab-mcp login` to sign it in to this one", p.Name, InstanceKind(s.Instance))
-	case cfg.TestInstance && p.User.Instance == "" && o.env(credentials.EnvVar) == "":
+	case cfg.TestInstance && p.User.Instance == "" && !s.envToken:
 		// The keyring is keyed by profile alone, so a stored token under a
 		// profile that records no instance may be gitlab.com's: it is
 		// never sent to a test instance. A token given in the environment
@@ -161,14 +161,13 @@ func Resolve(cfg config.Config, o Options) (*Settings, error) {
 	s.HTTPClient = NewHTTPClient()
 	s.app = &auth.Application{Instance: s.Instance, ClientID: s.ClientID, HTTPClient: s.HTTPClient, Timeout: cfg.HTTPTimeout}
 
-	if s.CredentialsErr == nil && s.ClientID == "" && o.env(credentials.EnvVar) == "" && !p.HasUser {
+	if s.CredentialsErr == nil && s.ClientID == "" && !s.envToken && !p.HasUser {
 		s.CredentialsErr = errors.New("not signed in: run `gitlab-mcp login --client-id <application id>`")
 	}
 	if s.CredentialsErr == nil && s.ClientID == "" {
 		s.CredentialsErr = fmt.Errorf("no OAuth application id: set %s or run `gitlab-mcp login --client-id <application id>`",
 			config.EnvClientID)
 	}
-	s.envToken = o.env(credentials.EnvVar) != ""
 	s.tokens = s.tokenSource(warn)
 	return s, nil
 }
@@ -182,13 +181,6 @@ func (s *Settings) tokenSource(warn func(string)) gapi.TokenSource {
 	return auth.NewTokenSource(s.app, s.Profile.Store, auth.TokenSourceOptions{
 		LockPath: s.Profile.Dir.LockPath(s.Profile.Name), Warn: warn,
 	})
-}
-
-func (o Options) env(k string) string {
-	if o.Env == nil {
-		return ""
-	}
-	return strings.TrimSpace(o.Env(k))
 }
 
 // Application is the OAuth application these settings sign in with.

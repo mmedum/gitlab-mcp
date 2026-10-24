@@ -185,3 +185,23 @@ func TestServerJSONPublish(t *testing.T) {
 		}
 	}
 }
+
+// go.mod's module directive is read however it is spaced, quoted,
+// commented or ended, and a file without one declares none.
+func TestGoModModuleReadsTheDirective(t *testing.T) {
+	for _, tc := range []struct{ gomod, want string }{
+		{"module example.com/m\n\ngo 1.27\n", "example.com/m"},
+		{"module\texample.com/m\n", "example.com/m"},
+		{"module   example.com/m // the module\r\n\r\ngo 1.27\r\n", "example.com/m"},
+		{"// module example.com/old\nmodule \"example.com/m\"\n", "example.com/m"},
+		{"go 1.27\n\nrequire example.com/module v1.0.0\n", ""},
+	} {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(tc.gomod), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := goModModule(root); err != nil || got != tc.want {
+			t.Errorf("goModModule(%q) = %q, %v; want %q", tc.gomod, got, err, tc.want)
+		}
+	}
+}

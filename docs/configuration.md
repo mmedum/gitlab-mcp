@@ -19,7 +19,7 @@ itself, and every problem is reported together.
 
 | Variable | Flag | Default | What it does |
 |---|---|---|---|
-| `GITLAB_MCP_PROFILE` | `--profile` | `default` | Which stored sign-in to use. Separate profiles keep separate tokens, such as one per GitLab account. Up to 64 characters from a to z, 0 to 9, `-` and `_`, starting with a letter or digit. |
+| `GITLAB_MCP_PROFILE` | `--profile` | `default` | Which stored sign-in to use. Separate profiles keep separate tokens, such as one per GitLab account. A name is up to 64 characters from a to z, 0 to 9, - and _, starting with a letter or digit. |
 | `GITLAB_MCP_CLIENT_ID` | `--client-id` | the profile's | The OAuth application id. Overrides the one the profile recorded at login. |
 | `GITLAB_MCP_READ_ONLY` | `--read-only` | `false` | Register only the Read tools and request `read_api`. Needs a login made in this mode. |
 | `GITLAB_MCP_ENABLE_SHIP` | `--enable-ship` | `false` | Register merging, approving, running and canceling CI, and creating releases. |
@@ -40,7 +40,9 @@ Two more are read from the environment only:
 | `GITLAB_MCP_REFRESH_TOKEN` | none | A refresh token to use instead of the stored one, for CI and automation. It has no flag because a command line is visible to every process on the machine. |
 
 A switch takes `true`, `false`, `1`, `0`, `yes`, `no`, `on` or `off`,
-and a bare flag such as `--read-only` means `true`.
+and a bare flag such as `--read-only` means `true`. A variable set to
+spaces alone is unset, as an empty one is, and the spaces around a
+value are dropped.
 
 ### Refused combinations
 

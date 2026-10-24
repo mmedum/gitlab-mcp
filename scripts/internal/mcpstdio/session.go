@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 )
 
 // Protocol is the revision Initialize asks for when none is given.
@@ -28,11 +30,6 @@ const Protocol = "2025-11-25"
 
 // CallTimeout bounds one request when Config.Timeout is zero.
 const CallTimeout = 2 * time.Minute
-
-// envPrefix is the server's settings prefix. No setting a maintainer
-// exported is inherited unless the caller passes it, so nothing in the
-// shell changes what a run drives.
-const envPrefix = "GITLAB_MCP_"
 
 // Config says how to start the server.
 type Config struct {
@@ -116,7 +113,9 @@ func Start(binary string, cfg Config) (*Session, error) {
 func Environ(base []string, extra ...string) []string {
 	out := make([]string, 0, len(base)+len(extra))
 	for _, kv := range base {
-		if !strings.HasPrefix(kv, envPrefix) {
+		// No setting a maintainer exported is inherited unless the caller
+		// passes it, so nothing in the shell changes what a run drives.
+		if !strings.HasPrefix(kv, config.EnvPrefix) {
 			out = append(out, kv)
 		}
 	}

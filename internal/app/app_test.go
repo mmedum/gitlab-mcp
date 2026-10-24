@@ -147,7 +147,7 @@ func TestATokenStaysWithTheInstanceThatIssuedIt(t *testing.T) {
 // that records no instance still sends it to the test instance.
 func TestAnEnvironmentTokenReachesTheTestInstance(t *testing.T) {
 	e, k := setup(t, "http://127.0.0.1:9")
-	e[credentials.EnvVar] = "test-refresh-from-env"
+	e[config.EnvRefreshToken] = "test-refresh-from-env"
 	e[config.EnvClientID] = gitlabtest.ClientID
 	s, err := Resolve(load(t, e), Options{Env: e.get, Keyring: k})
 	if err != nil {
@@ -155,6 +155,21 @@ func TestAnEnvironmentTokenReachesTheTestInstance(t *testing.T) {
 	}
 	if s.CredentialsErr != nil {
 		t.Errorf("an environment token was withheld: %v", s.CredentialsErr)
+	}
+}
+
+// A nil Env is the process's environment, for the settings as for the
+// credential store they build, so a token set there counts as given.
+func TestANilEnvIsTheProcessEnvironment(t *testing.T) {
+	e, k := setup(t, "http://127.0.0.1:9")
+	e[config.EnvClientID] = gitlabtest.ClientID
+	t.Setenv(config.EnvRefreshToken, "test-refresh-from-env")
+	s, err := Resolve(load(t, e), Options{Keyring: k})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CredentialsErr != nil {
+		t.Errorf("Resolve with a nil Env and %s set: %v, want the token used", config.EnvRefreshToken, s.CredentialsErr)
 	}
 }
 
@@ -315,7 +330,7 @@ func TestProbeIgnoresTheLoginsScopesForAnEnvironmentToken(t *testing.T) {
 	e, k := setup(t, srv.URL)
 	cfg := load(t, e)
 	signIn(t, cfg, k, srv.URL, srv.TokenFor("bob", "api"), "api")
-	e[credentials.EnvVar] = "test-refresh-from-env"
+	e[config.EnvRefreshToken] = "test-refresh-from-env"
 	s, err := Resolve(cfg, Options{Env: e.get, Keyring: k})
 	if err != nil {
 		t.Fatal(err)

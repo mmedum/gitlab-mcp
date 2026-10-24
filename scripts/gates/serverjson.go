@@ -77,20 +77,31 @@ func serverJSON(out io.Writer, args []string) error {
 	return fmt.Errorf("usage: server-json [TAG CHECKSUMS]; no arguments checks, two print the entry to publish")
 }
 
+// goModModule is the module path go.mod under root declares, "" when it
+// declares none: the gates that need it read it here. The directive may
+// be spaced by tabs, quote the path, end in a // comment and a carriage
+// return.
+func goModModule(root string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(root, "go.mod")) //nolint:gosec // a repository path
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line, _, _ = strings.Cut(line, "//")
+		if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "module" {
+			return strings.Trim(fields[1], `"`), nil
+		}
+	}
+	return "", nil
+}
+
 // serverJSONOwnerRepo reads the module path out of go.mod and splits it
 // into owner and repository, a major-version suffix such as /v2 dropped:
 // the repository is the same one at every major version.
 func serverJSONOwnerRepo(root string) (string, string, error) {
-	data, err := os.ReadFile(filepath.Join(root, "go.mod")) //nolint:gosec // a repository path
+	module, err := goModModule(root)
 	if err != nil {
 		return "", "", err
-	}
-	module := ""
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
-			module = strings.Trim(strings.TrimSpace(rest), `"`)
-			break
-		}
 	}
 	module = serverJSONMajor.ReplaceAllString(module, "")
 	parts := strings.Split(module, "/")

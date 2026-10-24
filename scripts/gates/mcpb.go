@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"fmt"
@@ -66,6 +67,17 @@ type mcpbStaged struct {
 	repo string
 }
 
+// role says what a staged program is, for a refusal that names it.
+func (f mcpbStaged) role() string {
+	switch {
+	case f.launcher:
+		return "the launcher, staged for " + strconv.Quote(f.platform)
+	case f.platform == "":
+		return "a binary the launcher chooses"
+	}
+	return "staged for " + strconv.Quote(f.platform)
+}
+
 // mcpbFiles is what a bundle contains. goreleaser names directories
 // <build id>_<goos>_<goarch>[_<variant>], and the universal binary's
 // <id>_darwin_all.
@@ -88,8 +100,10 @@ var mcpbFiles = []mcpbStaged{
 	{path: "README.md", repo: "README.md"},
 }
 
-// mcpbManifest is the part of the manifest the checks read. The whole
-// document is decoded a second time as a map, so unknown keys survive.
+// mcpbManifest is the part of the manifest the checks read. A key it
+// leaves out is held by the vendored schema, which reads the raw bytes,
+// and still ships, since the packer's stamp decodes the whole document
+// as a map.
 type mcpbManifest struct {
 	Schema          string   `json:"$schema"`
 	ManifestVersion string   `json:"manifest_version"`
@@ -135,13 +149,63 @@ func mcpb(out io.Writer, _ []string) error {
 }
 
 func mcpbCheck(out io.Writer, root string) error {
-	path := filepath.Join(root, mcpbManifestPath)
-	m, raw, err := mcpbRead(path)
+	_, m, problems, err := mcpbCommitted(root)
 	if err != nil {
 		return err
 	}
+	if err := gatekit.Problems(out, mcpbManifestPath, problems); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "mcpb: %s: %d staged files, %d platforms, %d user_config keys; every name resolves\n",
+		mcpbManifestPath, len(mcpbFiles), len(m.Compatibility.Platforms), len(m.UserConfig))
+	return nil
+}
+
+// mcpbCommitted is where the gate and the packer both start: the
+// committed manifest under root, read once and decoded once, and every
+// problem the checks find in it and in the files beside it under the
+// same root, sorted. The packer ships this document re-encoded with the
+// real version, so it holds what it stamps to the vendored schema too.
+//
+// A key repeated in one object is refused before anything else is
+// checked, and so are two keys that differ only in case. The typed
+// decode merges a repeated object into the first and matches a key
+// whatever its case, while a decode into a map, which the vendored
+// schema's validator and the packer's stamp read, keeps the last of a
+// repeat and each spelling apart, as Node's JSON.parse, the reference
+// host's, does. Every other check would read a document that is not the
+// one shipped. Claude Desktop was not probed (§18 rows 133 and 134).
+func mcpbCommitted(root string) ([]byte, mcpbManifest, []string, error) {
+	raw, err := os.ReadFile(filepath.Join(root, mcpbManifestPath)) //nolint:gosec // a repository path
+	if err != nil {
+		return nil, mcpbManifest{}, nil, err
+	}
+	var m mcpbManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, mcpbManifest{}, nil, fmt.Errorf("%s is not valid JSON: %w", mcpbManifestPath, err)
+	}
+	repeated, err := mcpbRepeatedKeys(raw)
+	if err != nil {
+		return raw, m, []string{fmt.Sprintf("the manifest could not be read key by key: %v", err)}, nil
+	}
+	if len(repeated) > 0 {
+		problems := make([]string, 0, len(repeated))
+		for _, r := range repeated {
+			if r.first == "" {
+				problems = append(problems, fmt.Sprintf("the manifest has %s more than once; the gate's decode "+
+					"merges a repeated key, and the schema and the packer keep the last, as Node's JSON.parse "+
+					"does, so they would read different documents", r.at))
+				continue
+			}
+			problems = append(problems, fmt.Sprintf("the manifest has %s beside %q, which differs only in case; "+
+				"the gate's decode reads the two as one key, and the schema and the packer as two, as Node's "+
+				"JSON.parse does, so they would read different documents", r.at, r.first))
+		}
+		return raw, m, problems, nil
+	}
 	problems := mcpbValidate(m, mcpbFiles, launcherNamesIn(launcherScript(mcpbFiles)))
 	problems = append(problems, mcpbDocumentProblems(m, raw)...)
+	problems = append(problems, mcpbIdentityProblems(m, mcpbFiles)...)
 	if m.Version != gatekit.PlaceholderVersion {
 		problems = append(problems, fmt.Sprintf("version is %q; the committed manifest carries %q and the "+
 			"packer writes the real one", m.Version, gatekit.PlaceholderVersion))
@@ -151,29 +215,79 @@ func mcpbCheck(out io.Writer, root string) error {
 	}
 	problems = append(problems, mcpbRepoProblems(root, m)...)
 	slices.Sort(problems)
-	if err := gatekit.Problems(out, mcpbManifestPath, problems); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(out, "mcpb: %s: %d staged files, %d platforms, %d user_config keys; every name resolves\n",
-		mcpbManifestPath, len(mcpbFiles), len(m.Compatibility.Platforms), len(m.UserConfig))
-	return nil
+	return raw, m, problems, nil
 }
 
-// mcpbRead decodes the manifest twice: typed for the checks, and as a
-// document for the schema and the packer, which must keep every key.
-func mcpbRead(path string) (mcpbManifest, []byte, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // a repository path
-	if err != nil {
-		return mcpbManifest{}, nil, err
-	}
-	var m mcpbManifest
-	var doc map[string]any
-	for _, into := range []any{&m, &doc} {
-		if err := json.Unmarshal(raw, into); err != nil {
-			return mcpbManifest{}, nil, fmt.Errorf("%s is not valid JSON: %w", path, err)
+// mcpbRepeat is a key an object has more than once: at is its path,
+// and first the spelling it had before when that differs only in case.
+type mcpbRepeat struct{ at, first string }
+
+// mcpbRepeatedKeys is every key an object in raw has more than once,
+// equal or equal under Unicode case folding, as the typed decode matches
+// keys, each once, in document order. Its path is "server" at the top
+// level, "server.mcp_config.env.GITLAB_MCP_PROFILE" inside, [i] for an
+// element of a list and ["a.b"] for a key a dot or a bracket would make
+// ambiguous. A document the walk cannot read is an error, not a pass.
+func mcpbRepeatedKeys(raw []byte) ([]mcpbRepeat, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var repeated []mcpbRepeat
+	var walk func(path string) error
+	walk = func(path string) error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
 		}
+		switch tok {
+		case json.Delim('{'):
+			var keys []string
+			reported := map[int]bool{}
+			for dec.More() {
+				keyTok, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				key, _ := keyTok.(string)
+				at := mcpbKeyPath(path, key)
+				if i := slices.IndexFunc(keys, func(k string) bool { return strings.EqualFold(k, key) }); i >= 0 && !reported[i] {
+					reported[i] = true
+					first := keys[i]
+					if first == key {
+						first = ""
+					}
+					repeated = append(repeated, mcpbRepeat{at, first})
+				}
+				keys = append(keys, key)
+				if err := walk(at); err != nil {
+					return err
+				}
+			}
+		case json.Delim('['):
+			for i := 0; dec.More(); i++ {
+				if err := walk(fmt.Sprintf("%s[%d]", path, i)); err != nil {
+					return err
+				}
+			}
+		default:
+			return nil
+		}
+		_, err = dec.Token() // the closing brace or bracket
+		return err
 	}
-	return m, raw, nil
+	if err := walk(""); err != nil {
+		return nil, err
+	}
+	return repeated, nil
+}
+
+// mcpbKeyPath is the path of key in the object at path.
+func mcpbKeyPath(path, key string) string {
+	switch {
+	case key == "" || strings.ContainsAny(key, `.[]"`):
+		return path + "[" + strconv.Quote(key) + "]"
+	case path == "":
+		return key
+	}
+	return path + "." + key
 }
 
 // mcpbDocumentProblems holds what the manifest says about itself: its
@@ -194,12 +308,36 @@ func mcpbDocumentProblems(m mcpbManifest, raw []byte) []string {
 		problems = append(problems, fmt.Sprintf("compatibility.claude_desktop is %q, want %q",
 			m.Compatibility.ClaudeDesktop, mcpbMinDesktop))
 	}
-	if m.Name != gatekit.BinaryName {
-		problems = append(problems, fmt.Sprintf("name is %q, want %q", m.Name, gatekit.BinaryName))
-	}
 	if len(m.PrivacyPolicies) == 0 {
 		problems = append(problems, "privacy_policies is empty; the manifest specification requires one for a "+
 			"server that connects to a service processing user data, as this one does to gitlab.com")
+	}
+	return problems
+}
+
+// mcpbIdentityProblems holds what the manifest says it is: the server's
+// own name, a binary, and exactly the platforms the packer stages an
+// entry point for, derived from the staged table, so dropping a platform
+// together with its override is refused. mcpbValidate holds each
+// claimed platform to the file staged for it.
+func mcpbIdentityProblems(m mcpbManifest, files []mcpbStaged) []string {
+	var problems []string
+	if m.Name != gatekit.BinaryName {
+		problems = append(problems, fmt.Sprintf("name is %q, want %q", m.Name, gatekit.BinaryName))
+	}
+	if m.Server.Type != "binary" {
+		problems = append(problems, fmt.Sprintf("server.type is %q; the bundle carries a binary", m.Server.Type))
+	}
+	var staged []string
+	for _, f := range files {
+		if f.platform != "" {
+			staged = append(staged, f.platform)
+		}
+	}
+	slices.Sort(staged)
+	if claimed := slices.Sorted(slices.Values(m.Compatibility.Platforms)); !slices.Equal(claimed, staged) {
+		problems = append(problems, fmt.Sprintf("compatibility.platforms is %v; the packer stages entry points for %v",
+			claimed, staged))
 	}
 	return problems
 }
@@ -216,6 +354,7 @@ type mcpbOption struct {
 	Required    bool            `json:"required"`
 	Default     json.RawMessage `json:"default"`
 	Multiple    bool            `json:"multiple"`
+	Sensitive   bool            `json:"sensitive"`
 }
 
 // options decodes each user_config entry the checks can read. An entry
@@ -280,15 +419,19 @@ func mcpbEnvRefProblems(m mcpbManifest) []string {
 	return problems
 }
 
-// mcpbResolve is the path in the bundle a command names.
-func mcpbResolve(cmd string) string {
-	return strings.TrimPrefix(cmd, "${__dirname}/")
+// mcpbDirname starts every command: the one path the specification
+// fixes to the bundle. What a relative command is resolved against, no
+// source says (§18 row 132).
+const mcpbDirname = "${__dirname}/"
+
+// mcpbResolve is the path in the bundle a command names, and whether it
+// names one through mcpbDirname.
+func mcpbResolve(cmd string) (string, bool) {
+	return strings.CutPrefix(cmd, mcpbDirname)
 }
 
 // mcpbCommandProblems holds each command, keyed by platform with "" for
-// the base, to a program the packer stages, named through ${__dirname}:
-// the one path the specification fixes to the bundle. What a relative
-// command is resolved against, no source says (§18 row 132).
+// the base, to a program the packer stages, named through mcpbDirname.
 func mcpbCommandProblems(commands map[string]string, staged map[string]mcpbStaged) []string {
 	var problems []string
 	for _, platform := range slices.Sorted(maps.Keys(commands)) {
@@ -296,16 +439,40 @@ func mcpbCommandProblems(commands map[string]string, staged map[string]mcpbStage
 		if platform != "" {
 			where = "platform_overrides." + platform + ".command"
 		}
-		if !strings.HasPrefix(commands[platform], "${__dirname}/") {
-			problems = append(problems, fmt.Sprintf("%s is %q; a command starts with ${__dirname}/, the one "+
-				"path the specification fixes to the bundle", where, commands[platform]))
+		rel, ok := mcpbResolve(commands[platform])
+		if !ok {
+			problems = append(problems, fmt.Sprintf("%s is %q; a command starts with %s, the one "+
+				"path the specification fixes to the bundle", where, commands[platform], mcpbDirname))
 			continue
 		}
-		if _, ok := staged[mcpbResolve(commands[platform])]; !ok {
+		if _, ok := staged[rel]; !ok {
 			problems = append(problems, fmt.Sprintf("%s is %q, which the packer does not stage", where, commands[platform]))
 		}
 	}
 	return problems
+}
+
+// mcpbArgsProblems holds the base mcp_config.args. Settings pass by env
+// only: a flag in args, such as --enable-destructive, would turn on what
+// every check on env holds off. The base keeps its empty args, as Claude
+// Desktop has always been given it; no launch of Desktop has shown it
+// optional.
+func mcpbArgsProblems(raw json.RawMessage) []string {
+	if raw == nil {
+		return []string{"mcp_config.args is missing; keep it as [], the shape every released bundle " +
+			"has had, since no Claude Desktop launch has shown the key optional"}
+	}
+	var args []json.RawMessage
+	switch err := json.Unmarshal(raw, &args); {
+	case err != nil:
+		return []string{"mcp_config.args is not a list; keep it as []"}
+	case args == nil:
+		return []string{"mcp_config.args is null; keep it as []"}
+	case len(args) > 0:
+		return []string{"mcp_config.args is not empty; settings pass by env only, and a flag there " +
+			"would escape every check on env"}
+	}
+	return nil
 }
 
 // mcpbValidate is the referential checks. It takes the staged table and
@@ -333,21 +500,18 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 		}
 	}
 	problems = append(problems, mcpbCommandProblems(commands, staged)...)
-	problems = append(problems, mcpbEnvRefProblems(m)...)
-	// Settings pass by env only: a flag in args, such as
-	// --enable-destructive, would turn on what every check on env holds
-	// off. The base keeps its empty args, as Claude Desktop has always
-	// been given it; no launch of Desktop has shown it optional.
-	switch args := strings.TrimSpace(string(m.Server.MCPConfig.Args)); {
-	case args == "":
-		problems = append(problems, "mcp_config.args is missing; keep it as [], the shape every released bundle "+
-			"has had, since no Claude Desktop launch has shown the key optional")
-	case args == "null":
-		problems = append(problems, "mcp_config.args is null; keep it as []")
-	case args != "[]":
-		problems = append(problems, "mcp_config.args is not empty; settings pass by env only, and a flag there "+
-			"would escape every check on env")
+	// entry_point is the file the default command runs, so the bundle does
+	// not name one file as the server and spawn another. An entry point or
+	// a command that names no program is reported above.
+	if rel, ok := mcpbResolve(m.Server.MCPConfig.Command); ok {
+		_, entryStaged := staged[m.Server.EntryPoint]
+		if _, runs := staged[rel]; runs && entryStaged && rel != m.Server.EntryPoint {
+			problems = append(problems, fmt.Sprintf("entry_point is %q, and mcp_config.command runs %q",
+				m.Server.EntryPoint, rel))
+		}
 	}
+	problems = append(problems, mcpbEnvRefProblems(m)...)
+	problems = append(problems, mcpbArgsProblems(m.Server.MCPConfig.Args)...)
 
 	// Every override is a claimed platform.
 	claimed := map[string]bool{}
@@ -374,21 +538,21 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 				"mcp_config.env with it, so put every variable in mcp_config.env", platform))
 		}
 	}
-	if len(m.Compatibility.Platforms) == 0 {
-		problems = append(problems, "compatibility.platforms claims no platform")
-	}
-
 	// Each claimed platform spawns the file staged for it, not merely a
 	// staged file: without its override, a platform runs the default
-	// command, which is another platform's binary.
+	// command, which is another platform's binary. A claimed platform
+	// nothing is staged for is mcpbIdentityProblems'.
 	for _, platform := range m.Compatibility.Platforms {
+		if !slices.ContainsFunc(files, func(f mcpbStaged) bool { return f.platform == platform }) {
+			continue
+		}
 		cmd, ok := commands[platform]
 		if !ok {
 			cmd = commands[""]
 		}
-		if f, found := staged[mcpbResolve(cmd)]; found && f.platform != platform {
-			problems = append(problems, fmt.Sprintf("platform %q runs %q, which is staged for %q",
-				platform, f.path, cmp.Or(f.platform, "the launcher")))
+		rel, _ := mcpbResolve(cmd)
+		if f, found := staged[rel]; found && f.platform != platform {
+			problems = append(problems, fmt.Sprintf("platform %q runs %q, which is %s", platform, f.path, f.role()))
 		}
 	}
 
@@ -571,10 +735,21 @@ func mcpbLoad(env map[string]string) (config.Config, error) {
 // bundle install turns on nothing an unconfigured server leaves off.
 // Claude Desktop approves each tool, and a person can always allow one,
 // so this is the guard a bundle install keeps (§18 row 130). A switch
-// is also asked as a boolean, so Desktop shows it as one.
-func mcpbDefaultsProblems(m mcpbManifest) []string {
-	var problems []string
+// is also asked as a boolean, so Desktop shows it as one, and a default
+// holds no ${...}: the gate reads a default as written, and a host may
+// substitute in it, as the reference host does a ${user_config.x}
+// declared after it (§18 row 135). The error is the defaults' own, when
+// they do not start the server.
+func mcpbDefaultsProblems(m mcpbManifest) ([]string, error) {
 	opts := m.options()
+	problems := mcpbSensitiveProblems(config.Vars, mcpbUserConfig, opts)
+	for _, key := range slices.Sorted(maps.Keys(opts)) {
+		var def any
+		if json.Unmarshal(opts[key].Default, &def) == nil && strings.Contains(fmt.Sprint(def), "${") {
+			problems = append(problems, fmt.Sprintf("user_config.%s's default holds %q; a host may substitute a "+
+				"${...} in a default, and the gate reads it as written", key, fmt.Sprint(def)))
+		}
+	}
 	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
 		v, opt := mcpbUserConfig[key], opts[key]
 		if _, ok := opts[key]; !ok {
@@ -597,32 +772,106 @@ func mcpbDefaultsProblems(m mcpbManifest) []string {
 			problems = append(problems, fmt.Sprintf("user_config.%s does not say a name is %q", key, userconfig.ProfileRule))
 		}
 	}
-	got, err := mcpbLoad(mcpbHostEnv(m))
-	if err != nil {
-		return append(problems, fmt.Sprintf("the bundle's defaults do not start the server: %v", err))
+	got, defaultsErr := mcpbLoad(mcpbHostEnv(m))
+	if defaultsErr != nil {
+		return append(problems, fmt.Sprintf("the bundle's defaults do not start the server: %v", defaultsErr)), defaultsErr
 	}
 	want, err := mcpbLoad(nil)
 	if err != nil {
-		return append(problems, fmt.Sprintf("an unconfigured server does not start: %v", err))
+		return append(problems, fmt.Sprintf("an unconfigured server does not start: %v", err)), nil
 	}
-	if diff := mcpbConfigDiff(got, want); len(diff) > 0 {
+	if diff := mcpbFieldDiff(got, want); len(diff) > 0 {
 		problems = append(problems, fmt.Sprintf("the bundle's defaults start the server differently from no "+
 			"settings, in %s; a bundle install may turn on nothing an unconfigured server leaves off",
 			strings.Join(diff, ", ")))
 	}
+	return problems, nil
+}
+
+// mcpbSensitiveProblems holds each field that sets a credential to
+// sensitive, which a host masks and stores apart from the plain
+// settings. Which settings are credentials is config's Secret flag. The
+// bundle excludes the one there is today, so the floor holds that the
+// flag still marks it: dropped, a credential the bundle asked for later
+// would go unheld.
+func mcpbSensitiveProblems(vars []config.Var, keys map[string]config.Var, opts map[string]mcpbOption) []string {
+	secrets := 0
+	for _, v := range vars {
+		if v.Secret {
+			secrets++
+		}
+	}
+	problems := gatekit.Floor("credentials marked Secret in internal/config.Vars", secrets, 1)
+	for _, key := range slices.Sorted(maps.Keys(keys)) {
+		if opt, ok := opts[key]; ok && keys[key].Secret && !opt.Sensitive {
+			problems = append(problems, fmt.Sprintf("user_config.%s sets %s, a credential, and is not sensitive, "+
+				"so a host shows and stores it as plain text", key, keys[key].Name))
+		}
+	}
 	return problems
 }
 
-// mcpbConfigDiff names the fields two configurations disagree on.
-func mcpbConfigDiff(a, b config.Config) []string {
+// mcpbFieldDiff names the fields of two values of one struct type that
+// differ, two configurations here, an unexported one included: each is
+// compared by mcpbSame, which reads it as reflect.DeepEqual would.
+func mcpbFieldDiff(a, b any) []string {
 	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
 	var fields []string
 	for i := range va.NumField() {
-		if !reflect.DeepEqual(va.Field(i).Interface(), vb.Field(i).Interface()) {
+		if !mcpbSame(va.Field(i), vb.Field(i)) {
 			fields = append(fields, va.Type().Field(i).Name)
 		}
 	}
 	return fields
+}
+
+// mcpbSame is reflect.DeepEqual for two values of one type, read through
+// Value's accessors: Interface panics on a value read from an unexported
+// field, and Value.Equal compares pointers by address and panics on an
+// interface holding a slice. A pointer compares by what it points to, a
+// func only when both are nil, and a channel by identity, as DeepEqual
+// has them. It does not guard against a cycle, which a configuration
+// does not hold.
+func mcpbSame(x, y reflect.Value) bool {
+	switch x.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if x.IsNil() || y.IsNil() {
+			return x.IsNil() == y.IsNil()
+		}
+		return x.Elem().Type() == y.Elem().Type() && mcpbSame(x.Elem(), y.Elem())
+	case reflect.Struct:
+		for i := range x.NumField() {
+			if !mcpbSame(x.Field(i), y.Field(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice, reflect.Array:
+		if x.Len() != y.Len() || (x.Kind() == reflect.Slice && x.IsNil() != y.IsNil()) {
+			return false
+		}
+		for i := range x.Len() {
+			if !mcpbSame(x.Index(i), y.Index(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		if x.Len() != y.Len() || x.IsNil() != y.IsNil() {
+			return false
+		}
+		for _, k := range x.MapKeys() {
+			if v := y.MapIndex(k); !v.IsValid() || !mcpbSame(x.MapIndex(k), v) {
+				return false
+			}
+		}
+		return true
+	case reflect.Func:
+		return x.IsNil() && y.IsNil()
+	case reflect.Chan, reflect.UnsafePointer:
+		return x.Pointer() == y.Pointer()
+	}
+	return x.Equal(y)
 }
 
 // mcpbRefusalProblems starts every combination of the bundle's switches
@@ -631,7 +880,10 @@ func mcpbConfigDiff(a, b config.Config) []string {
 // warns of, and a declared one the server accepts. A declared key that
 // is not a switch, or has no title for the others to name, is reported
 // once, however many pairs it is in, whether or not the defaults start.
-func mcpbRefusalProblems(m mcpbManifest, declared [][]string) []string {
+// When they do not, which defaultsErr says, no combination is started:
+// the defaults check reports it, and every combination would fail with
+// it.
+func mcpbRefusalProblems(m mcpbManifest, declared [][]string, defaultsErr error) []string {
 	opts := m.options()
 	var switches []string
 	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
@@ -672,8 +924,8 @@ func mcpbRefusalProblems(m mcpbManifest, declared [][]string) []string {
 			}
 		}
 	}
-	if _, err := mcpbLoad(mcpbHostEnv(m)); err != nil {
-		return problems // the defaults check reports it
+	if defaultsErr != nil {
+		return problems
 	}
 	for set := 1; set < 1<<len(switches); set++ {
 		var on []string
@@ -704,10 +956,19 @@ const mcpbServerPackage = "internal/server"
 
 // mcpbRepoProblems holds the manifest to the rest of the repository:
 // the server's description constant, the settings the server reads, the
-// files the packer copies from the root, and the metadata a desktop
-// shows.
+// files the packer copies from the root, the module the launcher's
+// install hint names, and the metadata a desktop shows.
 func mcpbRepoProblems(root string, m mcpbManifest) []string {
 	var problems []string
+	// The launcher is generated with gatekit.ModulePath, which go.mod
+	// moves at every major version.
+	switch module, err := goModModule(root); {
+	case err != nil:
+		problems = append(problems, err.Error())
+	case module != gatekit.ModulePath:
+		problems = append(problems, fmt.Sprintf("the launcher's install hint names %s, and go.mod's module is %q",
+			gatekit.ModulePath, module))
+	}
 	desc, err := serverDescription(root)
 	switch {
 	case err != nil:
@@ -748,8 +1009,9 @@ func mcpbRepoProblems(root string, m mcpbManifest) []string {
 			problems = append(problems, fmt.Sprintf("mcp_config.env.%s is %q, want %q", mcpbUserConfig[key].Name, got, want))
 		}
 	}
-	problems = append(problems, mcpbDefaultsProblems(m)...)
-	problems = append(problems, mcpbRefusalProblems(m, mcpbRefused)...)
+	defaults, defaultsErr := mcpbDefaultsProblems(m)
+	problems = append(problems, defaults...)
+	problems = append(problems, mcpbRefusalProblems(m, mcpbRefused, defaultsErr)...)
 	for _, f := range mcpbFiles {
 		if f.repo == "" {
 			continue

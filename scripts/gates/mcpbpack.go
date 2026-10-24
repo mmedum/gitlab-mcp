@@ -60,16 +60,12 @@ func mcpbPackTo(out io.Writer, root, dist, version, bundle string, runVersion bo
 	if want := mcpbPackName(version); filepath.Base(bundle) != want {
 		return "", fmt.Errorf("the bundle is named %q; the release publishes %q", filepath.Base(bundle), want)
 	}
-	m, raw, err := mcpbRead(filepath.Join(root, mcpbManifestPath))
+	// The gate's own start, so the release packs no manifest the gate
+	// would refuse, the placeholder version included.
+	raw, _, problems, err := mcpbCommitted(root)
 	if err != nil {
 		return "", err
 	}
-	if m.Version != gatekit.PlaceholderVersion {
-		return "", fmt.Errorf("%s says version %q; the committed manifest must carry %q",
-			mcpbManifestPath, m.Version, gatekit.PlaceholderVersion)
-	}
-	problems := mcpbValidate(m, mcpbFiles, launcherNamesIn(launcherScript(mcpbFiles)))
-	problems = append(problems, mcpbDocumentProblems(m, raw)...)
 	if err := gatekit.Problems(out, mcpbManifestPath, problems); err != nil {
 		return "", fmt.Errorf("the manifest does not describe the bundle this would pack: %w", err)
 	}
@@ -115,7 +111,10 @@ func mcpbPackTo(out io.Writer, root, dist, version, bundle string, runVersion bo
 }
 
 // mcpbStamp writes the version through a JSON decode and encode, never
-// a substitution over text, keeping every key the manifest carries.
+// a substitution over text, keeping every key the manifest carries. The
+// encode sorts the keys, so what ships is the committed document but not
+// its bytes, and it is held to the vendored schema its own
+// manifest_version names before anything packs it.
 func mcpbStamp(raw []byte, version string) ([]byte, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -127,6 +126,14 @@ func mcpbStamp(raw []byte, version string) ([]byte, error) {
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(doc); err != nil {
+		return nil, err
+	}
+	declared, _ := doc["manifest_version"].(string)
+	schema, err := vendorManifestSchemaFile(declared)
+	if err != nil {
+		return nil, err
+	}
+	if err := vendorValidate(schema, "the stamped manifest", b.Bytes()); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil

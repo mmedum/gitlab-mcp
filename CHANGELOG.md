@@ -15,9 +15,12 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.1.3] - 2026-10-24
+
 ### Fixed
 
 - The Claude Desktop bundle's profile field says what a profile name may be, and the refusal of any other name says the same.
+- A setting of spaces alone is unset, as an empty one is, and the spaces around a value are dropped: `GITLAB_MCP_LOG_LEVEL`, `GITLAB_MCP_LOG_FORMAT` or `GITLAB_MCP_HTTP_TIMEOUT` set to a space no longer stops the server, and `logout` no longer warns about a `GITLAB_MCP_REFRESH_TOKEN` of spaces.
 
 ## [4.1.2] - 2026-10-24
 
@@ -242,7 +245,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.2...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.3...HEAD
+[4.1.3]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.2...v4.1.3
 [4.1.2]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.1...v4.1.2
 [4.1.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.1...v4.1.0

@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 	"github.com/mmedum/gitlab-mcp/v4/internal/credentials"
 	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
@@ -421,7 +422,7 @@ func TestARefreshFromAnEnvironmentTokenIsStoredAsItsSuccessor(t *testing.T) {
 	f := newFixture(t, 300*time.Second)
 	seed := signIn(t, f.app, "api").Token.RefreshToken
 	env := func(k string) string {
-		if k == credentials.EnvVar {
+		if k == config.EnvRefreshToken {
 			return seed
 		}
 		return ""

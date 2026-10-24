@@ -86,11 +86,11 @@ func defaultSurface(env []string) (int, error) {
 // this gate, and a configuration directory made for the run.
 func smokeEnv(cfgDir string) []string {
 	return []string{
-		"GITLAB_MCP_TEST_INSTANCE=http://127.0.0.1:1",
-		"GITLAB_MCP_PROFILE=gates-smoke",
-		"GITLAB_MCP_CONFIG_DIR=" + cfgDir,
-		"GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME=true",
-		"GITLAB_MCP_LOG_LEVEL=debug",
+		config.EnvTestInstance + "=http://127.0.0.1:1",
+		config.EnvProfile + "=gates-smoke",
+		config.EnvConfigDir + "=" + cfgDir,
+		config.EnvConfigDirAllowOutsideHome + "=true",
+		config.EnvLogLevel + "=debug",
 	}
 }
 
@@ -260,7 +260,7 @@ func smokeResource(binary string, env []string, proto, uri string) error {
 // holds each to its own annotations: a mode that removes writes must
 // actually remove them.
 func smokeReadOnly(binary string, env []string) error {
-	replies, err := exchange(binary, append(slices.Clone(env), "GITLAB_MCP_READ_ONLY=true"), []frame{
+	replies, err := exchange(binary, append(slices.Clone(env), config.EnvReadOnly+"=true"), []frame{
 		initialize(smokeProtocols[0]), initialized, request(2, "tools/list", nil),
 	})
 	if err != nil {

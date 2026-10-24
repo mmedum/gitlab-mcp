@@ -58,7 +58,7 @@ func serverEnv(ctx context.Context, w *world, t Task) ([]string, func(), error) 
 		config.EnvProfile + "=" + profile,
 		config.EnvConfigDir + "=" + dir,
 		config.EnvConfigDirAllowOutsideHome + "=true",
-		credentials.EnvVar + "=" + refresh,
+		config.EnvRefreshToken + "=" + refresh,
 		config.EnvEnableShip + "=" + strconv.FormatBool(t.Ship),
 	}
 	return env, func() {

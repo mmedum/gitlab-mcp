@@ -11,6 +11,8 @@ import (
 
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
+
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 )
 
 // fakeKeyring is an in-memory Backend. failGet, failSet and failDelete
@@ -94,8 +96,8 @@ func sameToken(t *testing.T, got, want *oauth2.Token) {
 }
 
 func TestConstants(t *testing.T) {
-	if ServiceName != "gitlab-mcp" || EnvVar != "GITLAB_MCP_REFRESH_TOKEN" {
-		t.Errorf("ServiceName = %q, EnvVar = %q", ServiceName, EnvVar)
+	if ServiceName != "gitlab-mcp" || config.EnvRefreshToken != "GITLAB_MCP_REFRESH_TOKEN" {
+		t.Errorf("ServiceName = %q, the environment override = %q", ServiceName, config.EnvRefreshToken)
 	}
 }
 

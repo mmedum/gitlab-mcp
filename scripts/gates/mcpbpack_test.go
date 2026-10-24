@@ -136,7 +136,7 @@ func TestMcpbPackRefuses(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, mcpbManifestPath), raw, 0o600); err != nil {
 				t.Fatal(err)
 			}
-		}, want: "must carry"},
+		}, want: `version is "1.0.0"; the committed manifest carries`},
 		{name: "glob matches nothing", version: "1.2.3", setup: func(t *testing.T, _, dist string) {
 			if err := os.RemoveAll(filepath.Join(dist, "gitlab-mcp_linux_arm64_v8.0")); err != nil {
 				t.Fatal(err)
@@ -165,10 +165,72 @@ func TestMcpbPackRefuses(t *testing.T) {
 			}
 			var s bytes.Buffer
 			_, err := mcpbPackTo(&s, root, dist, tc.version, out, false)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("err %v, want %q", err, tc.want)
+			if err == nil || !strings.Contains(err.Error()+"\n"+s.String(), tc.want) {
+				t.Errorf("err %v\n%s\nwant %q", err, s.String(), tc.want)
 			}
 		})
+	}
+}
+
+// The packer runs the gate's own checks over the same root, not a subset:
+// each break here is one the gate refuses, and the pack refuses it too.
+func TestMcpbPackRunsEveryCheckTheGateRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// file, when set, is written with body into the root.
+		file, body string
+		edit       func(doc map[string]any)
+		want       string
+	}{
+		{name: "another license", file: "LICENSE", body: "MIT License\n", want: `license is "Apache-2.0" and LICENSE is MIT`},
+		{name: "a description the server does not carry", edit: func(d map[string]any) { d["description"] = "GitLab tools." },
+			want: "one constant feeds both"},
+		{name: "a switch the bundle turns on", edit: func(d map[string]any) {
+			mcpbDig(d, "user_config", "enable_ship")["default"] = true
+		}, want: "differently from no settings, in EnableShip"},
+		{name: "a node server", edit: func(d map[string]any) { mcpbDig(d, "server")["type"] = "node" },
+			want: `server.type is "node"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := mcpbFixture(t)
+			if tc.edit != nil {
+				tc.edit(doc)
+			}
+			root := mcpbRoot(t, doc)
+			if tc.file != "" {
+				if err := os.WriteFile(filepath.Join(root, tc.file), []byte(tc.body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dist := mcpbPackDist(t, root, "1.2.3")
+			var out bytes.Buffer
+			_, err := mcpbPackTo(&out, root, dist, "1.2.3", filepath.Join(dist, mcpbPackName("1.2.3")), false)
+			if err == nil || !strings.Contains(out.String(), tc.want) {
+				t.Errorf("pack = %v\n%s\nwant it refused, saying %q", err, out.String(), tc.want)
+			}
+		})
+	}
+}
+
+// What ships is held to the vendored schema, not only what is committed,
+// since the stamp encodes the document again.
+func TestMcpbStampHoldsTheStampedManifestToTheSchema(t *testing.T) {
+	raw, err := json.Marshal(mcpbFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mcpbStamp(raw, "1.2.3"); err != nil {
+		t.Fatalf("the committed manifest does not stamp: %v", err)
+	}
+	doc := mcpbFixture(t)
+	doc["keywords"] = "gitlab"
+	if raw, err = json.Marshal(doc); err != nil {
+		t.Fatal(err)
+	}
+	_, err = mcpbStamp(raw, "1.2.3")
+	if want := "the stamped manifest does not satisfy mcpb-manifest-v0.3.schema.json"; err == nil ||
+		!strings.Contains(err.Error(), want) {
+		t.Errorf("stamping a document the schema refuses gave %v, want an error containing %q", err, want)
 	}
 }
 
