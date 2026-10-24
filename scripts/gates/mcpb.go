@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/userconfig"
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
@@ -575,6 +576,10 @@ func mcpbDefaultsProblems(m mcpbManifest) []string {
 			if !strings.Contains(opt.Description, list) {
 				problems = append(problems, fmt.Sprintf("user_config.%s does not list the toolsets as %q", key, list))
 			}
+		}
+		// The server refuses any other name at start.
+		if v.Name == config.EnvProfile && !strings.Contains(opt.Description, userconfig.ProfileRule) {
+			problems = append(problems, fmt.Sprintf("user_config.%s does not say a name is %q", key, userconfig.ProfileRule))
 		}
 	}
 	got, err := mcpbLoad(mcpbHostEnv(m))

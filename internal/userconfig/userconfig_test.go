@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -93,16 +94,17 @@ func TestBaseDirErrors(t *testing.T) {
 }
 
 func TestValidProfile(t *testing.T) {
-	good := []string{"default", "work", "a", "gitlab-com_2", "0abc"}
-	bad := []string{"", "Work", "-lead", "_lead", "a/b", "..", "a b", string(make([]byte, 65))}
+	good := []string{"default", "work", "a", "gitlab-com_2", "0abc", strings.Repeat("a", 64)}
+	bad := []string{"", "Work", "-lead", "_lead", "a/b", "..", "a b", string(make([]byte, 65)), strings.Repeat("a", 65)}
 	for _, n := range good {
 		if err := ValidProfile(n); err != nil {
 			t.Errorf("ValidProfile(%q) = %v", n, err)
 		}
 	}
+	// A refusal says the rule in words, as the bundle's field does.
 	for _, n := range bad {
-		if err := ValidProfile(n); !errors.Is(err, ErrInvalidProfile) {
-			t.Errorf("ValidProfile(%q) = %v, want ErrInvalidProfile", n, err)
+		if err := ValidProfile(n); !errors.Is(err, ErrInvalidProfile) || !strings.Contains(err.Error(), ProfileRule) {
+			t.Errorf("ValidProfile(%q) = %v, want ErrInvalidProfile naming %q", n, err, ProfileRule)
 		}
 	}
 }

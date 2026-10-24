@@ -93,6 +93,9 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"a command naming a document", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["command"] = "${__dirname}/README.md"
 		}, `platform_overrides.win32.command is "${__dirname}/README.md", which the packer does not stage`},
+		{"a profile field silent on the rule", func(d map[string]any) {
+			mcpbDig(d, "user_config", "profile")["description"] = "Which stored login to use."
+		}, `user_config.profile does not say a name is "up to 64 lowercase letters`},
 		{"a refused field with no title", func(d map[string]any) {
 			mcpbDig(d, "user_config", "enable_ship")["title"] = ""
 		}, "user_config.enable_ship has no title"},

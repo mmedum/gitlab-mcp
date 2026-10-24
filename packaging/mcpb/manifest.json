@@ -63,7 +63,7 @@
     "profile": {
       "type": "string",
       "title": "Profile",
-      "description": "Which stored login to use. Separate profiles keep separate tokens, such as one per GitLab account. A name is lowercase letters, digits, - and _, up to 64 characters, starting with a letter or digit; any other name stops the server at start. Leave it empty for the default profile.",
+      "description": "Which stored login to use. Separate profiles keep separate tokens, such as one per GitLab account. A name is up to 64 lowercase letters, digits, - and _, starting with a letter or digit; any other name stops the server at start. Leave it empty for the default profile.",
       "default": "",
       "required": false
     },

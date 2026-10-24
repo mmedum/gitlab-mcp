@@ -17,7 +17,7 @@ lifted verbatim.
 
 ### Fixed
 
-- The Claude Desktop bundle's profile field says what a profile name may contain; any other name stops the server at start.
+- The Claude Desktop bundle's profile field says what a profile name may be, and the refusal of any other name says the same.
 
 ## [4.1.2] - 2026-10-24
 
