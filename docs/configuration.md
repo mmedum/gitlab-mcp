@@ -40,7 +40,9 @@ Two more are read from the environment only:
 | `GITLAB_MCP_REFRESH_TOKEN` | none | A refresh token to use instead of the stored one, for CI and automation. It has no flag because a command line is visible to every process on the machine. |
 
 A switch takes `true`, `false`, `1`, `0`, `yes`, `no`, `on` or `off`,
-and a bare flag such as `--read-only` means `true`.
+and a bare flag such as `--read-only` means `true`. A variable set to
+spaces alone is unset, as an empty one is, and the spaces around a
+value are dropped.
 
 ### Refused combinations
 

@@ -407,22 +407,25 @@ func TestUnknownFlag(t *testing.T) {
 // TestVarsList is the list the staleness gate reads. Each variable is
 // stated here rather than read back from Vars.
 func TestVarsList(t *testing.T) {
-	want := map[string]struct{ flag, def string }{
-		"GITLAB_MCP_PROFILE":                       {"profile", ""},
-		"GITLAB_MCP_CLIENT_ID":                     {"client-id", ""},
-		"GITLAB_MCP_READ_ONLY":                     {"read-only", "false"},
-		"GITLAB_MCP_ENABLE_SHIP":                   {"enable-ship", "false"},
-		"GITLAB_MCP_ENABLE_DESTRUCTIVE":            {"enable-destructive", "false"},
-		"GITLAB_MCP_TOOLSETS":                      {"toolsets", ""},
-		"GITLAB_MCP_WRITE_NAMESPACES":              {"write-namespaces", ""},
-		"GITLAB_MCP_UPLOAD_DIRS":                   {"upload-dirs", ""},
-		"GITLAB_MCP_LOG_LEVEL":                     {"log-level", "info"},
-		"GITLAB_MCP_LOG_FORMAT":                    {"log-format", "text"},
-		"GITLAB_MCP_HTTP_TIMEOUT":                  {"http-timeout", "1m0s"},
-		"GITLAB_MCP_CONFIG_DIR":                    {"config-dir", ""},
-		"GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME": {"", "false"},
-		"GITLAB_MCP_REFRESH_TOKEN":                 {"", ""},
-		"GITLAB_MCP_TEST_INSTANCE":                 {"", ""},
+	want := map[string]struct {
+		flag, def string
+		outside   bool
+	}{
+		"GITLAB_MCP_PROFILE":                       {"profile", "", false},
+		"GITLAB_MCP_CLIENT_ID":                     {"client-id", "", false},
+		"GITLAB_MCP_READ_ONLY":                     {"read-only", "false", false},
+		"GITLAB_MCP_ENABLE_SHIP":                   {"enable-ship", "false", false},
+		"GITLAB_MCP_ENABLE_DESTRUCTIVE":            {"enable-destructive", "false", false},
+		"GITLAB_MCP_TOOLSETS":                      {"toolsets", "", false},
+		"GITLAB_MCP_WRITE_NAMESPACES":              {"write-namespaces", "", false},
+		"GITLAB_MCP_UPLOAD_DIRS":                   {"upload-dirs", "", false},
+		"GITLAB_MCP_LOG_LEVEL":                     {"log-level", "info", false},
+		"GITLAB_MCP_LOG_FORMAT":                    {"log-format", "text", false},
+		"GITLAB_MCP_HTTP_TIMEOUT":                  {"http-timeout", "1m0s", false},
+		"GITLAB_MCP_CONFIG_DIR":                    {"config-dir", "", false},
+		"GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME": {"", "false", false},
+		"GITLAB_MCP_REFRESH_TOKEN":                 {"", "", true},
+		"GITLAB_MCP_TEST_INSTANCE":                 {"", "", false},
 	}
 	if len(Vars) != len(want) {
 		t.Errorf("Vars has %d entries, want %d", len(Vars), len(want))
@@ -433,8 +436,9 @@ func TestVarsList(t *testing.T) {
 			t.Errorf("unexpected variable %s", v.Name)
 			continue
 		}
-		if v.Flag != w.flag || v.Default != w.def {
-			t.Errorf("%s: flag %q default %q, want %q %q", v.Name, v.Flag, v.Default, w.flag, w.def)
+		if v.Flag != w.flag || v.Default != w.def || v.Outside != w.outside {
+			t.Errorf("%s: flag %q default %q outside %t, want %q %q %t", v.Name, v.Flag, v.Default, v.Outside,
+				w.flag, w.def, w.outside)
 		}
 		if strings.TrimSpace(v.Doc) == "" {
 			t.Errorf("%s has no doc", v.Name)
@@ -472,18 +476,22 @@ func TestRemovedRequirePrompt(t *testing.T) {
 	}
 }
 
-// TestDefineReadsExactlyVars: every variable Define looks up is in Vars,
-// but the removed GITLAB_MCP_REQUIRE_PROMPT it reads to refuse, and
-// every flag it binds is one Vars names, so the list cannot fall behind
-// the code.
+// TestDefineReadsExactlyVars: Define looks up every variable in Vars
+// once, but those read outside it, and the removed
+// GITLAB_MCP_REQUIRE_PROMPT it reads to refuse; and every flag it binds
+// is one Vars names, so the list cannot fall behind the code.
 func TestDefineReadsExactlyVars(t *testing.T) {
 	var read []string
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	Define(fs, func(k string) string { read = append(read, k); return "" })
 	slices.Sort(read)
-	all := append(EnvVars(), DevVars()...)
-	all = append(all, RemovedVars()...)
+	all := slices.Clone(RemovedVars())
+	for _, v := range Vars {
+		if !v.Outside {
+			all = append(all, v.Name)
+		}
+	}
 	slices.Sort(all)
 	if !slices.Equal(read, all) {
 		t.Errorf("Define read %v, Vars lists %v", read, all)

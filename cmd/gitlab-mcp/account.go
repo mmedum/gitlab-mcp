@@ -168,7 +168,7 @@ func cmdLogout(args []string, stdout, stderr io.Writer, env func(string) string)
 	default:
 		outf(stdout, "Could not read the stored token (%v); removing what is there.\n", err)
 	}
-	if env(credentials.EnvVar) != "" {
+	if credentials.EnvToken(env) != "" {
 		outf(stderr, "warning: %s is set; logout neither revokes nor removes it\n", credentials.EnvVar)
 	}
 

@@ -287,7 +287,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, env func(string) string)
 	if err == nil {
 		s, err = app.Resolve(cfg, app.Options{Env: env, Keyring: keyringBackend, Warn: warnTo(stderr)})
 	}
-	m := masker(s, env(config.EnvTestInstance))
+	m := masker(s, config.Lookup(env, config.EnvTestInstance))
 	code := 1
 	if err != nil {
 		r.Reason = orNil(err.Error())
@@ -318,7 +318,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer, env func(string) string)
 	var warnings []string
 	s, err := app.Resolve(cfg, app.Options{Env: env, Keyring: keyringBackend,
 		Warn: func(msg string) { warnings = append(warnings, msg) }})
-	d := &doctor{w: stdout, m: masker(s, env(config.EnvTestInstance))}
+	d := &doctor{w: stdout, m: masker(s, config.Lookup(env, config.EnvTestInstance))}
 	d.printf("%s\n", version.Info())
 	if err != nil {
 		d.report(false, "instance", err.Error())

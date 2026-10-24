@@ -261,6 +261,23 @@ func TestStalenessRefuses(t *testing.T) {
 	}
 }
 
+// A variable is documented by its whole name: a longer name that holds
+// one is that longer name, in either document.
+func TestStalenessEnvReadsWholeNames(t *testing.T) {
+	in := stalenessFixture()
+	doc := strings.Replace(in.docs[stalenessConfigDoc], "`GITLAB_MCP_PROFILE`", "`GITLAB_MCP_PROFILE_NAME`", 1)
+	devDoc := strings.Replace(in.docs[stalenessDevDoc], "`GITLAB_MCP_TEST_INSTANCE`", "`GITLAB_MCP_TEST_INSTANCE_URL`", 1)
+	_, got := stalenessEnv(doc, devDoc, in.configVars, in.devVars, in.removedVars)
+	want := []string{
+		"docs/development.md does not document the development override GITLAB_MCP_TEST_INSTANCE",
+		"docs/configuration.md does not document GITLAB_MCP_PROFILE",
+		"docs/configuration.md documents GITLAB_MCP_PROFILE_NAME, which the server does not read",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("stalenessEnv = %q\nwant %q", got, want)
+	}
+}
+
 // The Safety table keyed "Setting" is not the tool table, however many
 // backticked names it has.
 func TestStalenessReadmeReadsTheToolTable(t *testing.T) {

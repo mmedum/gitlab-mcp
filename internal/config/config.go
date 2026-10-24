@@ -7,6 +7,9 @@
 // the default. Build validates once and reports every problem together,
 // so a misconfigured server fails before it announces itself.
 //
+// Every variable is read through Lookup, so spaces alone are unset and
+// the spaces around a value are dropped, whichever package reads it.
+//
 // Vars lists every variable. Define binds from it, and the staleness
 // gate holds docs/configuration.md (and, for the development override,
 // docs/development.md) against it, so a setting cannot be added without
@@ -65,6 +68,9 @@ type Var struct {
 	// docs/development.md rather than docs/configuration.md, and never
 	// offered to the people running the server.
 	Dev bool
+	// Outside marks a variable read outside Define, by the package that
+	// uses it and through Lookup. Define skips it, and it has no flag.
+	Outside bool
 }
 
 // Variable names.
@@ -85,7 +91,7 @@ const (
 	EnvHTTPTimeout               = EnvPrefix + "HTTP_TIMEOUT"
 	EnvConfigDir                 = EnvPrefix + "CONFIG_DIR"
 	EnvConfigDirAllowOutsideHome = EnvPrefix + "CONFIG_DIR_ALLOW_OUTSIDE_HOME"
-	// EnvRefreshToken is read by internal/credentials, never by Build,
+	// EnvRefreshToken is read by internal/credentials, never by Define,
 	// and has no flag: a secret on a command line is visible to every
 	// process on the machine.
 	EnvRefreshToken = EnvPrefix + "REFRESH_TOKEN"
@@ -124,7 +130,7 @@ var Vars = []Var{
 		Doc: "directory for profiles; must be inside your home directory"},
 	{Name: EnvConfigDirAllowOutsideHome, Default: "false", Switch: true,
 		Doc: "accept a config directory outside your home directory"},
-	{Name: EnvRefreshToken,
+	{Name: EnvRefreshToken, Outside: true,
 		Doc: "a refresh token to use instead of the stored one (CI, automation)"},
 	{Name: EnvTestInstance, Dev: true,
 		Doc: "a loopback base URL that stands in for gitlab.com, for tests only"},
@@ -245,6 +251,15 @@ func (c Config) Scopes() []string { return scopes.ForMode(c.Mode()) }
 // ToolsetEnabled reports whether an optional toolset is on.
 func (c Config) ToolsetEnabled(name string) bool { return slices.Contains(c.Toolsets, name) }
 
+// Lookup is the variable name as env gives it, without the spaces around
+// it. Spaces alone are "", unset as an empty variable is, so a form field
+// cleared to a space means the default rather than a value the server
+// refuses. Define reads every variable through it, and so does each
+// reader outside Define.
+func Lookup(env func(string) string, name string) string {
+	return strings.TrimSpace(env(name))
+}
+
 // Settings holds the raw values before validation, keyed by variable,
 // the removed ones included.
 type Settings struct {
@@ -252,16 +267,20 @@ type Settings struct {
 }
 
 // Define registers one flag per flagged variable on fs, each defaulting
-// to its environment variable read through env, and reads the
-// environment-only variables.
+// to its environment variable read through Lookup, and reads the
+// environment-only variables; a variable read outside Define is left to
+// its reader.
 func Define(fs *flag.FlagSet, env func(string) string) *Settings {
 	s := &Settings{values: map[string]*string{}}
 	for _, name := range RemovedVars() {
-		v := env(name)
+		v := Lookup(env, name)
 		s.values[name] = &v
 	}
 	for _, v := range Vars {
-		val := env(v.Name)
+		if v.Outside {
+			continue
+		}
+		val := Lookup(env, v.Name)
 		if val == "" {
 			val = v.Default
 		}

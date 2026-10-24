@@ -30,20 +30,29 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 	"github.com/mmedum/gitlab-mcp/v4/internal/fileperm"
 )
 
 // ServiceName is the keyring service identifier.
 const ServiceName = "gitlab-mcp"
 
-// EnvVar is the environment override.
-const EnvVar = "GITLAB_MCP_REFRESH_TOKEN"
+// EnvVar is the environment override, named by config.
+const EnvVar = config.EnvRefreshToken
+
+// EnvToken is the refresh token env gives, read through config.Lookup as
+// every setting is, so spaces alone are none. A nil env gives none.
+func EnvToken(env func(string) string) string {
+	if env == nil {
+		return ""
+	}
+	return config.Lookup(env, EnvVar)
+}
 
 // Source identifies where a token came from.
 type Source string
@@ -144,11 +153,13 @@ func (s *Store) warn(msg string) {
 	}
 }
 
-func (s *Store) env(k string) string {
+// envToken is the refresh token in Env, or in the process's environment
+// when Env is nil.
+func (s *Store) envToken() string {
 	if s.Env != nil {
-		return strings.TrimSpace(s.Env(k))
+		return EnvToken(s.Env)
 	}
-	return strings.TrimSpace(os.Getenv(k))
+	return EnvToken(os.Getenv)
 }
 
 // seed is the stamp a pair rotated from the environment token carries.
@@ -164,7 +175,7 @@ func seed(refresh string) string {
 // A token from the environment carries only the refresh token, so the
 // first call refreshes it.
 func (s *Store) Resolve() (*oauth2.Token, Source, error) {
-	v := s.env(EnvVar)
+	v := s.envToken()
 	if v == "" {
 		return s.ResolveStored()
 	}
@@ -301,7 +312,7 @@ func (s *Store) Save(tok *oauth2.Token) (Source, error) {
 		r.SavedAt = s.lastSaved.Add(time.Microsecond)
 	}
 	s.lastSaved = r.SavedAt
-	if v := s.env(EnvVar); v != "" {
+	if v := s.envToken(); v != "" {
 		r.EnvSeed = seed(v)
 	}
 	// Storing the token is what this function is for.

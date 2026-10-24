@@ -18,6 +18,7 @@ lifted verbatim.
 ### Fixed
 
 - The Claude Desktop bundle's profile field says what a profile name may be, and the refusal of any other name says the same.
+- A setting of spaces alone is unset, as an empty one is, and the spaces around a value are dropped: `GITLAB_MCP_LOG_LEVEL`, `GITLAB_MCP_LOG_FORMAT` or `GITLAB_MCP_HTTP_TIMEOUT` set to a space no longer stops the server, and `logout` no longer warns about a `GITLAB_MCP_REFRESH_TOKEN` of spaces.
 
 ## [4.1.2] - 2026-10-24
 
