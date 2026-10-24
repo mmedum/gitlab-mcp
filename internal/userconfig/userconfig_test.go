@@ -102,9 +102,10 @@ func TestValidProfile(t *testing.T) {
 		}
 	}
 	// A refusal says the rule in words, as the bundle's field does.
+	const rule = "must be up to 64 characters from a to z, 0 to 9, - and _, starting with a letter or digit"
 	for _, n := range bad {
-		if err := ValidProfile(n); !errors.Is(err, ErrInvalidProfile) || !strings.Contains(err.Error(), ProfileRule) {
-			t.Errorf("ValidProfile(%q) = %v, want ErrInvalidProfile naming %q", n, err, ProfileRule)
+		if err := ValidProfile(n); !errors.Is(err, ErrInvalidProfile) || !strings.HasSuffix(err.Error(), rule) {
+			t.Errorf("ValidProfile(%q) = %v, want ErrInvalidProfile ending %q", n, err, rule)
 		}
 	}
 }

@@ -112,9 +112,9 @@ func masker(s *app.Settings, rawInstance string) *redact.Masker {
 }
 
 // rawHost is the hostname of an instance as a person typed it, before
-// it was validated: a bare host, or a URL with or without a scheme.
+// it was validated: a bare host, or a URL with or without a scheme. The
+// caller has read it through config.Lookup, which trims it.
 func rawHost(raw string) string {
-	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
 	}

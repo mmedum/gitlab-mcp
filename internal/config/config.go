@@ -71,6 +71,9 @@ type Var struct {
 	// Outside marks a variable read outside Define, by the package that
 	// uses it and through Lookup. Define skips it, and it has no flag.
 	Outside bool
+	// Secret marks a credential. A bundle field that sets one is
+	// sensitive, so a host keeps the value out of sight.
+	Secret bool
 }
 
 // Variable names.
@@ -130,7 +133,7 @@ var Vars = []Var{
 		Doc: "directory for profiles; must be inside your home directory"},
 	{Name: EnvConfigDirAllowOutsideHome, Default: "false", Switch: true,
 		Doc: "accept a config directory outside your home directory"},
-	{Name: EnvRefreshToken, Outside: true,
+	{Name: EnvRefreshToken, Outside: true, Secret: true,
 		Doc: "a refresh token to use instead of the stored one (CI, automation)"},
 	{Name: EnvTestInstance, Dev: true,
 		Doc: "a loopback base URL that stands in for gitlab.com, for tests only"},
@@ -251,11 +254,11 @@ func (c Config) Scopes() []string { return scopes.ForMode(c.Mode()) }
 // ToolsetEnabled reports whether an optional toolset is on.
 func (c Config) ToolsetEnabled(name string) bool { return slices.Contains(c.Toolsets, name) }
 
-// Lookup is the variable name as env gives it, without the spaces around
-// it. Spaces alone are "", unset as an empty variable is, so a form field
-// cleared to a space means the default rather than a value the server
-// refuses. Define reads every variable through it, and so does each
-// reader outside Define.
+// Lookup is the value env gives the variable name, without the spaces
+// around it. Spaces alone are "", unset as an empty variable is, so a
+// form field cleared to a space means the default rather than a value the
+// server refuses. Define reads every variable through it, and so does
+// each reader outside Define.
 func Lookup(env func(string) string, name string) string {
 	return strings.TrimSpace(env(name))
 }

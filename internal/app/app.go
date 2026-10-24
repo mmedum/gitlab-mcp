@@ -137,7 +137,7 @@ func Resolve(cfg config.Config, o Options) (*Settings, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Settings{Config: cfg, Profile: p, Instance: cfg.Target(), envToken: credentials.EnvToken(o.Env) != ""}
+	s := &Settings{Config: cfg, Profile: p, Instance: cfg.Target(), envToken: p.Store.EnvToken() != ""}
 	if cfg.TestInstance {
 		logger.Warn(config.EnvTestInstance + " is set: this server talks to a loopback test instance, not gitlab.com")
 	}

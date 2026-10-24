@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mmedum/gitlab-mcp/v4/internal/userconfig"
 )
 
 // stalenessTestTools is a surface the fixture documents describe.
@@ -72,6 +74,7 @@ func stalenessFixture() stalenessInputs {
 	for _, v := range vars {
 		configDoc.WriteString("| `" + v + "` | x |\n")
 	}
+	configDoc.WriteString("\nA profile name is " + userconfig.ProfileRule + ".\n")
 
 	var commandNames []string
 	var devDoc strings.Builder
@@ -126,8 +129,8 @@ func stalenessFixture() stalenessInputs {
 func TestStalenessPassesOnTheFixture(t *testing.T) {
 	r := stalenessCheck(stalenessFixture())
 	wantClean(t, r.problems)
-	if len(r.read) != 11 {
-		t.Errorf("%d rules reported what they read, want 11: %q", len(r.read), r.read)
+	if len(r.read) != 12 {
+		t.Errorf("%d rules reported what they read, want 12: %q", len(r.read), r.read)
 	}
 	joined := strings.Join(r.read, "\n")
 	for _, want := range []string{"package map: 22 listed paths, 23 packages", "§8 tool counts: 25 table rows",
@@ -248,6 +251,9 @@ func TestStalenessRefuses(t *testing.T) {
 		{"a mode with no block", func(in *stalenessInputs) {
 			in.modes = append(in.modes, stalenessMode{Name: "ship", Block: "x\n"})
 		}, "has no <!-- setup:begin ship --> ... <!-- setup:end ship --> block"},
+		{"a configuration page silent on the profile rule", func(in *stalenessInputs) {
+			in.docs[stalenessConfigDoc] = strings.Replace(in.docs[stalenessConfigDoc], userconfig.ProfileRule, "lowercase letters and digits", 1)
+		}, `docs/configuration.md does not say a profile name is "up to 64 characters from a to z, 0 to 9, - and _, starting with a letter or digit"`},
 		{"the tool table missing", func(in *stalenessInputs) {
 			in.docs["README.md"] = strings.Replace(in.docs["README.md"], "| Tool | What it does |", "| Name | What it does |", 1)
 		}, "README.md has no table headed | Tool |"},
@@ -262,15 +268,21 @@ func TestStalenessRefuses(t *testing.T) {
 }
 
 // A variable is documented by its whole name: a longer name that holds
-// one is that longer name, in either document.
+// one is that longer name, in either document, a letter of either case
+// on either side included, and a name followed by * is a pattern.
 func TestStalenessEnvReadsWholeNames(t *testing.T) {
 	in := stalenessFixture()
-	doc := strings.Replace(in.docs[stalenessConfigDoc], "`GITLAB_MCP_PROFILE`", "`GITLAB_MCP_PROFILE_NAME`", 1)
+	doc := strings.NewReplacer("`GITLAB_MCP_PROFILE`", "`GITLAB_MCP_PROFILE_NAME`",
+		"`GITLAB_MCP_CLIENT_ID`", "`GITLAB_MCP_CLIENT_IDs`", "`GITLAB_MCP_READ_ONLY`", "`xGITLAB_MCP_READ_ONLY`",
+		"`GITLAB_MCP_TOOLSETS`", "`GITLAB_MCP_TOOLSETS*` and `GITLAB_MCP_TOOL*`").Replace(in.docs[stalenessConfigDoc])
 	devDoc := strings.Replace(in.docs[stalenessDevDoc], "`GITLAB_MCP_TEST_INSTANCE`", "`GITLAB_MCP_TEST_INSTANCE_URL`", 1)
 	_, got := stalenessEnv(doc, devDoc, in.configVars, in.devVars, in.removedVars)
 	want := []string{
 		"docs/development.md does not document the development override GITLAB_MCP_TEST_INSTANCE",
 		"docs/configuration.md does not document GITLAB_MCP_PROFILE",
+		"docs/configuration.md does not document GITLAB_MCP_CLIENT_ID",
+		"docs/configuration.md does not document GITLAB_MCP_READ_ONLY",
+		"docs/configuration.md does not document GITLAB_MCP_TOOLSETS",
 		"docs/configuration.md documents GITLAB_MCP_PROFILE_NAME, which the server does not read",
 	}
 	if !slices.Equal(got, want) {

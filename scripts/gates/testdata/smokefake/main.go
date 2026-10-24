@@ -10,11 +10,13 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 )
 
 func main() {
 	mode := os.Getenv("SMOKE_FAKE")
-	readOnly := os.Getenv("GITLAB_MCP_READ_ONLY") == "true"
+	readOnly := config.Lookup(os.Getenv, config.EnvReadOnly) == "true"
 	if mode == "stray" {
 		fmt.Println("starting up")
 	}
