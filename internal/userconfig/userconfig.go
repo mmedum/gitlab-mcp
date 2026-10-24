@@ -46,7 +46,7 @@ var ProfilePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 // ProfileRule is ProfilePattern in words, which a refusal and the
 // bundle's profile field both give.
-const ProfileRule = "up to 64 lowercase letters, digits, - and _, starting with a letter or digit"
+const ProfileRule = "up to 64 characters from a to z, 0 to 9, - and _, starting with a letter or digit"
 
 // ValidProfile refuses a name that does not match ProfilePattern.
 func ValidProfile(name string) error {

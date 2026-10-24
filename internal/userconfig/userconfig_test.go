@@ -95,7 +95,7 @@ func TestBaseDirErrors(t *testing.T) {
 
 func TestValidProfile(t *testing.T) {
 	good := []string{"default", "work", "a", "gitlab-com_2", "0abc", strings.Repeat("a", 64)}
-	bad := []string{"", "Work", "-lead", "_lead", "a/b", "..", "a b", string(make([]byte, 65)), strings.Repeat("a", 65)}
+	bad := []string{"", "Work", "-lead", "_lead", "a/b", "..", "a b", "caf\u00e9", string(make([]byte, 65)), strings.Repeat("a", 65)}
 	for _, n := range good {
 		if err := ValidProfile(n); err != nil {
 			t.Errorf("ValidProfile(%q) = %v", n, err)
