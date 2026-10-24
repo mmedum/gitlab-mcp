@@ -119,7 +119,7 @@ type mcpbManifest struct {
 			} `json:"platform_overrides"`
 		} `json:"mcp_config"`
 	} `json:"server"`
-	UserConfig    map[string]mcpbOption `json:"user_config"`
+	UserConfig    map[string]json.RawMessage `json:"user_config"`
 	Compatibility struct {
 		ClaudeDesktop string   `json:"claude_desktop"`
 		Platforms     []string `json:"platforms"`
@@ -207,10 +207,26 @@ var mcpbUserConfigRef = regexp.MustCompile(`\$\{user_config\.([A-Za-z0-9_]+)\}`)
 
 // mcpbOption is the part of one user_config entry the checks read.
 type mcpbOption struct {
-	Type     string          `json:"type"`
-	Required bool            `json:"required"`
-	Default  json.RawMessage `json:"default"`
-	Multiple bool            `json:"multiple"`
+	Type        string          `json:"type"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Required    bool            `json:"required"`
+	Default     json.RawMessage `json:"default"`
+	Multiple    bool            `json:"multiple"`
+}
+
+// options decodes each user_config entry the checks can read. An entry
+// that does not decode is left out here: the schema refuses it, and so
+// does mcpbValidate when an env value spends it.
+func (m mcpbManifest) options() map[string]mcpbOption {
+	out := map[string]mcpbOption{}
+	for key, raw := range m.UserConfig {
+		var opt mcpbOption
+		if json.Unmarshal(raw, &opt) == nil {
+			out[key] = opt
+		}
+	}
+	return out
 }
 
 // mcpbSubstituted refuses a user_config key an env value spends that a
@@ -224,6 +240,39 @@ func mcpbSubstituted(where, key string, opt mcpbOption) []string {
 	if opt.Multiple {
 		problems = append(problems, fmt.Sprintf("%s spends ${user_config.%s}, which takes multiple values; "+
 			"a host does not substitute an array in a string", where, key))
+	}
+	return problems
+}
+
+// mcpbEnvRefProblems holds every ${user_config.x} in an env value to a
+// declared key that is substituted whatever the person does: the
+// reference host leaves the reference as written for an optional key
+// with no default, and for an array of values in a string
+// (src/shared/config.ts in anthropics/mcpb at v2.1.2), and the server
+// would then refuse it.
+func mcpbEnvRefProblems(m mcpbManifest) []string {
+	var problems []string
+	envs := map[string]map[string]string{"mcp_config": m.Server.MCPConfig.Env}
+	for platform, over := range m.Server.MCPConfig.PlatformOverrides {
+		envs["platform_overrides."+platform] = over.Env
+	}
+	for where, env := range envs {
+		for key, value := range env {
+			for _, ref := range mcpbUserConfigRef.FindAllStringSubmatch(value, -1) {
+				raw, ok := m.UserConfig[ref[1]]
+				if !ok {
+					problems = append(problems, fmt.Sprintf("%s.env.%s spends ${user_config.%s}, which user_config "+
+						"does not declare", where, key, ref[1]))
+					continue
+				}
+				var opt mcpbOption
+				if err := json.Unmarshal(raw, &opt); err != nil {
+					problems = append(problems, fmt.Sprintf("user_config.%s is not an option: %v", ref[1], err))
+					continue
+				}
+				problems = append(problems, mcpbSubstituted(where+".env."+key, ref[1], opt)...)
+			}
+		}
 	}
 	return problems
 }
@@ -262,38 +311,25 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 		}
 	}
 
-	// Every ${user_config.x} in an env value is declared, and is
-	// substituted whatever the person does: the reference host leaves the
-	// reference as written for an optional key with no default, and for
-	// an array of values in a string (src/shared/config.ts in
-	// anthropics/mcpb at v2.1.2), and the server would then refuse it.
-	envs := map[string]map[string]string{"mcp_config": m.Server.MCPConfig.Env}
-	for platform, over := range m.Server.MCPConfig.PlatformOverrides {
-		envs["platform_overrides."+platform] = over.Env
-	}
-	for where, env := range envs {
-		for key, value := range env {
-			for _, ref := range mcpbUserConfigRef.FindAllStringSubmatch(value, -1) {
-				opt, ok := m.UserConfig[ref[1]]
-				if !ok {
-					problems = append(problems, fmt.Sprintf("%s.env.%s spends ${user_config.%s}, which user_config "+
-						"does not declare", where, key, ref[1]))
-					continue
-				}
-				problems = append(problems, mcpbSubstituted(where+".env."+key, ref[1], opt)...)
-			}
-		}
-	}
+	problems = append(problems, mcpbEnvRefProblems(m)...)
 
 	// Every override is a claimed platform.
 	claimed := map[string]bool{}
 	for _, p := range m.Compatibility.Platforms {
 		claimed[p] = true
 	}
-	for platform := range m.Server.MCPConfig.PlatformOverrides {
+	for platform, over := range m.Server.MCPConfig.PlatformOverrides {
 		if !claimed[platform] {
 			problems = append(problems, fmt.Sprintf("platform_overrides has %q, which compatibility.platforms "+
 				"does not claim", platform))
+		}
+		// The reference host replaces mcp_config.env with an override's
+		// env rather than merging the two (anthropics/mcpb v2.1.2), so the
+		// settings would not reach that platform, and the defaults checks
+		// below read mcp_config.env alone.
+		if len(over.Env) > 0 {
+			problems = append(problems, fmt.Sprintf("platform_overrides.%s.env is set; a host replaces "+
+				"mcp_config.env with it, so put every variable in mcp_config.env", platform))
 		}
 	}
 	if len(m.Compatibility.Platforms) == 0 {
@@ -426,22 +462,22 @@ var mcpbExcluded = map[string]string{
 }
 
 // mcpbUserConfig is what the bundle asks for at install, each key with
-// the variable it sets.
+// the setting it sets.
 var mcpbUserConfig, mcpbExclusionProblems = mcpbUserConfigFrom(config.Vars, mcpbExcluded)
 
 // mcpbUserConfigFrom derives the bundle's keys from the settings the
 // server reads: each one not a development override and not excluded,
 // keyed by its name without the prefix, lowercased. It also refuses an
 // exclusion that names no setting, so a removed one cannot linger.
-func mcpbUserConfigFrom(vars []config.Var, excluded map[string]string) (map[string]string, []string) {
-	keys := map[string]string{}
+func mcpbUserConfigFrom(vars []config.Var, excluded map[string]string) (map[string]config.Var, []string) {
+	keys := map[string]config.Var{}
 	read := map[string]bool{}
 	for _, v := range vars {
 		read[v.Name] = true
 		if v.Dev || excluded[v.Name] != "" {
 			continue
 		}
-		keys[strings.ToLower(strings.TrimPrefix(v.Name, config.EnvPrefix))] = v.Name
+		keys[strings.ToLower(strings.TrimPrefix(v.Name, config.EnvPrefix))] = v
 	}
 	var problems []string
 	for _, name := range slices.Sorted(maps.Keys(excluded)) {
@@ -462,6 +498,7 @@ var mcpbRefused = [][]string{{"enable_destructive", "read_only"}, {"enable_ship"
 // defaults, with the keys in on set to true. A required key with no
 // default is left out, since the person must give it a value.
 func mcpbHostEnv(m mcpbManifest, on ...string) map[string]string {
+	opts := m.options()
 	env := map[string]string{}
 	for name, value := range m.Server.MCPConfig.Env {
 		ref := mcpbUserConfigRef.FindStringSubmatch(value)
@@ -469,23 +506,15 @@ func mcpbHostEnv(m mcpbManifest, on ...string) map[string]string {
 			env[name] = value
 			continue
 		}
-		opt := m.UserConfig[ref[1]]
 		if slices.Contains(on, ref[1]) {
 			env[name] = "true"
 			continue
 		}
 		var def any
-		if opt.Default == nil || json.Unmarshal(opt.Default, &def) != nil {
+		if opt := opts[ref[1]]; opt.Default == nil || json.Unmarshal(opt.Default, &def) != nil {
 			continue
 		}
-		switch d := def.(type) {
-		case bool:
-			env[name] = strconv.FormatBool(d)
-		case string:
-			env[name] = d
-		default:
-			env[name] = fmt.Sprint(d)
-		}
+		env[name] = fmt.Sprint(def)
 	}
 	return env
 }
@@ -503,11 +532,22 @@ func mcpbLoad(env map[string]string) (config.Config, error) {
 // is also asked as a boolean, so Desktop shows it as one.
 func mcpbDefaultsProblems(m mcpbManifest) []string {
 	var problems []string
+	opts := m.options()
 	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
-		i := slices.IndexFunc(config.Vars, func(v config.Var) bool { return v.Name == mcpbUserConfig[key] })
-		if opt, ok := m.UserConfig[key]; ok && i >= 0 && config.Vars[i].Switch && opt.Type != "boolean" {
+		v, opt := mcpbUserConfig[key], opts[key]
+		if _, ok := opts[key]; !ok {
+			continue
+		}
+		if v.Switch && opt.Type != "boolean" {
 			problems = append(problems, fmt.Sprintf("user_config.%s is a %s; %s is a switch, so ask for a boolean",
-				key, cmp.Or(opt.Type, "field with no type"), config.Vars[i].Name))
+				key, cmp.Or(opt.Type, "field with no type"), v.Name))
+		}
+		if v.Name == config.EnvToolsets {
+			for _, name := range append(slices.Clone(config.Toolsets), config.ToolsetAll) {
+				if !strings.Contains(opt.Description, name) {
+					problems = append(problems, fmt.Sprintf("user_config.%s does not name the %q toolset", key, name))
+				}
+			}
 		}
 	}
 	got, err := mcpbLoad(mcpbHostEnv(m))
@@ -543,13 +583,31 @@ func mcpbConfigDiff(a, b config.Config) []string {
 // ways: a refusal the list does not declare, which no description then
 // warns of, and a declared one the server accepts.
 func mcpbRefusalProblems(m mcpbManifest, declared [][]string) []string {
+	if _, err := mcpbLoad(mcpbHostEnv(m)); err != nil {
+		return nil // the defaults check reports it
+	}
+	opts := m.options()
 	var switches []string
 	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
-		if m.UserConfig[key].Type == "boolean" {
+		if opts[key].Type == "boolean" {
 			switches = append(switches, key)
 		}
 	}
 	var problems []string
+	for _, pair := range declared {
+		for _, key := range pair {
+			if !slices.Contains(switches, key) {
+				problems = append(problems, fmt.Sprintf("mcpbRefused names %s, which is not a switch the bundle asks for", key))
+				continue
+			}
+			for _, other := range pair {
+				if other != key && !strings.Contains(opts[key].Description, opts[other].Title) {
+					problems = append(problems, fmt.Sprintf("user_config.%s does not name %q, which the server "+
+						"refuses it with", key, opts[other].Title))
+				}
+			}
+		}
+	}
 	for set := 1; set < 1<<len(switches); set++ {
 		var on []string
 		for i, key := range switches {
@@ -606,6 +664,9 @@ func mcpbRepoProblems(root string, m mcpbManifest) []string {
 				problems = append(problems, fmt.Sprintf("%s.env sets %s, a development override no bundle may carry", where, key))
 			case !known[key]:
 				problems = append(problems, fmt.Sprintf("%s.env sets %s, which the server does not read", where, key))
+			case mcpbExcluded[key] != "":
+				problems = append(problems, fmt.Sprintf("%s.env sets %s, which the bundle excludes: %s",
+					where, key, mcpbExcluded[key]))
 			}
 		}
 	}
@@ -616,8 +677,8 @@ func mcpbRepoProblems(root string, m mcpbManifest) []string {
 			continue
 		}
 		want := "${user_config." + key + "}"
-		if got := m.Server.MCPConfig.Env[mcpbUserConfig[key]]; got != want {
-			problems = append(problems, fmt.Sprintf("mcp_config.env.%s is %q, want %q", mcpbUserConfig[key], got, want))
+		if got := m.Server.MCPConfig.Env[mcpbUserConfig[key].Name]; got != want {
+			problems = append(problems, fmt.Sprintf("mcp_config.env.%s is %q, want %q", mcpbUserConfig[key].Name, got, want))
 		}
 	}
 	problems = append(problems, mcpbDefaultsProblems(m)...)

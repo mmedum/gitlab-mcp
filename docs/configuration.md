@@ -179,7 +179,12 @@ authority in the system's trust store.
 }
 ```
 
-The Claude Desktop bundle asks for the application id, the profile,
-read-only mode and one image directory for `upload_file`, and passes
-them as the matching variables. It does not log you in; run `gitlab-mcp login` from a
+The Claude Desktop bundle asks for every setting above except the log
+level and format, the HTTP timeout, the configuration directory and its
+override, and the refresh token: the application id, the profile,
+read-only mode, the Ship and Destructive switches, the toolsets, the
+write namespaces and one image directory for `upload_file`. It passes
+them as the matching variables, each defaulting so the server starts as
+an unconfigured one does, and Read-only cannot be combined with either
+switch. It does not log you in; run `gitlab-mcp login` from a
 terminal first (`docs/setup.md`).

@@ -166,6 +166,21 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"defaults the server refuses", func(d map[string]any) {
 			mcpbDig(d, "user_config", "toolsets")["default"] = "nope"
 		}, "the bundle's defaults do not start the server"},
+		{"an override's env, which replaces the base", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["env"] = map[string]any{"GITLAB_MCP_ENABLE_SHIP": "true"}
+		}, "platform_overrides.win32.env is set"},
+		{"an excluded setting in env", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_REFRESH_TOKEN"] = "x"
+		}, "sets GITLAB_MCP_REFRESH_TOKEN, which the bundle excludes"},
+		{"a refused combination the description does not warn of", func(d map[string]any) {
+			mcpbDig(d, "user_config", "read_only")["description"] = "Read only."
+		}, `user_config.read_only does not name "Merging, approving, CI and releases"`},
+		{"a toolset the description leaves out", func(d map[string]any) {
+			mcpbDig(d, "user_config", "toolsets")["description"] = "Comma-separated toolsets."
+		}, `user_config.toolsets does not name the "activity" toolset`},
+		{"an option that does not decode", func(d map[string]any) {
+			mcpbDig(d, "user_config", "upload_dirs")["required"] = "false"
+		}, "user_config.upload_dirs is not an option"},
 		{"a switch asked as text", func(d map[string]any) {
 			mcpbDig(d, "user_config", "enable_destructive")["type"] = "string"
 			mcpbDig(d, "user_config", "enable_destructive")["default"] = "false"
@@ -227,7 +242,7 @@ func TestMcpbUserConfigIsDerivedFromTheSettings(t *testing.T) {
 		config.EnvPrefix + "EXCLUDED": "a reason",
 		config.EnvPrefix + "GONE":     "a reason",
 	})
-	if want := map[string]string{"asked": config.EnvPrefix + "ASKED"}; !maps.Equal(keys, want) {
+	if want := map[string]config.Var{"asked": vars[0]}; !maps.Equal(keys, want) {
 		t.Errorf("keys = %v, want %v", keys, want)
 	}
 	want := []string{"the bundle excludes GITLAB_MCP_GONE, which the server does not read"}
@@ -250,6 +265,10 @@ func TestMcpbRefusedCombinationsAreDeclared(t *testing.T) {
 	missing := mcpbRefusalProblems(m, [][]string{{"enable_ship", "read_only"}})
 	if len(missing) == 0 || !strings.Contains(missing[0], "the server refuses enable_destructive, read_only together") {
 		t.Errorf("an undeclared refusal passed: %q", missing)
+	}
+	stale := mcpbRefusalProblems(m, append(slices.Clone(mcpbRefused), []string{"enable_shipp", "read_only"}))
+	if !slices.Contains(stale, "mcpbRefused names enable_shipp, which is not a switch the bundle asks for") {
+		t.Errorf("a declared name that is no switch passed: %q", stale)
 	}
 	extra := mcpbRefusalProblems(m, append(slices.Clone(mcpbRefused), []string{"enable_destructive", "enable_ship"}))
 	if !slices.ContainsFunc(extra, func(p string) bool {
@@ -348,5 +367,22 @@ func TestLauncherScriptRuns(t *testing.T) {
 	stdout, stderr, err = runAs("aarch64")
 	if err != nil || stdout != "ran --flag\n" {
 		t.Errorf("present binary: err %v, stdout %q, stderr %q", err, stdout, stderr)
+	}
+}
+
+// Defaults the server refuses are reported once, not again as a refusal
+// of every combination of the switches.
+func TestMcpbDefaultsThatFailAreReportedOnce(t *testing.T) {
+	doc := mcpbFixture(t)
+	mcpbDig(doc, "user_config", "toolsets")["default"] = "nope"
+	var out bytes.Buffer
+	if err := mcpbCheck(&out, mcpbRoot(t, doc)); err == nil {
+		t.Fatalf("accepted: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "the bundle's defaults do not start the server") {
+		t.Errorf("the failure is not named:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "together") {
+		t.Errorf("the failure is also blamed on the switches:\n%s", out.String())
 	}
 }
