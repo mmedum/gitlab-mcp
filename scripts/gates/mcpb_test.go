@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,16 +12,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
 // mcpbTestDescription is the server's description in the fixture root.
 const mcpbTestDescription = "GitLab over MCP from your own account: issues, merge requests, reviews, the repository and CI."
 
-// mcpbFixture decodes the good manifest fixture as a document.
+// mcpbFixture decodes the committed manifest as a document. Each test
+// breaks its own copy.
 func mcpbFixture(t *testing.T) map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", "mcpb", "manifest.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", mcpbManifestPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,11 +159,32 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"no privacy policy", func(d map[string]any) { delete(d, "privacy_policies") }, "privacy_policies is empty"},
 		{"a switch the bundle turns on", func(d map[string]any) {
 			mcpbDig(d, "user_config", "enable_ship")["default"] = true
-		}, "user_config.enable_ship is a boolean defaulting to true; GITLAB_MCP_ENABLE_SHIP is a switch the server defaults to false"},
+		}, "the bundle's defaults start the server differently from no settings, in EnableShip"},
+		{"a toolset the bundle turns on", func(d map[string]any) {
+			mcpbDig(d, "user_config", "toolsets")["default"] = "all"
+		}, "the bundle's defaults start the server differently from no settings, in Toolsets"},
+		{"defaults the server refuses", func(d map[string]any) {
+			mcpbDig(d, "user_config", "toolsets")["default"] = "nope"
+		}, "the bundle's defaults do not start the server"},
+		{"an override's env, which replaces the base", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["env"] = map[string]any{"GITLAB_MCP_ENABLE_SHIP": "true"}
+		}, "platform_overrides.win32.env is set"},
+		{"an excluded setting in env", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_REFRESH_TOKEN"] = "x"
+		}, "sets GITLAB_MCP_REFRESH_TOKEN, which the bundle excludes"},
+		{"a refused combination the description does not warn of", func(d map[string]any) {
+			mcpbDig(d, "user_config", "read_only")["description"] = "Read only."
+		}, `user_config.read_only does not name "Merging, approving, CI and releases"`},
+		{"a toolset the description leaves out", func(d map[string]any) {
+			mcpbDig(d, "user_config", "toolsets")["description"] = "Comma-separated toolsets."
+		}, `user_config.toolsets does not name the "activity" toolset`},
+		{"an option that does not decode", func(d map[string]any) {
+			mcpbDig(d, "user_config", "upload_dirs")["required"] = "false"
+		}, "user_config.upload_dirs is not an option"},
 		{"a switch asked as text", func(d map[string]any) {
 			mcpbDig(d, "user_config", "enable_destructive")["type"] = "string"
-			mcpbDig(d, "user_config", "enable_destructive")["default"] = ""
-		}, `user_config.enable_destructive is a string defaulting to ""; GITLAB_MCP_ENABLE_DESTRUCTIVE is a switch`},
+			mcpbDig(d, "user_config", "enable_destructive")["default"] = "false"
+		}, "user_config.enable_destructive is a string; GITLAB_MCP_ENABLE_DESTRUCTIVE is a switch, so ask for a boolean"},
 		{"a setting the bundle no longer asks for", func(d map[string]any) {
 			delete(mcpbDig(d, "user_config"), "write_namespaces")
 			delete(mcpbDig(d, "server", "mcp_config", "env"), "GITLAB_MCP_WRITE_NAMESPACES")
@@ -184,7 +208,13 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 
 // Each file the packer copies from the repository must be there.
 func TestMcpbRefusesAMissingRepositoryFile(t *testing.T) {
-	for _, name := range []string{"NOTICE", "README.md"} {
+	copied := 0
+	for _, f := range mcpbFiles {
+		if f.repo == "" {
+			continue
+		}
+		copied++
+		name := f.repo
 		root := mcpbRoot(t, mcpbFixture(t))
 		if err := os.Remove(filepath.Join(root, name)); err != nil {
 			t.Fatal(err)
@@ -193,6 +223,58 @@ func TestMcpbRefusesAMissingRepositoryFile(t *testing.T) {
 		if err := mcpbCheck(&out, root); err == nil || !strings.Contains(out.String(), "copies "+name) {
 			t.Errorf("a missing %s passed: %v\n%s", name, err, out.String())
 		}
+	}
+	if copied != 3 {
+		t.Errorf("the packer copies %d files from the repository, want LICENSE, NOTICE and README.md", copied)
+	}
+}
+
+// The bundle's keys are the settings the server reads, less the
+// development overrides and the exclusions, and an exclusion of a
+// setting that is gone is refused.
+func TestMcpbUserConfigIsDerivedFromTheSettings(t *testing.T) {
+	vars := []config.Var{
+		{Name: config.EnvPrefix + "ASKED"},
+		{Name: config.EnvPrefix + "DEV", Dev: true},
+		{Name: config.EnvPrefix + "EXCLUDED"},
+	}
+	keys, problems := mcpbUserConfigFrom(vars, map[string]string{
+		config.EnvPrefix + "EXCLUDED": "a reason",
+		config.EnvPrefix + "GONE":     "a reason",
+	})
+	if want := map[string]config.Var{"asked": vars[0]}; !maps.Equal(keys, want) {
+		t.Errorf("keys = %v, want %v", keys, want)
+	}
+	want := []string{"the bundle excludes GITLAB_MCP_GONE, which the server does not read"}
+	if !slices.Equal(problems, want) {
+		t.Errorf("problems = %q, want %q", problems, want)
+	}
+}
+
+// The refused combinations of the bundle's switches are declared, both
+// ways: one the server refuses and the list leaves out, and one the list
+// declares that the server accepts.
+func TestMcpbRefusedCombinationsAreDeclared(t *testing.T) {
+	m, _, err := mcpbRead(filepath.Join("..", "..", mcpbManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := mcpbRefusalProblems(m, mcpbRefused); len(problems) != 0 {
+		t.Errorf("the declared list does not match the server: %q", problems)
+	}
+	missing := mcpbRefusalProblems(m, [][]string{{"enable_ship", "read_only"}})
+	if len(missing) == 0 || !strings.Contains(missing[0], "the server refuses enable_destructive, read_only together") {
+		t.Errorf("an undeclared refusal passed: %q", missing)
+	}
+	stale := mcpbRefusalProblems(m, append(slices.Clone(mcpbRefused), []string{"enable_shipp", "read_only"}))
+	if !slices.Contains(stale, "mcpbRefused names enable_shipp, which is not a switch the bundle asks for") {
+		t.Errorf("a declared name that is no switch passed: %q", stale)
+	}
+	extra := mcpbRefusalProblems(m, append(slices.Clone(mcpbRefused), []string{"enable_destructive", "enable_ship"}))
+	if !slices.ContainsFunc(extra, func(p string) bool {
+		return strings.Contains(p, "declares a refusal among enable_destructive, enable_ship, and the server starts")
+	}) {
+		t.Errorf("a declared refusal the server accepts passed: %q", extra)
 	}
 }
 
@@ -285,5 +367,22 @@ func TestLauncherScriptRuns(t *testing.T) {
 	stdout, stderr, err = runAs("aarch64")
 	if err != nil || stdout != "ran --flag\n" {
 		t.Errorf("present binary: err %v, stdout %q, stderr %q", err, stdout, stderr)
+	}
+}
+
+// Defaults the server refuses are reported once, not again as a refusal
+// of every combination of the switches.
+func TestMcpbDefaultsThatFailAreReportedOnce(t *testing.T) {
+	doc := mcpbFixture(t)
+	mcpbDig(doc, "user_config", "toolsets")["default"] = "nope"
+	var out bytes.Buffer
+	if err := mcpbCheck(&out, mcpbRoot(t, doc)); err == nil {
+		t.Fatalf("accepted: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "the bundle's defaults do not start the server") {
+		t.Errorf("the failure is not named:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "together") {
+		t.Errorf("the failure is also blamed on the switches:\n%s", out.String())
 	}
 }
