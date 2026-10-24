@@ -176,6 +176,9 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"no base args", func(d map[string]any) {
 			delete(mcpbDig(d, "server", "mcp_config"), "args")
 		}, "mcp_config.args is missing"},
+		{"null base args", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config")["args"] = nil
+		}, "mcp_config.args is null"},
 		{"a flag in args", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config")["args"] = []any{"--enable-destructive=true"}
 		}, "mcp_config.args is not empty"},
