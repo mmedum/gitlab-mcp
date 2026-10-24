@@ -19,6 +19,10 @@ lifted verbatim.
 
 - The Claude Desktop bundle's profile field defaults to empty, which means the default profile as it did before.
 
+### Fixed
+
+- The Claude Desktop bundle's Ship field names every tool it registers: applying review suggestions and moving an issue to another project were left out.
+
 ## [4.1.1] - 2026-10-24
 
 ### Fixed
