@@ -19,7 +19,7 @@ itself, and every problem is reported together.
 
 | Variable | Flag | Default | What it does |
 |---|---|---|---|
-| `GITLAB_MCP_PROFILE` | `--profile` | `default` | Which stored sign-in to use. Separate profiles keep separate tokens, such as one per GitLab account. Lowercase letters, digits, `-` and `_`. |
+| `GITLAB_MCP_PROFILE` | `--profile` | `default` | Which stored sign-in to use. Separate profiles keep separate tokens, such as one per GitLab account. Up to 64 characters from a to z, 0 to 9, `-` and `_`, starting with a letter or digit. |
 | `GITLAB_MCP_CLIENT_ID` | `--client-id` | the profile's | The OAuth application id. Overrides the one the profile recorded at login. |
 | `GITLAB_MCP_READ_ONLY` | `--read-only` | `false` | Register only the Read tools and request `read_api`. Needs a login made in this mode. |
 | `GITLAB_MCP_ENABLE_SHIP` | `--enable-ship` | `false` | Register merging, approving, running and canceling CI, and creating releases. |

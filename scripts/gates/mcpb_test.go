@@ -86,7 +86,25 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 	}{
 		{"entry point not staged", func(d map[string]any) {
 			mcpbDig(d, "server")["entry_point"] = "server/nothing"
-		}, `entry_point "server/nothing"`},
+		}, `entry_point "server/nothing" is not a program the packer stages`},
+		{"entry point a document", func(d map[string]any) {
+			mcpbDig(d, "server")["entry_point"] = "LICENSE"
+		}, `entry_point "LICENSE" is not a program the packer stages`},
+		{"a command naming a document", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["command"] = "${__dirname}/README.md"
+		}, `platform_overrides.win32.command is "${__dirname}/README.md", which the packer does not stage`},
+		{"a profile field silent on the rule", func(d map[string]any) {
+			mcpbDig(d, "user_config", "profile")["description"] = "Which stored login to use."
+		}, `user_config.profile does not say a name is "up to 64 characters from a to z`},
+		{"a refused field with no title", func(d map[string]any) {
+			mcpbDig(d, "user_config", "enable_ship")["title"] = ""
+		}, "user_config.enable_ship has no title"},
+		{"a command relative to the bundle", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config")["command"] = "server/gitlab-mcp-darwin"
+		}, `mcp_config.command is "server/gitlab-mcp-darwin"; a command starts with ${__dirname}/`},
+		{"a command from the root", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["command"] = "/server/gitlab-mcp.exe"
+		}, `platform_overrides.win32.command is "/server/gitlab-mcp.exe"; a command starts with ${__dirname}/`},
 		{"command not staged", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config")["command"] = "${__dirname}/server/typo"
 		}, "mcp_config.command is"},
@@ -285,6 +303,42 @@ func TestMcpbRefusedCombinationsAreDeclared(t *testing.T) {
 	missing := mcpbRefusalProblems(m, [][]string{{"enable_ship", "read_only"}})
 	if len(missing) == 0 || !strings.Contains(missing[0], "the server refuses enable_destructive, read_only together") {
 		t.Errorf("an undeclared refusal passed: %q", missing)
+	}
+	// read_only is in both pairs, and a missing title is one problem, not
+	// one per pair.
+	untitled, _, err := mcpbRead(filepath.Join("..", "..", mcpbManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	untitled.UserConfig["read_only"] = json.RawMessage(`{"type": "boolean", "title": "", "default": false}`)
+	got := mcpbRefusalProblems(untitled, mcpbRefused)
+	if n := len(slices.DeleteFunc(got, func(p string) bool {
+		return !strings.HasPrefix(p, "user_config.read_only has no title")
+	})); n != 1 {
+		t.Errorf("an untitled read_only is reported %d times, want 1", n)
+	}
+	// It is reported when the defaults do not start, too: the title check
+	// starts nothing.
+	untitled.UserConfig["toolsets"] = json.RawMessage(`{"type": "string", "title": "Toolsets", "default": "nope"}`)
+	if got := mcpbRefusalProblems(untitled, mcpbRefused); !slices.ContainsFunc(got, func(p string) bool {
+		return strings.HasPrefix(p, "user_config.read_only has no title")
+	}) {
+		t.Errorf("an untitled read_only passed beside defaults that do not start: %q", got)
+	}
+	// A title with a space around it is named without the space.
+	padded, _, err := mcpbRead(filepath.Join("..", "..", mcpbManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt := padded.options()["read_only"]
+	opt.Title += " "
+	raw, err := json.Marshal(opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded.UserConfig["read_only"] = raw
+	if got := mcpbRefusalProblems(padded, mcpbRefused); len(got) != 0 {
+		t.Errorf("a padded title is not found in descriptions that name it: %q", got)
 	}
 	stale := mcpbRefusalProblems(m, append(slices.Clone(mcpbRefused), []string{"enable_shipp", "read_only"}))
 	if !slices.Contains(stale, "mcpbRefused names enable_shipp, which is not a switch the bundle asks for") {

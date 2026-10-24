@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/v4/internal/config"
+	"github.com/mmedum/gitlab-mcp/v4/internal/userconfig"
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
@@ -279,21 +280,49 @@ func mcpbEnvRefProblems(m mcpbManifest) []string {
 	return problems
 }
 
+// mcpbResolve is the path in the bundle a command names.
+func mcpbResolve(cmd string) string {
+	return strings.TrimPrefix(cmd, "${__dirname}/")
+}
+
+// mcpbCommandProblems holds each command, keyed by platform with "" for
+// the base, to a program the packer stages, named through ${__dirname}:
+// the one path the specification fixes to the bundle. What a relative
+// command is resolved against, no source says (§18 row 132).
+func mcpbCommandProblems(commands map[string]string, staged map[string]mcpbStaged) []string {
+	var problems []string
+	for _, platform := range slices.Sorted(maps.Keys(commands)) {
+		where := "mcp_config.command"
+		if platform != "" {
+			where = "platform_overrides." + platform + ".command"
+		}
+		if !strings.HasPrefix(commands[platform], "${__dirname}/") {
+			problems = append(problems, fmt.Sprintf("%s is %q; a command starts with ${__dirname}/, the one "+
+				"path the specification fixes to the bundle", where, commands[platform]))
+			continue
+		}
+		if _, ok := staged[mcpbResolve(commands[platform])]; !ok {
+			problems = append(problems, fmt.Sprintf("%s is %q, which the packer does not stage", where, commands[platform]))
+		}
+	}
+	return problems
+}
+
 // mcpbValidate is the referential checks. It takes the staged table and
 // the launcher's names as arguments so a test can break each one.
 func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []string {
 	var problems []string
+	// staged is what can run: a document copied from the repository, such
+	// as LICENSE, is packed too, but no command may name it.
 	staged := map[string]mcpbStaged{}
 	for _, f := range files {
-		staged[f.path] = f
+		if f.repo == "" {
+			staged[f.path] = f
+		}
 	}
-	resolve := func(cmd string) string {
-		return strings.TrimPrefix(strings.TrimPrefix(cmd, "${__dirname}"), "/")
-	}
-
 	// entry_point names a staged file.
 	if _, ok := staged[m.Server.EntryPoint]; !ok {
-		problems = append(problems, fmt.Sprintf("entry_point %q is not a file the packer stages", m.Server.EntryPoint))
+		problems = append(problems, fmt.Sprintf("entry_point %q is not a program the packer stages", m.Server.EntryPoint))
 	}
 
 	// Every command names one too.
@@ -303,16 +332,7 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 			commands[platform] = over.Command
 		}
 	}
-	for _, platform := range slices.Sorted(maps.Keys(commands)) {
-		where := "mcp_config.command"
-		if platform != "" {
-			where = "platform_overrides." + platform + ".command"
-		}
-		if _, ok := staged[resolve(commands[platform])]; !ok {
-			problems = append(problems, fmt.Sprintf("%s is %q, which the packer does not stage", where, commands[platform]))
-		}
-	}
-
+	problems = append(problems, mcpbCommandProblems(commands, staged)...)
 	problems = append(problems, mcpbEnvRefProblems(m)...)
 	// Settings pass by env only: a flag in args, such as
 	// --enable-destructive, would turn on what every check on env holds
@@ -366,7 +386,7 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 		if !ok {
 			cmd = commands[""]
 		}
-		if f, found := staged[resolve(cmd)]; found && f.platform != platform {
+		if f, found := staged[mcpbResolve(cmd)]; found && f.platform != platform {
 			problems = append(problems, fmt.Sprintf("platform %q runs %q, which is staged for %q",
 				platform, f.path, cmp.Or(f.platform, "the launcher")))
 		}
@@ -572,6 +592,10 @@ func mcpbDefaultsProblems(m mcpbManifest) []string {
 				problems = append(problems, fmt.Sprintf("user_config.%s does not list the toolsets as %q", key, list))
 			}
 		}
+		// The server refuses any other name at start.
+		if v.Name == config.EnvProfile && !strings.Contains(opt.Description, userconfig.ProfileRule) {
+			problems = append(problems, fmt.Sprintf("user_config.%s does not say a name is %q", key, userconfig.ProfileRule))
+		}
 	}
 	got, err := mcpbLoad(mcpbHostEnv(m))
 	if err != nil {
@@ -604,11 +628,10 @@ func mcpbConfigDiff(a, b config.Config) []string {
 // mcpbRefusalProblems starts every combination of the bundle's switches
 // and holds the ones the server refuses to the declared list, both
 // ways: a refusal the list does not declare, which no description then
-// warns of, and a declared one the server accepts.
+// warns of, and a declared one the server accepts. A declared key that
+// is not a switch, or has no title for the others to name, is reported
+// once, however many pairs it is in, whether or not the defaults start.
 func mcpbRefusalProblems(m mcpbManifest, declared [][]string) []string {
-	if _, err := mcpbLoad(mcpbHostEnv(m)); err != nil {
-		return nil // the defaults check reports it
-	}
 	opts := m.options()
 	var switches []string
 	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
@@ -617,19 +640,40 @@ func mcpbRefusalProblems(m mcpbManifest, declared [][]string) []string {
 		}
 	}
 	var problems []string
+	paired := map[string]bool{}
+	for _, pair := range declared {
+		for _, key := range pair {
+			paired[key] = true
+		}
+	}
+	titled := map[string]bool{}
+	for _, key := range slices.Sorted(maps.Keys(paired)) {
+		switch {
+		case !slices.Contains(switches, key):
+			problems = append(problems, fmt.Sprintf("mcpbRefused names %s, which is not a switch the bundle asks for", key))
+		case strings.TrimSpace(opts[key].Title) == "":
+			problems = append(problems, fmt.Sprintf("user_config.%s has no title, so the fields it is refused "+
+				"with cannot name it", key))
+		default:
+			titled[key] = true
+		}
+	}
 	for _, pair := range declared {
 		for _, key := range pair {
 			if !slices.Contains(switches, key) {
-				problems = append(problems, fmt.Sprintf("mcpbRefused names %s, which is not a switch the bundle asks for", key))
 				continue
 			}
 			for _, other := range pair {
-				if other != key && !strings.Contains(opts[key].Description, opts[other].Title) {
+				title := strings.TrimSpace(opts[other].Title)
+				if other != key && titled[other] && !strings.Contains(opts[key].Description, title) {
 					problems = append(problems, fmt.Sprintf("user_config.%s does not name %q, which the server "+
-						"refuses it with", key, opts[other].Title))
+						"refuses it with", key, title))
 				}
 			}
 		}
+	}
+	if _, err := mcpbLoad(mcpbHostEnv(m)); err != nil {
+		return problems // the defaults check reports it
 	}
 	for set := 1; set < 1<<len(switches); set++ {
 		var on []string
