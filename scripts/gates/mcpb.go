@@ -324,10 +324,12 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 				"does not claim", platform))
 		}
 		// The reference host replaces mcp_config.env with an override's
-		// env rather than merging the two (anthropics/mcpb v2.1.2), so the
-		// settings would not reach that platform, and the defaults checks
-		// below read mcp_config.env alone.
-		if len(over.Env) > 0 {
+		// env rather than merging the two (`platformConfig.env ||
+		// result.env`, src/shared/config.ts L120 at anthropics/mcpb
+		// v2.1.2), so the settings would not reach that platform, and the
+		// defaults checks below read mcp_config.env alone. An empty {} is
+		// an object too, so it replaces the base just the same.
+		if over.Env != nil {
 			problems = append(problems, fmt.Sprintf("platform_overrides.%s.env is set; a host replaces "+
 				"mcp_config.env with it, so put every variable in mcp_config.env", platform))
 		}

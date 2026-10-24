@@ -2707,6 +2707,7 @@ shallow, fixed in `83f7577` and `842b194` and released as 4.1.2:
 | Only settings flagged as switches were compared, so a `toolsets` default of `all` passed | The configuration is started from the bundle's defaults and from nothing, and any difference is refused |
 | "Read-only excludes the switches" was prose nothing held | Every combination of the switches is started and the refused ones held to a declared list both ways; each field names the other by its title |
 | A platform override's `env`, which a host substitutes for the base, passed unchecked | Refused |
+| An empty override `env: {}` still passed, though the host's `platformConfig.env \|\| result.env` takes it (found after 4.1.2) | Refused whenever the key is present |
 | An excluded setting, such as the refresh token, could be set in `env` | Refused |
 | The defaults failing to start was also reported as seven refusals | The combination check stays quiet then |
 | The Ship field left out applying suggestions and moving an issue; `docs/configuration.md` listed four settings | Both say what the bundle does |

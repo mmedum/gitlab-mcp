@@ -169,6 +169,9 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"an override's env, which replaces the base", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["env"] = map[string]any{"GITLAB_MCP_ENABLE_SHIP": "true"}
 		}, "platform_overrides.win32.env is set"},
+		{"an empty override env, which still replaces the base", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "platform_overrides", "linux")["env"] = map[string]any{}
+		}, "platform_overrides.linux.env is set"},
 		{"an excluded setting in env", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "env")["GITLAB_MCP_REFRESH_TOKEN"] = "x"
 		}, "sets GITLAB_MCP_REFRESH_TOKEN, which the bundle excludes"},
