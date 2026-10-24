@@ -32,7 +32,6 @@
     "entry_point": "server/gitlab-mcp-darwin",
     "mcp_config": {
       "command": "${__dirname}/server/gitlab-mcp-darwin",
-      "args": [],
       "env": {
         "GITLAB_MCP_CLIENT_ID": "${user_config.client_id}",
         "GITLAB_MCP_PROFILE": "${user_config.profile}",
