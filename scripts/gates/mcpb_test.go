@@ -99,6 +99,12 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"a refused field with no title", func(d map[string]any) {
 			mcpbDig(d, "user_config", "enable_ship")["title"] = ""
 		}, "user_config.enable_ship has no title"},
+		{"a command relative to the host", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config")["command"] = "server/gitlab-mcp-darwin"
+		}, `mcp_config.command is "server/gitlab-mcp-darwin"; a command starts with ${__dirname}/`},
+		{"a command from the root", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["command"] = "/server/gitlab-mcp.exe"
+		}, `platform_overrides.win32.command is "/server/gitlab-mcp.exe"; a command starts with ${__dirname}/`},
 		{"command not staged", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config")["command"] = "${__dirname}/server/typo"
 		}, "mcp_config.command is"},
@@ -297,6 +303,19 @@ func TestMcpbRefusedCombinationsAreDeclared(t *testing.T) {
 	missing := mcpbRefusalProblems(m, [][]string{{"enable_ship", "read_only"}})
 	if len(missing) == 0 || !strings.Contains(missing[0], "the server refuses enable_destructive, read_only together") {
 		t.Errorf("an undeclared refusal passed: %q", missing)
+	}
+	// read_only is in both pairs, and a missing title is one problem, not
+	// one per pair.
+	untitled, _, err := mcpbRead(filepath.Join("..", "..", mcpbManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	untitled.UserConfig["read_only"] = json.RawMessage(`{"type": "boolean", "title": "", "default": false}`)
+	got := mcpbRefusalProblems(untitled, mcpbRefused)
+	if n := len(slices.DeleteFunc(got, func(p string) bool {
+		return !strings.HasPrefix(p, "user_config.read_only has no title")
+	})); n != 1 {
+		t.Errorf("an untitled read_only is reported %d times, want 1", n)
 	}
 	stale := mcpbRefusalProblems(m, append(slices.Clone(mcpbRefused), []string{"enable_shipp", "read_only"}))
 	if !slices.Contains(stale, "mcpbRefused names enable_shipp, which is not a switch the bundle asks for") {
