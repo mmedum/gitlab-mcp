@@ -1,6 +1,12 @@
 # Architecture — gitlab-mcp
 
-**Status: 4.1.2, 2026-10-24, built with Go 1.27.3: the bundle gate holds
+**Status: 4.1.3, 2026-10-24, built with Go 1.27.3: the family sweep
+(§16a): every read of a server variable goes through `config.Lookup`, so
+a setting of spaces alone is unset, held by a scan with a floor; the
+bundle gate keeps documents out of the commands, holds the identity and
+the profile rule, refuses a repeated key and validates the stamped
+manifest. A live run against the scratch group behaved as expected,
+its transcript read. 4.1.2, 2026-10-24: the bundle gate holds
 the bundle's settings to the server's own, found by the reviews 4.1.0
 and 4.1.1 shipped without (§16a); the Ship field names every tool it
 registers. 4.1.1: the Claude Desktop bundle says Read-only excludes the
