@@ -318,7 +318,11 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 	// --enable-destructive, would turn on what every check on env holds
 	// off. The base keeps its empty args, as Claude Desktop has always
 	// been given it; no launch of Desktop has shown it optional.
-	if len(m.Server.MCPConfig.Args) > 0 {
+	switch {
+	case m.Server.MCPConfig.Args == nil:
+		problems = append(problems, "mcp_config.args is missing; keep it as [], the shape every released bundle "+
+			"has had, since no Claude Desktop launch has shown the key optional")
+	case len(m.Server.MCPConfig.Args) > 0:
 		problems = append(problems, "mcp_config.args is not empty; settings pass by env only, and a flag there "+
 			"would escape every check on env")
 	}

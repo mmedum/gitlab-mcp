@@ -173,6 +173,9 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"an override's env, which replaces the base", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["env"] = map[string]any{"GITLAB_MCP_ENABLE_SHIP": "true"}
 		}, "platform_overrides.win32.env is set"},
+		{"no base args", func(d map[string]any) {
+			delete(mcpbDig(d, "server", "mcp_config"), "args")
+		}, "mcp_config.args is missing"},
 		{"a flag in args", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config")["args"] = []any{"--enable-destructive=true"}
 		}, "mcp_config.args is not empty"},
