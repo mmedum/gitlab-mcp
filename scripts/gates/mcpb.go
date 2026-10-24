@@ -112,9 +112,11 @@ type mcpbManifest struct {
 		EntryPoint string `json:"entry_point"`
 		MCPConfig  struct {
 			Command           string            `json:"command"`
+			Args              json.RawMessage   `json:"args"`
 			Env               map[string]string `json:"env"`
 			PlatformOverrides map[string]struct {
 				Command string            `json:"command"`
+				Args    []string          `json:"args"`
 				Env     map[string]string `json:"env"`
 			} `json:"platform_overrides"`
 		} `json:"mcp_config"`
@@ -312,6 +314,20 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 	}
 
 	problems = append(problems, mcpbEnvRefProblems(m)...)
+	// Settings pass by env only: a flag in args, such as
+	// --enable-destructive, would turn on what every check on env holds
+	// off. The base keeps its empty args, as Claude Desktop has always
+	// been given it; no launch of Desktop has shown it optional.
+	switch args := strings.TrimSpace(string(m.Server.MCPConfig.Args)); {
+	case args == "":
+		problems = append(problems, "mcp_config.args is missing; keep it as [], the shape every released bundle "+
+			"has had, since no Claude Desktop launch has shown the key optional")
+	case args == "null":
+		problems = append(problems, "mcp_config.args is null; keep it as []")
+	case args != "[]":
+		problems = append(problems, "mcp_config.args is not empty; settings pass by env only, and a flag there "+
+			"would escape every check on env")
+	}
 
 	// Every override is a claimed platform.
 	claimed := map[string]bool{}
@@ -329,6 +345,10 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 		// v2.1.2), so the settings would not reach that platform, and the
 		// defaults checks below read mcp_config.env alone. An empty {} is
 		// an object too, so it replaces the base just the same.
+		if over.Args != nil {
+			problems = append(problems, fmt.Sprintf("platform_overrides.%s.args is set; settings pass by env "+
+				"only, and a flag there would escape every check on env", platform))
+		}
 		if over.Env != nil {
 			problems = append(problems, fmt.Sprintf("platform_overrides.%s.env is set; a host replaces "+
 				"mcp_config.env with it, so put every variable in mcp_config.env", platform))
@@ -545,10 +565,11 @@ func mcpbDefaultsProblems(m mcpbManifest) []string {
 				key, cmp.Or(opt.Type, "field with no type"), v.Name))
 		}
 		if v.Name == config.EnvToolsets {
-			for _, name := range append(slices.Clone(config.Toolsets), config.ToolsetAll) {
-				if !strings.Contains(opt.Description, name) {
-					problems = append(problems, fmt.Sprintf("user_config.%s does not name the %q toolset", key, name))
-				}
+			// The exact list, so a toolset whose name is an ordinary word
+			// cannot go missing behind that word used elsewhere.
+			list := strings.Join(config.Toolsets, ", ") + ", or " + config.ToolsetAll
+			if !strings.Contains(opt.Description, list) {
+				problems = append(problems, fmt.Sprintf("user_config.%s does not list the toolsets as %q", key, list))
 			}
 		}
 	}
