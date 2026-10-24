@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Changed
+
+- The Claude Desktop bundle's profile field defaults to empty, which means the default profile as it did before.
+
 ## [4.1.1] - 2026-10-24
 
 ### Fixed

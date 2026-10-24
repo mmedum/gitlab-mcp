@@ -63,8 +63,8 @@
     "profile": {
       "type": "string",
       "title": "Profile",
-      "description": "Which stored login to use. Separate profiles keep separate tokens, such as one per GitLab account.",
-      "default": "default",
+      "description": "Which stored login to use. Separate profiles keep separate tokens, such as one per GitLab account. Leave it empty for the default profile.",
+      "default": "",
       "required": false
     },
     "read_only": {

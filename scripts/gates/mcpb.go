@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -118,7 +119,7 @@ type mcpbManifest struct {
 			} `json:"platform_overrides"`
 		} `json:"mcp_config"`
 	} `json:"server"`
-	UserConfig    map[string]json.RawMessage `json:"user_config"`
+	UserConfig    map[string]mcpbOption `json:"user_config"`
 	Compatibility struct {
 		ClaudeDesktop string   `json:"claude_desktop"`
 		Platforms     []string `json:"platforms"`
@@ -204,17 +205,17 @@ func mcpbDocumentProblems(m mcpbManifest, raw []byte) []string {
 // one composed into a longer string.
 var mcpbUserConfigRef = regexp.MustCompile(`\$\{user_config\.([A-Za-z0-9_]+)\}`)
 
+// mcpbOption is the part of one user_config entry the checks read.
+type mcpbOption struct {
+	Type     string          `json:"type"`
+	Required bool            `json:"required"`
+	Default  json.RawMessage `json:"default"`
+	Multiple bool            `json:"multiple"`
+}
+
 // mcpbSubstituted refuses a user_config key an env value spends that a
 // host may leave unsubstituted: optional with no default, or multiple.
-func mcpbSubstituted(where, key string, raw json.RawMessage) []string {
-	var opt struct {
-		Required bool            `json:"required"`
-		Default  json.RawMessage `json:"default"`
-		Multiple bool            `json:"multiple"`
-	}
-	if err := json.Unmarshal(raw, &opt); err != nil {
-		return []string{fmt.Sprintf("user_config.%s is not an object: %v", key, err)}
-	}
+func mcpbSubstituted(where, key string, opt mcpbOption) []string {
 	var problems []string
 	if !opt.Required && opt.Default == nil {
 		problems = append(problems, fmt.Sprintf("%s spends ${user_config.%s}, which is optional with no default; "+
@@ -273,13 +274,13 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 	for where, env := range envs {
 		for key, value := range env {
 			for _, ref := range mcpbUserConfigRef.FindAllStringSubmatch(value, -1) {
-				raw, ok := m.UserConfig[ref[1]]
+				opt, ok := m.UserConfig[ref[1]]
 				if !ok {
 					problems = append(problems, fmt.Sprintf("%s.env.%s spends ${user_config.%s}, which user_config "+
 						"does not declare", where, key, ref[1]))
 					continue
 				}
-				problems = append(problems, mcpbSubstituted(where+".env."+key, ref[1], raw)...)
+				problems = append(problems, mcpbSubstituted(where+".env."+key, ref[1], opt)...)
 			}
 		}
 	}
@@ -412,47 +413,161 @@ func mcpbLicense(root string) string {
 	return ""
 }
 
-// mcpbUserConfig is what the bundle asks for at install, each key with
-// the variable it sets: what a person sets in their client's own
-// configuration, the instance aside (§12).
-var mcpbUserConfig = map[string]string{
-	"client_id":          config.EnvClientID,
-	"profile":            config.EnvProfile,
-	"read_only":          config.EnvReadOnly,
-	"enable_ship":        config.EnvEnableShip,
-	"enable_destructive": config.EnvEnableDestructive,
-	"toolsets":           config.EnvToolsets,
-	"write_namespaces":   config.EnvWriteNamespaces,
-	"upload_dirs":        config.EnvUploadDirs,
+// mcpbExcluded are the settings the server reads that the bundle does
+// not ask for, each with its reason. Every other setting is asked for,
+// development overrides aside (§12).
+var mcpbExcluded = map[string]string{
+	config.EnvLogLevel:                  "a diagnostic: Claude Desktop keeps the server's stderr in its own log",
+	config.EnvLogFormat:                 "a diagnostic, as the log level is",
+	config.EnvHTTPTimeout:               "tuning with a bounded default that a bundle install has no reason to change",
+	config.EnvConfigDir:                 "where profiles live; a bundle uses the store login wrote to",
+	config.EnvConfigDirAllowOutsideHome: "meaningful only with a configuration directory, which the bundle does not set",
+	config.EnvRefreshToken:              "a secret the keyring holds; a bundle never carries a token",
 }
 
-// mcpbSwitchProblems holds every switch the bundle asks for to the
-// server's own default, so a bundle install turns on nothing an
-// unconfigured server leaves off. The defaults are compared as JSON, so
-// a text "false" is refused. In Claude Desktop the only other guard is
-// its approval of each tool, which a person can set to always allow
-// (§18 row 130).
-func mcpbSwitchProblems(userConfig map[string]json.RawMessage) []string {
+// mcpbUserConfig is what the bundle asks for at install, each key with
+// the variable it sets.
+var mcpbUserConfig, mcpbExclusionProblems = mcpbUserConfigFrom(config.Vars, mcpbExcluded)
+
+// mcpbUserConfigFrom derives the bundle's keys from the settings the
+// server reads: each one not a development override and not excluded,
+// keyed by its name without the prefix, lowercased. It also refuses an
+// exclusion that names no setting, so a removed one cannot linger.
+func mcpbUserConfigFrom(vars []config.Var, excluded map[string]string) (map[string]string, []string) {
+	keys := map[string]string{}
+	read := map[string]bool{}
+	for _, v := range vars {
+		read[v.Name] = true
+		if v.Dev || excluded[v.Name] != "" {
+			continue
+		}
+		keys[strings.ToLower(strings.TrimPrefix(v.Name, config.EnvPrefix))] = v.Name
+	}
+	var problems []string
+	for _, name := range slices.Sorted(maps.Keys(excluded)) {
+		if !read[name] {
+			problems = append(problems, fmt.Sprintf("the bundle excludes %s, which the server does not read", name))
+		}
+	}
+	return keys, problems
+}
+
+// mcpbRefused are the combinations of the bundle's switches the server
+// refuses at startup, each sorted; the fields involved say so in their
+// descriptions. The gate starts every combination and holds the refused
+// ones to this list both ways.
+var mcpbRefused = [][]string{{"enable_destructive", "read_only"}, {"enable_ship", "read_only"}}
+
+// mcpbHostEnv is the environment a host builds from the bundle's
+// defaults, with the keys in on set to true. A required key with no
+// default is left out, since the person must give it a value.
+func mcpbHostEnv(m mcpbManifest, on ...string) map[string]string {
+	env := map[string]string{}
+	for name, value := range m.Server.MCPConfig.Env {
+		ref := mcpbUserConfigRef.FindStringSubmatch(value)
+		if ref == nil {
+			env[name] = value
+			continue
+		}
+		opt := m.UserConfig[ref[1]]
+		if slices.Contains(on, ref[1]) {
+			env[name] = "true"
+			continue
+		}
+		var def any
+		if opt.Default == nil || json.Unmarshal(opt.Default, &def) != nil {
+			continue
+		}
+		switch d := def.(type) {
+		case bool:
+			env[name] = strconv.FormatBool(d)
+		case string:
+			env[name] = d
+		default:
+			env[name] = fmt.Sprint(d)
+		}
+	}
+	return env
+}
+
+// mcpbLoad builds the server's configuration from an environment alone.
+func mcpbLoad(env map[string]string) (config.Config, error) {
+	return config.Load(nil, func(name string) string { return env[name] })
+}
+
+// mcpbDefaultsProblems starts the configuration from the bundle's
+// defaults and from no settings at all, and refuses any difference: a
+// bundle install turns on nothing an unconfigured server leaves off.
+// Claude Desktop approves each tool, and a person can always allow one,
+// so this is the guard a bundle install keeps (§18 row 130). A switch
+// is also asked as a boolean, so Desktop shows it as one.
+func mcpbDefaultsProblems(m mcpbManifest) []string {
 	var problems []string
 	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
-		raw, asked := userConfig[key]
 		i := slices.IndexFunc(config.Vars, func(v config.Var) bool { return v.Name == mcpbUserConfig[key] })
-		if !asked || i < 0 || !config.Vars[i].Switch {
-			continue
+		if opt, ok := m.UserConfig[key]; ok && i >= 0 && config.Vars[i].Switch && opt.Type != "boolean" {
+			problems = append(problems, fmt.Sprintf("user_config.%s is a %s; %s is a switch, so ask for a boolean",
+				key, cmp.Or(opt.Type, "field with no type"), config.Vars[i].Name))
 		}
-		v := config.Vars[i]
-		var opt struct {
-			Type    string          `json:"type"`
-			Default json.RawMessage `json:"default"`
+	}
+	got, err := mcpbLoad(mcpbHostEnv(m))
+	if err != nil {
+		return append(problems, fmt.Sprintf("the bundle's defaults do not start the server: %v", err))
+	}
+	want, err := mcpbLoad(nil)
+	if err != nil {
+		return append(problems, fmt.Sprintf("an unconfigured server does not start: %v", err))
+	}
+	if diff := mcpbConfigDiff(got, want); len(diff) > 0 {
+		problems = append(problems, fmt.Sprintf("the bundle's defaults start the server differently from no "+
+			"settings, in %s; a bundle install may turn on nothing an unconfigured server leaves off",
+			strings.Join(diff, ", ")))
+	}
+	return problems
+}
+
+// mcpbConfigDiff names the fields two configurations disagree on.
+func mcpbConfigDiff(a, b config.Config) []string {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	var fields []string
+	for i := range va.NumField() {
+		if !reflect.DeepEqual(va.Field(i).Interface(), vb.Field(i).Interface()) {
+			fields = append(fields, va.Type().Field(i).Name)
 		}
-		if err := json.Unmarshal(raw, &opt); err != nil {
-			problems = append(problems, fmt.Sprintf("user_config.%s is not an object: %v", key, err))
-			continue
+	}
+	return fields
+}
+
+// mcpbRefusalProblems starts every combination of the bundle's switches
+// and holds the ones the server refuses to the declared list, both
+// ways: a refusal the list does not declare, which no description then
+// warns of, and a declared one the server accepts.
+func mcpbRefusalProblems(m mcpbManifest, declared [][]string) []string {
+	var switches []string
+	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
+		if m.UserConfig[key].Type == "boolean" {
+			switches = append(switches, key)
 		}
-		if string(opt.Default) != v.Default {
-			problems = append(problems, fmt.Sprintf("user_config.%s is a %s defaulting to %s; %s is a switch the "+
-				"server defaults to %s, and a bundle install may turn on nothing an unconfigured server leaves off",
-				key, cmp.Or(opt.Type, "field"), cmp.Or(string(opt.Default), "nothing"), v.Name, v.Default))
+	}
+	var problems []string
+	for set := 1; set < 1<<len(switches); set++ {
+		var on []string
+		for i, key := range switches {
+			if set&(1<<i) != 0 {
+				on = append(on, key)
+			}
+		}
+		_, err := mcpbLoad(mcpbHostEnv(m, on...))
+		expected := slices.ContainsFunc(declared, func(pair []string) bool {
+			return !slices.ContainsFunc(pair, func(k string) bool { return !slices.Contains(on, k) })
+		})
+		switch {
+		case err != nil && !expected:
+			problems = append(problems, fmt.Sprintf("the server refuses %s together, and mcpbRefused does not "+
+				"declare it, so no field's description warns of it: %v", strings.Join(on, ", "), err))
+		case err == nil && expected:
+			problems = append(problems, fmt.Sprintf("mcpbRefused declares a refusal among %s, and the server "+
+				"starts with them", strings.Join(on, ", ")))
 		}
 	}
 	return problems
@@ -494,6 +609,7 @@ func mcpbRepoProblems(root string, m mcpbManifest) []string {
 			}
 		}
 	}
+	problems = append(problems, mcpbExclusionProblems...)
 	for _, key := range slices.Sorted(maps.Keys(mcpbUserConfig)) {
 		if _, ok := m.UserConfig[key]; !ok {
 			problems = append(problems, fmt.Sprintf("user_config does not ask for %s", key))
@@ -504,7 +620,8 @@ func mcpbRepoProblems(root string, m mcpbManifest) []string {
 			problems = append(problems, fmt.Sprintf("mcp_config.env.%s is %q, want %q", mcpbUserConfig[key], got, want))
 		}
 	}
-	problems = append(problems, mcpbSwitchProblems(m.UserConfig)...)
+	problems = append(problems, mcpbDefaultsProblems(m)...)
+	problems = append(problems, mcpbRefusalProblems(m, mcpbRefused)...)
 	for _, f := range mcpbFiles {
 		if f.repo == "" {
 			continue
