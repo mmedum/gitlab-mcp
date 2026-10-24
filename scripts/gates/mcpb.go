@@ -316,9 +316,10 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 	problems = append(problems, mcpbEnvRefProblems(m)...)
 	// Settings pass by env only: a flag in args, such as
 	// --enable-destructive, would turn on what every check on env holds
-	// off, and an empty [] is a value the host takes too.
-	if m.Server.MCPConfig.Args != nil {
-		problems = append(problems, "mcp_config.args is set; settings pass by env only, and a flag there "+
+	// off. The base keeps its empty args, as Claude Desktop has always
+	// been given it; no launch of Desktop has shown it optional.
+	if len(m.Server.MCPConfig.Args) > 0 {
+		problems = append(problems, "mcp_config.args is not empty; settings pass by env only, and a flag there "+
 			"would escape every check on env")
 	}
 
@@ -558,10 +559,11 @@ func mcpbDefaultsProblems(m mcpbManifest) []string {
 				key, cmp.Or(opt.Type, "field with no type"), v.Name))
 		}
 		if v.Name == config.EnvToolsets {
-			for _, name := range append(slices.Clone(config.Toolsets), config.ToolsetAll) {
-				if !strings.Contains(opt.Description, name) {
-					problems = append(problems, fmt.Sprintf("user_config.%s does not name the %q toolset", key, name))
-				}
+			// The exact list, so a toolset whose name is an ordinary word
+			// cannot go missing behind that word used elsewhere.
+			list := strings.Join(config.Toolsets, ", ") + ", or " + config.ToolsetAll
+			if !strings.Contains(opt.Description, list) {
+				problems = append(problems, fmt.Sprintf("user_config.%s does not list the toolsets as %q", key, list))
 			}
 		}
 	}

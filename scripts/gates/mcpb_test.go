@@ -160,6 +160,10 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		{"a switch the bundle turns on", func(d map[string]any) {
 			mcpbDig(d, "user_config", "enable_ship")["default"] = true
 		}, "the bundle's defaults start the server differently from no settings, in EnableShip"},
+		{"a required switch the bundle turns on", func(d map[string]any) {
+			mcpbDig(d, "user_config", "enable_destructive")["default"] = true
+			mcpbDig(d, "user_config", "enable_destructive")["required"] = true
+		}, "the bundle's defaults start the server differently from no settings, in EnableDestructive"},
 		{"a toolset the bundle turns on", func(d map[string]any) {
 			mcpbDig(d, "user_config", "toolsets")["default"] = "all"
 		}, "the bundle's defaults start the server differently from no settings, in Toolsets"},
@@ -171,10 +175,7 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 		}, "platform_overrides.win32.env is set"},
 		{"a flag in args", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config")["args"] = []any{"--enable-destructive=true"}
-		}, "mcp_config.args is set"},
-		{"an empty args, which a host still takes", func(d map[string]any) {
-			mcpbDig(d, "server", "mcp_config")["args"] = []any{}
-		}, "mcp_config.args is set"},
+		}, "mcp_config.args is not empty"},
 		{"a flag in an override's args", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config", "platform_overrides", "linux")["args"] = []any{"--enable-ship=true"}
 		}, "platform_overrides.linux.args is set"},
@@ -188,8 +189,9 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 			mcpbDig(d, "user_config", "read_only")["description"] = "Read only."
 		}, `user_config.read_only does not name "Merging, approving, CI and releases"`},
 		{"a toolset the description leaves out", func(d map[string]any) {
-			mcpbDig(d, "user_config", "toolsets")["description"] = "Comma-separated toolsets."
-		}, `user_config.toolsets does not name the "activity" toolset`},
+			mcpbDig(d, "user_config", "toolsets")["description"] = "Comma-separated toolsets to add: activity, " +
+				"deployments, releases, snippets, wiki, or all. Leave it empty for none; planning is its own word here."
+		}, `user_config.toolsets does not list the toolsets as "activity, deployments, planning, releases, snippets, wiki, or all"`},
 		{"an option that does not decode", func(d map[string]any) {
 			mcpbDig(d, "user_config", "upload_dirs")["required"] = "false"
 		}, "user_config.upload_dirs is not an option"},
