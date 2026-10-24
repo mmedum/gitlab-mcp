@@ -212,8 +212,9 @@ Claude Desktop can instead open the `.mcpb` bundle from a release. It
 asks for the same settings: merging, approving, applying suggestions,
 moving issues, CI and releases (`enable_ship`) and deleting
 (`enable_destructive`) stay off unless you turn them on, and
-`write_namespaces` confines writes to the groups and projects you name. This server asks nobody before a call. Claude Desktop
-approves each tool, and a tool you always allow then runs unasked, so
+`write_namespaces` confines writes to the groups and projects you name.
+This server asks nobody before a call. Claude Desktop approves each
+tool, and a tool you always allow then runs unasked, so
 leave a switch off unless you need its tools.
 
 ## Configuration

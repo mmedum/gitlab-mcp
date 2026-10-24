@@ -1,7 +1,10 @@
 # Architecture — gitlab-mcp
 
-**Status: 4.1.1, 2026-10-24, built with Go 1.27.3: the Claude Desktop
-bundle says Read-only excludes the two switches. 4.1.0: the bundle asks
+**Status: 4.1.2, 2026-10-24, built with Go 1.27.3: the bundle gate holds
+the bundle's settings to the server's own, found by the reviews 4.1.0
+and 4.1.1 shipped without (§16a); the Ship field names every tool it
+registers. 4.1.1: the Claude Desktop bundle says Read-only excludes the
+two switches. 4.1.0: the bundle asks
 for every setting another client sets, each switch off by
 default, and names GitLab's privacy statement (§12, §18 rows 130 and
 131). Owed: the siblings' bundles follow the same shape
@@ -2689,6 +2692,25 @@ fixed in its "Tighten … after review" commit:
 | `subscribe`, `add_todo` (#17) | `add_todo` repeated after a lost answer, on a check GitLab runs with no lock or unique index. Never repeated: a lost answer is `[ambiguous_outcome]`, settled by reading the account's to-dos; a 304 is read only through `DoAnswered`; both set `openWorldHint` false |
 | `update_snippet`, `delete_snippet` (#16) | An internal or public snippet could be written, publishing what was written; a PUT that creates, deletes or moves a file repeated; "unchanged" was read from `updated_at` alone. Private snippets only, such a PUT is sent once (`Call.Once`) and settled by reading, and the result says when `updated_at` did not move |
 | `run_merge_request_pipeline` (#18) | A lost create was settled by any merge request pipeline the account started since shortly before, which GitLab also starts on a push or a merge request opening; five candidates read, then "calling again is safe"; a `source_branch` kind GitLab never answers. The newest pipeline id is read before the POST and only a newer one counts, found by one filtered read with no cap; a moved head is refused after the question, and a pipeline at another sha is named; `kind` is `merged_results` or `detached` |
+
+**The 4.1 bundle, reviewed after release.** 4.1.0 and 4.1.1 shipped
+without `/simplify` or `/code-review high`, and with a security review
+written by hand rather than run; this repository's definition of done
+asks for all three. They were run over `v4.0.1..HEAD` on 2026-10-24.
+`/security-review`: no finding (`audit/security-reviews/v4.1.2.md`).
+`/simplify` and `/code-review high` found the bundle gate one layer too
+shallow, fixed in `83f7577` and `842b194` and released as 4.1.2:
+
+| Found | Fixed |
+|---|---|
+| The keys the bundle asks for were typed out, so four settings went missing for weeks | Derived from `config.Vars`; each setting left out has a reason, and a stale exclusion is refused |
+| Only settings flagged as switches were compared, so a `toolsets` default of `all` passed | The configuration is started from the bundle's defaults and from nothing, and any difference is refused |
+| "Read-only excludes the switches" was prose nothing held | Every combination of the switches is started and the refused ones held to a declared list both ways; each field names the other by its title |
+| A platform override's `env`, which a host substitutes for the base, passed unchecked | Refused |
+| An excluded setting, such as the refresh token, could be set in `env` | Refused |
+| The defaults failing to start was also reported as seven refusals | The combination check stays quiet then |
+| The Ship field left out applying suggestions and moving an issue; `docs/configuration.md` listed four settings | Both say what the bundle does |
+| The test fixture copied the manifest byte for byte, and one option decode aborted the gate | The tests break copies of the manifest itself; options decode leniently |
 
 ## 17. Open decisions
 

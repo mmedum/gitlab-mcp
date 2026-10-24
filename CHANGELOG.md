@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.1.2] - 2026-10-24
+
 ### Changed
 
 - The Claude Desktop bundle's profile field defaults to empty, which means the default profile as it did before.
@@ -236,7 +238,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.1...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.2...HEAD
+[4.1.2]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.1...v4.1.2
 [4.1.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.1...v4.1.0
 [4.0.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.0.0...v4.0.1
