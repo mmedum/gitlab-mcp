@@ -86,7 +86,16 @@ func TestMcpbRefusesEachBreak(t *testing.T) {
 	}{
 		{"entry point not staged", func(d map[string]any) {
 			mcpbDig(d, "server")["entry_point"] = "server/nothing"
-		}, `entry_point "server/nothing"`},
+		}, `entry_point "server/nothing" is not a program the packer stages`},
+		{"entry point a document", func(d map[string]any) {
+			mcpbDig(d, "server")["entry_point"] = "LICENSE"
+		}, `entry_point "LICENSE" is not a program the packer stages`},
+		{"a command naming a document", func(d map[string]any) {
+			mcpbDig(d, "server", "mcp_config", "platform_overrides", "win32")["command"] = "${__dirname}/README.md"
+		}, `platform_overrides.win32.command is "${__dirname}/README.md", which the packer does not stage`},
+		{"a refused field with no title", func(d map[string]any) {
+			mcpbDig(d, "user_config", "enable_ship")["title"] = ""
+		}, "user_config.enable_ship has no title"},
 		{"command not staged", func(d map[string]any) {
 			mcpbDig(d, "server", "mcp_config")["command"] = "${__dirname}/server/typo"
 		}, "mcp_config.command is"},

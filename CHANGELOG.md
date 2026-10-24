@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Claude Desktop bundle's profile field says what a profile name may contain; any other name stops the server at start.
+
 ## [4.1.2] - 2026-10-24
 
 ### Changed

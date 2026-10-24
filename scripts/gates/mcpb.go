@@ -283,9 +283,13 @@ func mcpbEnvRefProblems(m mcpbManifest) []string {
 // the launcher's names as arguments so a test can break each one.
 func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []string {
 	var problems []string
+	// staged is what can run: a document copied from the repository, such
+	// as LICENSE, is packed too, but no command may name it.
 	staged := map[string]mcpbStaged{}
 	for _, f := range files {
-		staged[f.path] = f
+		if f.repo == "" {
+			staged[f.path] = f
+		}
 	}
 	resolve := func(cmd string) string {
 		return strings.TrimPrefix(strings.TrimPrefix(cmd, "${__dirname}"), "/")
@@ -293,7 +297,7 @@ func mcpbValidate(m mcpbManifest, files []mcpbStaged, launcher []string) []strin
 
 	// entry_point names a staged file.
 	if _, ok := staged[m.Server.EntryPoint]; !ok {
-		problems = append(problems, fmt.Sprintf("entry_point %q is not a file the packer stages", m.Server.EntryPoint))
+		problems = append(problems, fmt.Sprintf("entry_point %q is not a program the packer stages", m.Server.EntryPoint))
 	}
 
 	// Every command names one too.
@@ -621,6 +625,11 @@ func mcpbRefusalProblems(m mcpbManifest, declared [][]string) []string {
 		for _, key := range pair {
 			if !slices.Contains(switches, key) {
 				problems = append(problems, fmt.Sprintf("mcpbRefused names %s, which is not a switch the bundle asks for", key))
+				continue
+			}
+			if strings.TrimSpace(opts[key].Title) == "" {
+				problems = append(problems, fmt.Sprintf("user_config.%s has no title, so the fields it is refused "+
+					"with cannot name it", key))
 				continue
 			}
 			for _, other := range pair {
