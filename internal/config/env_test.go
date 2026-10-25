@@ -134,8 +134,9 @@ func parseSources(t *testing.T, srcs map[string]string) (*token.FileSet, []sourc
 	return fset, files
 }
 
-// variableName is a GITLAB_MCP_ variable, as a whole word.
-var variableName = regexp.MustCompile(`^` + config.EnvPrefix + `[A-Z0-9][A-Z0-9_]*$`)
+// variableName is a GITLAB_MCP_ variable, as a whole word. A name ends
+// in a capital or a digit, so GITLAB_MCP_ENABLE_ is a prefix, not one.
+var variableName = regexp.MustCompile(`^` + config.EnvPrefix + `[A-Z0-9_]*[A-Z0-9]$`)
 
 // nameChar is a character a variable's name is made of.
 func nameChar(r rune) bool { return r == '_' || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') }
@@ -143,11 +144,11 @@ func nameChar(r rune) bool { return r == '_' || (r >= 'A' && r <= 'Z') || (r >= 
 // spelledNames is every GITLAB_MCP_ name a file spells, each with where.
 // A name is seen as a string literal, or as a chain of literals and
 // EnvPrefix joined by +, read in order: each run of them is one string,
-// and any other operand ends the run and is read on its own. A run that
-// such an operand follows ends in a prefix the operand completes, as
-// EnvPrefix + "ENABLE_" + kind does, so the word it ends in is not a
-// name. One built from any other constant, or through a format verb, is
-// not seen.
+// and any other operand ends the run and is read on its own. Every run
+// is read whole: one ending in _, as EnvPrefix + "ENABLE_" + kind does,
+// ends in a prefix, and one ending in a name's last character ends in
+// that name. One built from any other constant, or through a format
+// verb, is not seen.
 func spelledNames(fset *token.FileSet, f *ast.File) map[string]string {
 	found := map[string]string{}
 	spell := func(s string, at token.Pos) {
@@ -173,7 +174,7 @@ func spelledNames(fset *token.FileSet, f *ast.File) map[string]string {
 					run += s
 					continue
 				}
-				spell(strings.TrimRightFunc(run, nameChar), at)
+				spell(run, at)
 				run = ""
 				ast.Inspect(op, visit)
 			}
@@ -202,6 +203,7 @@ func TestTheNameScanReadsWholeNames(t *testing.T) {
 		{`"set " + x + EnvPrefix + "NEW"`, []string{"GITLAB_MCP_NEW"}},
 		{`"GITLAB_MCP_OLD=" + v`, []string{"GITLAB_MCP_OLD"}},
 		{`(EnvPrefix + "A") + " and " + EnvPrefix + "B_" + kind`, []string{"GITLAB_MCP_A"}},
+		{`EnvPrefix + "WHOLE" + suffix`, []string{"GITLAB_MCP_WHOLE"}},
 	} {
 		fset, files := parseSources(t, map[string]string{"p.go": "package p\n\nvar _ = " + tc.expr + "\n"})
 		if got := slices.Sorted(maps.Keys(spelledNames(fset, files[0].file))); !slices.Equal(got, tc.want) {
