@@ -374,6 +374,36 @@ func TestPipelineFailedByATriggerJob(t *testing.T) {
 	}
 }
 
+// A merge status GitLab has not finished working out says to read again;
+// a settled one, a real conflict, and one GitLab adds later, do not.
+func TestMergeStatusPendingSaysReadAgain(t *testing.T) {
+	const again = "read it again in a few seconds"
+	for _, c := range []struct {
+		status    string
+		conflicts bool
+		want      bool
+	}{
+		{"preparing", false, true},
+		{"checking", false, true},
+		{"unchecked", false, true},
+		{"approvals_syncing", false, true},
+		{"conflict", false, true},
+		{"conflict", true, false},
+		{"mergeable", false, false},
+		{"not_approved", false, false},
+		{"ci_still_running", false, false},
+		{"some_future_status", false, false},
+		{"", false, false},
+	} {
+		got := MergeRequest(model.MergeRequest{DetailedMergeStatus: c.status, HasConflicts: c.conflicts},
+			FixedBoundary("0123456789abcdef"))
+		if strings.Contains(got, again) != c.want {
+			t.Errorf("MergeRequest with detailed_merge_status %q and has_conflicts %t: says %q = %t, want %t; text:\n%s",
+				c.status, c.conflicts, again, !c.want, c.want, got)
+		}
+	}
+}
+
 // Only a project with no board says so; an empty later page is the end
 // of the listing.
 func TestBoardsEmpty(t *testing.T) {

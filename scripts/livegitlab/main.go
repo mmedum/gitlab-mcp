@@ -65,7 +65,7 @@ func main() {
 	flag.StringVar(&o.profile, "profile", "", "the signed-in profile to use; empty takes the default")
 	flag.BoolVar(&o.keep, "keep", false, "leave the scratch projects in place for a look afterwards")
 	flag.StringVar(&o.record, "record", "testdata/live-cover-record.tsv", "where to write what the run sent")
-	flag.StringVar(&o.spike, "spike", "", "run only this spike after seeding (E, G or O), and drive no tool")
+	flag.StringVar(&o.spike, "spike", "", "run only this spike after seeding (E, G, O or R), and drive no tool")
 	flag.Parse()
 
 	p := redact.NewPrinter(redact.NewRedactor(false))
@@ -73,8 +73,8 @@ func main() {
 		p.Fail("livegitlab: -namespace is required; the run creates its projects in -namespace and reads nothing else")
 		os.Exit(2)
 	}
-	if o.spike != "" && o.spike != "E" && o.spike != "G" && o.spike != "O" {
-		p.Fail("livegitlab: -spike takes E, G or O; the other spikes run with every run")
+	if o.spike != "" && o.spike != "E" && o.spike != "G" && o.spike != "O" && o.spike != "R" {
+		p.Fail("livegitlab: -spike takes E, G, O or R; the other spikes run with every run")
 		os.Exit(2)
 	}
 	err := run(context.Background(), o, p)
@@ -156,7 +156,7 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	if err != nil {
 		return fmt.Errorf("seed the scratch projects: %w", err)
 	}
-	if o.spike == "E" || o.spike == "G" {
+	if o.spike == "E" || o.spike == "G" || o.spike == "R" {
 		spikes(ctx, settings, s, o.spike, p)
 		return nil
 	}
