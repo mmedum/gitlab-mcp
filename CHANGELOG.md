@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.1.4] - 2026-10-28
+
 ### Changed
 
 - `get_merge_request` says when GitLab has not finished checking whether a merge request can merge, such as right after a push, and to read it again in a few seconds; each read asks GitLab to check.
@@ -249,7 +251,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.3...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.4...HEAD
+[4.1.4]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.3...v4.1.4
 [4.1.3]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.2...v4.1.3
 [4.1.2]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.1...v4.1.2
 [4.1.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.0...v4.1.1

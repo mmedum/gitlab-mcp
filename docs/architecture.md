@@ -1,6 +1,9 @@
 # Architecture — gitlab-mcp
 
-**Status: 4.1.3, 2026-10-24, built with Go 1.27.3: the family sweep
+**Status: 4.1.4, 2026-10-28, built with Go 1.27.3: `get_merge_request`
+says when GitLab has not finished checking whether a merge request can
+merge, and to read again (§7.2, §18 row 136); spike R watches it live.
+4.1.3, 2026-10-24: the family sweep
 (§16a): every read of a server variable goes through `config.Lookup`, so
 a setting of spaces alone is unset, held by a scan with a floor; the
 bundle gate keeps documents out of the commands, holds the identity and
