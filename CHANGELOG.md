@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Changed
+
+- `get_merge_request` says when GitLab has not finished checking whether a merge request can merge, such as right after a push, and to read it again in a few seconds; each read asks GitLab to check.
+
 ## [4.1.3] - 2026-10-24
 
 ### Fixed

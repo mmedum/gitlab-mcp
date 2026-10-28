@@ -116,6 +116,13 @@ func spikes(ctx context.Context, settings *app.Settings, s scratch, only string,
 		}
 		return
 	}
+	if only == "R" {
+		p.Say("\n=== spike R: a read starts the merge status check ===")
+		if err := spikeR(ctx, c, s, p); err != nil {
+			p.Sayf("!! spike R: %v", err)
+		}
+		return
+	}
 	if only == "E" {
 		p.Say("\n=== spike E: quick actions ===")
 		if err := spikeE(ctx, c, s, p); err != nil {
@@ -148,6 +155,10 @@ func spikes(ctx context.Context, settings *app.Settings, s scratch, only string,
 	p.Say("\n=== spike M: settle by reading ===")
 	if err := spikeM(ctx, c, s, p); err != nil {
 		p.Sayf("!! spike M: %v", err)
+	}
+	p.Say("\n=== spike R: a read starts the merge status check ===")
+	if err := spikeR(ctx, c, s, p); err != nil {
+		p.Sayf("!! spike R: %v", err)
 	}
 	p.Say("\n=== spike N: a conditional comment delete ===")
 	if err := spikeN(ctx, c, s, p); err != nil {
@@ -1008,6 +1019,118 @@ func spikeM(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		}
 	}
 	return nil
+}
+
+// ------------------------------------------------------------ spike R
+
+// spikeR asks whether reading a merge request is what makes GitLab work
+// out whether it can merge (§18 row 136). It opens a merge request of its
+// own and watches it settle, pushes to it, watches it through the
+// listing, which the source says never starts the check, and then
+// through single reads, which it says do. Its commits skip CI.
+func spikeR(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
+	project := "projects/" + itoa(s.ID)
+	branch := "spike-r-" + s.Name[len(s.Name)-6:]
+	commit := func(body map[string]any) error {
+		body["branch"], body["commit_message"] = branch, "Spike R commit [skip ci]"
+		r, err := c.write(ctx, http.MethodPost, project+"/repository/commits", body)
+		if err == nil && r.status != http.StatusCreated {
+			err = fmt.Errorf("a commit answered %d", r.status)
+		}
+		return err
+	}
+	if err := commit(map[string]any{"start_branch": s.Default,
+		"actions": []any{map[string]any{"action": "create", "file_path": "spike-r.txt", "content": "r\n"}}}); err != nil {
+		return err
+	}
+	r, err := c.write(ctx, http.MethodPost, project+"/merge_requests", map[string]any{"source_branch": branch,
+		"target_branch": s.Default, "title": "Spike R merge request"})
+	if err != nil {
+		return err
+	}
+	var mr struct {
+		IID int64 `json:"iid"`
+	}
+	if r.status != http.StatusCreated || json.Unmarshal(r.body, &mr) != nil || mr.IID == 0 {
+		return fmt.Errorf("opening the merge request answered %d", r.status)
+	}
+	path := project + "/merge_requests/" + itoa(mr.IID)
+	single := func() (string, error) {
+		var one mergeStatus
+		err := c.decode(ctx, path, nil, &one)
+		return one.String(), err
+	}
+	// with_labels_details only keeps the listing out of GitLab's cache.
+	inListing := func() (string, error) {
+		var rows []mergeStatus
+		err := c.decode(ctx, project+"/merge_requests", url.Values{"iids[]": {itoa(mr.IID)}, "with_labels_details": {"true"}}, &rows)
+		if err == nil && len(rows) != 1 {
+			err = fmt.Errorf("the listing has %d rows for one merge request", len(rows))
+		}
+		if err != nil {
+			return "", err
+		}
+		return rows[0].String(), nil
+	}
+	if err := watchMergeStatus(p, "a new merge request, read singly", single); err != nil {
+		return err
+	}
+	if err := commit(map[string]any{"actions": []any{map[string]any{"action": "update", "file_path": "spike-r.txt",
+		"content": "r2\n"}}}); err != nil {
+		return err
+	}
+	if err := watchMergeStatus(p, "after a push, through the listing", inListing); err != nil {
+		return err
+	}
+	if err := watchMergeStatus(p, "then read singly", single); err != nil {
+		return err
+	}
+	_, err = c.write(ctx, http.MethodPut, path, map[string]any{"state_event": "close"})
+	return err
+}
+
+// mergeStatus is what spike R reads of a merge request.
+type mergeStatus struct {
+	Status       string `json:"detailed_merge_status"`
+	HasConflicts bool   `json:"has_conflicts"`
+}
+
+func (m mergeStatus) String() string {
+	return fmt.Sprintf("%s (has_conflicts %t)", m.Status, m.HasConflicts)
+}
+
+// watchMergeStatus reads a merge request's detailed_merge_status every
+// second for twenty seconds, and prints each value it shows and when it
+// first came.
+func watchMergeStatus(p *redact.Printer, what string, read func() (string, error)) error {
+	start := time.Now()
+	var seen []string
+	last := ""
+	for time.Since(start) < 20*time.Second {
+		status, err := read()
+		if err != nil {
+			return err
+		}
+		if status != last || len(seen) == 0 {
+			seen = append(seen, fmt.Sprintf("%s at %d ms", status, time.Since(start).Milliseconds()))
+			last = status
+		}
+		time.Sleep(time.Second)
+	}
+	p.Sayf("%s: %s", what, strings.Join(seen, ", then "))
+	return nil
+}
+
+// decode reads path and decodes a 200 answer into out.
+func (c spikeClient) decode(ctx context.Context, path string, q url.Values, out any) error {
+	r, err := c.get(ctx, path, q, nil)
+	if err != nil {
+		return err
+	}
+	if r.status != http.StatusOK {
+		return fmt.Errorf("a read answered %d", r.status)
+	}
+	return json.Unmarshal(r.body, out)
 }
 
 // listed reports whether a listing has a row whose field equals want.

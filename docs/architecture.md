@@ -956,6 +956,13 @@ on a merge request the account cannot read is counted as `hidden` and
 not named, since GitLab keeps the row and leaves the merge request out.
 A merged blocker no longer blocks and a closed one still does; the
 state is shown so the reader can tell (§18 row 122).
+After a push, `detailed_merge_status` is `preparing`, `checking`,
+`unchecked` or `approvals_syncing`, or `conflict` with `has_conflicts`
+false, until GitLab has worked out whether the merge request can merge.
+The single read asks GitLab to work it out, when the account may update
+the merge request, so `get_merge_request` says to read again in a few
+seconds rather than sending a parameter: `with_merge_status_recheck`
+belongs to the listings (§18 row 136).
 Both carry the item's `time_stats`: the estimate and the time spent,
 in seconds and in GitLab's short form, which gitlab.com writes in hours
 and minutes, and empty at zero. Both carry `upvotes` and `downvotes`,
@@ -1952,7 +1959,7 @@ declared list the fields' descriptions follow.
 
 Each spike states its question and, when run, its verdict separately.
 Every spike has run on gitlab.com (2026-09-26 and 2026-09-27), spike O
-the last, for phase 5. Spike I, the floor version, was dropped with self-managed support
+the last, for phase 5, and spike R, added later, on 2026-10-28. Spike I, the floor version, was dropped with self-managed support
 (§14, 2026-09-26).
 
 - **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
@@ -2097,6 +2104,17 @@ the last, for phase 5. Spike I, the floor version, was dropped with self-managed
   0 on the next, and 0 for a running log: it is not used. `byte_limit`
   512,001 answered 400. The diffs listing sends `X-Total` and
   `X-Total-Pages`. The driver runs it alone with `-spike O`.*
+
+- **Spike R — a read starts the merge status check.** Whether a
+  merge request pushed to stays `unchecked` through the listing, which
+  never asks for the check, and settles once read singly, and how long
+  that takes (§7.2, §18 row 136).
+  *Verdict, gitlab.com, 2026-10-28: refuted in part. The listing showed
+  `conflict` with `has_conflicts` false within a second of a push, then
+  `unchecked`; single reads settled it in 1.8 and 3.2 s in two runs. In
+  a third, on a project seconds old, single reads left a new merge
+  request `unchecked` for twenty seconds, and a push settled through the
+  listing alone. The driver runs it alone with `-spike R`.*
 
 Spikes A–D register or use an OAuth application and are in the "ask
 before doing" of `CLAUDE.md`.
@@ -3111,3 +3129,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 133 | Every reader of the manifest reads a repeated key the same way | Probed 2026-10-24 with Go 1.27.3 and Node 26.8.1 on `{"server": {"type": "binary", "env": {"A": "1"}}, "server": {"env": {"B": "2"}}}` | **Refuted (tier 1, a probe; Claude Desktop not probed).** Go's decode into a struct, the gate's, keeps `type` and merges `env` into `A` and `B`. Its decode into `map[string]any`, which the vendored schema's validator and the packer's stamp read, keeps the second object alone, as Node's `JSON.parse`, the reference host's, does. The `mcpb` gate refuses a repeated key before any other check |
 | 134 | Every reader of the manifest reads a key's case the same way | Probed 2026-10-24 with Go 1.27.3 and Node 26.8.1 on `{"command": "a", "Command": "b"}`, the same reversed, and `{"k": 1, "\u212a": 2}` | **Refuted (tier 1, a probe; Claude Desktop not probed).** Go's decode into a struct, the gate's, matches a key whatever its case and keeps the last match: `b`, and reversed `a`; the Kelvin sign matches `k` too. Its decode into `map[string]any`, the schema validator's and the packer's, and Node's `JSON.parse`, the reference host's, keep the two spellings apart, and the host reads `command`, `a`. The `mcpb` gate refuses two keys in one object that are equal under Unicode case folding, as `strings.EqualFold` has it |
 | 135 | A host substitutes the variables it knows in a `user_config` default | Read 2026-10-24. anthropics/mcpb v2.1.2 `src/shared/config.ts`: L132-137 put `__dirname`, `pathSeparator`, `/` and the system directories first among the variables, L142-170 add each `user_config.x` after them from its default or the person's value, and `replaceVariables`, L18-41, replaces each variable once, in that order, in the text already substituted | **Refined (tier 1, the reference host's source; Claude Desktop not probed).** The substitution is one pass over the variables, not over the defaults: a system directory or `${__dirname}` in a default arrives after its own turn and stays as written, while a `${user_config.y}` in one is substituted when `y` comes later in the manifest. Either way the server can start with a value other than the default the gate reads, so the `mcpb` gate refuses a default that holds `${` |
+| 136 | `get_merge_request` needs `with_merge_status_recheck` for GitLab to recheck a merge request's merge status after a push | Read 2026-10-28. GitLab v19.4.1-ee: `lib/api/merge_requests.rb` reads the parameter for the listings only, in `serializer_options_for` (L192-202), and the single read (L495-505) never sets `skip_merge_status_recheck`; `lib/api/entities/merge_request_basic.rb` L73-78 then calls `check_mergeability(async: true)` when the account may update the merge request; `mergeability_check_service.rb` L21-26 marks it `checking` and queues the check; `detailed_merge_status_service.rb` L12-32 answers `preparing`, `checking` or `unchecked` first, and otherwise the first check that did not pass, which `check_conflict_status_service.rb` L10-20 leaves `checking` while the new head is not yet in the diff, so the status reads `conflict` with `has_conflicts` false. Spike R on gitlab.com, three runs | **Refuted (tier 1, the source and a probe).** The single read takes no such parameter: it is itself the request. In two runs the listing showed `conflict` with `has_conflicts` false within a second of a push, then `unchecked` for the rest of twenty seconds, and single reads then settled it, to `mergeable`, in 1.8 and 3.2 s. In a third, on a project seconds old, twenty seconds of single reads left a new merge request `unchecked`, and after a push it settled with no single read, in 13.5 s: how soon GitLab settles is not promised. `get_merge_request` sends nothing new and says to read again while the status is one of those (§7.2) |

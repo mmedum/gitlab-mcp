@@ -379,6 +379,20 @@ func timeLine(t model.TimeStats) string {
 	return fmt.Sprintf("estimate %s, spent %s", orNone(Ident(t.HumanTimeEstimate)), orNone(Ident(t.HumanTotalTimeSpent)))
 }
 
+// mergeStatusPending reports whether GitLab has not finished working out
+// whether a merge request can merge (§18 row 136): a status it gives
+// while it works, or conflict while has_conflicts is false, which is the
+// conflict check still running, as it is right after a push.
+func mergeStatusPending(mr model.MergeRequest) bool {
+	switch mr.DetailedMergeStatus {
+	case "preparing", "checking", "unchecked", "approvals_syncing":
+		return true
+	case "conflict":
+		return !mr.HasConflicts
+	}
+	return false
+}
+
 // MergeRequest renders get_merge_request.
 func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	var b strings.Builder
@@ -394,6 +408,10 @@ func MergeRequest(mr model.MergeRequest, bd Boundary) string {
 	b.WriteString(".\n")
 	fmt.Fprintf(&b, "Head %s; merge status %s; conflicts %s; files changed %s.\n", Ident(mr.SHA), Ident(mr.DetailedMergeStatus),
 		yesNo(mr.HasConflicts), Ident(mr.ChangesCount))
+	if mergeStatusPending(mr) {
+		b.WriteString("GitLab has not finished checking whether it can merge; read it again in a few seconds. A read by an " +
+			"account that may update the merge request asks GitLab to check.\n")
+	}
 	if d := mr.DiffRefs; d != nil {
 		fmt.Fprintf(&b, "Diff refs: base %s, start %s, head %s.\n", Ident(d.BaseSHA), Ident(d.StartSHA), Ident(d.HeadSHA))
 	}
