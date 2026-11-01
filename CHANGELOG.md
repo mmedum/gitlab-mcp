@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-11-01
+
 ### Changed
 
 - Every write that changes or removes something, starts a pipeline or links items now says `destructiveHint: true`, as the MCP spec reads `false` as "only additive updates": edits, comments, reviews, commits, reactions, links, new branches, tags and merge requests among them, 29 tools in all. Only the 6 writes that add something and start nothing say false: `create_issue`, `create_label`, `create_milestone`, `create_snippet`, `add_todo` and `upload_file`. claude.ai, Claude Desktop and Codex may now ask before the 29; if you run them unattended there, allow them again. None moves behind a flag or needs `confirm`.
@@ -255,7 +257,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.4...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.2.0...HEAD
+[4.2.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.4...v4.2.0
 [4.1.4]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.3...v4.1.4
 [4.1.3]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.2...v4.1.3
 [4.1.2]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.1...v4.1.2

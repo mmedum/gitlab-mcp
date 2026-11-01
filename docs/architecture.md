@@ -1,6 +1,10 @@
 # Architecture — gitlab-mcp
 
-**Status: 4.1.4, 2026-10-28, built with Go 1.27.3: `get_merge_request`
+**Status: 4.2.0, 2026-11-01, built with Go 1.27.3: every write that
+changes or removes something says `destructiveHint: true`, and the six
+that only add are the `Adding` kind (§8); a live run against the scratch
+group behaved as expected, its transcript read.
+4.1.4, 2026-10-28: `get_merge_request`
 says when GitLab has not finished checking whether a merge request can
 merge, and to read again (§7.2, §18 row 136); spike R watches it live.
 4.1.3, 2026-10-24: the family sweep
