@@ -680,7 +680,7 @@ func stalenessToolCounts(arch string, tools []string, toolsErr error) (int, []st
 	if len(rows) < 20 {
 		return len(rows), []string{fmt.Sprintf("§8's tool table has %d rows; the check is reading the wrong section", len(rows))}
 	}
-	var names []string
+	var names, problems []string
 	def, readOnly, shipDestr := 0, 0, 0
 	for _, r := range rows {
 		names = append(names, r[1])
@@ -692,14 +692,15 @@ func stalenessToolCounts(arch string, tools []string, toolsErr error) (int, []st
 			readOnly++
 			def++
 			shipDestr++
-		case "Write":
+		case "Write", "Adding":
 			def++
 			shipDestr++
 		case "Ship", "Destructive":
 			shipDestr++
+		default:
+			problems = append(problems, fmt.Sprintf("§8 gives %s the kind %q, which is no kind this server has", r[1], r[2]))
 		}
 	}
-	var problems []string
 	m := stalenessToolSentence.FindStringSubmatch(stalenessSpace.ReplaceAllString(section, " "))
 	if m == nil {
 		problems = append(problems, "§8 states no tool counts in the form \"N tools. With the default toolsets: N by default, "+

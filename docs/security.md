@@ -89,7 +89,8 @@ Every tool has one kind, and the kind decides whether it is registered:
 | Kind | What | Registered |
 |---|---|---|
 | Read | every GET | always |
-| Write | issues and their links, comments, reviews, branches, commits, cherry-picks and reverts to unprotected branches, merge requests, todos, wiki, snippets, labels, milestones, unprotected tags | unless `GITLAB_MCP_READ_ONLY=true` |
+| Write | edits, comments, reviews, branches, commits, cherry-picks and reverts to unprotected branches, merge requests, issue and merge request links, to-dos done, wiki, snippets, unprotected tags: every write that changes something, starts a pipeline or links items; marked destructive | unless `GITLAB_MCP_READ_ONLY=true` |
+| Adding | a new issue, label, milestone, snippet, to-do or upload, changing nothing and starting nothing; the one kind of write not marked destructive | as Write |
 | Ship | merge, cancel an auto-merge, approve, unapprove, rebase, apply review suggestions, run, retry, play and cancel CI, create a release, move an issue to another project | only with `GITLAB_MCP_ENABLE_SHIP=true` |
 | Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet; make a confidential issue public | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
 
@@ -104,9 +105,10 @@ registered tool can be called by a model a comment has persuaded, and
 `confirm: true` is an argument the model writes, so registration is the
 control that holds on every client: leave `GITLAB_MCP_ENABLE_SHIP` and
 `GITLAB_MCP_ENABLE_DESTRUCTIVE` off for a client that runs with nobody
-watching or approves by itself. Per call, your client decides. Ship and
-Destructive tools are marked destructive, which claude.ai and Codex
-prompt for by default, and VS Code prompts for every tool that writes.
+watching or approves by itself. Per call, your client decides. Every
+write but the Adding ones is marked destructive, which claude.ai and
+Codex prompt for by default, and VS Code prompts for every tool that
+writes.
 In Claude Code, `delete_label`, `delete_milestone` and
 `make_issue_public` ask on every call whatever your rules say, since
 each reaches past one item and cannot be undone; for the rest an `ask`
@@ -154,8 +156,8 @@ replace it with a `read_api` one.
 
 ## Writes stay where they are allowed
 
-- **`GITLAB_MCP_WRITE_NAMESPACES`**, when set, confines every Write,
-  Ship and Destructive call to projects under the listed groups or
+- **`GITLAB_MCP_WRITE_NAMESPACES`**, when set, confines every write
+  call, of any kind, to projects under the listed groups or
   projects. Any other target is `[blocked]` naming the setting. Unset,
   a write can go anywhere your account can write. `mark_todos_done`
   refuses a to-do item whose project is outside it.

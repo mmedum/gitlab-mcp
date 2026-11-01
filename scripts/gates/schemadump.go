@@ -53,10 +53,9 @@ type dumpTool struct {
 }
 
 type dumpAnnotation struct {
-	ReadOnlyHint    bool  `json:"readOnlyHint,omitempty"`
-	DestructiveHint *bool `json:"destructiveHint,omitempty"`
-	IdempotentHint  bool  `json:"idempotentHint,omitempty"`
-	OpenWorldHint   *bool `json:"openWorldHint,omitempty"`
+	ReadOnlyHint   bool  `json:"readOnlyHint,omitempty"`
+	IdempotentHint bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint  *bool `json:"openWorldHint,omitempty"`
 }
 
 type dumpSchema struct {

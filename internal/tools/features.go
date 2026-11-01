@@ -133,7 +133,7 @@ type createLabelIn struct {
 
 func createLabel() definition {
 	return tool[createLabelIn, model.LabelWrite]{
-		sp: spec{Name: "create_label", Kind: Write, Toolset: "planning",
+		sp: spec{Name: "create_label", Kind: Adding, Toolset: "planning",
 			Description: "Create a project label. Never repeated after a lost answer." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in createLabelIn) (model.LabelWrite, error) {
 			return svc.CreateLabel(ctx, service.LabelRequest{Project: string(in.Project), Name: in.Name, Color: in.Color,
@@ -201,7 +201,7 @@ type createMilestoneIn struct {
 
 func createMilestone() definition {
 	return tool[createMilestoneIn, model.MilestoneWrite]{
-		sp: spec{Name: "create_milestone", Kind: Write, Toolset: "planning",
+		sp: spec{Name: "create_milestone", Kind: Adding, Toolset: "planning",
 			Description: "Create a project milestone. Never repeated after a lost answer." + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in createMilestoneIn) (model.MilestoneWrite, error) {
 			return svc.CreateMilestone(ctx, service.MilestoneRequest{Project: string(in.Project), Title: in.Title,

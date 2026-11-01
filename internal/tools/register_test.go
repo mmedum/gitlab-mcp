@@ -58,6 +58,7 @@ func fakes() []definition {
 	return []definition{
 		fake("fake_read", Read, ""),
 		fake("fake_write", Write, ""),
+		fake("fake_add", Adding, ""),
 		fake("fake_ship", Ship, ""),
 		fake("fake_delete", Destructive, ""),
 		fake("fake_wiki", Read, "wiki"),
@@ -80,19 +81,19 @@ func TestGate(t *testing.T) {
 		want    []string
 	}{
 		{"default", config.Config{}, nil,
-			[]string{"fake_read", "fake_write"}},
+			[]string{"fake_read", "fake_write", "fake_add"}},
 		{"read-only beats every flag", config.Config{ReadOnly: true, EnableShip: true, EnableDestructive: true}, nil,
 			[]string{"fake_read"}},
 		{"ship", config.Config{EnableShip: true}, nil,
-			[]string{"fake_read", "fake_write", "fake_ship"}},
+			[]string{"fake_read", "fake_write", "fake_add", "fake_ship"}},
 		{"destructive", config.Config{EnableDestructive: true}, nil,
-			[]string{"fake_read", "fake_write", "fake_delete"}},
+			[]string{"fake_read", "fake_write", "fake_add", "fake_delete"}},
 		{"toolset", config.Config{Toolsets: []string{"wiki"}}, nil,
-			[]string{"fake_read", "fake_write", "fake_wiki"}},
+			[]string{"fake_read", "fake_write", "fake_add", "fake_wiki"}},
 		{"a read_api token gets no write tool", FullSurface(config.Config{}), []string{scopes.ReadAPI},
 			[]string{"fake_read", "fake_wiki"}},
 		{"an api token gets everything", FullSurface(config.Config{}), []string{scopes.API},
-			[]string{"fake_read", "fake_write", "fake_ship", "fake_delete", "fake_wiki"}},
+			[]string{"fake_read", "fake_write", "fake_add", "fake_ship", "fake_delete", "fake_wiki"}},
 	}
 	for _, c := range cases {
 		got := names(surface(fakes(), c.cfg, c.granted))
@@ -146,7 +147,8 @@ func TestAnnotationsAndMeta(t *testing.T) {
 		readOnly, destructive, world bool
 	}{
 		{"fake_read", true, false, false},
-		{"fake_write", false, false, true},
+		{"fake_write", false, true, true},
+		{"fake_add", false, false, true},
 		{"fake_ship", false, true, true},
 		{"fake_delete", false, true, true},
 	}

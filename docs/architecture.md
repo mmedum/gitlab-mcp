@@ -379,19 +379,20 @@ reading `/merge` merges, whatever the Ship flag says. So one package,
    The server treats it as a defect of the guard: `[unexpected]`, logged
    at error.
 
-`scripts/gates bodies` derives every string input of every Write, Ship
-and Destructive tool from the schema dump and fails on one that is
+`scripts/gates bodies` derives every string input of every write tool
+from the schema dump and fails on one that is
 neither routed through the guard nor listed as a plain field with a
 reason.
 
 ### 4.3 Kinds, and what registration enables
 
-Four kinds, decided in one `register` (`CLAUDE.md` rule 14):
+Five kinds, decided in one `register` (`CLAUDE.md` rule 14):
 
 | Kind | What | Registered |
 |---|---|---|
 | Read | every GET | always |
-| Write | issues, comments, reactions, reviews, branches, commits to unprotected branches, merge requests, todos, wiki, snippets | unless read-only |
+| Write | every write that changes or removes something, starts a pipeline or links items: edits, comments, reactions, reviews and draft comments, branches, tags, merge requests, issue and merge request links, commits to unprotected branches, wiki, snippets, to-dos done; annotated destructive | unless read-only |
+| Adding | a new issue, label, milestone, snippet, to-do or upload, changing nothing already there and starting nothing; the one kind of write annotated not destructive (§18 row 137) | unless read-only, as Write |
 | Ship | merge, approve, unapprove, cancel an auto-merge, apply review suggestions, run, retry, play and cancel CI, create a release | `GITLAB_MCP_ENABLE_SHIP=true` |
 | Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, plus `confirm: true` per call |
 
@@ -704,9 +705,11 @@ What stays is what holds on every client:
    by `make_issue_public`, and `upload_file`'s directories
    (§7.10).
 4. **`dry_run`** on every write.
-5. **Annotations.** `destructiveHint` is true on the Ship and
-   Destructive tools, so a client that prompts by annotation, as
-   claude.ai and Codex do, prompts for them. VS Code ignores
+5. **Annotations.** `destructiveHint` is true on every write but the
+   Adding ones, since the MCP schema reads `false` as "only additive
+   updates" (§18 row 137), so a client that prompts by annotation, as
+   claude.ai and Codex do, prompts for every write that changes or
+   removes, and for Ship and Destructive. VS Code ignores
    `destructiveHint` and prompts on every tool without `readOnlyHint`,
    which only the Read tools carry.
    Three tools carry Claude Code's `anthropic/requiresUserInteraction`:
@@ -814,7 +817,7 @@ golangci-lint and gitleaks actions are not used: every CI step is a
 | `api-fields` | request **and** response sides: every query parameter and body field the client sends exists on that operation, and every response field a wire struct decodes exists in its schema or carries a verified omission; recursive over inline objects; the Go kind can hold the declared type; floors on published and modeled fields |
 | `schema-diff` | a committed baseline so it works before the first tag; the full surface with every flag and toolset on; the previous tag built in a git worktree that is always removed; tools **and resources**; fails on a removed tool, a lost input or output field, or a new required input, unless a **Breaking:** entry above the tag's own CHANGELOG heading names the tool in backticks and no version heading there keeps the tag's major; the whole `mcp.Tool` dumped, `_meta` and output schema included; a floor on tools |
 | `descriptions` **(09-25)** | reads the `--dump-schemas` output, not the Go registry; fails on an empty dump, a missing description, more than one `IMPORTANT:` per description, and a witness input whose description lacks "NOT a retry signal" |
-| `bodies` | §4.2: every string input of a Write, Ship or Destructive tool is either routed through `internal/quickaction` or listed as a plain field with a reason; derived from the schema dump; a floor |
+| `bodies` | §4.2: every string input of a write tool is either routed through `internal/quickaction` or listed as a plain field with a reason; derived from the schema dump; a floor |
 | `leaks` | allow-list rules, each anchored on a shape generated fields cannot take (an `@` with a dotted domain; an `https://` host outside the example set; a GitLab token prefix; `gitlab.com/` followed by a namespace outside the fixture set; the OAuth shapes); every allow-list entry carries a reason, asserted; tracked and untracked-unignored files scanned; base64url blobs decoded and scanned; a tracked binary is a finding; history mode covering blobs, commit messages and tags, skipping author and committer lines, with a derived floor; findings printed redacted |
 | `transcript` | drivers cannot reach `os.Stdout`, `os.Stderr` or `log.*`; exactly one exempt package with exactly one write site, which redacts; an unlisted driver fails; a listed directory that is missing fails; the evals directory included; a floor on mentions |
 | `live-cover` | per tool **option**, recorded at run time through the stdio client; waivers in a TSV with verdict `undrivable` or `undriven` and a reason each, the ceiling on `undriven` only; a stale row fails; an empty record fails |
@@ -1493,7 +1496,7 @@ the client's own rules decide each call (§4.12).
 | `find_users` | Read | default | `GET /users?search=` |
 | `search_issues` | Read | default | `GET /issues`, `/projects/:id/issues`, `/groups/:id/issues` |
 | `get_issue` | Read | default | `GET /projects/:id/issues/:iid`, `/related_merge_requests`, `/closed_by` |
-| `create_issue` | Write | default | `POST /projects/:id/issues` |
+| `create_issue` | Adding | default | `POST /projects/:id/issues` |
 | `update_issue` | Write | default | `PUT /projects/:id/issues/:iid` |
 | `list_discussions` | Read | default | `GET …/issues|merge_requests/:iid/discussions` |
 | `list_item_events` | Read | default | `GET …/issues|merge_requests/:iid/resource_label_events`, `/resource_state_events`, `/resource_milestone_events`; an issue's `/resource_weight_events` |
@@ -1547,10 +1550,10 @@ the client's own rules decide each call (§4.12).
 | `search` | Read | default | `GET /search`, `/groups/:id/search`, `/projects/:id/search` |
 | `list_todos` | Read | default | `GET /todos` |
 | `mark_todos_done` | Write | default | `POST /todos/:id/mark_as_done` |
-| `add_todo` | Write | default | `POST …/issues|merge_requests/:iid/todo` |
+| `add_todo` | Adding | default | `POST …/issues|merge_requests/:iid/todo` |
 | `subscribe` | Write | default | `POST …/issues|merge_requests/:iid/subscribe`, `/unsubscribe` |
 | `react` | Write | default | `GET`/`POST …/issues|merge_requests/:iid[/notes/:id]/award_emoji`, `GET`/`DELETE …/award_emoji/:id` (own reactions) |
-| `upload_file` | Write | default | `POST /projects/:id/uploads` (an image from a directory `GITLAB_MCP_UPLOAD_DIRS` names; never repeated) |
+| `upload_file` | Adding | default | `POST /projects/:id/uploads` (an image from a directory `GITLAB_MCP_UPLOAD_DIRS` names; never repeated) |
 | `merge_merge_request` | Ship | default | `PUT …/merge_requests/:iid/merge` |
 | `cancel_auto_merge` | Ship | default | `POST …/merge_requests/:iid/cancel_merge_when_pipeline_succeeds` (reads the answer's `status`; nothing sent without an auto-merge) |
 | `approve_merge_request` | Ship | default | `POST …/merge_requests/:iid/approve` |
@@ -1573,7 +1576,7 @@ the client's own rules decide each call (§4.12).
 | `delete_wiki_page` | Destructive | wiki | `DELETE …/wikis/:slug` |
 | `list_snippets` | Read | snippets | `GET /snippets`, `…/snippets` |
 | `get_snippet` | Read | snippets | `GET …/snippets/:id`, `/raw` |
-| `create_snippet` | Write | snippets | `POST …/snippets` (private) |
+| `create_snippet` | Adding | snippets | `POST …/snippets` (private) |
 | `update_snippet` | Write | snippets | `PUT …/snippets/:id` (own snippets; takes `updated_at`; never visibility) |
 | `delete_snippet` | Destructive | snippets | `DELETE …/snippets/:id` (own snippets; `If-Unmodified-Since`) |
 | `list_releases` | Read | releases | `GET …/releases` |
@@ -1581,10 +1584,10 @@ the client's own rules decide each call (§4.12).
 | `create_release` | Ship | releases | `POST …/releases`, with asset links into the project |
 | `create_tag` | Write | releases | `POST …/repository/tags` (refuses protected names) |
 | `delete_tag` | Destructive | releases | `DELETE …/repository/tags/:name` (refuses protected tags) |
-| `create_label` | Write | planning | `POST …/labels` |
+| `create_label` | Adding | planning | `POST …/labels` |
 | `update_label` | Write | planning | `PUT …/labels/:id` (takes the label's `version`) |
 | `delete_label` | Destructive | planning | `DELETE …/labels/:id` |
-| `create_milestone` | Write | planning | `POST …/milestones` |
+| `create_milestone` | Adding | planning | `POST …/milestones` |
 | `update_milestone` | Write | planning | `PUT …/milestones/:id` (takes `updated_at`) |
 | `delete_milestone` | Destructive | planning | `DELETE …/milestones/:id` |
 | `list_environments` | Read | deployments | `GET …/environments` |
@@ -1593,7 +1596,7 @@ the client's own rules decide each call (§4.12).
 
 The staleness gate holds those counts against the table.
 
-Every Write, Ship and Destructive tool takes `dry_run`, which returns
+Every write tool, of any kind, takes `dry_run`, which returns
 what would be sent — and, for a body, what the guard would do — without
 writing.
 
@@ -1734,7 +1737,7 @@ something to do.
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds Ship | `api` (no change: §2.6) |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds Destructive | `api` (no change) |
 | `GITLAB_MCP_TOOLSETS` | adds `wiki`, `snippets`, `releases`, `deployments`, `activity`, `planning`, or `all` | — |
-| `GITLAB_MCP_WRITE_NAMESPACES` | confines Write, Ship, Destructive (§4.7) | — |
+| `GITLAB_MCP_WRITE_NAMESPACES` | confines every write (§4.7) | — |
 | `GITLAB_MCP_UPLOAD_DIRS` | nothing; the only directories `upload_file` may read images from (§7.10); unset, it reads none; a filesystem root or a directory holding the home directory is refused at startup | — |
 
 No setting chooses the instance: it is gitlab.com (§4.9).
@@ -2671,7 +2674,23 @@ reviews found:
 | A major release on the `/v2` module path, which `go install` never reaches | The module path is `/v3` |
 | A value of `GITLAB_MCP_REQUIRE_PROMPT` that is not a boolean was ignored | Anything but off refuses start |
 | `schema-diff` read the whole CHANGELOG as unreleased when the tag had no heading in it | It refuses then |
-| `create_tag` and `upload_file` lost their question and are not marked destructive, so a client that prompts only by that mark does not prompt for them | Kept as Write: both only add, which is what `destructiveHint: false` says, and moving a tool between kinds is the maintainer's. The README's `ask` rules include both, and `docs/security.md` names `upload_file`'s guards |
+| `create_tag` and `upload_file` lost their question and are not marked destructive, so a client that prompts only by that mark does not prompt for them | Kept as Write: both only add, which is what `destructiveHint: false` says, and moving a tool between kinds is the maintainer's. The README's `ask` rules include both, and `docs/security.md` names `upload_file`'s guards *(Since 2026-11-01 `upload_file` is Adding and still not destructive; `create_tag` stays Write and is destructive, since it starts tag pipelines, row 137.)* |
+
+- **4.2.0, `/simplify`, `/code-review medium` and a security review.**
+  The first cut put twelve tools on Adding; review took six back to
+  Write, each because it does more than add: `create_tag`,
+  `create_branch` and `create_merge_request` can start a pipeline, the
+  two link tools can make one item hold another, and
+  `add_review_comment` can resolve a thread when the review is
+  submitted. Also fixed: five documents still listed four kinds or said
+  only Ship and Destructive prompt; the staleness fixture had no Adding
+  row, so dropping it from the gate failed nothing; the gate now names a
+  §8 kind it does not know; the bodies gate's kind wording and the dump
+  field only it read are gone; a tool with no destructiveHint fails the
+  hint test rather than counting as adding; the release note names
+  Claude Desktop. Kept: a kind rather than a flag for Adding, and the
+  release a minor without **Breaking:**, both the owner's call. The
+  security review found nothing at confidence 8 or above.
 
 ### Closing a phase
 
@@ -3133,3 +3152,4 @@ yet probed live** — §15 exists to settle these, and they are marked.
 | 134 | Every reader of the manifest reads a key's case the same way | Probed 2026-10-24 with Go 1.27.3 and Node 26.8.1 on `{"command": "a", "Command": "b"}`, the same reversed, and `{"k": 1, "\u212a": 2}` | **Refuted (tier 1, a probe; Claude Desktop not probed).** Go's decode into a struct, the gate's, matches a key whatever its case and keeps the last match: `b`, and reversed `a`; the Kelvin sign matches `k` too. Its decode into `map[string]any`, the schema validator's and the packer's, and Node's `JSON.parse`, the reference host's, keep the two spellings apart, and the host reads `command`, `a`. The `mcpb` gate refuses two keys in one object that are equal under Unicode case folding, as `strings.EqualFold` has it |
 | 135 | A host substitutes the variables it knows in a `user_config` default | Read 2026-10-24. anthropics/mcpb v2.1.2 `src/shared/config.ts`: L132-137 put `__dirname`, `pathSeparator`, `/` and the system directories first among the variables, L142-170 add each `user_config.x` after them from its default or the person's value, and `replaceVariables`, L18-41, replaces each variable once, in that order, in the text already substituted | **Refined (tier 1, the reference host's source; Claude Desktop not probed).** The substitution is one pass over the variables, not over the defaults: a system directory or `${__dirname}` in a default arrives after its own turn and stays as written, while a `${user_config.y}` in one is substituted when `y` comes later in the manifest. Either way the server can start with a value other than the default the gate reads, so the `mcpb` gate refuses a default that holds `${` |
 | 136 | `get_merge_request` needs `with_merge_status_recheck` for GitLab to recheck a merge request's merge status after a push | Read 2026-10-28. GitLab v19.4.1-ee: `lib/api/merge_requests.rb` reads the parameter for the listings only, in `serializer_options_for` (L192-202), and the single read (L495-505) never sets `skip_merge_status_recheck`; `lib/api/entities/merge_request_basic.rb` L73-78 then calls `check_mergeability(async: true)` when the account may update the merge request; `mergeability_check_service.rb` L21-26 marks it `checking` and queues the check; `detailed_merge_status_service.rb` L12-32 answers `preparing`, `checking` or `unchecked` first, and otherwise the first check that did not pass, which `check_conflict_status_service.rb` L10-20 leaves `checking` while the new head is not yet in the diff, so the status reads `conflict` with `has_conflicts` false. Spike R on gitlab.com, three runs | **Refuted (tier 1, the source and a probe).** The single read takes no such parameter: it is itself the request. In two runs the listing showed `conflict` with `has_conflicts` false within a second of a push, then `unchecked` for the rest of twenty seconds, and single reads then settled it, to `mergeable`, in 1.8 and 3.2 s. In a third, on a project seconds old, twenty seconds of single reads left a new merge request `unchecked`, and after a push it settled with no single read, in 13.5 s: how soon GitLab settles is not promised. `get_merge_request` sends nothing new and says to read again while the status is one of those (§7.2) |
+| 137 | `destructiveHint: false` fits any write a person can edit back | Read 2026-11-01: the MCP schema (2025-11-25), `ToolAnnotations`, "If false, the tool performs only additive updates", default true; the reference filesystem server says false on `create_directory` and true on `write_file` and `edit_file`; GitHub's server says false on `create_issue` and reactions, and leaves its other writes unset, which reads as true | **Refuted (tier 1, the specification and the two servers' source; no client probed).** Write is annotated destructive, and the new Adding kind, registered as Write is, carries the six writes that add and start nothing. Twenty-nine tools flip, none moves behind a flag. Kept on Write though they add: `add_comment`, since a comment outside a thread marks the account's pending to-dos on the item done; `create_branch`, `create_tag` and `create_merge_request`, since each can start a pipeline and a pipeline can deploy; `link_issues` and `link_merge_requests`, since a blocking link makes one item hold the other; and `add_review_comment`, whose `resolve_thread` resolves a thread when the review is submitted. `TestOnlyToolsThatAddSayTheyAreNotDestructive` names the six |

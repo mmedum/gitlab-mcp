@@ -149,7 +149,7 @@ type createSnippetIn struct {
 
 func createSnippet() definition {
 	return tool[createSnippetIn, model.SnippetWrite]{
-		sp: spec{Name: "create_snippet", Kind: Write, Toolset: "snippets",
+		sp: spec{Name: "create_snippet", Kind: Adding, Toolset: "snippets",
 			Description: "Create a private snippet of one or more files, in a project or as your own. It is always private: " +
 				"visibility is not an input, because a public snippet is how private content leaves. Never repeated after " +
 				"a lost answer." + visibleNote},

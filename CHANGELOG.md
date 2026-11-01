@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Changed
+
+- Every write that changes or removes something, starts a pipeline or links items now says `destructiveHint: true`, as the MCP spec reads `false` as "only additive updates": edits, comments, reviews, commits, reactions, links, new branches, tags and merge requests among them, 29 tools in all. Only the 6 writes that add something and start nothing say false: `create_issue`, `create_label`, `create_milestone`, `create_snippet`, `add_todo` and `upload_file`. claude.ai, Claude Desktop and Codex may now ask before the 29; if you run them unattended there, allow them again. None moves behind a flag or needs `confirm`.
+
 ## [4.1.4] - 2026-10-28
 
 ### Changed

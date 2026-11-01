@@ -25,7 +25,7 @@ itself, and every problem is reported together.
 | `GITLAB_MCP_ENABLE_SHIP` | `--enable-ship` | `false` | Register merging, approving, running and canceling CI, and creating releases. |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE` | `--enable-destructive` | `false` | Register deletions. Each call also needs `confirm: true`. |
 | `GITLAB_MCP_TOOLSETS` | `--toolsets` | none | Comma-separated optional toolsets: `activity`, `deployments`, `planning`, `releases`, `snippets`, `wiki`, or `all`. |
-| `GITLAB_MCP_WRITE_NAMESPACES` | `--write-namespaces` | anywhere | Comma-separated group or project paths that Write, Ship and Destructive calls are confined to. A call aimed elsewhere is `[blocked]`. |
+| `GITLAB_MCP_WRITE_NAMESPACES` | `--write-namespaces` | anywhere | Comma-separated group or project paths that every write call is confined to. A call aimed elsewhere is `[blocked]`. |
 | `GITLAB_MCP_UPLOAD_DIRS` | `--upload-dirs` | none | The absolute directories `upload_file` may read images from, separated as `PATH` is: `:` on Linux and macOS, `;` on Windows; a value that is one existing directory is taken whole. Unset, it reads none. See below. |
 | `GITLAB_MCP_LOG_LEVEL` | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. |
 | `GITLAB_MCP_LOG_FORMAT` | `--log-format` | `text` | `text` or `json`. |
@@ -71,7 +71,7 @@ flags decide what is registered rather than what is requested:
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds Ship | `api` |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds Destructive | `api` |
 | `GITLAB_MCP_TOOLSETS` | adds the tools of each toolset named | no change |
-| `GITLAB_MCP_WRITE_NAMESPACES` | nothing; confines Write, Ship and Destructive | no change |
+| `GITLAB_MCP_WRITE_NAMESPACES` | nothing; confines every write | no change |
 | `GITLAB_MCP_UPLOAD_DIRS` | nothing; lets `upload_file` read images from more directories | no change |
 
 A tool that is not registered does not exist for the model: it cannot
@@ -83,11 +83,11 @@ protect.
 ## Approving each call
 
 The server asks you nothing; your MCP client approves each call. Clients
-that prompt by a tool's annotations prompt for the Ship and Destructive
-tools, which are marked destructive. In Claude Code, an `ask` rule per
-tool does it; the README lists them. Leave `GITLAB_MCP_ENABLE_SHIP` and
-`GITLAB_MCP_ENABLE_DESTRUCTIVE` off for a client that runs with nobody
-watching.
+that prompt by a tool's annotations prompt for every tool marked
+destructive: every write but the six that only add. In Claude Code, an
+`ask` rule per tool does it; the README lists them. Leave
+`GITLAB_MCP_ENABLE_SHIP` and `GITLAB_MCP_ENABLE_DESTRUCTIVE` off for a
+client that runs with nobody watching.
 
 `upload_file` has no flag of its own: its guards are the upload
 directories and `GITLAB_MCP_WRITE_NAMESPACES`. A client that runs it

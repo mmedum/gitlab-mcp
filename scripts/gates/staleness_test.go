@@ -39,7 +39,7 @@ func stalenessFixture() stalenessInputs {
 
 	var toolRows []string
 	kinds := []struct{ kind, set string }{{"Read", "default"}, {"Write", "default"}, {"Ship", "default"},
-		{"Destructive", "default"}, {"Read", "wiki"}}
+		{"Destructive", "default"}, {"Read", "wiki"}, {"Adding", "default"}}
 	for i := range 25 {
 		k := kinds[i%len(kinds)]
 		name := fmt.Sprintf("tool_%c", 'a'+i)
@@ -50,11 +50,11 @@ func stalenessFixture() stalenessInputs {
 		toolRows = append(toolRows, fmt.Sprintf("| `%s` | %s | %s | `GET /x` |", name, k.kind, k.set))
 	}
 	// 10 Read default, then of the other 15: i=10..24 cycling kinds from
-	// i%5: Read default 3 (i=10,15,20), Write 3, Ship 3, Destructive 3,
-	// wiki Read 3. Default 10+3+3 = 16, read-only 13, with Ship and
-	// Destructive 22, total 25.
+	// i%6: Read default 3 (i=12,18,24), Write 2, Ship 2, Destructive 2,
+	// wiki Read 3, Adding 3. Default 13+2+3 = 18, read-only 13, with
+	// Ship and Destructive 22, total 25.
 	arch := "# Architecture\n\n**Status: phase 0 of 5, nothing tagged yet.**\n\n## 8. Tool surface\n\n" +
-		"Twenty-five tools. With the default toolsets: sixteen by default,\nthirteen in read-only mode, twenty-two with Ship and " +
+		"Twenty-five tools. With the default toolsets: eighteen by default,\nthirteen in read-only mode, twenty-two with Ship and " +
 		"Destructive both enabled. Every toolset and flag on registers all twenty-five.\n\n" +
 		"| Tool | Kind | Toolset | Main operations |\n|---|---|---|---|\n" + strings.Join(toolRows, "\n") + "\n\n### 8a. Next\n"
 

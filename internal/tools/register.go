@@ -36,9 +36,18 @@ type Kind int
 const (
 	// Read is every GET. Always registered.
 	Read Kind = iota
-	// Write changes something a person can edit back. Registered unless
-	// read-only.
+	// Write changes or removes something a person can edit back.
+	// Registered unless read-only. Annotated destructive, the MCP
+	// schema's default, since the schema reads destructiveHint false as
+	// "the tool performs only additive updates".
 	Write
+	// Adding creates something new and changes nothing already there,
+	// and starts nothing: an issue, a label, a milestone, a snippet, a
+	// to-do, an upload. Registered as Write is, and the one kind of write
+	// annotated not destructive. A write that starts a pipeline, links
+	// items so one holds the other, or resolves a thread on the side is a
+	// Write.
+	Adding
 	// Ship is where a persuaded call becomes an effect: a merge, an
 	// approval, a pipeline run. Registered only with
 	// GITLAB_MCP_ENABLE_SHIP=true.
@@ -52,7 +61,7 @@ const (
 // Scope is the scopes package's view of the kind.
 func (k Kind) Scope() scopes.Kind {
 	switch k {
-	case Write:
+	case Write, Adding:
 		return scopes.KindWrite
 	case Ship:
 		return scopes.KindShip
@@ -68,8 +77,8 @@ func (k Kind) Scope() scopes.Kind {
 // those whose effect only the account sees (spec.OwnOnly).
 func (k Kind) annotations(idempotent, ownOnly bool) *mcp.ToolAnnotations {
 	switch k {
-	case Write:
-		return &mcp.ToolAnnotations{DestructiveHint: ptr(false), IdempotentHint: idempotent, OpenWorldHint: ptr(!ownOnly)}
+	case Write, Adding:
+		return &mcp.ToolAnnotations{DestructiveHint: ptr(k == Write), IdempotentHint: idempotent, OpenWorldHint: ptr(!ownOnly)}
 	case Ship, Destructive:
 		return &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: idempotent, OpenWorldHint: ptr(true)}
 	}
@@ -86,7 +95,7 @@ type spec struct {
 	Toolset string
 	// Idempotent marks a write that lands the same way twice.
 	Idempotent bool
-	// OwnOnly marks a Write whose effect only the signed-in account sees,
+	// OwnOnly marks a write whose effect only the signed-in account sees,
 	// such as its to-do list, so openWorldHint is false (§8).
 	OwnOnly bool
 	// Bucket is the rate bucket the tool's requests are charged to
@@ -135,7 +144,7 @@ func (d Deps) logger() *slog.Logger {
 // gate says why a tool is not registered, "" when it is.
 func gate(sp spec, cfg config.Config, granted []string) string {
 	switch sp.Kind {
-	case Write:
+	case Write, Adding:
 		if cfg.ReadOnly {
 			return "read-only"
 		}

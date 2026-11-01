@@ -195,7 +195,7 @@ it.
 ## Adding a tool
 
 1. Declare it in `internal/tools` through the one `register`, with a
-   `Kind` (Read, Write, Ship or Destructive) and, if it belongs to one,
+   `Kind` (Read, Write, Adding, Ship or Destructive) and, if it belongs to one,
    a toolset. The kind decides the annotations, whether it registers,
    and the dry-run context. Moving a tool between kinds or toolsets is
    the maintainer's call.

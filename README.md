@@ -235,13 +235,14 @@ scope cannot separate any of it:
 | Setting | Registers |
 |---|---|
 | `GITLAB_MCP_READ_ONLY=true` | Read tools only, with a `read_api` token |
-| default | Read and Write: issues, comments, reviews, branches, merge requests |
+| default | Read, Write and Adding: issues, comments, reviews, branches, merge requests |
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds merging, approving, running CI and releases |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds deletion and making an issue public, and each call must pass `confirm: true` |
 
 Your MCP client approves each call; the server does not ask you
-itself. claude.ai and Codex prompt for the Ship and Destructive tools,
-which are marked destructive, and VS Code prompts for every tool that
+itself. claude.ai, Claude Desktop and Codex prompt for every tool
+marked destructive: every write but the six that only add, such as
+`create_issue` and `create_label`. VS Code prompts for every tool that
 writes. In Claude Code, `delete_label`, `delete_milestone` and
 `make_issue_public` ask on every call whatever your rules say, since
 none can be undone and each reaches past the one item: a label or
