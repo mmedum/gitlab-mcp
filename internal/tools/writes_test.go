@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -736,6 +737,35 @@ func TestOwnOnlyWritesAreNotOpenWorld(t *testing.T) {
 	}
 	if a := tools["add_comment"].Annotations; a.OpenWorldHint == nil || !*a.OpenWorldHint {
 		t.Errorf("add_comment annotations = %+v", a)
+	}
+}
+
+// destructiveHint false means "the tool performs only additive updates"
+// (MCP schema, ToolAnnotations), so only the writes that add say it, and
+// every other write says true, the schema's default, gated or not.
+// A write that adds but starts a pipeline or changes something on the
+// side is not one: add_comment marks the account's pending to-dos done,
+// create_branch, create_tag and create_merge_request can start a
+// pipeline, the two link tools can make one item hold another, and
+// add_review_comment can resolve a thread (§18 row 137). A new write is destructive unless its kind is
+// Adding, so adding one is a decision this list shows.
+func TestOnlyToolsThatAddSayTheyAreNotDestructive(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: FullSurface(config.Config{})})
+	var adds []string
+	for name, tl := range listed(t, h) {
+		a := tl.Annotations
+		switch {
+		case a.ReadOnlyHint:
+		case a.DestructiveHint == nil:
+			t.Errorf("%s writes and leaves destructiveHint unset", name)
+		case !*a.DestructiveHint:
+			adds = append(adds, name)
+		}
+	}
+	slices.Sort(adds)
+	want := []string{"add_todo", "create_issue", "create_label", "create_milestone", "create_snippet", "upload_file"}
+	if !slices.Equal(adds, want) {
+		t.Errorf("writes not annotated destructive: %v, want %v", adds, want)
 	}
 }
 

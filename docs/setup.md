@@ -10,8 +10,8 @@ The application form takes four values. The blocks
 below are generated from `internal/scopes` and `make staleness` compares
 them with the code exactly, so what you copy here is what `login` sends.
 
-For the default mode (Read and Write tools, and Ship or Destructive if
-you turn them on):
+For the default mode (Read, Write and Adding tools, and Ship or
+Destructive if you turn them on):
 
 <!-- setup:begin default -->
 ```text

@@ -47,8 +47,8 @@ with `make check` green, a live run whose transcript is read, and a
 review, and then stops. The next phase starts only when the maintainer
 says so; a tag is not that approval.
 
-Ask before adding a scope, moving a tool between the Read, Write, Ship
-and Destructive kinds, or reversing a decision §14 records.
+Ask before adding a scope, moving a tool between the Read, Write,
+Adding, Ship and Destructive kinds, or reversing a decision §14 records.
 
 ## Changing the tool surface
 

@@ -222,8 +222,8 @@ scores a model against the tool surface and is run by hand;
   instance.
 - Anything that writes to a project other than the live driver's own
   scratch project, including a spike.
-- Adding a scope, or moving a tool between the Read, Write, Ship and
-  Destructive kinds or between toolsets.
+- Adding a scope, or moving a tool between the Read, Write, Adding,
+  Ship and Destructive kinds or between toolsets.
 - Reversing a decision §14 records as confirmed, or quietly narrowing a
   written-off verdict in §8a into a used one.
 - Pushing, tagging, or anything that publishes.

@@ -223,7 +223,7 @@ type Config struct {
 	// Toolsets are the optional toolsets turned on, sorted, with "all"
 	// expanded.
 	Toolsets []string
-	// WriteNamespaces confine Write, Ship and Destructive (§4.7). Empty
+	// WriteNamespaces confine every write, of any kind (§4.7). Empty
 	// means no confinement.
 	WriteNamespaces []string
 	// UploadDirs are the only directories upload_file may read an image

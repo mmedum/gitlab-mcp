@@ -12,7 +12,7 @@ import (
 
 // The bodies gate holds §4.2 (CLAUDE.md rule 5): GitLab runs every
 // quick-action line in a description or a comment the API is sent, so
-// every string a Write, Ship or Destructive tool takes either passes
+// every string a write tool takes either passes
 // through internal/quickaction or is listed below as a plain field with
 // the reason it cannot carry a command.
 //
@@ -176,8 +176,8 @@ func checkBodies(d schemaDump, plain map[string]string, toolFloor, writeFloor in
 			case plain[name] != "":
 				usedPlain[name] = true
 			default:
-				problems = append(problems, fmt.Sprintf("%s is a string input of a %s tool, neither routed through internal/quickaction "+
-					"nor listed in plainInputs; a quick-action line in it would run (§4.2)", key, kindWord(t)))
+				problems = append(problems, fmt.Sprintf("%s is a string input of a write tool, neither routed through internal/quickaction "+
+					"nor listed in plainInputs; a quick-action line in it would run (§4.2)", key))
 				continue
 			}
 			plainCount++
@@ -196,12 +196,4 @@ func checkBodies(d schemaDump, plain map[string]string, toolFloor, writeFloor in
 	}
 	return fmt.Sprintf("bodies ok: %d tools, %d of them writes, with %d string inputs: %d through the quick-action guard, %d plain",
 		len(d.Tools), writes, strs, guardedCount, plainCount), problems
-}
-
-// kindWord names what the annotations make a tool, for a message.
-func kindWord(t dumpTool) string {
-	if t.Annotations != nil && t.Annotations.DestructiveHint != nil && *t.Annotations.DestructiveHint {
-		return "Ship or Destructive"
-	}
-	return "Write"
 }

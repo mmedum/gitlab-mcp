@@ -37,7 +37,7 @@ type createIssueIn struct {
 
 func createIssue() definition {
 	return tool[createIssueIn, model.IssueWrite]{
-		sp: spec{Name: "create_issue", Kind: Write, Guarded: []string{"description"},
+		sp: spec{Name: "create_issue", Kind: Adding, Guarded: []string{"description"},
 			Description: "Create an issue in a project. Labels, assignees and milestone are checked to exist first. A line in the " +
 				"description that GitLab would run as a quick action (/close, /assign and the rest) refuses the call unless " +
 				"escape_commands is true; set a field instead. Never repeated after a lost answer: if GitLab does not confirm, " +
@@ -540,7 +540,7 @@ type addTodoIn struct {
 
 func addTodo() definition {
 	return tool[addTodoIn, model.TodoWrite]{
-		sp: spec{Name: "add_todo", Kind: Write, OwnOnly: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
+		sp: spec{Name: "add_todo", Kind: Adding, OwnOnly: true, Enums: map[string][]string{"type": {"issue", "merge_request"}},
 			Description: "Add a to-do item for yourself on an issue or a merge request. The result gives its id, which " +
 				"mark_todos_done takes. While a pending to-do you added is there, GitLab adds none and the result is unchanged, " +
 				"with that one's id; other pending items, such as a mention, do not count. GitLab marks your pending to-dos on " +
@@ -588,7 +588,7 @@ type uploadFileIn struct {
 
 func uploadFile() definition {
 	return tool[uploadFileIn, model.UploadWrite]{
-		sp: spec{Name: "upload_file", Kind: Write,
+		sp: spec{Name: "upload_file", Kind: Adding,
 			Description: "Upload an image from this machine to a project and get the Markdown that shows it, to put in a comment " +
 				"(add_comment), a review comment (add_review_comment) or a description (create_issue, update_issue, " +
 				"create_merge_request, update_merge_request) in the same project. The image is read only from the directories " +
