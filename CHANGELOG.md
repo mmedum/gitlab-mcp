@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Changed
+
+- `gitlab-mcp --dump-schemas` also prints the instructions the server gives a client, for the full surface and for the default, read-only and `read_api` configurations.
+
 ## [4.2.0] - 2026-11-01
 
 ### Changed

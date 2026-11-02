@@ -55,16 +55,27 @@ Adding, Ship and Destructive kinds, or reversing a decision §14 records.
 The released tool surface is a contract. `make schema-diff` fails on a
 removed tool, a lost field or a new required input, unless a major
 release declares it: an entry under `[Unreleased]` that says
-`**Breaking:**` and names the tool in backticks. On a pull request,
-a changed surface also needs an acknowledgment on a commit the pull
-request adds, as an empty commit rather than an amend:
+`**Breaking:**` and names the tool in backticks.
+
+On a pull request, `make schema-ack` builds the merge-base and the head
+and compares the whole surface: tools, annotations included, resource
+templates and the instructions. Every item that changed must be named
+in a footer of a commit the pull request adds, as an empty commit
+rather than an amend:
 
 ```bash
 git commit --allow-empty -m "Acknowledge the tool surface change" \
-  -m "SCHEMA-CHANGE: <what was added>"
+  -m "SCHEMA-CHANGE: update_issue, instructions: what changed"
 ```
 
-Use `BREAKING CHANGE: <what breaks>` for anything that is not additive.
+A footer names a tool by its name, a resource template by its URI
+template, and the instructions as `instructions`, each a whole word.
+Only the names before the first `: ` count; the description after it
+names nothing. A name with a comma or a space in it goes in backticks.
+A break of the last release, such as a removed tool or input, needs
+`BREAKING CHANGE: <names>: what broke` instead. Narrowing something no
+release shipped is a plain change. A refusal prints the footer that
+fixes it.
 
 ## Adding an API call
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,15 +21,16 @@ import (
 )
 
 // The released tool surface is a contract (CLAUDE.md rule 17). A client
-// written against the last release breaks when a tool or resource
-// template goes, when an input it sends or an output field it reads
-// goes, or when an input it never sent becomes required. Adding is fine.
+// written against the last release breaks when a tool, resource template,
+// resource or prompt goes, when an input it sends or an output field it
+// reads goes, or when an input it never sent becomes required. Adding is
+// fine.
 //
 // schema-diff compares the built binary with the last tag's, built in a
 // git worktree that is always removed; before the first tag it compares
 // with testdata/schema-baseline.json, which `make schema-baseline`
 // records on purpose. schema-ack is the pull-request half: any change at
-// all needs a commit that says so.
+// all needs a commit footer that names each item it changes.
 
 const (
 	baselineFile = "testdata/schema-baseline.json"
@@ -38,133 +40,151 @@ const (
 	surfaceFloor = 66
 )
 
+// A change is one difference between two dumps: the item it is to, which
+// a footer or a CHANGELOG entry names, and how the report shows it. The
+// item is a tool's name, a resource template's URI template, a list
+// item's id, or a top-level key such as instructions. field is, on the
+// break of a tool still there, the part it breaks, such as "input iid",
+// so a break is matched across two comparisons by item and field, never
+// by its text.
+type change struct {
+	item, text, field string
+}
+
 // surfaceChanges is what moved between two dumps.
 type surfaceChanges struct {
-	Breaking []string
-	Additive []string
-	// Other is anything else in the surface that differs: a description,
-	// an annotation, a _meta key. Not breaking, and still a change a
-	// pull request acknowledges.
-	Other []string
+	breaking, added []change
+	// changed is anything else in the surface that differs: a
+	// description, an annotation, a _meta key, the instructions. Not
+	// breaking, and still a change a pull request acknowledges.
+	changed []change
 }
 
 func (c surfaceChanges) empty() bool {
-	return len(c.Breaking)+len(c.Additive)+len(c.Other) == 0
+	return len(c.breaking)+len(c.added)+len(c.changed) == 0
 }
 
 func (c surfaceChanges) write(out io.Writer) {
-	for _, s := range c.Breaking {
-		_, _ = fmt.Fprintln(out, "BREAKING  "+s)
+	for _, s := range c.breaking {
+		_, _ = fmt.Fprintln(out, "BREAKING  "+s.text)
 	}
-	for _, s := range c.Additive {
-		_, _ = fmt.Fprintln(out, "added     "+s)
+	for _, s := range c.added {
+		_, _ = fmt.Fprintln(out, "added     "+s.text)
 	}
-	for _, s := range c.Other {
-		_, _ = fmt.Fprintln(out, "changed   "+s)
+	for _, s := range c.changed {
+		_, _ = fmt.Fprintln(out, "changed   "+s.text)
 	}
 }
 
 // compareSurfaces is the rule over two dumps, so it can be tested
-// without building anything.
+// without building anything. Every item of every list is compared whole,
+// and so is every other key: an item gone breaks a caller, and so does a
+// tool's input or output field gone or an input newly required. A tool
+// that broke also lists every other change to it.
 func compareSurfaces(prev, cur schemaDump) surfaceChanges {
 	var c surfaceChanges
-	oldTools := map[string]dumpTool{}
-	for _, t := range prev.Tools {
-		oldTools[t.Name] = t
+	oldTools, newTools := toolsByName(prev), toolsByName(cur)
+	byListThenID := func(a, b itemKey) int { return cmp.Or(strings.Compare(a.list, b.list), strings.Compare(a.id, b.id)) }
+	for _, k := range sortedUnion(prev.items, cur.items, byListThenID) {
+		was, inPrev := prev.items[k]
+		now, inCur := cur.items[k]
+		switch {
+		case !inCur:
+			c.breaking = append(c.breaking, change{item: k.id, text: k.word() + " removed: " + k.id})
+		case !inPrev:
+			c.added = append(c.added, change{item: k.id, text: k.word() + " added: " + k.id})
+		default:
+			if k.list == "tools" {
+				c.breaking = append(c.breaking, toolBreaks(oldTools[k.id], newTools[k.id])...)
+			}
+			if parts := changedParts(was, now); len(parts) > 0 {
+				c.changed = append(c.changed, change{item: k.id, text: k.word() + " " + k.id + ": " + strings.Join(parts, ", ")})
+			}
+		}
 	}
-	newTools := map[string]dumpTool{}
-	for _, t := range cur.Tools {
-		newTools[t.Name] = t
-	}
-	for _, name := range slices.Sorted(maps.Keys(oldTools)) {
-		was := oldTools[name]
-		now, ok := newTools[name]
-		if !ok {
-			c.Breaking = append(c.Breaking, "tool removed: "+name)
+	// A key other than a list is its own item, named first as a footer
+	// names it: "instructions: default, read_only".
+	for _, part := range changedParts(prev.rest, cur.rest) {
+		top, sub, _ := strings.Cut(part, ".")
+		if n := len(c.changed); n > 0 && c.changed[n-1].item == top {
+			c.changed[n-1].text += ", " + sub
 			continue
 		}
-		compareTool(&c, name, was, now)
-	}
-	for _, name := range slices.Sorted(maps.Keys(newTools)) {
-		if _, ok := oldTools[name]; !ok {
-			c.Additive = append(c.Additive, "tool added: "+name)
+		text := top
+		if sub != "" {
+			text += ": " + sub
 		}
-	}
-	oldT := map[string]dumpTemplate{}
-	for _, t := range prev.ResourceTemplates {
-		oldT[t.URITemplate] = t
-	}
-	newT := map[string]dumpTemplate{}
-	for _, t := range cur.ResourceTemplates {
-		newT[t.URITemplate] = t
-	}
-	for _, u := range slices.Sorted(maps.Keys(oldT)) {
-		now, ok := newT[u]
-		switch {
-		case !ok:
-			c.Breaking = append(c.Breaking, "resource template removed: "+u)
-		case canonical(now.raw) != canonical(oldT[u].raw):
-			c.Other = append(c.Other, "resource template "+u+": name, description or media type")
-		}
-	}
-	for _, u := range slices.Sorted(maps.Keys(newT)) {
-		if _, ok := oldT[u]; !ok {
-			c.Additive = append(c.Additive, "resource template added: "+u)
-		}
+		c.changed = append(c.changed, change{item: top, text: text})
 	}
 	return c
 }
 
-// compareTool adds what changed in one tool that both surfaces have.
-func compareTool(c *surfaceChanges, name string, was, now dumpTool) {
+func toolsByName(d schemaDump) map[string]dumpTool {
+	out := make(map[string]dumpTool, len(d.Tools))
+	for _, t := range d.Tools {
+		out[t.Name] = t
+	}
+	return out
+}
+
+// toolBreaks is what breaks a caller in the fields of a tool both
+// surfaces have: an input or an output field gone, or an input newly
+// required. What a tool adds is a change its changed line names.
+func toolBreaks(was, now dumpTool) []change {
+	var out []change
+	broke := func(side, f, how string) {
+		out = append(out, change{now.Name, now.Name + ": " + side + " " + how + ": " + f, side + " " + f})
+	}
 	wasIn, nowIn := schemaFields(was.InputSchema), schemaFields(now.InputSchema)
 	for _, f := range slices.Sorted(maps.Keys(wasIn)) {
-		if _, ok := nowIn[f]; !ok {
-			c.Breaking = append(c.Breaking, name+": input removed: "+f)
-		}
-	}
-	for _, f := range slices.Sorted(maps.Keys(nowIn)) {
-		if _, ok := wasIn[f]; !ok {
-			c.Additive = append(c.Additive, name+": input added: "+f)
+		if !nowIn[f] {
+			broke("input", f, "removed")
 		}
 	}
 	wasReq, nowReq := requiredOf(was.InputSchema), requiredOf(now.InputSchema)
 	for _, f := range slices.Sorted(maps.Keys(nowReq)) {
 		if !wasReq[f] {
-			c.Breaking = append(c.Breaking, name+": input now required: "+f)
+			broke("input", f, "now required")
 		}
 	}
 	wasOut, nowOut := schemaFields(was.OutputSchema), schemaFields(now.OutputSchema)
 	for _, f := range slices.Sorted(maps.Keys(wasOut)) {
-		if _, ok := nowOut[f]; !ok {
-			c.Breaking = append(c.Breaking, name+": output field removed: "+f)
+		if !nowOut[f] {
+			broke("output field", f, "removed")
 		}
 	}
-	for _, f := range slices.Sorted(maps.Keys(nowOut)) {
-		if _, ok := wasOut[f]; !ok {
-			c.Additive = append(c.Additive, name+": output field added: "+f)
-		}
-	}
-	if canonical(was.raw) != canonical(now.raw) && !touched(*c, name) {
-		c.Other = append(c.Other, name+": description, schema detail, annotations or _meta")
-	}
+	return out
 }
 
-// touched reports whether a tool already has a breaking or additive line,
-// so its other differences are not reported a second time.
-func touched(c surfaceChanges, name string) bool {
-	for _, s := range slices.Concat(c.Breaking, c.Additive) {
-		if strings.HasPrefix(s, name+": ") {
-			return true
+// changedParts names what differs between two dumped objects, one level
+// deep, so a flipped hint reads as annotations.destructiveHint. Values
+// are compared decoded, so a reordered key is the same schema.
+func changedParts(o, n map[string]any) []string {
+	var parts []string
+	for _, k := range sortedUnion(o, n, strings.Compare) {
+		if reflect.DeepEqual(o[k], n[k]) {
+			continue
+		}
+		om, oMap := o[k].(map[string]any)
+		nm, nMap := n[k].(map[string]any)
+		if !oMap || !nMap {
+			parts = append(parts, k)
+			continue
+		}
+		for _, sub := range sortedUnion(om, nm, strings.Compare) {
+			if !reflect.DeepEqual(om[sub], nm[sub]) {
+				parts = append(parts, k+"."+sub)
+			}
 		}
 	}
-	return false
+	return parts
 }
 
-// canonical is the whole dumped object as sorted JSON.
-func canonical(raw map[string]any) string {
-	out, _ := json.Marshal(raw)
-	return string(out)
+// sortedUnion is every key of a and b, sorted by compare.
+func sortedUnion[K comparable, V any](a, b map[K]V, compare func(K, K) int) []K {
+	keys := slices.AppendSeq(slices.Collect(maps.Keys(a)), maps.Keys(b))
+	slices.SortFunc(keys, compare)
+	return slices.Compact(keys)
 }
 
 // schemaFields is every property of a schema as a dotted path, nested
@@ -214,7 +234,7 @@ func schemaDiff(out io.Writer, args []string) error {
 	}
 	var prev schemaDump
 	against := ""
-	tag, err := gitx.LatestTag(root)
+	tag, err := gitx.LatestTagOn(root, "HEAD")
 	switch {
 	case errors.Is(err, gitx.ErrNoTag):
 		prev, err = readDump(filepath.Join(root, baselineFile))
@@ -233,11 +253,11 @@ func schemaDiff(out io.Writer, args []string) error {
 	}
 	c := compareSurfaces(prev, cur)
 	c.write(out)
-	if len(c.Breaking) > 0 {
+	if len(c.breaking) > 0 {
 		// Before the first tag nothing was released, so no entry can
 		// declare a break.
 		if tag == "" {
-			return fmt.Errorf("%d breaking change(s) to the tool surface since %s", len(c.Breaking), against)
+			return fmt.Errorf("%d breaking change(s) to the tool surface since %s", len(c.breaking), against)
 		}
 		changelog, err := os.ReadFile(filepath.Join(root, changelogFile))
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -256,10 +276,10 @@ func schemaDiff(out io.Writer, args []string) error {
 				len(problems), against, strings.TrimPrefix(tag, "v"))
 		}
 		_, _ = fmt.Fprintf(out, "%d breaking change(s) since %s, each declared under **Breaking:** for a major release\n",
-			len(c.Breaking), against)
+			len(c.breaking), against)
 	}
 	_, _ = fmt.Fprintf(out, "schema diff ok against %s: %d tools, %d resource templates; %d additive, %d other change(s)\n",
-		against, len(cur.Tools), len(cur.ResourceTemplates), len(c.Additive), len(c.Other))
+		against, len(cur.Tools), len(cur.ResourceTemplates), len(c.added), len(c.changed))
 	return nil
 }
 
@@ -287,9 +307,9 @@ func undeclaredBreaks(c surfaceChanges, changelog, tag string) ([]string, error)
 		}
 	}
 	var out []string
-	for _, b := range c.Breaking {
-		if !named[breakSubject(b)] {
-			out = append(out, b)
+	for _, b := range c.breaking {
+		if !named[b.item] {
+			out = append(out, b.text)
 		}
 	}
 	major := func(v string) int {
@@ -305,21 +325,10 @@ func undeclaredBreaks(c surfaceChanges, changelog, tag string) ([]string, error)
 	return out, nil
 }
 
-// breakSubject is what a breaking change is about: the tool, or the
-// resource template, a CHANGELOG entry names.
-func breakSubject(b string) string {
-	for _, prefix := range []string{"tool removed: ", "resource template removed: "} {
-		if rest, ok := strings.CutPrefix(b, prefix); ok {
-			return rest
-		}
-	}
-	name, _, _ := strings.Cut(b, ": ")
-	return name
-}
-
-// dumpAt builds the server at a revision in a scratch worktree and dumps
-// it. The worktree is removed on every path out, a failed build included,
-// and pruned so no stale registration survives a killed run.
+// dumpAt builds the server at a revision in a scratch worktree, trimmed
+// and without cgo as `make build` does so the build cache is shared, and
+// dumps it. The worktree is removed on every path out, a failed build or
+// checkout included, and pruned so no stale registration survives.
 func dumpAt(root, rev string) (schemaDump, error) {
 	tmp, err := os.MkdirTemp("", "gates-schema-*")
 	if err != nil {
@@ -328,6 +337,8 @@ func dumpAt(root, rev string) (schemaDump, error) {
 	defer func() { _ = os.RemoveAll(tmp) }()
 	src := filepath.Join(tmp, "src")
 	if _, err := gitx.Output(root, "worktree", "add", "--quiet", "--detach", src, rev); err != nil {
+		// A checkout that failed can leave its registration behind.
+		_, _ = gitx.Output(root, "worktree", "prune")
 		return schemaDump{}, err
 	}
 	defer func() {
@@ -340,9 +351,9 @@ func dumpAt(root, rev string) (schemaDump, error) {
 		return schemaDump{}, nil
 	}
 	bin := executable(filepath.Join(tmp, "gitlab-mcp"))
-	build := exec.Command("go", "build", "-o", bin, "./cmd/gitlab-mcp") //nolint:gosec // fixed arguments
+	build := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", bin, "./cmd/gitlab-mcp") //nolint:gosec // fixed arguments
 	build.Dir = src
-	build.Env = mcpstdio.Environ(os.Environ())
+	build.Env = mcpstdio.Environ(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		return schemaDump{}, fmt.Errorf("build %s: %w: %s", rev, err, strings.TrimSpace(string(out)))
 	}
@@ -381,72 +392,4 @@ func encodeBaseline(whole map[string]any) ([]byte, error) {
 		return nil, err
 	}
 	return append(raw, '\n'), nil
-}
-
-// ------------------------------------------------------------ schema-ack
-
-// ackFooter is a line of a commit message that acknowledges a change to
-// the surface: SCHEMA-CHANGE: for an additive one, BREAKING CHANGE: for
-// any.
-var ackFooter = regexp.MustCompile(`(?m)^(SCHEMA-CHANGE|BREAKING CHANGE):\s*\S`)
-
-// schemaAck holds a pull request: when its surface differs from its
-// merge-base's, some commit it adds says so.
-func schemaAck(out io.Writer, args []string) error {
-	bin, baseRef, head := args[0], args[1], args[2]
-	root, err := gitx.Root(".")
-	if err != nil {
-		return err
-	}
-	base, err := gitx.MergeBase(root, baseRef, head)
-	if err != nil {
-		return err
-	}
-	prev, err := dumpAt(root, base)
-	if err != nil {
-		return err
-	}
-	cur, err := dumpBinary(bin)
-	if err != nil {
-		return err
-	}
-	msgs, err := gitx.Messages(root, base, head)
-	if err != nil {
-		return err
-	}
-	return checkAck(out, compareSurfaces(prev, cur), msgs, base)
-}
-
-func checkAck(out io.Writer, c surfaceChanges, messages []string, base string) error {
-	if c.empty() {
-		_, _ = fmt.Fprintf(out, "schema ack ok: the tool surface is unchanged since %s\n", short(base))
-		return nil
-	}
-	c.write(out)
-	var schema, breaking bool
-	for _, m := range messages {
-		for _, f := range ackFooter.FindAllStringSubmatch(m, -1) {
-			if f[1] == "BREAKING CHANGE" {
-				breaking = true
-			}
-			schema = true
-		}
-	}
-	switch {
-	case len(c.Breaking) > 0 && !breaking:
-		return fmt.Errorf("the pull request breaks the tool surface and no commit since %s says BREAKING CHANGE:; add an empty commit "+
-			"(git commit --allow-empty) whose message carries it, never an amend", short(base))
-	case !schema:
-		return fmt.Errorf("the pull request changes the tool surface and no commit since %s says SCHEMA-CHANGE: or BREAKING CHANGE:; "+
-			"add an empty commit (git commit --allow-empty) whose message carries it, never an amend", short(base))
-	}
-	_, _ = fmt.Fprintf(out, "schema ack ok: the change since %s is acknowledged\n", short(base))
-	return nil
-}
-
-func short(sha string) string {
-	if len(sha) > 12 {
-		return sha[:12]
-	}
-	return sha
 }

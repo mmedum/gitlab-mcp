@@ -42,7 +42,7 @@ func parityFixture() (map[string]string, map[string]command) {
 	mk.WriteString("descriptions: schemas gates\n\t$(GATES) descriptions $(SCHEMAS)\n\n")
 	mk.WriteString("merge-base: gates\n\t$(GATES) merge-base $(BASE) $(HEAD)\n\n")
 	mk.WriteString("changelog: gates\n\t$(GATES) changelog $(BASE) $(HEAD)\n\n")
-	mk.WriteString("schema-ack: gates\n\t$(GATES) schema-ack ./bin $(BASE) $(HEAD)\n\n")
+	mk.WriteString("schema-ack: gates\n\t$(GATES) schema-ack $(BASE) $(HEAD)\n\n")
 	mk.WriteString("deps: gates ## (manual)\n\t$(GATES) deps\n\n")
 	mk.WriteString("# check: nothing\ncheck: " + strings.Join(prereqs, " ") + " vet descriptions\n")
 

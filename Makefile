@@ -213,12 +213,13 @@ merge-base: gates ## Print the commit a pull request is measured from
 changelog: gates ## A pull request adds a CHANGELOG entry, unless it cuts a release
 	$(GATES) changelog $(PR_BASE_REF) $(PR_HEAD)
 
-# A changed tool surface needs `SCHEMA-CHANGE:` (additive) or
-# `BREAKING CHANGE:` on some commit the pull request adds, as an empty
-# commit rather than an amend.
+# A changed tool surface needs a commit footer naming each item it
+# changes, `BREAKING CHANGE:` for a break of the last release and
+# `SCHEMA-CHANGE:` for the rest, as an empty commit rather than an amend.
+# Both sides are built from commits, so this needs no `build`.
 .PHONY: schema-ack
-schema-ack: build gates ## A changed tool surface is acknowledged in a commit
-	$(GATES) schema-ack $(BIN) $(PR_BASE_REF) $(PR_HEAD)
+schema-ack: gates ## A commit footer names each item of the tool surface a pull request changes
+	$(GATES) schema-ack $(PR_BASE_REF) $(PR_HEAD)
 
 # --- manual --------------------------------------------------------------
 

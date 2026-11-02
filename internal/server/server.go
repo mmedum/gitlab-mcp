@@ -16,6 +16,7 @@ import (
 
 	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
+	"github.com/mmedum/gitlab-mcp/v4/internal/scopes"
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 	"github.com/mmedum/gitlab-mcp/v4/internal/tools"
 	"github.com/mmedum/gitlab-mcp/v4/internal/version"
@@ -86,50 +87,103 @@ func logMethods(lg *slog.Logger) mcp.Middleware {
 
 // Dump is what --dump-schemas writes: the whole registrable surface,
 // every mcp.Tool as the wire carries it, _meta and output schema
-// included. The schema-diff gate compares two of these.
+// included, and the instructions a client puts in front of the model.
+// The schema gates compare two of these. The server has no resources or
+// prompts today; while it has none the dump leaves them out, and one
+// added later still reaches the gates.
 type Dump struct {
-	Server            string                  `json:"server"`
-	Version           string                  `json:"version"`
-	SDK               string                  `json:"sdk"`
+	Server  string `json:"server"`
+	Version string `json:"version"`
+	SDK     string `json:"sdk"`
+	// Instructions are the text the full surface is served, keyed "full",
+	// and the text each of instructionConfigs is.
+	Instructions      map[string]string       `json:"instructions"`
 	Tools             []*mcp.Tool             `json:"tools"`
 	ResourceTemplates []*mcp.ResourceTemplate `json:"resourceTemplates"`
+	Resources         []*mcp.Resource         `json:"resources,omitempty"`
+	Prompts           []*mcp.Prompt           `json:"prompts,omitempty"`
+}
+
+// instructionConfigs are the configurations, beside the full surface,
+// whose instructions the dump carries. The instructions differ by what
+// a configuration registers, so between them these reach every sentence
+// instructionsFor can say: the read-only one, the one for a token that
+// may only read, and the settings that would register more.
+var instructionConfigs = map[string]struct {
+	cfg     config.Config
+	granted []string
+}{
+	"default":   {config.Config{}, nil},
+	"read_only": {config.Config{ReadOnly: true}, nil},
+	"read_api":  {config.Config{}, []string{scopes.ReadAPI}},
 }
 
 // DumpSchemas writes the full tool surface — every flag and toolset on —
 // as JSON, without touching the network or credentials. The SDK has no
 // public enumerator, so an in-memory client asks the server, which is
-// also exactly what a client would be told.
+// also exactly what a client would be told. The other configurations'
+// instructions are the text New serves them, read without a session.
 func DumpSchemas(w io.Writer, version string) error {
 	ctx := context.Background()
-	s := New(Options{Config: tools.FullSurface(config.Config{}), Version: version})
+	d := Dump{Server: Name, Version: version, SDK: sdkVersion(), Instructions: map[string]string{}}
+	full := New(Options{Config: tools.FullSurface(config.Config{}), Version: version})
+	if err := withSession(ctx, full, func(cs *mcp.ClientSession) error {
+		d.Instructions["full"] = cs.InitializeResult().Instructions
+		return listSurface(ctx, cs, &d)
+	}); err != nil {
+		return err
+	}
+	for name, c := range instructionConfigs {
+		d.Instructions[name] = instructionsFor(c.cfg, c.granted)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(d)
+}
+
+// withSession serves s to an in-memory client and hands use the client's
+// session.
+func withSession(ctx context.Context, s *mcp.Server, use func(*mcp.ClientSession) error) error {
 	ct, st := mcp.NewInMemoryTransports()
 	ss, err := s.Connect(ctx, st, nil)
 	if err != nil {
 		return fmt.Errorf("connect server: %w", err)
 	}
 	defer func() { _ = ss.Close() }()
-	client := mcp.NewClient(&mcp.Implementation{Name: "schema-dump", Version: version}, nil)
-	cs, err := client.Connect(ctx, ct, nil)
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "schema-dump"}, nil).Connect(ctx, ct, nil)
 	if err != nil {
 		return fmt.Errorf("connect client: %w", err)
 	}
 	defer func() { _ = cs.Close() }()
-	list, err := cs.ListTools(ctx, nil)
+	return use(cs)
+}
+
+// listSurface reads the tools, resource templates, resources and prompts
+// the session is served into d, each list sorted by what names it.
+func listSurface(ctx context.Context, cs *mcp.ClientSession, d *Dump) error {
+	tl, err := cs.ListTools(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("list tools: %w", err)
 	}
-	slices.SortFunc(list.Tools, func(a, b *mcp.Tool) int { return strings.Compare(a.Name, b.Name) })
 	templates, err := cs.ListResourceTemplates(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("list resource templates: %w", err)
 	}
-	slices.SortFunc(templates.ResourceTemplates, func(a, b *mcp.ResourceTemplate) int {
+	resources, err := cs.ListResources(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("list resources: %w", err)
+	}
+	prompts, err := cs.ListPrompts(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("list prompts: %w", err)
+	}
+	d.Tools = slices.SortedFunc(slices.Values(tl.Tools), func(a, b *mcp.Tool) int { return strings.Compare(a.Name, b.Name) })
+	d.ResourceTemplates = slices.SortedFunc(slices.Values(templates.ResourceTemplates), func(a, b *mcp.ResourceTemplate) int {
 		return strings.Compare(a.URITemplate, b.URITemplate)
 	})
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(Dump{Server: Name, Version: version, SDK: sdkVersion(), Tools: list.Tools,
-		ResourceTemplates: templates.ResourceTemplates})
+	d.Resources = slices.SortedFunc(slices.Values(resources.Resources), func(a, b *mcp.Resource) int { return strings.Compare(a.URI, b.URI) })
+	d.Prompts = slices.SortedFunc(slices.Values(prompts.Prompts), func(a, b *mcp.Prompt) int { return strings.Compare(a.Name, b.Name) })
+	return nil
 }
 
 // sdkVersion is the MCP SDK version from the build info, so a diff an

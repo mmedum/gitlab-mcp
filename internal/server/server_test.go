@@ -2,8 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -28,17 +30,21 @@ func TestDumpSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	var d struct {
-		Server            string           `json:"server"`
-		Version           string           `json:"version"`
-		SDK               string           `json:"sdk"`
-		Tools             []map[string]any `json:"tools"`
-		ResourceTemplates []any            `json:"resourceTemplates"`
+		Server            string            `json:"server"`
+		Version           string            `json:"version"`
+		SDK               string            `json:"sdk"`
+		Instructions      map[string]string `json:"instructions"`
+		Tools             []map[string]any  `json:"tools"`
+		ResourceTemplates []any             `json:"resourceTemplates"`
 	}
 	if err := json.Unmarshal(buf.Bytes(), &d); err != nil {
 		t.Fatalf("dump is not JSON: %v", err)
 	}
 	if d.Server != "gitlab-mcp" || d.Version != "v0.0.0-test" || d.SDK != "v1.8.0" {
 		t.Errorf("header = %q %q %q", d.Server, d.Version, d.SDK)
+	}
+	if got := slices.Sorted(maps.Keys(d.Instructions)); !slices.Equal(got, []string{"default", "full", "read_api", "read_only"}) {
+		t.Errorf("instructions for %v", got)
 	}
 	if len(d.Tools) != 105 || len(d.ResourceTemplates) != 3 {
 		t.Fatalf("%d tools, templates %v", len(d.Tools), d.ResourceTemplates)
@@ -54,6 +60,99 @@ func TestDumpSchemas(t *testing.T) {
 	}
 	if !slices.IsSorted(names) {
 		t.Errorf("tools are not sorted: %v", names)
+	}
+}
+
+// The dump carries what each configuration is told, so between them its
+// instructions say every sentence the server can: a wording change in
+// any configuration changes the dump, and a pull request has to say so.
+func TestTheDumpCarriesEverySentenceOfTheInstructions(t *testing.T) {
+	var buf bytes.Buffer
+	if err := DumpSchemas(&buf, "v0.0.0-test"); err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		Instructions map[string]string `json:"instructions"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(slices.Collect(maps.Values(d.Instructions)), "\n")
+	sentences := []string{
+		"This server is read-only: no tool here changes anything in GitLab.",
+		"Every tool here only reads: none changes anything in GitLab.",
+		"Tools that write say so in their description and take dry_run.",
+		"Not registered in this configuration: ",
+		lead, addressing, bounded, untrusted,
+	}
+	for _, p := range toolPhrases {
+		sentences = append(sentences, p.tail)
+	}
+	for _, f := range flags(config.Config{}) {
+		sentences = append(sentences, f.setting+" adds "+f.adds)
+	}
+	for _, s := range sentences {
+		if !strings.Contains(all, s) {
+			t.Errorf("no configuration the dump reads is told %q", s)
+		}
+	}
+}
+
+// The dump reads the other configurations' instructions without a
+// session, so it holds only while a server built for each serves exactly
+// that text.
+func TestTheDumpSaysWhatEachConfigurationIsServed(t *testing.T) {
+	var buf bytes.Buffer
+	if err := DumpSchemas(&buf, "v0.0.0-test"); err != nil {
+		t.Fatal(err)
+	}
+	var d Dump
+	if err := json.Unmarshal(buf.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for name, c := range instructionConfigs {
+		var served string
+		if err := withSession(ctx, New(Options{Config: c.cfg, Granted: c.granted}), func(cs *mcp.ClientSession) error {
+			served = cs.InitializeResult().Instructions
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if d.Instructions[name] != served {
+			t.Errorf("the dump says %s is told\n%s\nand a session in it is told\n%s", name, d.Instructions[name], served)
+		}
+	}
+}
+
+// The server has no resources or prompts today. One added later is in
+// the dump, sorted, so the schema gates see it.
+func TestTheDumpListsResourcesAndPrompts(t *testing.T) {
+	ctx := context.Background()
+	s := mcp.NewServer(&mcp.Implementation{Name: "fixture"}, nil)
+	read := func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{}, nil
+	}
+	get := func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return &mcp.GetPromptResult{}, nil
+	}
+	s.AddResource(&mcp.Resource{URI: "gitlab://b", Name: "b"}, read)
+	s.AddResource(&mcp.Resource{URI: "gitlab://a", Name: "a"}, read)
+	s.AddPrompt(&mcp.Prompt{Name: "review"}, get)
+	s.AddPrompt(&mcp.Prompt{Name: "plan"}, get)
+	var d Dump
+	if err := withSession(ctx, s, func(cs *mcp.ClientSession) error { return listSurface(ctx, cs, &d) }); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range d.Resources {
+		got = append(got, r.URI)
+	}
+	for _, p := range d.Prompts {
+		got = append(got, p.Name)
+	}
+	if want := []string{"gitlab://a", "gitlab://b", "plan", "review"}; !slices.Equal(got, want) {
+		t.Errorf("the dump lists %v, want %v", got, want)
 	}
 }
 

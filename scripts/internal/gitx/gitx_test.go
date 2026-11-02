@@ -75,14 +75,38 @@ func TestFilesAndTracked(t *testing.T) {
 	}
 }
 
+// The newest tag rev reaches: not one only a later commit carries. A rev
+// that reaches none has none, though the repository has tags, and a rev
+// git cannot read is git's error, not a missing tag.
+func TestLatestTagOnReadsWhatRevReaches(t *testing.T) {
+	dir := repo(t)
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "first")
+	git(t, dir, "branch", "untagged")
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "second")
+	git(t, dir, "tag", "v1.0.0")
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "third")
+	git(t, dir, "tag", "v1.1.0")
+	for rev, want := range map[string]string{"HEAD~1": "v1.0.0", "main": "v1.1.0"} {
+		if tag, err := LatestTagOn(dir, rev); err != nil || tag != want {
+			t.Errorf("LatestTagOn(%s) = %q, %v; want %s", rev, tag, err, want)
+		}
+	}
+	if _, err := LatestTagOn(dir, "untagged"); !errors.Is(err, ErrNoTag) {
+		t.Errorf("LatestTagOn(untagged): err = %v, want ErrNoTag", err)
+	}
+	if _, err := LatestTagOn(dir, "no-such-ref"); err == nil || errors.Is(err, ErrNoTag) {
+		t.Errorf("LatestTagOn(no-such-ref): err = %v, want git's error", err)
+	}
+}
+
 func TestMergeBaseMessagesAndTags(t *testing.T) {
 	dir := repo(t)
 	write(t, dir, "a.txt", "a")
 	git(t, dir, "add", ".")
 	git(t, dir, "commit", "-q", "-m", "base")
 	base := git(t, dir, "rev-parse", "HEAD")
-	if _, err := LatestTag(dir); !errors.Is(err, ErrNoTag) {
-		t.Errorf("LatestTag with no tag: err = %v, want ErrNoTag", err)
+	if _, err := LatestTagOn(dir, "HEAD"); !errors.Is(err, ErrNoTag) {
+		t.Errorf("LatestTagOn with no tag: err = %v, want ErrNoTag", err)
 	}
 	git(t, dir, "tag", "v0.1.0")
 
@@ -116,9 +140,9 @@ func TestMergeBaseMessagesAndTags(t *testing.T) {
 	if want := []string{"b.txt"}; !reflect.DeepEqual(changed, want) {
 		t.Errorf("ChangedFiles = %q, want %q", changed, want)
 	}
-	tag, err := LatestTag(dir)
+	tag, err := LatestTagOn(dir, "HEAD")
 	if err != nil || tag != "v0.1.0" {
-		t.Errorf("LatestTag = %q, %v; want v0.1.0", tag, err)
+		t.Errorf("LatestTagOn = %q, %v; want v0.1.0", tag, err)
 	}
 	content, err := Show(dir, "v0.1.0", "a.txt")
 	if err != nil || string(content) != "a" {
