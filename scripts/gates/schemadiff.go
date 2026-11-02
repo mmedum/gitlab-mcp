@@ -45,8 +45,9 @@ const (
 // item is a tool's name, a resource template's URI template, a list
 // item's id, or a top-level key such as instructions. field is, on the
 // break of a tool still there, the part it breaks, such as "input iid",
-// so a break is matched across two comparisons by item and field, never
-// by its text.
+// and on a removed item its list, so a removed prompt and a tool of one
+// name differ. A break is matched across two comparisons by item and
+// field, never by its text.
 type change struct {
 	item, text, field string
 }
@@ -90,7 +91,7 @@ func compareSurfaces(prev, cur schemaDump) surfaceChanges {
 		now, inCur := cur.items[k]
 		switch {
 		case !inCur:
-			c.breaking = append(c.breaking, change{item: k.id, text: k.word() + " removed: " + k.id})
+			c.breaking = append(c.breaking, change{item: k.id, text: k.word() + " removed: " + k.id, field: k.list})
 		case !inPrev:
 			c.added = append(c.added, change{item: k.id, text: k.word() + " added: " + k.id})
 		default:

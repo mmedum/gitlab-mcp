@@ -75,8 +75,9 @@ SHA the event recorded, which is stale in a stack of pull requests:
 | `make schema-ack` | `gates schema-ack`: builds the merge-base and the head, and a footer on a commit the pull request adds names each item of the tool surface that changed: `BREAKING CHANGE:` for a break of the last release, `SCHEMA-CHANGE:` for the rest |
 
 The acknowledgment is an empty commit, never an amend. Only the names
-before the first `: ` count, and the refusal prints the footer that
-fixes it (`CONTRIBUTING.md`, "Changing the tool surface"):
+before the first colon followed by white space count, a list wraps only
+after a comma, and the refusal prints the footer that fixes it
+(`CONTRIBUTING.md`, "Changing the tool surface"):
 
 ```bash
 git commit --allow-empty -m "Acknowledge the tool surface change" \
