@@ -143,7 +143,8 @@ func Messages(root, from, to string) ([]string, error) {
 // ErrNoTag is LatestTagOn finding no tag reachable.
 var ErrNoTag = errors.New("no tag reachable")
 
-// LatestTagOn is the newest tag reachable from rev. A clone can hold
+// LatestTagOn is the tag git describe finds for rev: the nearest one rev
+// reaches, which on a history tagged in order is the newest. A clone can hold
 // tags rev does not reach, such as a fork that fetched upstream's: rev
 // then has none. Any other failure is git's, and says so.
 func LatestTagOn(root, rev string) (string, error) {

@@ -102,9 +102,19 @@ func compareSurfaces(prev, cur schemaDump) surfaceChanges {
 			}
 		}
 	}
+	// A key other than a list is its own item, named first as a footer
+	// names it: "instructions: default, read_only".
 	for _, part := range changedParts(prev.rest, cur.rest) {
-		top, _, _ := strings.Cut(part, ".")
-		c.changed = append(c.changed, change{item: top, text: part})
+		top, sub, _ := strings.Cut(part, ".")
+		if n := len(c.changed); n > 0 && c.changed[n-1].item == top {
+			c.changed[n-1].text += ", " + sub
+			continue
+		}
+		text := top
+		if sub != "" {
+			text += ": " + sub
+		}
+		c.changed = append(c.changed, change{item: top, text: text})
 	}
 	return c
 }

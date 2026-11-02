@@ -138,7 +138,7 @@ func TestCompareSurfacesOnDetail(t *testing.T) {
 // removed prompt breaks a caller as a removed tool does, and a reworded
 // instruction is a change to the instructions.
 func TestCompareSurfacesReadsTheWholeDump(t *testing.T) {
-	const base = `{"server":"gitlab-mcp","version":"v1","sdk":"v1.8.0","instructions":{"default":"Read first."},"tools":[],` +
+	const base = `{"server":"gitlab-mcp","version":"v1","sdk":"v1.8.0","instructions":{"default":"Read first.","full":"Read all."},"tools":[],` +
 		`"resources":[{"uri":"gitlab://about","name":"about","description":"what"}],"prompts":[{"name":"review"}]}`
 	cases := []struct {
 		name, from, to, want string
@@ -147,7 +147,10 @@ func TestCompareSurfacesReadsTheWholeDump(t *testing.T) {
 		{"a prompt removed", `"prompts":[{"name":"review"}]`, `"prompts":[]`, "BREAKING  prompt removed: review\n", "review"},
 		{"a resource changed", `"description":"what"`, `"description":"why"`, "changed   resource gitlab://about: description\n",
 			"gitlab://about"},
-		{"the instructions changed", "Read first.", "Read it first.", "changed   instructions.default\n", "instructions"},
+		{"the instructions changed", "Read first.", "Read it first.", "changed   instructions: default\n", "instructions"},
+		{"two configurations' instructions changed", `"Read first.","full":"Read all."`, `"Read it first.","full":"Read it all."`,
+			"changed   instructions: default, full\n", "instructions"},
+		{"the instructions removed", `"instructions":{"default":"Read first.","full":"Read all."},`, ``, "changed   instructions\n", "instructions"},
 		{"the build stamp is not the surface", `"version":"v1","sdk":"v1.8.0"`, `"version":"v2","sdk":"v1.9.0"`, "", ""},
 	}
 	for _, tc := range cases {

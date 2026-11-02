@@ -31,7 +31,7 @@ func schemaAck(out io.Writer, args []string) error {
 
 // ackInputs is what checkAck judges: the changes from the merge-base of
 // baseRef and head to head, with each break kept as one only if it also
-// breaks the newest release; the messages of the commits in between; and
+// breaks the last release; the messages of the commits in between; and
 // the merge-base.
 func ackInputs(baseRef, head string) (surfaceChanges, []string, string, error) {
 	root, err := gitx.Root(".")
@@ -65,10 +65,11 @@ func ackInputs(baseRef, head string) (surfaceChanges, []string, string, error) {
 	return c, messages, base, nil
 }
 
-// releasedBreaks is what head breaks of the newest release's surface:
-// the build of the newest tag the base branch reaches, not the head's,
-// which a branch cut before the last tag would leave behind. Before the
-// first tag nothing is released, so nothing breaks a caller.
+// releasedBreaks is what head breaks of the last release's surface: the
+// build of the tag git describe finds for the base branch, the nearest
+// it reaches, not the head's, which a branch cut before the last tag
+// would leave behind. Before the first tag nothing is released, so
+// nothing breaks a caller.
 func releasedBreaks(root, baseRef string, head schemaDump) ([]change, error) {
 	tag, err := gitx.LatestTagOn(root, baseRef)
 	if errors.Is(err, gitx.ErrNoTag) {

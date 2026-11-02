@@ -98,6 +98,33 @@ func TestTheDumpCarriesEverySentenceOfTheInstructions(t *testing.T) {
 	}
 }
 
+// The dump reads the other configurations' instructions without a
+// session, so it holds only while a server built for each serves exactly
+// that text.
+func TestTheDumpSaysWhatEachConfigurationIsServed(t *testing.T) {
+	var buf bytes.Buffer
+	if err := DumpSchemas(&buf, "v0.0.0-test"); err != nil {
+		t.Fatal(err)
+	}
+	var d Dump
+	if err := json.Unmarshal(buf.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for name, c := range instructionConfigs {
+		var served string
+		if err := withSession(ctx, New(Options{Config: c.cfg, Granted: c.granted}), func(cs *mcp.ClientSession) error {
+			served = cs.InitializeResult().Instructions
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if d.Instructions[name] != served {
+			t.Errorf("the dump says %s is told\n%s\nand a session in it is told\n%s", name, d.Instructions[name], served)
+		}
+	}
+}
+
 // The server has no resources or prompts today. One added later is in
 // the dump, sorted, so the schema gates see it.
 func TestTheDumpListsResourcesAndPrompts(t *testing.T) {
