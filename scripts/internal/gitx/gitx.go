@@ -140,11 +140,8 @@ func Messages(root, from, to string) ([]string, error) {
 	return msgs, nil
 }
 
-// ErrNoTag is LatestTag or LatestTagOn finding no tag reachable.
+// ErrNoTag is LatestTagOn finding no tag reachable.
 var ErrNoTag = errors.New("no tag reachable")
-
-// LatestTag is the newest tag reachable from HEAD.
-func LatestTag(root string) (string, error) { return LatestTagOn(root, "HEAD") }
 
 // LatestTagOn is the newest tag reachable from rev. A clone can hold
 // tags rev does not reach, such as a fork that fetched upstream's: rev

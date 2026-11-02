@@ -82,13 +82,14 @@ func TestTheDumpCarriesEverySentenceOfTheInstructions(t *testing.T) {
 		"This server is read-only: no tool here changes anything in GitLab.",
 		"Every tool here only reads: none changes anything in GitLab.",
 		"Tools that write say so in their description and take dry_run.",
-		"Not registered in this configuration: GITLAB_MCP_READ_ONLY=false adds the tools that write",
-		"GITLAB_MCP_ENABLE_SHIP=true adds merging, approving and running CI",
-		"GITLAB_MCP_ENABLE_DESTRUCTIVE=true adds deleting and making a confidential issue public",
+		"Not registered in this configuration: ",
 		lead, addressing, bounded, untrusted,
 	}
 	for _, p := range toolPhrases {
 		sentences = append(sentences, p.tail)
+	}
+	for _, f := range flags(config.Config{}) {
+		sentences = append(sentences, f.setting+" adds "+f.adds)
 	}
 	for _, s := range sentences {
 		if !strings.Contains(all, s) {
@@ -112,19 +113,8 @@ func TestTheDumpListsResourcesAndPrompts(t *testing.T) {
 	s.AddResource(&mcp.Resource{URI: "gitlab://a", Name: "a"}, read)
 	s.AddPrompt(&mcp.Prompt{Name: "review"}, get)
 	s.AddPrompt(&mcp.Prompt{Name: "plan"}, get)
-	ct, st := mcp.NewInMemoryTransports()
-	ss, err := s.Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = ss.Close() }()
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = cs.Close() }()
 	var d Dump
-	if err := listSurface(ctx, cs, &d); err != nil {
+	if err := withSession(ctx, s, func(cs *mcp.ClientSession) error { return listSurface(ctx, cs, &d) }); err != nil {
 		t.Fatal(err)
 	}
 	var got []string

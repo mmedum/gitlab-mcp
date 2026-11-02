@@ -95,8 +95,8 @@ type Dump struct {
 	Server  string `json:"server"`
 	Version string `json:"version"`
 	SDK     string `json:"sdk"`
-	// Instructions are the text each of instructionConfigs is served, and
-	// the full surface's, keyed "full".
+	// Instructions are the text the full surface is served, keyed "full",
+	// and the text each of instructionConfigs is.
 	Instructions      map[string]string       `json:"instructions"`
 	Tools             []*mcp.Tool             `json:"tools"`
 	ResourceTemplates []*mcp.ResourceTemplate `json:"resourceTemplates"`
@@ -121,11 +121,12 @@ var instructionConfigs = map[string]struct {
 // DumpSchemas writes the full tool surface — every flag and toolset on —
 // as JSON, without touching the network or credentials. The SDK has no
 // public enumerator, so an in-memory client asks the server, which is
-// also exactly what a client would be told.
+// also exactly what a client would be told. The other configurations'
+// instructions are the text New serves them, read without a session.
 func DumpSchemas(w io.Writer, version string) error {
 	ctx := context.Background()
 	d := Dump{Server: Name, Version: version, SDK: sdkVersion(), Instructions: map[string]string{}}
-	full := Options{Config: tools.FullSurface(config.Config{}), Version: version}
+	full := New(Options{Config: tools.FullSurface(config.Config{}), Version: version})
 	if err := withSession(ctx, full, func(cs *mcp.ClientSession) error {
 		d.Instructions["full"] = cs.InitializeResult().Instructions
 		return listSurface(ctx, cs, &d)
@@ -133,29 +134,23 @@ func DumpSchemas(w io.Writer, version string) error {
 		return err
 	}
 	for name, c := range instructionConfigs {
-		if err := withSession(ctx, Options{Config: c.cfg, Granted: c.granted, Version: version}, func(cs *mcp.ClientSession) error {
-			d.Instructions[name] = cs.InitializeResult().Instructions
-			return nil
-		}); err != nil {
-			return err
-		}
+		d.Instructions[name] = instructionsFor(c.cfg, c.granted)
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(d)
 }
 
-// withSession serves the server opts build to an in-memory client and
-// hands use the client's session.
-func withSession(ctx context.Context, opts Options, use func(*mcp.ClientSession) error) error {
+// withSession serves s to an in-memory client and hands use the client's
+// session.
+func withSession(ctx context.Context, s *mcp.Server, use func(*mcp.ClientSession) error) error {
 	ct, st := mcp.NewInMemoryTransports()
-	ss, err := New(opts).Connect(ctx, st, nil)
+	ss, err := s.Connect(ctx, st, nil)
 	if err != nil {
 		return fmt.Errorf("connect server: %w", err)
 	}
 	defer func() { _ = ss.Close() }()
-	client := mcp.NewClient(&mcp.Implementation{Name: "schema-dump", Version: opts.Version}, nil)
-	cs, err := client.Connect(ctx, ct, nil)
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "schema-dump"}, nil).Connect(ctx, ct, nil)
 	if err != nil {
 		return fmt.Errorf("connect client: %w", err)
 	}

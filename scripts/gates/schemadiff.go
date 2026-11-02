@@ -83,14 +83,9 @@ func (c surfaceChanges) write(out io.Writer) {
 // that broke also lists every other change to it.
 func compareSurfaces(prev, cur schemaDump) surfaceChanges {
 	var c surfaceChanges
-	keys := slices.Collect(maps.Keys(prev.items))
-	for k := range cur.items {
-		if _, ok := prev.items[k]; !ok {
-			keys = append(keys, k)
-		}
-	}
-	slices.SortFunc(keys, func(a, b itemKey) int { return cmp.Or(strings.Compare(a.list, b.list), strings.Compare(a.id, b.id)) })
-	for _, k := range keys {
+	oldTools, newTools := toolsByName(prev), toolsByName(cur)
+	byListThenID := func(a, b itemKey) int { return cmp.Or(strings.Compare(a.list, b.list), strings.Compare(a.id, b.id)) }
+	for _, k := range sortedUnion(prev.items, cur.items, byListThenID) {
 		was, inPrev := prev.items[k]
 		now, inCur := cur.items[k]
 		switch {
@@ -99,24 +94,17 @@ func compareSurfaces(prev, cur schemaDump) surfaceChanges {
 		case !inPrev:
 			c.added = append(c.added, change{item: k.id, text: k.word() + " added: " + k.id})
 		default:
+			if k.list == "tools" {
+				c.breaking = append(c.breaking, toolBreaks(oldTools[k.id], newTools[k.id])...)
+			}
 			if parts := changedParts(was, now); len(parts) > 0 {
-				label := k.word() + " " + k.id
-				if k.list == "tools" {
-					label = k.id
-				}
-				c.changed = append(c.changed, change{item: k.id, text: label + ": " + strings.Join(parts, ", ")})
+				c.changed = append(c.changed, change{item: k.id, text: k.word() + " " + k.id + ": " + strings.Join(parts, ", ")})
 			}
 		}
 	}
 	for _, part := range changedParts(prev.rest, cur.rest) {
 		top, _, _ := strings.Cut(part, ".")
 		c.changed = append(c.changed, change{item: top, text: part})
-	}
-	oldTools, newTools := toolsByName(prev), toolsByName(cur)
-	for _, name := range slices.Sorted(maps.Keys(oldTools)) {
-		if now, ok := newTools[name]; ok {
-			compareTool(&c, oldTools[name], now)
-		}
 	}
 	return c
 }
@@ -129,25 +117,18 @@ func toolsByName(d schemaDump) map[string]dumpTool {
 	return out
 }
 
-// compareTool adds what changed in the fields of one tool that both
-// surfaces have.
-func compareTool(c *surfaceChanges, was, now dumpTool) {
-	name := was.Name
+// toolBreaks is what breaks a caller in the fields of a tool both
+// surfaces have: an input or an output field gone, or an input newly
+// required. What a tool adds is a change its changed line names.
+func toolBreaks(was, now dumpTool) []change {
+	var out []change
 	broke := func(side, f, how string) {
-		c.breaking = append(c.breaking, change{name, name + ": " + side + " " + how + ": " + f, side + " " + f})
-	}
-	added := func(side, f string) {
-		c.added = append(c.added, change{item: name, text: name + ": " + side + " added: " + f})
+		out = append(out, change{now.Name, now.Name + ": " + side + " " + how + ": " + f, side + " " + f})
 	}
 	wasIn, nowIn := schemaFields(was.InputSchema), schemaFields(now.InputSchema)
 	for _, f := range slices.Sorted(maps.Keys(wasIn)) {
 		if !nowIn[f] {
 			broke("input", f, "removed")
-		}
-	}
-	for _, f := range slices.Sorted(maps.Keys(nowIn)) {
-		if !wasIn[f] {
-			added("input", f)
 		}
 	}
 	wasReq, nowReq := requiredOf(was.InputSchema), requiredOf(now.InputSchema)
@@ -162,11 +143,7 @@ func compareTool(c *surfaceChanges, was, now dumpTool) {
 			broke("output field", f, "removed")
 		}
 	}
-	for _, f := range slices.Sorted(maps.Keys(nowOut)) {
-		if !wasOut[f] {
-			added("output field", f)
-		}
-	}
+	return out
 }
 
 // changedParts names what differs between two dumped objects, one level
@@ -174,7 +151,7 @@ func compareTool(c *surfaceChanges, was, now dumpTool) {
 // are compared decoded, so a reordered key is the same schema.
 func changedParts(o, n map[string]any) []string {
 	var parts []string
-	for _, k := range sortedUnion(o, n) {
+	for _, k := range sortedUnion(o, n, strings.Compare) {
 		if reflect.DeepEqual(o[k], n[k]) {
 			continue
 		}
@@ -184,7 +161,7 @@ func changedParts(o, n map[string]any) []string {
 			parts = append(parts, k)
 			continue
 		}
-		for _, sub := range sortedUnion(om, nm) {
+		for _, sub := range sortedUnion(om, nm, strings.Compare) {
 			if !reflect.DeepEqual(om[sub], nm[sub]) {
 				parts = append(parts, k+"."+sub)
 			}
@@ -193,10 +170,10 @@ func changedParts(o, n map[string]any) []string {
 	return parts
 }
 
-// sortedUnion is every key of a and b, sorted.
-func sortedUnion[V any](a, b map[string]V) []string {
+// sortedUnion is every key of a and b, sorted by compare.
+func sortedUnion[K comparable, V any](a, b map[K]V, compare func(K, K) int) []K {
 	keys := slices.AppendSeq(slices.Collect(maps.Keys(a)), maps.Keys(b))
-	slices.Sort(keys)
+	slices.SortFunc(keys, compare)
 	return slices.Compact(keys)
 }
 
@@ -247,7 +224,7 @@ func schemaDiff(out io.Writer, args []string) error {
 	}
 	var prev schemaDump
 	against := ""
-	tag, err := gitx.LatestTag(root)
+	tag, err := gitx.LatestTagOn(root, "HEAD")
 	switch {
 	case errors.Is(err, gitx.ErrNoTag):
 		prev, err = readDump(filepath.Join(root, baselineFile))
@@ -364,7 +341,7 @@ func dumpAt(root, rev string) (schemaDump, error) {
 		return schemaDump{}, nil
 	}
 	bin := executable(filepath.Join(tmp, "gitlab-mcp"))
-	build := exec.Command("go", "build", "-trimpath", "-o", bin, "./cmd/gitlab-mcp") //nolint:gosec // fixed arguments
+	build := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", bin, "./cmd/gitlab-mcp") //nolint:gosec // fixed arguments
 	build.Dir = src
 	build.Env = mcpstdio.Environ(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {

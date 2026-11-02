@@ -35,7 +35,8 @@ type schemaDump struct {
 	SDK               string         `json:"sdk"`
 	Tools             []dumpTool     `json:"tools"`
 	ResourceTemplates []dumpTemplate `json:"resourceTemplates"`
-	// whole is the dump as written, for the baseline.
+	// whole is the dump as written: the baseline records it, and items
+	// and rest are read from it.
 	whole map[string]any
 	// items is every item of every list in the dump, each whole, fields
 	// the structs here do not name included, so a comparison sees every
@@ -187,6 +188,10 @@ func dumpItems(whole map[string]any) (map[itemKey]map[string]any, map[string]any
 			continue
 		}
 		entries, isList := v.([]any)
+		if !isList {
+			rest[list] = v
+			continue
+		}
 		keyed := map[itemKey]map[string]any{}
 		for _, e := range entries {
 			obj, _ := e.(map[string]any)
@@ -201,7 +206,7 @@ func dumpItems(whole map[string]any) (map[itemKey]map[string]any, map[string]any
 			}
 			keyed[k] = obj
 		}
-		if !isList || keyed == nil {
+		if keyed == nil {
 			rest[list] = v
 			continue
 		}

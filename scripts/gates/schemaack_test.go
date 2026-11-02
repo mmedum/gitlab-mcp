@@ -167,8 +167,7 @@ func TestABreakIsABreakOfARelease(t *testing.T) {
 		t.Errorf("checkAck = %v, want both acknowledged", err)
 	}
 	want := "BREAKING  update_issue: input removed: iid\n" +
-		"added     update_issue: input added: issue_iid\n" +
-		"changed   update_issue: inputSchema.properties\n" +
+		"changed   tool update_issue: inputSchema.properties\n" +
 		"changed   tool removed: draft_tool\n" +
 		"schema ack ok: the change since base is acknowledged\n"
 	if report.String() != want {

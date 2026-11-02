@@ -75,18 +75,18 @@ func TestCompareSurfaces(t *testing.T) {
 		{name: "a tool removed", cur: dumpJSON(map[string][]string{"get_issue": {"project", "iid"}}, tmpl),
 			want: "BREAKING  tool removed: list_tree\n"},
 		{name: "an input removed", cur: dumpJSON(map[string][]string{"get_issue": {"project"}, "list_tree": {"project"}}, tmpl),
-			want: "BREAKING  get_issue: input removed: iid\nchanged   get_issue: inputSchema.properties\n"},
+			want: "BREAKING  get_issue: input removed: iid\nchanged   tool get_issue: inputSchema.properties\n"},
 		{name: "a tool and an input added", cur: dumpJSON(map[string][]string{"get_issue": {"project", "iid", "fields"}, "list_tree": {"project"},
 			"get_file": {"project"}}, tmpl),
-			want: "added     tool added: get_file\nadded     get_issue: input added: fields\nchanged   get_issue: inputSchema.properties\n"},
+			want: "added     tool added: get_file\nchanged   tool get_issue: inputSchema.properties\n"},
 		{name: "a resource template removed", cur: dumpJSON(map[string][]string{"get_issue": {"project", "iid"}, "list_tree": {"project"}}),
 			want: "BREAKING  resource template removed: " + tmpl + "\n"},
 		{name: "a resource template changed", cur: strings.Replace(base, `"the same text"`, `"other text"`, 1),
 			want: "changed   resource template " + tmpl + ": description\n"},
 		{name: "a description changed", cur: strings.Replace(base, "Reads get_issue.", "Reads one issue.", 1),
-			want: "changed   get_issue: description\n"},
+			want: "changed   tool get_issue: description\n"},
 		{name: "a title added", cur: strings.Replace(base, `"name":"list_tree"`, `"name":"list_tree","title":"Tree"`, 1),
-			want: "changed   list_tree: title\n"},
+			want: "changed   tool list_tree: title\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,15 +109,14 @@ func TestCompareSurfacesOnDetail(t *testing.T) {
 		want  string
 	}{
 		{"a new required input", [][2]string{{required, `"required":["project","iid"]`}},
-			"BREAKING  get_issue: input now required: iid\nchanged   get_issue: inputSchema.required\n"},
+			"BREAKING  get_issue: input now required: iid\nchanged   tool get_issue: inputSchema.required\n"},
 		{"a nested output field removed", [][2]string{{`"title":{"type":"string"}`, `"name":{"type":"string"}`}},
-			"BREAKING  get_issue: output field removed: items.title\nadded     get_issue: output field added: items.name\n" +
-				"changed   get_issue: outputSchema.properties\n"},
+			"BREAKING  get_issue: output field removed: items.title\nchanged   tool get_issue: outputSchema.properties\n"},
 		{"an input's minimum", [][2]string{{`"description":"the iid"`, `"description":"the iid","minLength":1`}},
-			"changed   get_issue: inputSchema.properties\n"},
+			"changed   tool get_issue: inputSchema.properties\n"},
 		{"a broken tool's flipped hint", [][2]string{
 			{`"readOnlyHint":true`, `"readOnlyHint":false`}, {required, `"required":["project","iid"]`},
-		}, "BREAKING  get_issue: input now required: iid\nchanged   get_issue: annotations.readOnlyHint, inputSchema.required\n"},
+		}, "BREAKING  get_issue: input now required: iid\nchanged   tool get_issue: annotations.readOnlyHint, inputSchema.required\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

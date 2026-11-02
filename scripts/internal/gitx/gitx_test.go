@@ -105,8 +105,8 @@ func TestMergeBaseMessagesAndTags(t *testing.T) {
 	git(t, dir, "add", ".")
 	git(t, dir, "commit", "-q", "-m", "base")
 	base := git(t, dir, "rev-parse", "HEAD")
-	if _, err := LatestTag(dir); !errors.Is(err, ErrNoTag) {
-		t.Errorf("LatestTag with no tag: err = %v, want ErrNoTag", err)
+	if _, err := LatestTagOn(dir, "HEAD"); !errors.Is(err, ErrNoTag) {
+		t.Errorf("LatestTagOn with no tag: err = %v, want ErrNoTag", err)
 	}
 	git(t, dir, "tag", "v0.1.0")
 
@@ -140,9 +140,9 @@ func TestMergeBaseMessagesAndTags(t *testing.T) {
 	if want := []string{"b.txt"}; !reflect.DeepEqual(changed, want) {
 		t.Errorf("ChangedFiles = %q, want %q", changed, want)
 	}
-	tag, err := LatestTag(dir)
+	tag, err := LatestTagOn(dir, "HEAD")
 	if err != nil || tag != "v0.1.0" {
-		t.Errorf("LatestTag = %q, %v; want v0.1.0", tag, err)
+		t.Errorf("LatestTagOn = %q, %v; want v0.1.0", tag, err)
 	}
 	content, err := Show(dir, "v0.1.0", "a.txt")
 	if err != nil || string(content) != "a" {
