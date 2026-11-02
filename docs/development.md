@@ -72,13 +72,15 @@ SHA the event recorded, which is stale in a stack of pull requests:
 |---|---|
 | `make merge-base` | `gates merge-base`: prints the commit the pull request is measured from |
 | `make changelog` | `gates changelog`: the pull request adds a CHANGELOG line, unless it cuts a release or only bumps the modules go.mod requires, the MCP SDK excepted |
-| `make schema-ack` | `gates schema-ack`: a changed tool surface is acknowledged by `SCHEMA-CHANGE:` or `BREAKING CHANGE:` on a commit the pull request adds |
+| `make schema-ack` | `gates schema-ack`: builds the merge-base and the head, and a footer on a commit the pull request adds names each item of the tool surface that changed: `BREAKING CHANGE:` for a break of the last release, `SCHEMA-CHANGE:` for the rest |
 
-The acknowledgment is an empty commit, never an amend:
+The acknowledgment is an empty commit, never an amend. Only the names
+before the first `: ` count, and the refusal prints the footer that
+fixes it (`CONTRIBUTING.md`, "Changing the tool surface"):
 
 ```bash
 git commit --allow-empty -m "Acknowledge the tool surface change" \
-  -m "SCHEMA-CHANGE: <what was added>"
+  -m "SCHEMA-CHANGE: update_issue: what changed"
 ```
 
 ### By hand

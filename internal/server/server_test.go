@@ -2,8 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -28,17 +30,21 @@ func TestDumpSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	var d struct {
-		Server            string           `json:"server"`
-		Version           string           `json:"version"`
-		SDK               string           `json:"sdk"`
-		Tools             []map[string]any `json:"tools"`
-		ResourceTemplates []any            `json:"resourceTemplates"`
+		Server            string            `json:"server"`
+		Version           string            `json:"version"`
+		SDK               string            `json:"sdk"`
+		Instructions      map[string]string `json:"instructions"`
+		Tools             []map[string]any  `json:"tools"`
+		ResourceTemplates []any             `json:"resourceTemplates"`
 	}
 	if err := json.Unmarshal(buf.Bytes(), &d); err != nil {
 		t.Fatalf("dump is not JSON: %v", err)
 	}
 	if d.Server != "gitlab-mcp" || d.Version != "v0.0.0-test" || d.SDK != "v1.8.0" {
 		t.Errorf("header = %q %q %q", d.Server, d.Version, d.SDK)
+	}
+	if got := slices.Sorted(maps.Keys(d.Instructions)); !slices.Equal(got, []string{"default", "full", "read_api", "read_only"}) {
+		t.Errorf("instructions for %v", got)
 	}
 	if len(d.Tools) != 105 || len(d.ResourceTemplates) != 3 {
 		t.Fatalf("%d tools, templates %v", len(d.Tools), d.ResourceTemplates)
@@ -54,6 +60,82 @@ func TestDumpSchemas(t *testing.T) {
 	}
 	if !slices.IsSorted(names) {
 		t.Errorf("tools are not sorted: %v", names)
+	}
+}
+
+// The dump carries what each configuration is told, so between them its
+// instructions say every sentence the server can: a wording change in
+// any configuration changes the dump, and a pull request has to say so.
+func TestTheDumpCarriesEverySentenceOfTheInstructions(t *testing.T) {
+	var buf bytes.Buffer
+	if err := DumpSchemas(&buf, "v0.0.0-test"); err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		Instructions map[string]string `json:"instructions"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(slices.Collect(maps.Values(d.Instructions)), "\n")
+	sentences := []string{
+		"This server is read-only: no tool here changes anything in GitLab.",
+		"Every tool here only reads: none changes anything in GitLab.",
+		"Tools that write say so in their description and take dry_run.",
+		"Not registered in this configuration: GITLAB_MCP_READ_ONLY=false adds the tools that write",
+		"GITLAB_MCP_ENABLE_SHIP=true adds merging, approving and running CI",
+		"GITLAB_MCP_ENABLE_DESTRUCTIVE=true adds deleting and making a confidential issue public",
+		lead, addressing, bounded, untrusted,
+	}
+	for _, p := range toolPhrases {
+		sentences = append(sentences, p.tail)
+	}
+	for _, s := range sentences {
+		if !strings.Contains(all, s) {
+			t.Errorf("no configuration the dump reads is told %q", s)
+		}
+	}
+}
+
+// The server has no resources or prompts today. One added later is in
+// the dump, sorted, so the schema gates see it.
+func TestTheDumpListsResourcesAndPrompts(t *testing.T) {
+	ctx := context.Background()
+	s := mcp.NewServer(&mcp.Implementation{Name: "fixture"}, nil)
+	read := func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{}, nil
+	}
+	get := func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return &mcp.GetPromptResult{}, nil
+	}
+	s.AddResource(&mcp.Resource{URI: "gitlab://b", Name: "b"}, read)
+	s.AddResource(&mcp.Resource{URI: "gitlab://a", Name: "a"}, read)
+	s.AddPrompt(&mcp.Prompt{Name: "review"}, get)
+	s.AddPrompt(&mcp.Prompt{Name: "plan"}, get)
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := s.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ss.Close() }()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cs.Close() }()
+	var d Dump
+	if err := listSurface(ctx, cs, &d); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range d.Resources {
+		got = append(got, r.URI)
+	}
+	for _, p := range d.Prompts {
+		got = append(got, p.Name)
+	}
+	if want := []string{"gitlab://a", "gitlab://b", "plan", "review"}; !slices.Equal(got, want) {
+		t.Errorf("the dump lists %v, want %v", got, want)
 	}
 }
 

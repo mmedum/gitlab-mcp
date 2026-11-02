@@ -155,6 +155,11 @@ jobs:
       PR_BASE_REF: origin/${{ github.base_ref }}
       # The head commit, not the merge commit the checkout sits on.
       PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      # schema-ack builds the merge-base and the head as `make build`
+      # does, trimmed and without cgo; set for the job, every build in it
+      # shares one cache.
+      CGO_ENABLED: "0"
+      GOFLAGS: -trimpath
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

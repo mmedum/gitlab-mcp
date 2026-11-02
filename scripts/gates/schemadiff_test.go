@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -56,100 +57,120 @@ func mustDump(t *testing.T, raw string) schemaDump {
 	return d
 }
 
+// report is what compareSurfaces finds between two dumps, as written.
+func report(t *testing.T, prev, cur string) string {
+	t.Helper()
+	var out strings.Builder
+	compareSurfaces(mustDump(t, prev), mustDump(t, cur)).write(&out)
+	return out.String()
+}
+
 func TestCompareSurfaces(t *testing.T) {
-	base := dumpJSON(map[string][]string{"get_issue": {"project", "iid"}, "list_tree": {"project"}}, "gitlab://projects/{id}/issues/{iid}")
+	const tmpl = "gitlab://projects/{id}/issues/{iid}"
+	base := dumpJSON(map[string][]string{"get_issue": {"project", "iid"}, "list_tree": {"project"}}, tmpl)
 	cases := []struct {
-		name     string
-		cur      string
-		breaking []string
-		additive []string
-		other    int
+		name, cur, want string
 	}{
 		{name: "unchanged", cur: base},
-		{name: "a tool removed", cur: dumpJSON(map[string][]string{"get_issue": {"project", "iid"}}, "gitlab://projects/{id}/issues/{iid}"),
-			breaking: []string{"tool removed: list_tree"}},
-		{name: "an input removed", cur: dumpJSON(map[string][]string{"get_issue": {"project"}, "list_tree": {"project"}}, "gitlab://projects/{id}/issues/{iid}"),
-			breaking: []string{"get_issue: input removed: iid"}},
+		{name: "a tool removed", cur: dumpJSON(map[string][]string{"get_issue": {"project", "iid"}}, tmpl),
+			want: "BREAKING  tool removed: list_tree\n"},
+		{name: "an input removed", cur: dumpJSON(map[string][]string{"get_issue": {"project"}, "list_tree": {"project"}}, tmpl),
+			want: "BREAKING  get_issue: input removed: iid\nchanged   get_issue: inputSchema.properties\n"},
 		{name: "a tool and an input added", cur: dumpJSON(map[string][]string{"get_issue": {"project", "iid", "fields"}, "list_tree": {"project"},
-			"get_file": {"project"}}, "gitlab://projects/{id}/issues/{iid}"),
-			additive: []string{"get_issue: input added: fields", "tool added: get_file"}},
+			"get_file": {"project"}}, tmpl),
+			want: "added     tool added: get_file\nadded     get_issue: input added: fields\nchanged   get_issue: inputSchema.properties\n"},
 		{name: "a resource template removed", cur: dumpJSON(map[string][]string{"get_issue": {"project", "iid"}, "list_tree": {"project"}}),
-			breaking: []string{"resource template removed: gitlab://projects/{id}/issues/{iid}"}},
-		{name: "a description changed", cur: strings.Replace(base, "Reads get_issue.", "Reads one issue.", 1), other: 1},
+			want: "BREAKING  resource template removed: " + tmpl + "\n"},
+		{name: "a resource template changed", cur: strings.Replace(base, `"the same text"`, `"other text"`, 1),
+			want: "changed   resource template " + tmpl + ": description\n"},
+		{name: "a description changed", cur: strings.Replace(base, "Reads get_issue.", "Reads one issue.", 1),
+			want: "changed   get_issue: description\n"},
+		{name: "a title added", cur: strings.Replace(base, `"name":"list_tree"`, `"name":"list_tree","title":"Tree"`, 1),
+			want: "changed   list_tree: title\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := compareSurfaces(mustDump(t, base), mustDump(t, tc.cur))
-			if strings.Join(c.Breaking, "|") != strings.Join(tc.breaking, "|") {
-				t.Errorf("breaking = %q, want %q", c.Breaking, tc.breaking)
-			}
-			if strings.Join(c.Additive, "|") != strings.Join(tc.additive, "|") {
-				t.Errorf("additive = %q, want %q", c.Additive, tc.additive)
-			}
-			if len(c.Other) != tc.other {
-				t.Errorf("other = %q, want %d", c.Other, tc.other)
+			if got := report(t, base, tc.cur); got != tc.want {
+				t.Errorf("the report is\n%s\nwant\n%s", got, tc.want)
 			}
 		})
 	}
 }
 
 // The rules that need a hand-edited dump: a new required input, a lost
-// output field, and a change only the whole object shows.
+// output field, a change only the whole object shows, and a tool that
+// broke still showing its other changes.
 func TestCompareSurfacesOnDetail(t *testing.T) {
 	base := dumpJSON(map[string][]string{"get_issue": {"project", "iid"}})
+	const required = `"required":["project"]`
 	cases := []struct {
-		name, from, to, want string
-		breaking             bool
+		name  string
+		edits [][2]string
+		want  string
 	}{
-		{"a new required input", `"required":["project"]`, `"required":["project","iid"]`, "get_issue: input now required: iid", true},
-		{"a nested output field removed", `"title":{"type":"string"}`, `"name":{"type":"string"}`, "get_issue: output field removed: items.title", true},
-		{"an input's minimum", `"type":"string","description":"the iid"`, `"type":"string","description":"the iid","minLength":1`,
-			"get_issue: description, schema detail, annotations or _meta", false},
+		{"a new required input", [][2]string{{required, `"required":["project","iid"]`}},
+			"BREAKING  get_issue: input now required: iid\nchanged   get_issue: inputSchema.required\n"},
+		{"a nested output field removed", [][2]string{{`"title":{"type":"string"}`, `"name":{"type":"string"}`}},
+			"BREAKING  get_issue: output field removed: items.title\nadded     get_issue: output field added: items.name\n" +
+				"changed   get_issue: outputSchema.properties\n"},
+		{"an input's minimum", [][2]string{{`"description":"the iid"`, `"description":"the iid","minLength":1`}},
+			"changed   get_issue: inputSchema.properties\n"},
+		{"a broken tool's flipped hint", [][2]string{
+			{`"readOnlyHint":true`, `"readOnlyHint":false`}, {required, `"required":["project","iid"]`},
+		}, "BREAKING  get_issue: input now required: iid\nchanged   get_issue: annotations.readOnlyHint, inputSchema.required\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if !strings.Contains(base, tc.from) {
-				t.Fatalf("fixture lacks %s", tc.from)
+			cur := base
+			for _, e := range tc.edits {
+				if !strings.Contains(cur, e[0]) {
+					t.Fatalf("fixture lacks %s", e[0])
+				}
+				cur = strings.Replace(cur, e[0], e[1], 1)
 			}
-			c := compareSurfaces(mustDump(t, base), mustDump(t, strings.Replace(base, tc.from, tc.to, 1)))
-			got := strings.Join(append(append(c.Breaking, c.Additive...), c.Other...), "|")
-			if !strings.Contains(got, tc.want) {
-				t.Errorf("got %q, want %q", got, tc.want)
-			}
-			if tc.breaking != (len(c.Breaking) > 0) {
-				t.Errorf("breaking = %v, want %v", c.Breaking, tc.breaking)
+			if got := report(t, base, cur); got != tc.want {
+				t.Errorf("the report is\n%s\nwant\n%s", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestCheckAck(t *testing.T) {
-	additive := surfaceChanges{Additive: []string{"tool added: get_file"}}
-	breaking := surfaceChanges{Breaking: []string{"tool removed: list_tree"}}
+// Every list is compared item by item, and every other key whole: a
+// removed prompt breaks a caller as a removed tool does, and a reworded
+// instruction is a change to the instructions.
+func TestCompareSurfacesReadsTheWholeDump(t *testing.T) {
+	const base = `{"server":"gitlab-mcp","version":"v1","sdk":"v1.8.0","instructions":{"default":"Read first."},"tools":[],` +
+		`"resources":[{"uri":"gitlab://about","name":"about","description":"what"}],"prompts":[{"name":"review"}]}`
 	cases := []struct {
-		name     string
-		c        surfaceChanges
-		messages []string
-		wantErr  string
+		name, from, to, want string
+		item                 string
 	}{
-		{"no change needs nothing", surfaceChanges{}, nil, ""},
-		{"an additive change acknowledged", additive, []string{"add get_file\n\nSCHEMA-CHANGE: get_file added\n"}, ""},
-		{"an additive change unacknowledged", additive, []string{"add get_file"}, "no commit since"},
-		{"a mention in prose is not a footer", additive, []string{"this adds a SCHEMA-CHANGE: nothing"}, "no commit since"},
-		{"an empty footer is not one", additive, []string{"x\n\nSCHEMA-CHANGE:\n"}, "no commit since"},
-		{"a breaking change acknowledged", breaking, []string{"drop list_tree\n\nBREAKING CHANGE: list_tree is gone"}, ""},
-		{"a breaking change called additive", breaking, []string{"drop list_tree\n\nSCHEMA-CHANGE: list_tree is gone"}, "says BREAKING CHANGE"},
+		{"a prompt removed", `"prompts":[{"name":"review"}]`, `"prompts":[]`, "BREAKING  prompt removed: review\n", "review"},
+		{"a resource changed", `"description":"what"`, `"description":"why"`, "changed   resource gitlab://about: description\n",
+			"gitlab://about"},
+		{"the instructions changed", "Read first.", "Read it first.", "changed   instructions.default\n", "instructions"},
+		{"the build stamp is not the surface", `"version":"v1","sdk":"v1.8.0"`, `"version":"v2","sdk":"v1.9.0"`, "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkAck(&bytes.Buffer{}, tc.c, tc.messages, strings.Repeat("a", 40))
-			switch {
-			case tc.wantErr == "" && err != nil:
-				t.Errorf("err = %v", err)
-			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
-				t.Errorf("err = %v, want %q", err, tc.wantErr)
+			cur := strings.Replace(base, tc.from, tc.to, 1)
+			if got := report(t, base, cur); got != tc.want {
+				t.Errorf("the report is\n%s\nwant\n%s", got, tc.want)
+			}
+			c := compareSurfaces(mustDump(t, base), mustDump(t, cur))
+			if items := unnamed(slices.Concat(c.breaking, c.added, c.changed), nil); strings.Join(items, " ") != tc.item {
+				t.Errorf("the change is to %q, want %q", items, tc.item)
 			}
 		})
+	}
+}
+
+// Two items of one list with one id are one item twice, which no
+// comparison can tell apart.
+func TestADumpNamingAnItemTwiceIsRefused(t *testing.T) {
+	_, err := decodeDump([]byte(`{"tools":[{"name":"get_issue"},{"name":"get_issue"}]}`), "fixture")
+	if err == nil || err.Error() != `fixture: the tools list names "get_issue" twice` {
+		t.Errorf("err = %v", err)
 	}
 }
 
@@ -202,9 +223,19 @@ func (r *fakeRepo) git(args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// commit writes a main that prints dump, or does not compile when dump
+// commit commits a main that prints dump, or does not compile when dump
 // is empty.
 func (r *fakeRepo) commit(dump, message string) string {
+	r.t.Helper()
+	r.write(dump)
+	r.git("add", "-A")
+	r.git("commit", "--quiet", "-m", message)
+	return r.git("rev-parse", "HEAD")
+}
+
+// write puts a main that prints dump in the working tree, uncommitted,
+// or one that does not compile when dump is empty.
+func (r *fakeRepo) write(dump string) {
 	r.t.Helper()
 	dir := filepath.Join(r.root, "cmd", "gitlab-mcp")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -217,9 +248,6 @@ func (r *fakeRepo) commit(dump, message string) string {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o600); err != nil {
 		r.t.Fatal(err)
 	}
-	r.git("add", "-A")
-	r.git("commit", "--quiet", "-m", message)
-	return r.git("rev-parse", "HEAD")
 }
 
 // build builds the checked-out main into a binary outside the tree.
@@ -297,8 +325,13 @@ func TestSchemaDiffAcceptsADeclaredBreak(t *testing.T) {
 }
 
 func TestUndeclaredBreaks(t *testing.T) {
-	c := surfaceChanges{Breaking: []string{"tool removed: list_tree", "apply_suggestions: input now required: suggestions",
-		"resource template removed: gitlab://projects/{id}/wiki"}}
+	c := surfaceChanges{breaking: []change{
+		{item: "list_tree", text: "tool removed: list_tree"},
+		{"apply_suggestions", "apply_suggestions: input now required: suggestions", "input suggestions"},
+		{item: "gitlab://projects/{id}/wiki", text: "resource template removed: gitlab://projects/{id}/wiki"},
+	}}
+	texts := []string{"tool removed: list_tree", "apply_suggestions: input now required: suggestions",
+		"resource template removed: gitlab://projects/{id}/wiki"}
 	all := "`list_tree`, `apply_suggestions` and `gitlab://projects/{id}/wiki`"
 	released := "\n## [1.4.0] - 2026-01-01\n\n- **Breaking:** " + all + ".\n"
 	for _, tc := range []struct {
@@ -308,8 +341,8 @@ func TestUndeclaredBreaks(t *testing.T) {
 		{"every one declared", "## [Unreleased]\n\n- **Breaking:** " + all + ".\n" + released, nil},
 		{"one not named", "## [Unreleased]\n\n- **Breaking:** `list_tree` and `gitlab://projects/{id}/wiki`.\n" + released,
 			[]string{"apply_suggestions: input now required: suggestions"}},
-		{"named outside a Breaking entry", "## [Unreleased]\n\n- " + all + " changed.\n" + released, c.Breaking},
-		{"declared only in a release made", "## [Unreleased]\n" + released, c.Breaking},
+		{"named outside a Breaking entry", "## [Unreleased]\n\n- " + all + " changed.\n" + released, texts},
+		{"declared only in a release made", "## [Unreleased]\n" + released, texts},
 		{"a release that raises the major", "## [2.0.0] - 2026-02-01\n\n- **Breaking:** " + all + ".\n" + released, nil},
 		{"a release that does not", "## [1.5.0] - 2026-02-01\n\n- **Breaking:** " + all + ".\n" + released,
 			[]string{"release 1.5.0 breaks the surface without raising the major version from 1.4.0"}},
@@ -387,45 +420,6 @@ func TestSchemaDiffRefusesASmallSurface(t *testing.T) {
 		if err := run(); err == nil || !strings.Contains(err.Error(), "the floor is") {
 			t.Errorf("%s: err = %v", name, err)
 		}
-	}
-}
-
-func TestSchemaAckInAPullRequest(t *testing.T) {
-	r := newFakeRepo(t)
-	base := r.commit(dumpJSON(manyTools()), "base")
-	r.commit(dumpJSON(manyTools("get_file")), "add get_file")
-	bin := r.build()
-	t.Chdir(r.root)
-
-	if err := schemaAck(&bytes.Buffer{}, []string{bin, base, "HEAD"}); err == nil || !strings.Contains(err.Error(), "SCHEMA-CHANGE") {
-		t.Fatalf("unacknowledged: err = %v", err)
-	}
-	r.git("commit", "--quiet", "--allow-empty", "-m", "acknowledge\n\nSCHEMA-CHANGE: get_file added")
-	var out bytes.Buffer
-	if err := schemaAck(&out, []string{bin, base, "HEAD"}); err != nil {
-		t.Fatalf("acknowledged: %v\n%s", err, out.String())
-	}
-	if n := r.worktrees(); n != 1 {
-		t.Errorf("%d worktrees left", n)
-	}
-}
-
-// A pull request from before the server existed compares with an empty
-// surface: every tool is added, and has to be acknowledged.
-func TestSchemaAckFromBeforeTheServer(t *testing.T) {
-	r := newFakeRepo(t)
-	r.git("add", "-A")
-	r.git("commit", "--quiet", "-m", "initial")
-	base := r.git("rev-parse", "HEAD")
-	r.commit(dumpJSON(manyTools()), "the server")
-	bin := r.build()
-	t.Chdir(r.root)
-	if err := schemaAck(&bytes.Buffer{}, []string{bin, base, "HEAD"}); err == nil || !strings.Contains(err.Error(), "SCHEMA-CHANGE") {
-		t.Fatalf("unacknowledged: err = %v", err)
-	}
-	r.git("commit", "--quiet", "--allow-empty", "-m", "acknowledge\n\nSCHEMA-CHANGE: the first tools")
-	if err := schemaAck(&bytes.Buffer{}, []string{bin, base, "HEAD"}); err != nil {
-		t.Fatalf("acknowledged: %v", err)
 	}
 }
 

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -76,9 +77,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := c.run(stdout, rest); err != nil {
 		_, _ = fmt.Fprintf(stderr, "gates %s: %v\n", args[0], err)
-		return 1
+		return exitCode(err)
 	}
 	return 0
+}
+
+// couldNotRun is a gate that reached no verdict: a build or a git call
+// failed. Its message says so, and it exits 2, as a usage error does,
+// where a refusal exits 1.
+type couldNotRun struct{ err error }
+
+func (e couldNotRun) Error() string { return "could not run: " + e.err.Error() }
+func (e couldNotRun) Unwrap() error { return e.err }
+
+// exitCode is the status a gate's error exits with.
+func exitCode(err error) int {
+	if errors.As(err, new(couldNotRun)) {
+		return 2
+	}
+	return 1
 }
 
 func usage(w io.Writer) {

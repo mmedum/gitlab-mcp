@@ -75,6 +75,30 @@ func TestFilesAndTracked(t *testing.T) {
 	}
 }
 
+// The newest tag rev reaches: not one only a later commit carries. A rev
+// that reaches none has none, though the repository has tags, and a rev
+// git cannot read is git's error, not a missing tag.
+func TestLatestTagOnReadsWhatRevReaches(t *testing.T) {
+	dir := repo(t)
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "first")
+	git(t, dir, "branch", "untagged")
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "second")
+	git(t, dir, "tag", "v1.0.0")
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "third")
+	git(t, dir, "tag", "v1.1.0")
+	for rev, want := range map[string]string{"HEAD~1": "v1.0.0", "main": "v1.1.0"} {
+		if tag, err := LatestTagOn(dir, rev); err != nil || tag != want {
+			t.Errorf("LatestTagOn(%s) = %q, %v; want %s", rev, tag, err, want)
+		}
+	}
+	if _, err := LatestTagOn(dir, "untagged"); !errors.Is(err, ErrNoTag) {
+		t.Errorf("LatestTagOn(untagged): err = %v, want ErrNoTag", err)
+	}
+	if _, err := LatestTagOn(dir, "no-such-ref"); err == nil || errors.Is(err, ErrNoTag) {
+		t.Errorf("LatestTagOn(no-such-ref): err = %v, want git's error", err)
+	}
+}
+
 func TestMergeBaseMessagesAndTags(t *testing.T) {
 	dir := repo(t)
 	write(t, dir, "a.txt", "a")

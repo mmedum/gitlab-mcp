@@ -140,22 +140,28 @@ func Messages(root, from, to string) ([]string, error) {
 	return msgs, nil
 }
 
-// ErrNoTag is LatestTag finding no tag reachable from HEAD.
-var ErrNoTag = errors.New("no tag reachable from HEAD")
+// ErrNoTag is LatestTag or LatestTagOn finding no tag reachable.
+var ErrNoTag = errors.New("no tag reachable")
 
 // LatestTag is the newest tag reachable from HEAD.
-func LatestTag(root string) (string, error) {
-	cmd := exec.Command("git", "describe", "--tags", "--abbrev=0")
-	cmd.Dir = root
-	out, err := cmd.Output()
+func LatestTag(root string) (string, error) { return LatestTagOn(root, "HEAD") }
+
+// LatestTagOn is the newest tag reachable from rev. A clone can hold
+// tags rev does not reach, such as a fork that fetched upstream's: rev
+// then has none. Any other failure is git's, and says so.
+func LatestTagOn(root, rev string) (string, error) {
+	tags, err := Output(root, "tag", "--merged", rev)
 	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			return "", ErrNoTag
-		}
-		return "", fmt.Errorf("git describe: %w", err)
+		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	if strings.TrimSpace(tags) == "" {
+		return "", ErrNoTag
+	}
+	out, err := Output(root, "describe", "--tags", "--abbrev=0", rev)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 func isSHA(s string) bool {

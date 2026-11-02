@@ -37,12 +37,14 @@ type schemaDump struct {
 	ResourceTemplates []dumpTemplate `json:"resourceTemplates"`
 	// whole is the dump as written, for the baseline.
 	whole map[string]any
+	// items is every item of every list in the dump, each whole, fields
+	// the structs here do not name included, so a comparison sees every
+	// change; rest is every other key but the build stamp.
+	items map[itemKey]map[string]any
+	rest  map[string]any
 }
 
 type dumpTool struct {
-	// raw is the whole tool as dumped, fields this struct does not name
-	// included, so a comparison sees every change.
-	raw          map[string]any
 	Name         string          `json:"name"`
 	Title        string          `json:"title,omitempty"`
 	Description  string          `json:"description"`
@@ -69,7 +71,6 @@ type dumpSchema struct {
 }
 
 type dumpTemplate struct {
-	raw         map[string]any
 	URITemplate string `json:"uriTemplate"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -144,23 +145,79 @@ func decodeDump(raw []byte, name string) (schemaDump, error) {
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return schemaDump{}, fmt.Errorf("%s is not a schema dump: %w", name, err)
 	}
-	var whole struct {
-		Tools             []map[string]any `json:"tools"`
-		ResourceTemplates []map[string]any `json:"resourceTemplates"`
-	}
-	if err := json.Unmarshal(raw, &whole); err != nil {
-		return schemaDump{}, fmt.Errorf("%s is not a schema dump: %w", name, err)
-	}
 	if err := json.Unmarshal(raw, &d.whole); err != nil {
 		return schemaDump{}, err
 	}
-	for i := range d.Tools {
-		d.Tools[i].raw = whole.Tools[i]
+	items, rest, err := dumpItems(d.whole)
+	if err != nil {
+		return schemaDump{}, fmt.Errorf("%s: %w", name, err)
 	}
-	for i := range d.ResourceTemplates {
-		d.ResourceTemplates[i].raw = whole.ResourceTemplates[i]
-	}
+	d.items, d.rest = items, rest
 	return d, nil
+}
+
+// stampKeys are the dump's build stamp. They change with the build and
+// are not part of the surface; what an SDK bump changes on the wire shows
+// up inside the tools.
+var stampKeys = []string{"server", "version", "sdk"}
+
+// itemKey names an item of a dumped list: the list, and the id a client
+// asks for it by, its template or URI, else its name. The id is what a
+// commit footer and a CHANGELOG entry name the item by.
+type itemKey struct{ list, id string }
+
+// listWords is what the report calls an item of each list.
+var listWords = map[string]string{"tools": "tool", "resourceTemplates": "resource template", "resources": "resource", "prompts": "prompt"}
+
+func (k itemKey) word() string {
+	if w, ok := listWords[k.list]; ok {
+		return w
+	}
+	return k.list
+}
+
+// dumpItems reads every item of every list in a dump, and every other
+// key but the build stamp. A list with an item that has no id is
+// compared as one value, since a position is no identity.
+func dumpItems(whole map[string]any) (map[itemKey]map[string]any, map[string]any, error) {
+	items := map[itemKey]map[string]any{}
+	rest := map[string]any{}
+	for list, v := range whole {
+		if slices.Contains(stampKeys, list) {
+			continue
+		}
+		entries, isList := v.([]any)
+		keyed := map[itemKey]map[string]any{}
+		for _, e := range entries {
+			obj, _ := e.(map[string]any)
+			id := itemID(obj)
+			if id == "" {
+				keyed = nil
+				break
+			}
+			k := itemKey{list, id}
+			if _, twice := keyed[k]; twice {
+				return nil, nil, fmt.Errorf("the %s list names %q twice", list, id)
+			}
+			keyed[k] = obj
+		}
+		if !isList || keyed == nil {
+			rest[list] = v
+			continue
+		}
+		maps.Copy(items, keyed)
+	}
+	return items, rest, nil
+}
+
+// itemID is the id of an item of a dumped list, or "" when it has none.
+func itemID(item map[string]any) string {
+	for _, k := range []string{"uriTemplate", "uri", "name"} {
+		if v, ok := item[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func readDump(path string) (schemaDump, error) {
