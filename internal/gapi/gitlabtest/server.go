@@ -1,11 +1,11 @@
 // Package gitlabtest is an in-memory GitLab behind httptest, for tests.
 //
 // It serves the REST paths the client uses and models the platform facts
-// of docs/architecture.md §2 the server depends on: 404 for a private
-// project, the catch-all route shape, offset and keyset pagination with
-// their edges, 429 in both body shapes, a moved project, OAuth with
-// immediately rotating refresh tokens, and quick actions run from a note.
-// Everything in it is generated (§9.1).
+// the server depends on: 404 for a private project, the catch-all route
+// shape, offset and keyset pagination with their edges, 429 in both body
+// shapes, a moved project, OAuth with immediately rotating refresh
+// tokens, and quick actions run from a note. Everything in it is
+// generated.
 package gitlabtest
 
 import (
@@ -74,8 +74,8 @@ type Server struct {
 	mu sync.Mutex
 	// inputsSent are the input values the last job retry or play sent.
 	inputsSent map[string]any
-	// The phase 6 state: issue links, the ids new labels and milestones
-	// take, and the rebases asked for.
+	// Issue links, the ids new labels and milestones take, and the
+	// rebases asked for.
 	issueLinks      []issueLink
 	nextLinkID      int64
 	mrBlocks        []mrBlock

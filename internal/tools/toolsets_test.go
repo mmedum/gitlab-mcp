@@ -617,7 +617,7 @@ func TestDeleteSnippetIsReadBack(t *testing.T) {
 }
 
 // A snippet that is not private is not written to, personal or in a
-// project: writing into one is how private content leaves (§4.7).
+// project: writing into one is how private content leaves (D-39).
 func TestUpdateSnippetWritesOnlyPrivateSnippets(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: withToolsets(config.Config{}, "snippets")})
 	for _, project := range []string{"", alpha} {

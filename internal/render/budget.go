@@ -7,8 +7,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// Budgets in characters (§4.8). A result states the one it used, so a
-// cut text is never mistaken for a short one.
+// Budgets in characters. A result states the one it used, so a cut text
+// is never mistaken for a short one.
 const (
 	// DescriptionBudget bounds an issue or merge request description.
 	DescriptionBudget = 20000

@@ -17,9 +17,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// What every write shares: where it may go (§4.7), what a dry run shows,
-// how names become ids (§6.3), and how an ambiguous create is settled by
-// reading (§4.5).
+// What every write shares: where it may go, what a dry run shows, how
+// names become ids, and how an ambiguous create is settled by reading.
 
 // target is a write's project, read fresh: its visibility goes into the
 // result, and its path decides the allow-list.
@@ -166,7 +165,7 @@ func parallel(fns ...func() error) error {
 }
 
 // userIDs turns usernames into ids, exactly, looking them up at once. An
-// unknown one is invalid naming it (§6.3).
+// unknown one is invalid naming it.
 func (s *Service) userIDs(ctx context.Context, names []string) ([]int64, error) {
 	out := make([]int64, len(names))
 	lookups := make([]func() error, len(names))
@@ -189,7 +188,7 @@ func (s *Service) userIDs(ctx context.Context, names []string) ([]int64, error) 
 }
 
 // checkLabels refuses a label name the project and its groups do not
-// have, because GitLab would create it silently (§6.3). Names match
+// have, because GitLab would create it silently (D-64). Names match
 // exactly, scoped labels included.
 func (s *Service) checkLabels(ctx context.Context, p gapi.Project, names []string) error {
 	if len(names) == 0 {
@@ -219,7 +218,7 @@ func (s *Service) checkLabels(ctx context.Context, p gapi.Project, names []strin
 }
 
 // milestoneID finds a milestone by exact title in the project and its
-// groups. Two matches are ambiguous with both ids (§6.3).
+// groups. Two matches are ambiguous with both ids.
 func (s *Service) milestoneID(ctx context.Context, p gapi.Project, title string) (int64, error) {
 	if title == "" {
 		return 0, nil
@@ -255,7 +254,7 @@ func bareUsername(s string) string { return strings.TrimPrefix(strings.TrimSpace
 // for a clock that differs from GitLab's.
 const settleSkew = 2 * time.Minute
 
-// The three verdicts of a read that settles a lost write (§4.5), as
+// The three verdicts of a read that settles a lost write, as
 // each result ends.
 const (
 	settledLanded    = "Do not repeat the call"
@@ -263,10 +262,12 @@ const (
 	settledUnknown   = "read before doing anything, and do not repeat the call"
 )
 
-// settle turns a create's ambiguous failure into its verdict (§4.5).
+// settle turns a create's ambiguous failure into its verdict (D-34).
 // find reads what the create would have made: a non-empty description
 // when found, "" when not, and an error when the read itself failed.
-// Every other error comes back unchanged.
+// Every other error comes back unchanged. A read made at once finds what
+// a create made, so find waits for nothing. Checked by the live step
+// "how soon a read finds what a create made".
 func settle(err error, what string, find func() (string, error)) error {
 	var e *gapi.Error
 	if !errors.As(err, &e) || e.Class != gapi.ClassAmbiguousOutcome {
@@ -294,7 +295,7 @@ func sameText(a, b string) bool {
 // ------------------------------------------------------------ changes
 
 // removedFrom counts the lines of before that after no longer has, and
-// their characters, for a text replaced wholesale (§4.6).
+// their characters, for a text replaced wholesale.
 func removedFrom(before, after string) *model.Removed {
 	left := map[string]int{}
 	for l := range strings.SplitSeq(after, "\n") {
@@ -326,7 +327,7 @@ func usernames(us []gitlab.UserBasic) []string {
 
 // withSet is the ids of current plus add, less the usernames in remove:
 // assignees and reviewers change by add and remove, never by a list the
-// caller typed (§4.6).
+// caller typed (D-37).
 func withSet(current []gitlab.UserBasic, add []int64, remove []string) []int64 {
 	removed := func(u gitlab.UserBasic) bool {
 		return slices.ContainsFunc(remove, func(n string) bool {
@@ -375,8 +376,12 @@ func parseWitness(raw string) (time.Time, error) {
 }
 
 // checkWitness refuses an update whose witness is not the item's current
-// updated_at (§4.6). GitLab has no guard for this, so the window between
-// this read and the write stays open; the check narrows it.
+// updated_at (D-36). GitLab has no guard for this: nothing in its API
+// reads If-Match, and an issue's or a merge request's lock_version is
+// taken only by the web pages (v19.4.1-ee). So the window between this
+// read and the write stays open; the check narrows it. Checked by the
+// live step "an issue update with a stale witness is refused".
+// https://docs.gitlab.com/api/issues/
 func checkWitness(witness, current time.Time, what string) error {
 	if witness.Equal(current) {
 		return nil

@@ -1,7 +1,6 @@
 // Package diffpos computes where an inline comment lands: GitLab's diff
 // position for a line of a merge request's diff, from the file's unified
-// diff and the diff version's refs (docs/architecture.md §7.4). It makes
-// no request.
+// diff and the diff version's refs. It makes no request.
 //
 // The numbering follows GitLab's own parser, read at gitlab-org/gitlab
 // 829b21d284863743bde419836a053626309d02f6 (lib/gitlab/diff/parser.rb,
@@ -12,6 +11,13 @@
 // line's line_code names the new side's position too:
 //
 //	line_code = sha1(new_path, or old_path when empty) "_" old "_" new
+//
+// A hunk's start is taken as written and its count ignored, so after
+// "@@ -5,0 +6,2 @@" an added line's old counter is 5. GitLab's
+// discussions page shows line_code only by example and does not say how
+// it is computed. Checked by the live step
+// "whether diffpos positions land on GitLab's lines".
+// https://docs.gitlab.com/api/discussions/
 package diffpos
 
 import (

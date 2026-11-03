@@ -9,7 +9,7 @@ import (
 )
 
 // Each refusal internal/localimage gives carries the class the caller
-// acts on (§6.5); a kind with no words here is a defect, and anything
+// acts on; a kind with no words here is a defect, and anything
 // else passes through as it is.
 func TestImageRefusalsCarryTheirClass(t *testing.T) {
 	for kind, want := range map[localimage.Kind]gapi.Class{

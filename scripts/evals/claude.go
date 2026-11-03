@@ -26,9 +26,9 @@ import (
 //
 // The built-in tools are turned off at the source, never listed away:
 // --tools "" disables every one, and --allowed-tools names the MCP ones
-// that remain. A denylist fails open — a sibling's first version listed
-// six built-ins and the model used two it had not listed to read the
-// maintainer's notes mid-task. --setting-sources "" drops the
+// that remain. A denylist fails open: a built-in it does not name stays
+// on, and a model can use it to read the maintainer's files mid-task.
+// --setting-sources "" drops the
 // maintainer's settings, hooks and permission rules, and
 // --strict-mcp-config keeps their other MCP servers out. What is left is
 // the thing being scored. A tool call the harness sees that is not one

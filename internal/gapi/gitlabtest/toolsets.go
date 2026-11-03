@@ -14,7 +14,7 @@ import (
 
 // The optional toolsets' half of the instance: a project wiki, snippets,
 // releases, environments and deployments, and events. Everything is
-// generated here, as the rest of the instance is (§9.1).
+// generated here, as the rest of the instance is.
 
 // Fixture ids and names tests address.
 const (

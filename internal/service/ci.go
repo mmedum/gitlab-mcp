@@ -22,7 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ListPipelines lists a project's pipelines (§7.6).
+// ListPipelines lists a project's pipelines.
 func (s *Service) ListPipelines(ctx context.Context, raw string, q gapi.PipelineQuery, opts gapi.ListOptions) (model.Pipelines, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
@@ -40,7 +40,7 @@ func (s *Service) ListPipelines(ctx context.Context, raw string, q gapi.Pipeline
 	return out, nil
 }
 
-// GetPipeline reads a pipeline with its failed jobs (§7.6). The two reads
+// GetPipeline reads a pipeline with its failed jobs. The two reads
 // are independent and run at once.
 func (s *Service) GetPipeline(ctx context.Context, raw string, id int64) (model.PipelineDetail, error) {
 	p, ref, err := s.project(ctx, raw)
@@ -152,14 +152,20 @@ const (
 var unfinished = []string{"created", "waiting_for_resource", "preparing", "pending", "running", "scheduled", "manual",
 	"canceling"}
 
-// GetTestReport reads a pipeline's test report (§7.6): the counts, each
+// GetTestReport reads a pipeline's test report: the counts, each
 // suite's, and the failed and errored cases from offset under the
-// budget. GitLab parses the report when read and does not page it, so
-// each call reads it again; one larger than the client reads falls back
-// to the stored summary, which has counts and no cases. The report takes
-// in child pipelines in the project, so a child still running makes it
-// partial too. Case names and output are the project's tests' words:
-// masked like a job log and prepared for the boundary.
+// budget. Case names and output are the project's tests' words: masked
+// like a job log and prepared for the boundary.
+//
+// GitLab parses the report when read, caches it up to two minutes, and
+// answers every case in one body; the API docs say it pages, and it does
+// not, so each call reads it whole. One larger than the client reads
+// falls back to the stored summary, which a worker writes after each job
+// and which has counts and no cases. Child pipelines in the project are
+// taken in, so a child still running makes the report partial. JUnit's
+// failure text is in system_output; stack_trace is always null
+// (v19.4.1-ee). Checked by the live step "a pipeline's test report is read".
+// https://docs.gitlab.com/api/pipelines/
 func (s *Service) GetTestReport(ctx context.Context, raw string, pipeline int64, offset int) (model.TestReport, error) {
 	if offset < 0 {
 		return model.TestReport{}, gapi.Errf(gapi.ClassInvalid, "offset is 0 or more")
@@ -384,11 +390,16 @@ type JobLogQuery struct {
 }
 
 // GetJobLog shows a window of a job's log: the tail by default, from
-// byte_offset when given, or the section the job failed in (§7.6). What
-// it shows is cleaned as GitLab's page shows it, secret shapes masked
-// (§4.1.4) and hidden characters made visible, inside a boundary. Only
-// the window and what its edges need are read, so a log of any size can
-// be shown (§7.6).
+// byte_offset when given, or the section the job failed in. What it
+// shows is cleaned as GitLab's page shows it, secret shapes masked and
+// hidden characters made visible, inside a boundary. Only the window and
+// what its edges need are read, so a log of any size can be shown (D-56).
+//
+// The trace route's byte_offset and byte_limit, which the API docs do
+// not describe, cut an exact slice with no Content-Range, and answer an
+// empty 200 past the end. Checked by the live steps "what byte_offset
+// and byte_limit cut from a job log" and "a job log is read in a byte window".
+// https://docs.gitlab.com/api/jobs/
 func (s *Service) GetJobLog(ctx context.Context, q JobLogQuery) (model.JobLog, error) {
 	limit := q.ByteLimit
 	switch {
@@ -500,10 +511,14 @@ type logReader struct {
 	have []byte
 }
 
-// measure learns the log's size. An archived log's size is its trace
-// artifact's. Any other is read from its start, one ranged read's worth:
-// a shorter answer is the whole log, and a longer log is measured by
-// reading past its end (spike O).
+// measure learns the log's size. An archived log is the job's trace
+// artifact, whose size is the stored file's. A HEAD's length cannot be
+// trusted: it can be 0 for a finished log, and is for a running one.
+// Any other log is read from its start, one ranged read's worth: a
+// shorter answer is the whole log, and a longer one is measured by
+// reading past its end. Checked by the live steps "where a job log's
+// size shows without reading it" and "a failed job's log is read".
+// https://docs.gitlab.com/api/jobs/
 func (r *logReader) measure(j gitlab.Job) error {
 	for _, a := range j.Artifacts {
 		if a.FileType == "trace" && a.Size > 0 {
@@ -763,7 +778,8 @@ func lastKeyBegin(b []byte) int {
 
 // keyOpen reports whether start is inside a private key block opened
 // before it and not yet closed, which the caller masks whole rather than
-// shows from its middle. It looks keyReach back (§18 row 76).
+// shows from its middle. It looks keyReach back, past any real key's
+// length (RFC 7468 §3, RFC 4880 §6.2); a BEGIN further back is not found.
 func (r *logReader) keyOpen(start int) (bool, error) {
 	b, err := r.span(max(0, start-keyReach), start)
 	if err != nil {
@@ -835,7 +851,7 @@ type LintQuery struct {
 	Content string
 }
 
-// LintCI checks a project's CI configuration at a ref (§7.6). The merged
+// LintCI checks a project's CI configuration at a ref. The merged
 // configuration is shown under the file budget.
 func (s *Service) LintCI(ctx context.Context, q LintQuery) (model.Lint, error) {
 	p, ref, err := s.project(ctx, q.Project)
@@ -866,8 +882,8 @@ func (s *Service) LintCI(ctx context.Context, q LintQuery) (model.Lint, error) {
 }
 
 // lintContent lints configuration the caller supplied. GitLab takes it
-// only by POST, which a read_api token cannot send (§2.6), so read-only
-// mode refuses it before asking.
+// only by POST, which a read_api token cannot send, so read-only mode
+// refuses it before asking.
 func (s *Service) lintContent(ctx context.Context, p gapi.Project, content string, q gapi.LintQuery) (*gitlab.Lint, error) {
 	if s.cfg.ReadOnly {
 		return nil, gapi.Errf(gapi.ClassBlocked, "supplied content is linted by a POST, which read-only mode (%s) does not send; "+
@@ -882,7 +898,7 @@ func (s *Service) lintContent(ctx context.Context, p gapi.Project, content strin
 // refuseIncludes refuses supplied content with an include at any depth,
 // a job's trigger:include among them. GitLab fetches a remote include
 // from its own servers while linting, so a URL in supplied content is a
-// channel out that no write control sees (§4.7). The content is parsed
+// channel out that no write control sees (D-48). The content is parsed
 // rather than searched, so an escaped, quoted or anchored key is found;
 // content that does not parse is refused too, since GitLab's parser may
 // read what this one cannot.

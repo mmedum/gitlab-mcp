@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"maps"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,23 +15,20 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
-// The classes gate holds the closed error vocabulary (docs/architecture.md
-// §6.5, CLAUDE.md rule 16) from both sides: the Class constants in
-// internal/gapi against the table in §6.5, the Classes list against the
-// constants, and the constants against what the code emits.
+// The classes gate holds the closed error vocabulary (D-74) from every
+// side the code has: the Class constants in internal/gapi, each carrying
+// a comment, whose words it does not read; the Classes list against the
+// constants; and the constants against what the code emits.
 //
-// A model branches on the class — [ambiguous] means pick one,
+// A model branches on the class — [stale] means read again,
 // [ambiguous_outcome] means go and look — so a class invented at a call
-// site, or documented and never produced, is a lie told to the caller.
+// site, or declared and never produced, is a lie told to the caller.
 
-const (
-	classesSource = "internal/gapi/errors.go"
-	classesDoc    = "docs/architecture.md"
-)
+const classesSource = "internal/gapi/errors.go"
 
-// plannedClasses are declared and documented but not yet emitted, each
-// with the reason. A planned class the code has started emitting fails
-// until it leaves this list, so the list cannot outlive its reasons.
+// plannedClasses are declared but not yet emitted, each with the reason.
+// A planned class the code has started emitting fails until it leaves
+// this list, so the list cannot outlive its reasons.
 var plannedClasses = map[string]string{}
 
 // classesFloors are the least the gate must have read.
@@ -41,11 +37,7 @@ type classesFloors struct{ files, classes int }
 var realClassesFloors = classesFloors{files: 40, classes: 13}
 
 func classes(out io.Writer, _ []string) error {
-	doc, err := os.ReadFile(classesDoc)
-	if err != nil {
-		return err
-	}
-	report, problems, err := checkClasses(classesSource, []string{"internal", "cmd"}, string(doc), plannedClasses, realClassesFloors)
+	report, problems, err := checkClasses(classesSource, []string{"internal", "cmd"}, plannedClasses, realClassesFloors)
 	if err != nil {
 		return err
 	}
@@ -56,12 +48,8 @@ func classes(out io.Writer, _ []string) error {
 	return nil
 }
 
-func checkClasses(source string, roots []string, doc string, planned map[string]string, fl classesFloors) (string, []string, error) {
-	declared, listed, err := declaredClasses(source)
-	if err != nil {
-		return "", nil, err
-	}
-	documented, err := documentedClasses(doc)
+func checkClasses(source string, roots []string, planned map[string]string, fl classesFloors) (string, []string, error) {
+	declared, listed, undocumented, err := declaredClasses(source)
 	if err != nil {
 		return "", nil, err
 	}
@@ -81,54 +69,27 @@ func checkClasses(source string, roots []string, doc string, planned map[string]
 	if len(values) < fl.classes {
 		problems = append(problems, fmt.Sprintf("%s declares %d classes and the floor is %d", source, len(values), fl.classes))
 	}
-	problems = append(problems, againstDocument(source, values, documented)...)
-	problems = append(problems, againstList(declared, listed, documented, len(problems) == 0)...)
+	for _, name := range undocumented {
+		problems = append(problems, fmt.Sprintf("%s declares %s with no comment; say what the class means and what a caller does next",
+			source, name))
+	}
+	problems = append(problems, againstList(declared, listed)...)
 	problems = append(problems, againstCode(values, emitted, bracketed, planned)...)
 	slices.Sort(problems)
-	return fmt.Sprintf("classes ok: %d classes, declared, listed, documented and emitted (%d planned), over %d files",
+	return fmt.Sprintf("classes ok: %d classes, each declared with a comment, listed and emitted (%d planned), over %d files",
 		len(values), len(planned), files), problems, nil
 }
 
-// againstDocument holds the constants and §6.5's table both ways, and
-// finds a class the table lists twice by count, which a sorted compare
-// cannot see anywhere but beside itself.
-func againstDocument(source string, values map[string]bool, documented []string) []string {
-	var problems []string
-	for _, v := range slices.Sorted(maps.Keys(values)) {
-		if !slices.Contains(documented, v) {
-			problems = append(problems, fmt.Sprintf("%s declares %q and §6.5 of %s does not document it", source, v, classesDoc))
-		}
-	}
-	counts := map[string]int{}
-	for _, v := range documented {
-		counts[v]++
-		if !values[v] && counts[v] == 1 {
-			problems = append(problems, fmt.Sprintf("§6.5 documents %q and %s declares no such class", v, source))
-		}
-	}
-	for _, v := range slices.Sorted(maps.Keys(counts)) {
-		if counts[v] > 1 {
-			problems = append(problems, fmt.Sprintf("§6.5 lists %q %d times", v, counts[v]))
-		}
-	}
-	return problems
-}
-
-// againstList holds the Classes list to the constants: each once, and,
-// when everything else agrees, in the table's order, which the comment
-// on Classes promises.
-func againstList(declared map[string]string, listed, documented []string, compareOrder bool) []string {
+// againstList holds the Classes list to the constants: each once, and
+// none left out.
+func againstList(declared map[string]string, listed []string) []string {
 	var problems []string
 	counts := map[string]int{}
-	var listValues []string
 	for _, name := range listed {
 		counts[name]++
-		v, ok := declared[name]
-		if !ok {
+		if _, ok := declared[name]; !ok {
 			problems = append(problems, fmt.Sprintf("Classes lists %s, which is not a declared class", name))
-			continue
 		}
-		listValues = append(listValues, v)
 	}
 	for _, name := range slices.Sorted(maps.Keys(declared)) {
 		switch counts[name] {
@@ -138,9 +99,6 @@ func againstList(declared map[string]string, listed, documented []string, compar
 		default:
 			problems = append(problems, fmt.Sprintf("Classes lists %s %d times", name, counts[name]))
 		}
-	}
-	if compareOrder && len(problems) == 0 && !slices.Equal(listValues, documented) {
-		problems = append(problems, fmt.Sprintf("Classes is in the order %v and §6.5 tabulates %v", listValues, documented))
 	}
 	return problems
 }
@@ -175,15 +133,15 @@ func againstCode(values map[string]bool, emitted, bracketed, planned map[string]
 	return problems
 }
 
-// declaredClasses reads the Class constants, name to value, and the
-// names the Classes list holds in order.
-func declaredClasses(path string) (map[string]string, []string, error) {
+// declaredClasses reads the Class constants, name to value, the names
+// the Classes list holds, and the constants that carry no comment.
+func declaredClasses(path string) (map[string]string, []string, []string, error) {
 	pkg, err := parsePackageDir(filepath.Dir(path))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	declared := map[string]string{}
-	var listed []string
+	var listed, undocumented []string
 	for i, f := range pkg.files {
 		if filepath.Clean(pkg.paths[i]) != filepath.Clean(path) {
 			continue
@@ -202,6 +160,9 @@ func declaredClasses(path string) (map[string]string, []string, error) {
 					if gd.Tok == token.CONST && strings.HasPrefix(name.Name, "Class") && j < len(vs.Values) {
 						if v, ok := stringLit(vs.Values[j]); ok {
 							declared[name.Name] = v
+							if strings.TrimSpace(vs.Doc.Text()) == "" && strings.TrimSpace(vs.Comment.Text()) == "" {
+								undocumented = append(undocumented, name.Name)
+							}
 						}
 					}
 					if gd.Tok == token.VAR && name.Name == "Classes" && j < len(vs.Values) {
@@ -217,36 +178,12 @@ func declaredClasses(path string) (map[string]string, []string, error) {
 		}
 	}
 	if len(declared) == 0 {
-		return nil, nil, fmt.Errorf("no Class constants in %s; has the vocabulary moved?", path)
+		return nil, nil, nil, fmt.Errorf("no Class constants in %s; has the vocabulary moved?", path)
 	}
 	if listed == nil {
-		return nil, nil, fmt.Errorf("no Classes list in %s; has the vocabulary moved?", path)
+		return nil, nil, nil, fmt.Errorf("no Classes list in %s; has the vocabulary moved?", path)
 	}
-	return declared, listed, nil
-}
-
-var classRow = regexp.MustCompile("^\\|\\s*`([a-z_]+)`\\s*\\|")
-
-// documentedClasses reads §6.5's table, in order.
-func documentedClasses(doc string) ([]string, error) {
-	start := strings.Index(doc, "### 6.5 ")
-	if start < 0 {
-		return nil, fmt.Errorf("%s has no §6.5", classesDoc)
-	}
-	section := doc[start+len("### 6.5 "):]
-	if end := strings.Index(section, "\n#"); end >= 0 {
-		section = section[:end]
-	}
-	var out []string
-	for line := range strings.SplitSeq(section, "\n") {
-		if m := classRow.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-			out = append(out, m[1])
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("§6.5 of %s has no class table", classesDoc)
-	}
-	return out, nil
+	return declared, listed, undocumented, nil
 }
 
 var bracketPrefix = regexp.MustCompile(`^\[([a-z_]+)\] `)

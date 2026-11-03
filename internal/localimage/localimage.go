@@ -1,6 +1,6 @@
 // Package localimage reads an image from a directory the person allowed
-// in GITLAB_MCP_UPLOAD_DIRS, for upload_file to send (docs/architecture.md
-// §7.10). It touches no network.
+// in GITLAB_MCP_UPLOAD_DIRS, for upload_file to send. It touches no
+// network.
 //
 // An upload tool is an exfiltration channel by construction: a comment
 // that persuades a model to "attach" a key file would send the key. So
@@ -40,14 +40,18 @@ import (
 // MaxBytes is the largest image read: 10 MiB, a tenth of gitlab.com's
 // attachment limit. A screenshot or a mock-up is far smaller, and the
 // whole image is held in memory and sent in one request that the HTTP
-// timeout bounds (§7.10).
+// timeout bounds.
 const MaxBytes = 10 << 20
 
 // extensions are the image types accepted, by the media type
 // http.DetectContentType gives them, each with the extension the name
 // sent carries. GitLab decides from the extension whether Markdown
 // embeds an upload as an image, and whether a private project serves it
-// without sign-in, so it has to agree with the bytes.
+// without sign-in, while Workhorse serves it with the type the bytes
+// sniff as, so the two have to agree. GitLab's uploads page says
+// neither. Checked by the live step
+// "an image uploads from an allowed directory".
+// https://docs.gitlab.com/api/project_markdown_uploads/
 var extensions = map[string]string{
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
@@ -205,7 +209,11 @@ func within(path string, dirs []string) []candidate {
 }
 
 // openIn opens rel inside dir through os.Root, checked before and after
-// it is opened, and gives its size when opened.
+// it is opened, and gives its size when opened. Root refuses a link that
+// leaves dir and every absolute link, but it opens a FIFO or a device,
+// and it follows a final link even under O_NOFOLLOW. So the checks are
+// Lstat before and os.SameFile after, not an open flag.
+// https://pkg.go.dev/os#Root
 func openIn(dir, rel string) (*os.File, int64, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {

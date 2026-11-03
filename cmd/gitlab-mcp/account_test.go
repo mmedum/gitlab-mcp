@@ -119,7 +119,7 @@ func TestANamedProfileIsUsedOnlyWhenNamed(t *testing.T) {
 		}
 		return got.Profile, got.Credentials.Resolved
 	}
-	// As in the sibling servers: no pointer, so an unnamed run is "default".
+	// No pointer, so an unnamed run is "default".
 	if p, ok := status(); p != "default" || ok {
 		t.Errorf("unnamed: profile %q resolved %v, want default and not signed in", p, ok)
 	}

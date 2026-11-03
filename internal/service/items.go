@@ -23,7 +23,9 @@ import (
 
 // maxDiscussionPages bounds the threads read for one call: ten pages of
 // a hundred. A longer history is reported as incomplete, never as
-// shorter than it is.
+// shorter than it is. The walk starts at the first page, not the newest:
+// GitLab lists threads by creation, and ordering them by last activity
+// needs every thread.
 const maxDiscussionPages = 10
 
 // description prepares a description for a result: hidden text
@@ -34,7 +36,7 @@ func (s *Service) description(text string, offset int) (string, model.Budget, er
 }
 
 // GetIssue reads an issue with a summary of its threads and the merge
-// requests linked to it (§7.2). The reads are independent and run at
+// requests linked to it. The reads are independent and run at
 // once. The link reads are best effort, as the summary is, and a read
 // that continues the description from an offset leaves them out.
 func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset int) (model.Issue, error) {
@@ -102,7 +104,7 @@ func (s *Service) GetIssue(ctx context.Context, raw string, iid int64, offset in
 
 // GetMergeRequest reads a merge request with its approval state, each
 // reviewer's state, a summary of its threads, the issues linked to it
-// and the merge requests it waits for or holds (§7.2). The reads are
+// and the merge requests it waits for or holds. The reads are
 // independent and run at once. The approval, reviewer, link and
 // dependency reads are best effort: an instance that refuses them still
 // has a merge request to show. A read that continues the description
@@ -207,6 +209,11 @@ const reviewerPage = gapi.MaxPerPage
 // reviewerStates reads the first page of a merge request's reviewers
 // with their review states. It is best effort, as the approvals are: a
 // soft failure leaves the states null.
+//
+// The merge request itself carries no review state; only the reviewers
+// route has it, on Free too, in an order the database leaves unspecified
+// (v19.4.1-ee). Checked by the live step "an MR's review state is read".
+// https://docs.gitlab.com/api/merge_requests/
 func (s *Service) reviewerStates(ctx context.Context, p gapi.Project, iid int64) (*model.ReviewerStates, error) {
 	rows, page, err := s.client.ListMergeRequestReviewers(ctx, p, iid, gapi.ListOptions{PerPage: reviewerPage})
 	if err != nil {
@@ -285,7 +292,7 @@ func linkedMergeRequest(mr gitlab.LinkedMergeRequest) model.LinkedItem {
 
 // externalID is the shape an external tracker's issue id is kept in:
 // PROJ-123 and the like. Anything else is someone else's text, which
-// only the title, inside the boundary, carries (§4.1).
+// only the title, inside the boundary, carries.
 var externalID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.#-]{0,63}$`)
 
 // linkedIssue is an issue, or an external tracker's issue, which has
@@ -405,7 +412,7 @@ func (q DiscussionQuery) binding(projectID int64) string {
 }
 
 // ListDiscussions lists threads newest first under the character
-// budget (§4.8). Threads of the page that do not fit are named with
+// budget. Threads of the page that do not fit are named with
 // their author and date, and the next page starts with them.
 func (s *Service) ListDiscussions(ctx context.Context, q DiscussionQuery) (model.Discussions, error) {
 	p, ref, err := s.project(ctx, q.Project)
@@ -620,10 +627,18 @@ type eventStream struct {
 }
 
 // ListItemEvents merges an issue's or a merge request's label, state,
-// milestone and weight events into one history, newest first (§7.2).
-// Each kind is read whole, up to maxEventPages; when one is cut, the
-// history starts after its oldest event kept, so no kind is missing from
-// the part shown. Weight is an issue's only.
+// milestone and weight events into one history, newest first. Each kind
+// is read whole, up to maxEventPages; when one is cut, the history starts
+// after its oldest event kept, so no kind is missing from the part
+// shown. Weight is an issue's only.
+//
+// Each list pages by offset in id order, oldest first, which the API docs
+// do not say, and ids are taken to follow time. Label events are filtered
+// after the page is cut, so a page can be short and X-Total counts events
+// the account cannot see; a deleted label's event has a null label
+// (v19.4.1-ee). Checked by the live steps "an issue's history pages" and
+// "an MR's history is read".
+// https://docs.gitlab.com/api/resource_label_events/
 func (s *Service) ListItemEvents(ctx context.Context, q EventQuery) (model.ItemEvents, error) {
 	p, ref, err := s.project(ctx, q.Project)
 	if err != nil {
@@ -897,8 +912,10 @@ func eventWeight(e gitlab.WeightEvent) model.ItemEvent {
 // ------------------------------------------------------------ helpers
 
 // diffPosition is where a note sits on a diff, nil when it sits on none.
-// A general draft carries a position with no paths rather than none
-// (live, 2026-09-26), which is none here too.
+// A general draft carries a position with no paths rather than none,
+// and it is none here too. Checked by the live step "an edited draft
+// keeps its line and gets a new hash".
+// https://docs.gitlab.com/api/draft_notes/
 func diffPosition(pos *gitlab.Position) *model.DiffPosition {
 	if pos == nil || (pos.NewPath == "" && pos.OldPath == "") {
 		return nil

@@ -16,9 +16,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/render"
 )
 
-// The phase 6 tools (§17.13): moving and linking issues, label and
-// milestone writes, rebase, cherry-pick, revert, blame, job artifacts and
-// tag writes.
+// Moving and linking issues, label and milestone writes, rebase,
+// cherry-pick, revert, blame, job artifacts and tag writes.
 
 // ----------------------------------------------------------- issues
 
@@ -48,7 +47,7 @@ type IssueMoveRequest struct {
 // MoveIssue moves an issue to another project. Both projects are held to
 // the write allow-list, and a move that would show the issue to more
 // people than can see it now is refused: an injected "move this" is how
-// a private issue would reach a public project (§17.13).
+// a private issue would reach a public project (D-41).
 func (s *Service) MoveIssue(ctx context.Context, in IssueMoveRequest) (model.IssueMove, error) {
 	witness, err := parseWitness(in.UpdatedAt)
 	if err != nil {
@@ -262,8 +261,8 @@ func (s *Service) dependencyTargets(ctx context.Context, in MergeRequestLinkRequ
 }
 
 // maxDependencyPages bounds the read for one dependency. GitLab's caps
-// do not count a merge request's own blockers against it (§18 row 122),
-// so the bound is a read's, not GitLab's.
+// do not count a merge request's own blockers against it, so it can wait
+// for more than ten, and the bound is a read's, not GitLab's.
 const maxDependencyPages = 3
 
 // findDependency reads what the waiting merge request waits for and finds
@@ -289,6 +288,13 @@ func (s *Service) findDependency(ctx context.Context, d dependency) (row gitlab.
 
 // LinkMergeRequests makes one merge request wait for another. A
 // dependency that exists is reported unchanged.
+//
+// The dependency routes check no license, so they work on Free, where
+// only the merge check ignores them. The create takes the other merge
+// request by iid and project, and a repeat answers 409 and writes
+// nothing (v19.4.1-ee). Checked by the live steps "an MR is made to wait
+// for another" and "a dependency is made again from the other MR".
+// https://docs.gitlab.com/api/merge_requests/
 func (s *Service) LinkMergeRequests(ctx context.Context, in MergeRequestLinkRequest) (model.MergeRequestLinkWrite, error) {
 	d, err := s.dependencyTargets(ctx, in)
 	if err != nil {
@@ -361,8 +367,11 @@ func (s *Service) UnlinkMergeRequests(ctx context.Context, in MergeRequestLinkRe
 
 // ----------------------------------------------------------- labels
 
-// labelVersion is the label witness: a hash of what an update can change,
-// since GitLab keeps no version of a label (§4.6).
+// labelVersion is the label witness: a hash of what an update can change.
+// A label exposes no timestamp or version (v19.4.1-ee), so update_label
+// and delete_label read the label first and compare this. Checked by the
+// live step "a label update with a stale version is refused".
+// https://docs.gitlab.com/api/labels/
 func labelVersion(l gitlab.Label) string {
 	priority := ""
 	if l.Priority != nil {
@@ -770,7 +779,7 @@ func (s *Service) RebaseMergeRequest(ctx context.Context, raw string, iid int64,
 	// which for a fork is another project: it is held to the allow-list,
 	// and one more people can see is refused, since the target branch's
 	// history is what lands there. A protected source branch takes code
-	// only through a merge request (§4.4).
+	// only through a merge request.
 	source := t
 	if mr.SourceProjectID != t.project.ID {
 		if source, err = s.writeTarget(ctx, fmt.Sprint(mr.SourceProjectID)); err != nil {
@@ -821,8 +830,11 @@ type PickRequest struct {
 
 // Pick cherry-picks or reverts a commit onto a branch as a new commit.
 // The default branch and protected branches are refused as create_commit
-// refuses them (§4.4). A dry run asks GitLab's own dry run, which says
-// whether the change applies.
+// refuses them. A dry run asks GitLab's own, which commits nothing and
+// says whether the change applies; a change that does not apply answers
+// 400, which is [conflict]. Checked by the live steps "a cherry-pick is
+// previewed" and "a cherry-pick onto the default branch is refused".
+// https://docs.gitlab.com/api/commits/
 func (s *Service) Pick(ctx context.Context, in PickRequest) (model.PickWrite, error) {
 	switch {
 	case len(strings.TrimSpace(in.SHA)) < 7:
@@ -906,7 +918,7 @@ type BlameRequest struct {
 }
 
 // Blame shows who last changed each line of a file, a run of lines per
-// commit, under the file budget (§4.8).
+// commit, under the file budget.
 func (s *Service) Blame(ctx context.Context, in BlameRequest) (model.Blame, error) {
 	in.Path = strings.Trim(in.Path, "/")
 	switch {
@@ -1009,7 +1021,7 @@ func (s *Service) ListArtifacts(ctx context.Context, raw string, job int64, dir 
 }
 
 // GetArtifact shows one text file of a job's artifacts, masked as a job
-// log is (§4.1.4), under the file budget. A binary file is named with its
+// log is, under the file budget. A binary file is named with its
 // size only.
 func (s *Service) GetArtifact(ctx context.Context, raw string, job int64, path string, offset int) (model.Artifact, error) {
 	path = strings.Trim(path, "/")
@@ -1042,7 +1054,7 @@ func (s *Service) GetArtifact(ctx context.Context, raw string, job int64, path s
 
 // CreateTag creates a tag at a ref. A name a protected-tag rule covers is
 // refused: a protected tag's pipelines see protected variables and may
-// deploy, so it is made by a person (§17.13).
+// deploy, so it is made by a person (D-33).
 func (s *Service) CreateTag(ctx context.Context, raw, name, ref, message string) (model.TagWrite, error) {
 	switch {
 	case strings.TrimSpace(name) == "":

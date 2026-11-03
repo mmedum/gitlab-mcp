@@ -21,7 +21,7 @@ type gitlabUser = gitlab.UserBasic
 var looksLikeSHA = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 // ResolveURL turns a web URL on the configured instance into tool
-// arguments (§6.1). It needs the network only when a file or tree URL's
+// arguments. It needs the network only when a file or tree URL's
 // ref has slashes in it and could end anywhere: then one branch listing
 // settles where the ref stops and the path starts.
 func (s *Service) ResolveURL(ctx context.Context, raw string) (model.Resolved, error) {

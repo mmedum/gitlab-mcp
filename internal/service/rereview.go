@@ -10,8 +10,15 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// Re-requesting a review (§7.3, §8a). The REST API has no route for it,
-// so the reviewers and the approvals are read over REST and the one
+// Re-requesting a review. The REST API has no route for it, and removing
+// and adding a reviewer does not do it: only the GraphQL mutation
+// mergeRequestReviewerRereview sets the reviewer back to unreviewed,
+// removes their approval and notifies them. Checked by the live steps "a
+// review re-request is previewed" and "a reviewer is asked for a new
+// review".
+// https://docs.gitlab.com/api/graphql/reference/
+//
+// So the reviewers and the approvals are read over REST and the one
 // GraphQL mutation goes out after. The caller's reviewer_state is the
 // witness. A reviewer who approved, by their state or in the approvals,
 // is refused: GitLab would remove that approval, a sign-off this server

@@ -13,7 +13,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// Creating and updating issues and merge requests (§7.2, §4.6). Bodies
+// Creating and updating issues and merge requests. Bodies
 // arrive already through the quick-action guard.
 
 // dateOnly is GitLab's due date: a day, not an instant.
@@ -182,7 +182,7 @@ func (s *Service) updateIssue(ctx context.Context, in IssueUpdate, publish bool)
 	// the project's issues, as a move to a more visible project would,
 	// and an injected "it was confidential by mistake" asks for exactly
 	// that. It is make_issue_public's alone, behind the destructive flag,
-	// so a client's approval of update_issue never covers it (§4.12).
+	// so a client's approval of update_issue never covers it (D-40).
 	if in.Confidential != nil && !*in.Confidential && before.Confidential && !publish {
 		return model.IssueWrite{}, gapi.Errf(gapi.ClassBlocked, "update_issue does not make a confidential issue public; "+
 			"make_issue_public does, when %s=true; nothing was sent", config.EnvEnableDestructive)
@@ -375,8 +375,11 @@ func (s *Service) CreateMergeRequest(ctx context.Context, in MergeRequestCreate)
 		})
 	}
 	out := mergeRequestWrite("created", t, mr)
-	// A create's updated_at is no witness: seen live: gitlab.com moves a new merge request's updated_at about a
-	// second after answering, as it computes the diff (§18).
+	// A create's updated_at is no witness: GitLab moves a new merge
+	// request's updated_at about a second after answering, as it computes
+	// the diff, which the API docs do not say. Checked by the live step "a
+	// new MR's witness is read once it settles".
+	// https://docs.gitlab.com/api/merge_requests/
 	out.UpdatedAt = nil
 	out.Notes = append(out.Notes, "GitLab keeps working on a new merge request for a few seconds and moves its updated_at, "+
 		"so read it with get_merge_request before changing it with update_merge_request.")
@@ -458,7 +461,7 @@ func (s *Service) UpdateMergeRequest(ctx context.Context, in MergeRequestUpdate)
 	}
 	// The draft state is the title's prefix; GitLab takes no field. A new
 	// title keeps the current state unless draft says otherwise, since an
-	// omitted field is unchanged (§4.6).
+	// omitted field is unchanged.
 	switch {
 	case in.Draft != nil:
 		title := before.Title

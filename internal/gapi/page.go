@@ -14,11 +14,13 @@ import (
 	"strings"
 )
 
-// Pagination (§2.12, §7.1). GitLab pages by offset or by keyset; both
-// advertise the next page in a Link header, offset also in X-Next-Page.
-// The client turns the next page into an opaque token bound to the query
-// it came from, so a token is never replayed against another query and
-// never names a URL the client would call.
+// Pagination. GitLab pages by offset or by keyset; both advertise the
+// next page in a Link header, offset also in X-Next-Page. The client
+// turns the next page into an opaque token bound to the query it came
+// from, so a token is never replayed against another query and never
+// names a URL the client would call. A keyset page is followed through
+// its Link header, never built.
+// https://docs.gitlab.com/api/rest/
 
 // DefaultPerPage and MaxPerPage are GitLab's own.
 const (

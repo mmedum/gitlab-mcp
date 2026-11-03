@@ -13,11 +13,14 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/render"
 )
 
-// The wiki toolset (§7.8): a project's wiki pages. GitLab's wiki API
-// exposes no version and no updated_at, so the witness a write carries
-// is a hash of the content the caller read, compared with a fresh read
-// before the write (§4.6). As with issues, the window between that read
-// and the write stays open (§17b).
+// The wiki toolset: a project's wiki pages. GitLab checks a page's
+// last_commit_sha on update, but no REST answer exposes one, and a page
+// carries no updated_at (v19.4.1-ee). So the witness a write carries is
+// a hash of the content the caller read, compared with a fresh read
+// before the write. As with issues, the window between that read and the
+// write stays open. Checked by the live step "a wiki save with a stale
+// hash is refused".
+// https://docs.gitlab.com/api/wikis/
 
 // WikiFormats are the markups a page can be written in.
 var WikiFormats = []string{"asciidoc", "markdown", "org", "rdoc"}

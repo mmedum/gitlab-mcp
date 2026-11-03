@@ -13,8 +13,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/scopes"
 )
 
-// Me reads who is signed in and what this server and instance support
-// (§7.9). The account is required; the instance metadata and the token
+// Me reads who is signed in and what this server and instance support.
+// The account is required; the instance metadata and the token
 // details are reported as unknown when they cannot be read, because the
 // rest of the answer is still worth having. The reads are independent
 // and run at once, and metadata read here is kept for the next call.
@@ -66,8 +66,11 @@ func (s *Service) Me(ctx context.Context) (model.Me, error) {
 	if infoErr == nil {
 		me.Token.Scopes = info.Scope
 		if info.ExpiresIn != nil {
-			// expires_in is the seconds left when GitLab answered, not the
-			// lifetime: Doorkeeper's expires_in_seconds (§18 row 90).
+			// expires_in is the seconds left when GitLab answered, not a
+			// lifetime to add to created_at: Doorkeeper's expires_in_seconds,
+			// which the OAuth docs do not explain. Checked by the live step
+			// "the signed-in account and its token are read".
+			// https://docs.gitlab.com/api/oauth2/
 			at := infoAt.Add(time.Duration(*info.ExpiresIn) * time.Second).UTC().Truncate(time.Second)
 			me.Token.ExpiresAt = &at
 		}

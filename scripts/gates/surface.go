@@ -23,7 +23,7 @@ func surfaceCommands() map[string]command {
 		"bodies": {run: bodies, args: "<schemas.json>", minArgs: 1, maxArgs: 1, mode: modeCheck,
 			doc: "Every string a write sends goes through the quick-action guard or is listed plain"},
 		"classes": {run: classes, args: "", minArgs: 0, maxArgs: 0, mode: modeCheck,
-			doc: "The error vocabulary, held against the code and §6.5 both ways"},
+			doc: "The error vocabulary closed: every class declared with a comment, listed and emitted"},
 		"outcomes": {run: outcomes, args: "", minArgs: 0, maxArgs: 0, mode: modeCheck,
 			doc: "Every write result states its outcome, and none from the request alone"},
 		"smoke": {run: smoke, args: "<bin>", minArgs: 1, maxArgs: 1, mode: modeCheck,

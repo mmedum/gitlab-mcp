@@ -12,7 +12,7 @@ import (
 )
 
 // itemFilters are the filters search_issues and search_merge_requests
-// share (§7.1).
+// share.
 type itemFilters struct {
 	Project       idOrPath `json:"project,omitempty" jsonschema:"Limit to one project: its numeric id, its full path such as group/sub/project, or its web URL"`
 	Group         idOrPath `json:"group,omitempty" jsonschema:"Limit to one group and its subgroups: its numeric id or full path"`

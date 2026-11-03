@@ -8,7 +8,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The phase 6 tools, with the kinds and toolsets §17.13 decided.
+// Moving and linking issues, label and milestone writes, rebase,
+// cherry-pick, revert, blame, job artifacts and tag writes.
 
 // ----------------------------------------------------------- issues
 
@@ -178,6 +179,10 @@ type deleteLabelIn struct {
 	DryRun  bool     `json:"dry_run,omitempty" jsonschema:"Check the label and return what would be sent without deleting it"`
 }
 
+// deleteLabel carries PromptEveryCall: GitLab takes a deleted label off
+// every issue and merge request, and the deletion cannot be undone, as
+// its labels docs say.
+// https://docs.gitlab.com/user/project/labels/
 func deleteLabel() definition {
 	return tool[deleteLabelIn, model.LabelWrite]{
 		sp: spec{Name: "delete_label", Kind: Destructive, Toolset: "planning", Idempotent: true, PromptEveryCall: true,
@@ -249,6 +254,8 @@ type deleteMilestoneIn struct {
 	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"Check the milestone and return what would be sent without deleting it"`
 }
 
+// deleteMilestone carries PromptEveryCall: GitLab takes a deleted
+// milestone off every issue and merge request before it destroys it.
 func deleteMilestone() definition {
 	return tool[deleteMilestoneIn, model.MilestoneWrite]{
 		sp: spec{Name: "delete_milestone", Kind: Destructive, Toolset: "planning", Idempotent: true, PromptEveryCall: true,

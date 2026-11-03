@@ -23,7 +23,7 @@ import (
 
 // quickActionMeta is the _meta key a tool lists its guarded inputs
 // under: the string inputs internal/tools routes through
-// internal/quickaction before the handler runs (§4.2). The tools package
+// internal/quickaction before the handler runs. The tools package
 // writes it from the same declaration that does the routing; the bodies
 // gate reads it here.
 const quickActionMeta = "gitlab-mcp/quickaction"

@@ -8,10 +8,10 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The Ship and Destructive tools of phase 3 (docs/architecture.md §4.3,
-// §8). Ship is registered only with GITLAB_MCP_ENABLE_SHIP=true and
-// Destructive only with GITLAB_MCP_ENABLE_DESTRUCTIVE=true; register
-// also refuses a Destructive call without confirm: true.
+// The Ship and Destructive tools. Ship is registered only with
+// GITLAB_MCP_ENABLE_SHIP=true and Destructive only with
+// GITLAB_MCP_ENABLE_DESTRUCTIVE=true; register also refuses a
+// Destructive call without confirm: true.
 
 // shipNote ends the description of every Ship tool.
 const shipNote = " Only registered because GITLAB_MCP_ENABLE_SHIP is on; the person running the server chose that, and content " +

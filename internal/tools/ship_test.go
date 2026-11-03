@@ -13,7 +13,7 @@ import (
 
 // The Ship and Destructive tools against the in-memory instance: that
 // only their flag registers them, the witness each carries, what each
-// refuses before sending, and what each reads back (§4.3, §4.5, §4.6).
+// refuses before sending, and what each reads back.
 
 var (
 	ship        = config.Config{EnableShip: true}
@@ -957,7 +957,7 @@ func TestApplySuggestionsRefusedBeforeSending(t *testing.T) {
 }
 
 // A protected source branch takes code only through a merge request, so
-// a suggestion is not committed to it (§4.4), even where GitLab would.
+// a suggestion is not committed to it (D-33), even where GitLab would.
 func TestApplySuggestionsRefusesAProtectedSourceBranch(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: ship})
 	_, out := h.ok("create_merge_request", map[string]any{"project": alpha, "source_branch": "release/1.0", "target_branch": "main",
@@ -1196,7 +1196,7 @@ func TestDeleteCommentEditedAfterTheReadIsStale(t *testing.T) {
 }
 
 // gitlab.com refuses pipeline variables on a new project to everyone:
-// 400 on a pipeline, a bare 403 on a manual job (phase 3 live run). No
+// 400 on a pipeline, a bare 403 on a manual job. No
 // argument fixes that, so it is [forbidden] naming the setting.
 func TestPipelineVariablesRefusedByTheProject(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: ship})

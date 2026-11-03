@@ -11,8 +11,9 @@ body:
 
         Some things are left out on purpose. `testdata/api-coverage.tsv`
         carries a verdict for every GitLab REST operation, including the
-        ones written off and why, and `docs/architecture.md` §8a says why
-        administration, runners and CI variables are out of scope.
+        ones written off and why. The server works inside projects, so
+        administration and runners are out of scope. CI variables are out
+        too, because reading them puts secrets into a model's context.
   - type: textarea
     id: problem
     attributes:

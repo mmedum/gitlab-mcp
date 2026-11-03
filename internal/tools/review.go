@@ -9,8 +9,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The phase-1 reads of a merge request's review and the repository's
-// history (§7.3, §7.5).
+// The reads of a merge request's review and the repository's history.
 
 type mrPageIn struct {
 	Project   idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`

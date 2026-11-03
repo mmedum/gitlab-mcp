@@ -12,9 +12,9 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The phase 6 routes: issue moves and links, label and milestone writes,
-// rebase, cherry-pick and revert, blame, protected tags and tag writes,
-// and job artifacts. Each answers as GitLab's route does at v19.4.1-ee.
+// Issue moves and links, label and milestone writes, rebase, cherry-pick
+// and revert, blame, protected tags and tag writes, and job artifacts.
+// Each answers as GitLab's route does at v19.4.1-ee.
 
 // ConflictSHA is a commit whose cherry-pick or revert conflicts on every
 // branch.
@@ -28,7 +28,7 @@ type issueLink struct {
 	linkType           string
 }
 
-// serveFeatures serves the phase 6 routes; it reports whether the path
+// serveFeatures serves the routes above; it reports whether the path
 // was one of them.
 func (s *Server) serveFeatures(w http.ResponseWriter, r *http.Request, p *project, user string, seg []string) bool {
 	return s.serveIssueFeatures(w, r, p, user, seg) || s.serveMRDependencies(w, r, p, user, seg) ||

@@ -100,8 +100,8 @@ func main() {
 	mu.Lock()
 	inFlight := pending > 0
 	mu.Unlock()
-	// The defect the standard's §11 names: a disconnect with a request
-	// in flight reported as a failure rather than the end of a session.
+	// The defect the smoke gate catches: a disconnect with a request in
+	// flight reported as a failure rather than the end of a session.
 	if mode == "crash" || (mode == "inflight" && inFlight) {
 		fmt.Fprintln(os.Stderr, "connection closed: EOF")
 		os.Exit(1)

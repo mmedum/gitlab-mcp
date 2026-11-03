@@ -14,7 +14,7 @@ import (
 )
 
 // The outcomes gate holds the rule that a result states what happened,
-// and only what the response showed happened (§4.11, §5a "outcomes").
+// and only what the response showed happened (D-42).
 // Two halves, both read from the syntax tree:
 //
 //  1. Every service function that reaches a write of the client — a

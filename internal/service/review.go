@@ -23,7 +23,7 @@ const maxMRDiffPages = 10
 const maxCompareCommits = 100
 
 // ListMRFiles lists a merge request's changed files with their line
-// counts and GitLab's markers, and no diff text (§7.3).
+// counts and GitLab's markers, and no diff text.
 func (s *Service) ListMRFiles(ctx context.Context, raw string, iid int64, opts gapi.ListOptions) (model.MRFiles, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
@@ -58,7 +58,7 @@ func lineCounts(diff string) (added, removed int) {
 }
 
 // GetMRDiff shows a merge request's diffs under the budget: the named
-// files, or every file from fileOffset (§7.3). A named file the merge
+// files, or every file from fileOffset. A named file the merge
 // request does not change is refused naming it.
 func (s *Service) GetMRDiff(ctx context.Context, raw string, iid int64, paths []string, fileOffset, diffOffset int) (model.MRDiff, error) {
 	p, ref, err := s.project(ctx, raw)
@@ -102,7 +102,7 @@ func (s *Service) GetMRDiff(ctx context.Context, raw string, iid int64, paths []
 // mrDiffsFrom shows a merge request's diffs from the file at fileOffset:
 // it reads from the page that holds that file, and on only until the
 // budget is spent, so paging through a large merge request reads each
-// page about once (§17a).
+// page about once.
 func (s *Service) mrDiffsFrom(ctx context.Context, p gapi.Project, iid int64, fileOffset, diffOffset int) (model.Diffs, error) {
 	if fileOffset < 0 {
 		return model.Diffs{}, gapi.Errf(gapi.ClassInvalid, "file_offset is 0 or more")
@@ -180,7 +180,7 @@ func draftBinding(projectID, iid int64) string {
 }
 
 // ListReviewComments lists the signed-in account's unpublished review
-// comments on a merge request, under the discussion budget (§7.3). Drafts
+// comments on a merge request, under the discussion budget. Drafts
 // that do not fit are named, and the next page starts with them.
 func (s *Service) ListReviewComments(ctx context.Context, raw string, iid int64, pageToken string) (model.DraftNotes, error) {
 	p, ref, err := s.project(ctx, raw)
@@ -191,8 +191,8 @@ func (s *Service) ListReviewComments(ctx context.Context, raw string, iid int64,
 	if err != nil {
 		return model.DraftNotes{}, err
 	}
-	// GitLab's order is not stable between reads (live, 2026-09-26), and
-	// a page token is an index into it.
+	// GitLab returns drafts in no stable order, and a page token is an
+	// index into them.
 	slices.SortFunc(drafts, func(a, b gitlab.DraftNote) int { return cmp.Compare(a.ID, b.ID) })
 	// The token names the first draft of the next page by id, not by
 	// place, so a draft published or deleted between pages moves nothing.
@@ -246,7 +246,7 @@ type CompareQuery struct {
 }
 
 // CompareRefs compares two refs: the commits in to and not in from, and
-// the diffs, each under its bound (§7.5). GitLab answers unpaged, so the
+// the diffs, each under its bound. GitLab answers unpaged, so the
 // offsets continue within one answer.
 func (s *Service) CompareRefs(ctx context.Context, q CompareQuery) (model.Compare, error) {
 	p, ref, err := s.project(ctx, q.Project)
@@ -275,8 +275,10 @@ func compared(ref model.ProjectRef, q CompareQuery, c *gitlab.Compare) (model.Co
 	}
 	out := model.Compare{Project: ref, From: q.From, To: q.To, Straight: q.Straight, WebURL: c.WebURL, SameRef: c.CompareSameRef,
 		Timeout: c.CompareTimeout, Commits: []model.CommitRow{}, CommitsTotal: len(c.Commits), Diffs: d}
-	// GitLab lists the commits oldest first (live, 2026-09-26); they are
-	// shown newest first, as every other commit listing is.
+	// GitLab lists the commits oldest first, which the API docs do not
+	// say; they are shown newest first, as every other commit listing is.
+	// Checked by the live step "two refs compare".
+	// https://docs.gitlab.com/api/repositories/
 	n := len(c.Commits)
 	end := min(n, q.CommitOffset+maxCompareCommits)
 	for i := q.CommitOffset; i < end; i++ {
@@ -292,8 +294,7 @@ func compared(ref model.ProjectRef, q CompareQuery, c *gitlab.Compare) (model.Co
 // pages of a hundred, newest first.
 const maxVersionPages = 10
 
-// ListMRVersions lists a merge request's diff versions, newest first
-// (§7.3).
+// ListMRVersions lists a merge request's diff versions, newest first.
 func (s *Service) ListMRVersions(ctx context.Context, raw string, iid int64, opts gapi.ListOptions) (model.MRVersions, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
@@ -333,11 +334,13 @@ type MRVersionQuery struct {
 }
 
 // CompareMRVersions shows what changed in a merge request between two of
-// its versions (§7.3). GitLab has no route for it; the web page compares
-// the repository from the older version's head to the newer's, straight
+// its versions. GitLab has no route for it; the web page compares the
+// repository from the older version's head to the newer's, straight
 // rather than from their merge base, so a squash or a rebase between them
 // does not hide the change. This does the same, in the target project,
-// where GitLab keeps both heads.
+// where GitLab keeps both heads (v19.4.1-ee). Checked by the live step
+// "an MR's changes since a version are read".
+// https://docs.gitlab.com/api/merge_requests/
 func (s *Service) CompareMRVersions(ctx context.Context, q MRVersionQuery) (model.MRVersionChanges, error) {
 	if q.FromVersion <= 0 {
 		return model.MRVersionChanges{}, gapi.Errf(gapi.ClassInvalid, "from_version is a version id, as list_mr_versions gives it")

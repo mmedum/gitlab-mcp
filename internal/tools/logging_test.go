@@ -17,13 +17,13 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
 )
 
-// The rule this file holds (CLAUDE.md rule 3, docs/architecture.md
-// §9.2): a log line may say that a call happened, which tool, how it
-// ended, how long it took and the rate bucket. It may not carry what the
-// caller sent or what GitLab returned: hosts, paths, branch names, file
-// paths, titles, bodies, search terms, usernames. A path and a search
-// term reach a log through a request URL, which is why a transport
-// error is stripped of its URL before anything logs it.
+// The rule this file holds (D-05): a log line may say that a call
+// happened, which tool, how it ended, how long it took and the rate
+// bucket. It may not carry what the caller sent or what GitLab
+// returned: hosts, paths, branch names, file paths, titles, bodies,
+// search terms, usernames. A path and a search term reach a log through
+// a request URL, which is why a transport error is stripped of its URL
+// before anything logs it.
 //
 // Every registered tool is driven, not a hand-picked few, with a canary
 // in every string argument. Each is driven twice: once with canaries

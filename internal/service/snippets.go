@@ -14,7 +14,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/render"
 )
 
-// The snippets toolset (§7.8). Snippets this server creates are private,
+// The snippets toolset. Snippets this server creates are private,
 // always: visibility is not an input.
 
 // ListSnippets lists a project's snippets, or the signed-in account's
@@ -158,7 +158,7 @@ type SnippetCreate struct {
 
 // CreateSnippet creates a private snippet, in a project or the account's
 // own. Visibility is not the caller's to choose: a public snippet from a
-// model is how private content leaves (§4.7, §7.8).
+// model is how private content leaves (D-39).
 func (s *Service) CreateSnippet(ctx context.Context, in SnippetCreate) (model.SnippetWrite, error) {
 	switch {
 	case strings.TrimSpace(in.Title) == "":
@@ -205,7 +205,7 @@ func (s *Service) CreateSnippet(ctx context.Context, in SnippetCreate) (model.Sn
 	}
 	if sn.Visibility != "private" {
 		// The request said private; anything else is a defect worth
-		// shouting about, since it is exactly what §7.8 exists to prevent.
+		// shouting about, since it is how private content leaves.
 		return model.SnippetWrite{}, gapi.Errf(gapi.ClassUnexpected, "GitLab created snippet %d as %s although private was sent; "+
 			"check it now", sn.ID, sn.Visibility)
 	}
@@ -330,13 +330,16 @@ func (s *Service) UpdateSnippet(ctx context.Context, in SnippetEdit) (model.Snip
 		return model.SnippetUpdate{}, err
 	}
 	// Writing into a public or internal snippet is how private content
-	// leaves, which create_snippet's private-only rule closes (§4.7).
+	// leaves, which create_snippet's private-only rule closes (D-39).
 	if before.Visibility != "private" {
 		return model.SnippetUpdate{}, gapi.Errf(gapi.ClassBlocked, "the snippet is %s, and this server writes only to private "+
 			"snippets, as create_snippet makes them; nothing was sent", before.Visibility)
 	}
-	// GitLab's PUT checks no witness (§18 row 103), so the window between
-	// this read and the write stays open; the check narrows it.
+	// GitLab's PUT checks no witness, which the API docs do not say, so
+	// the window between this read and the write stays open; the check
+	// narrows it (v19.4.1-ee). Checked by the live step "a snippet update
+	// with a stale witness is refused".
+	// https://docs.gitlab.com/api/snippets/
 	if err := checkWitness(witness, before.UpdatedAt, "snippet"); err != nil {
 		return model.SnippetUpdate{}, err
 	}
@@ -388,8 +391,10 @@ func (s *Service) UpdateSnippet(ctx context.Context, in SnippetEdit) (model.Snip
 	case committed:
 		// A change to the files is a commit to the snippet's repository,
 		// and GitLab's post-receive job touches the snippet once it runs,
-		// after the answer (§18 row 103). The answer's updated_at is about
-		// to go stale, so it is not handed on as a witness.
+		// after the answer, with no bound a read could wait out. The
+		// answer's updated_at is about to go stale, so it is not handed on
+		// as a witness. Checked by the live step "a snippet's witness is
+		// read once its commit settles".
 		out.UpdatedAt = nil
 		out.Notes = append(out.Notes, "GitLab moves updated_at again once it has processed the change to the files, "+
 			"shortly after it answers, so no updated_at is given here: read the snippet with get_snippet for the updated_at "+

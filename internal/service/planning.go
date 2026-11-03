@@ -17,7 +17,7 @@ import (
 )
 
 // ListLabels lists the labels a project's issues and merge requests can
-// carry (§7.7).
+// carry.
 func (s *Service) ListLabels(ctx context.Context, raw string, q gapi.LabelQuery, opts gapi.ListOptions) (model.Labels, error) {
 	p, ref, err := s.project(ctx, raw)
 	if err != nil {
@@ -49,7 +49,7 @@ type MilestoneSearch struct {
 	List             gapi.ListOptions
 }
 
-// ListMilestones lists a project's or a group's milestones (§7.7).
+// ListMilestones lists a project's or a group's milestones.
 func (s *Service) ListMilestones(ctx context.Context, q MilestoneSearch) (model.Milestones, error) {
 	c, err := s.api()
 	if err != nil {
@@ -110,7 +110,7 @@ func titleIsFilter(title string) bool {
 
 // ListBoards lists a project's issue boards with their lists in board
 // order, and for each list the search_issues arguments that return its
-// issues (§7.7). GitLab returns every list of a board with it, so a
+// issues. GitLab returns every list of a board with it, so a
 // page is cut by max and by the boards budget; the token names the
 // next board by id.
 func (s *Service) ListBoards(ctx context.Context, raw string, opts gapi.ListOptions) (model.Boards, error) {
@@ -199,14 +199,16 @@ func boardRow(b gitlab.Board) model.Board {
 	out := model.Board{ID: b.ID, UntrustedName: name, OpenList: !b.HideBacklogList, ClosedList: !b.HideClosedList,
 		Scope: boardScope(b), Lists: []model.BoardList{}}
 	// A label list on a board scoped to a milestone holds only the
-	// issues in it; a filter in its place is not applied there (§18 row
-	// 100).
+	// issues in it; a filter in its place is not applied there
+	// (v19.4.1-ee).
 	var milestone *gitlab.BoardTimebox
 	if b.Milestone != nil && b.Milestone.ID > 0 {
 		milestone = b.Milestone
 	}
-	// GitLab orders lists by kind, then position. Every kind shares the
-	// positions, so position is the board's order.
+	// GitLab orders lists by kind, then position, which the API docs do
+	// not say. Every kind shares the positions, so position is the
+	// board's order. Checked by the live step "boards page with their lists".
+	// https://docs.gitlab.com/api/boards/
 	position := func(l gitlab.BoardList) int {
 		if l.Position == nil {
 			return math.MaxInt
@@ -333,7 +335,7 @@ func (s *Service) ListMembers(ctx context.Context, raw, query string, opts gapi.
 }
 
 // FindUsers finds accounts by exact username or by a search of names
-// and usernames (§6.3).
+// and usernames.
 func (s *Service) FindUsers(ctx context.Context, q gapi.UserQuery, opts gapi.ListOptions) (model.Users, error) {
 	c, err := s.api()
 	if err != nil {
@@ -363,7 +365,7 @@ type TodoSearch struct {
 	List    gapi.ListOptions
 }
 
-// ListTodos lists the signed-in account's to-do items (§7.7).
+// ListTodos lists the signed-in account's to-do items.
 func (s *Service) ListTodos(ctx context.Context, q TodoSearch) (model.Todos, error) {
 	c, err := s.api()
 	if err != nil {
@@ -419,8 +421,8 @@ type SearchQuery struct {
 	List    gapi.ListOptions
 }
 
-// Search runs GitLab's search in one project, one group or the instance
-// (§7.1). A scope the instance or group can only search with advanced
+// Search runs GitLab's search in one project, one group or the instance.
+// A scope the instance or group can only search with advanced
 // search, which it lacks, is [unsupported] and says to search a project.
 func (s *Service) Search(ctx context.Context, q SearchQuery) (model.Search, error) {
 	c, err := s.api()

@@ -861,7 +861,7 @@ func TestHeaderTimeout(t *testing.T) {
 }
 
 // TestCanceledCreateIsAmbiguous: a create canceled after it was sent may
-// have landed, so it is [ambiguous_outcome], not a plain failure (§4.5).
+// have landed, so it is [ambiguous_outcome], not a plain failure.
 // A canceled read is [unavailable].
 func TestCanceledCreateIsAmbiguous(t *testing.T) {
 	f := newFixture(t, gitlabtest.Options{}, func(o *Options) { o.MaxAttempts = 1 })

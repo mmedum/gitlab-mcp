@@ -3,7 +3,7 @@
 // version and edition, and turns GitLab web URLs into tool arguments.
 //
 // The base URL is normalized once, so every request and every origin
-// check compares the same scheme, host, port and sub-path (§4.9).
+// check compares the same scheme, host, port and sub-path.
 package instance
 
 import (
@@ -234,8 +234,7 @@ func (i Instance) SameOrigin(u *url.URL) bool {
 
 // UnderAPIRoot reports whether u may carry the token: same origin, no
 // credentials, and a path at or below the API root with no dot
-// segments, raw or percent-encoded. It guards following a Link header
-// (§11).
+// segments, raw or percent-encoded. It guards following a Link header.
 func (i Instance) UnderAPIRoot(u *url.URL) bool {
 	if !i.SameOrigin(u) || u.User != nil {
 		return false

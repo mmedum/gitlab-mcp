@@ -4,18 +4,18 @@
 //
 // These are not the wire types (internal/gitlab). A wire type is what
 // GitLab sends; a model type is what this server promises, and the
-// released surface is a contract `scripts/gates schema-diff` holds
-// (CLAUDE.md rule 17). Fields are added, never renamed or removed.
+// released surface is a contract `scripts/gates schema-diff` holds.
+// Fields are added, never renamed or removed.
 //
 // Text someone other than the signed-in person wrote — titles,
 // descriptions, comments, commit messages, file contents — sits in
-// fields named untrusted_* (docs/architecture.md §4.1.1), so a client
-// that reads only the structured half still knows which parts are data.
+// fields named untrusted_*, so a client that reads only the structured
+// half still knows which parts are data.
 package model
 
 import "time"
 
-// ProjectRef names a project by both its id and its path (§6.1).
+// ProjectRef names a project by both its id and its path.
 type ProjectRef struct {
 	ID   int64  `json:"id" jsonschema:"The numeric project id; the stable way to address it"`
 	Path string `json:"path" jsonschema:"The full path, such as group/sub/project"`
@@ -38,7 +38,7 @@ type Milestone struct {
 	State string `json:"state"`
 }
 
-// Listing says what part of a listing a result holds (§4.8, §7.1).
+// Listing says what part of a listing a result holds.
 type Listing struct {
 	Returned int  `json:"returned" jsonschema:"Rows in this result"`
 	Complete bool `json:"complete" jsonschema:"True when there is no further page"`
@@ -48,7 +48,7 @@ type Listing struct {
 	NextPageToken *string `json:"next_page_token" jsonschema:"Pass as page_token to continue; null when complete"`
 }
 
-// Budget reports how much of one text was shown (§4.8).
+// Budget reports how much of one text was shown.
 type Budget struct {
 	BudgetChars int `json:"budget_chars" jsonschema:"The most characters this result shows of the text"`
 	TotalChars  int `json:"total_chars" jsonschema:"The text's length in characters, after hidden text was removed"`
@@ -58,7 +58,7 @@ type Budget struct {
 	// shown to its end.
 	ContinueOffset *int `json:"continue_offset" jsonschema:"Pass as offset to read on; null when shown to the end"`
 	// HiddenRemoved counts characters dropped or made visible because a
-	// reader of the rendered page would not see them (§4.1.2).
+	// reader of the rendered page would not see them.
 	HiddenRemoved int `json:"hidden_chars_removed" jsonschema:"Zero-width, bidirectional-control and HTML-comment characters removed or made visible"`
 }
 
@@ -76,7 +76,7 @@ type DiscussionSummary struct {
 
 // ---------------------------------------------------------------- get_me
 
-// Me is get_me's result (§7.9).
+// Me is get_me's result.
 type Me struct {
 	User       MeUser       `json:"user"`
 	Instance   InstanceInfo `json:"instance"`
@@ -121,13 +121,13 @@ type Registration struct {
 	Tools    int      `json:"tools"`
 }
 
-// WriteScope is the write allow-list (§4.7).
+// WriteScope is the write allow-list.
 type WriteScope struct {
 	Confined   bool     `json:"confined" jsonschema:"False means writes may go wherever the token can write"`
 	Namespaces []string `json:"namespaces"`
 }
 
-// RateReading is the last rate-limit reading GitLab sent (§2.13).
+// RateReading is the last rate-limit reading GitLab sent.
 type RateReading struct {
 	Known     bool       `json:"known" jsonschema:"False until GitLab sent RateLimit headers, which not every response carries"`
 	Limit     int        `json:"limit"`
@@ -138,7 +138,7 @@ type RateReading struct {
 
 // ------------------------------------------------------------ resolve_url
 
-// Resolved is resolve_url's result: a web URL as tool arguments (§6.1).
+// Resolved is resolve_url's result: a web URL as tool arguments.
 type Resolved struct {
 	Kind    string `json:"kind" jsonschema:"project, issue, merge_request, file, commit, compare, pipeline, job or wiki"`
 	Project string `json:"project" jsonschema:"The project's full path"`
@@ -522,7 +522,7 @@ type File struct {
 	Size    int64      `json:"size_bytes"`
 	BlobID  string     `json:"blob_id"`
 	// LastCommitID is the witness an update or delete of this file
-	// carries (§4.6).
+	// carries.
 	LastCommitID string `json:"last_commit_id" jsonschema:"The last commit that changed this file; the witness a later edit carries"`
 	CommitID     string `json:"commit_id" jsonschema:"The commit the ref resolved to"`
 	SHA256       string `json:"content_sha256"`
@@ -1006,7 +1006,7 @@ type Label struct {
 	OpenMergeRequests    *int   `json:"open_merge_requests"`
 	UntrustedDescription string `json:"untrusted_description"`
 	// Version is the witness update_label and delete_label take: GitLab
-	// keeps no version of a label (§4.6).
+	// keeps no version of a label.
 	Version string `json:"version" jsonschema:"A hash of the label as read: update_label and delete_label take it, and refuse [stale] if the label changed since"`
 }
 
@@ -1196,9 +1196,9 @@ type Search struct {
 
 // Write is what every write result carries besides its own fields: where
 // it went, whether it was only a preview, and what the quick-action guard
-// did to the text sent (§4.2, §4.7, §4.11). Each result has its own
-// Outcome beside it, because `scripts/gates outcomes` holds every writing
-// function to set one.
+// did to the text sent. Each result has its own Outcome beside it,
+// because `scripts/gates outcomes` holds every writing function to set
+// one.
 type Write struct {
 	// DryRun is true when nothing was sent: the result says what would
 	// have been.
@@ -1214,7 +1214,7 @@ type Write struct {
 }
 
 // WriteTarget names the project a write went to and who can see it: a
-// write to a public project is visible to everyone (§4.7).
+// write to a public project is visible to everyone.
 type WriteTarget struct {
 	Project    ProjectRef `json:"project"`
 	Visibility string     `json:"visibility" jsonschema:"public, internal or private: who can see what was written"`
@@ -1234,7 +1234,7 @@ type EscapedLine struct {
 	Command string `json:"command" jsonschema:"The command name, without the slash"`
 }
 
-// Removed counts what replacing a text wholesale took out (§4.6).
+// Removed counts what replacing a text wholesale took out.
 type Removed struct {
 	Chars int `json:"chars"`
 	Lines int `json:"lines"`
@@ -1879,7 +1879,7 @@ type Events struct {
 	Listing Listing     `json:"listing"`
 }
 
-// ------------------------------------------------------------ phase 6
+// -------------------------------------------------------------- features
 
 // IssueMove is move_issue's result.
 type IssueMove struct {

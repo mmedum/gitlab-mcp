@@ -2,12 +2,15 @@
 // server requests in each mode, the scope each kind of tool needs, and
 // the text people paste when they register their OAuth application.
 //
-// GitLab offers nothing between read_api and api for the REST surface
-// (§2.6): read_api is enforced by HTTP method and covers every GET, and
-// api covers everything else, merging and deleting included. So the
-// scope follows read-only mode alone. The Ship and Destructive flags
-// change what is registered, not what is requested, which is why
-// registration is the control (§4.3, §9.4).
+// GitLab offers nothing between read_api and api for the REST surface:
+// read_api is enforced by HTTP method and covers every GET and HEAD,
+// and api covers everything else, merging and deleting included. The
+// mcp scope reaches only the few routes tagged for GitLab's own server,
+// which leave out notes and issue updates. GitLab's scope table says
+// neither. So the scope follows read-only mode alone, and the Ship and
+// Destructive flags change what is registered, not what is requested.
+// Checked by the live step "which REST routes an mcp-scoped token reaches".
+// https://docs.gitlab.com/integration/oauth_provider/
 //
 // docs/setup.md's application block is generated from SetupBlock and
 // compared exactly by the staleness gate.
@@ -29,9 +32,12 @@ const (
 
 // RedirectURI is the redirect URI people register with their OAuth
 // application, and the one login sends. GitLab ignores the port of a
-// loopback IP literal when it compares redirect URIs (§18 row 1), so the
-// registered URI carries none and login listens on 127.0.0.1:0.
-// `localhost` would need an exact port (§18 row 2).
+// loopback IP literal when it compares redirect URIs, as RFC 8252 §7.3
+// allows, so the registered URI carries none and login listens on
+// 127.0.0.1:0. GitLab's MCP page says the URI must match exactly, which
+// is wrong for a loopback IP literal. `localhost` is not one, and would
+// need an exact port.
+// https://docs.gitlab.com/user/model_context_protocol/mcp_server/
 const RedirectURI = "http://127.0.0.1/callback"
 
 // implies maps a scope to the narrower scopes it covers. A token holding
@@ -67,7 +73,7 @@ func ForMode(m Mode) []string {
 }
 
 // Kind is what a tool does, as far as scopes are concerned. It mirrors
-// the kinds of §4.3; the tool registry maps its own kind onto this one.
+// the tool kinds; the tool registry maps its own kind onto this one.
 type Kind string
 
 // Kinds.
@@ -78,7 +84,7 @@ const (
 	KindDestructive Kind = "destructive"
 )
 
-// Kinds is every kind, in the order §4.3 tabulates them.
+// Kinds is every kind, from the narrowest effect to the widest.
 func Kinds() []Kind { return []Kind{KindRead, KindWrite, KindShip, KindDestructive} }
 
 // Required is the narrowest scope that lets a tool of kind k work. Read

@@ -9,11 +9,10 @@ import (
 )
 
 // Drift is GitLab adding a response field. The wire types here model a
-// subset on purpose (§4.10), so an unknown field is routine and must not
-// fail the call; it is reported by path at debug level, once per
-// process, so a field worth modeling is noticed. A field the struct
-// declares and GitLab stops sending surfaces in `scripts/gates
-// api-fields` instead.
+// subset on purpose, so an unknown field is routine and must not fail
+// the call; it is reported by path at debug level, once per process, so
+// a field worth modeling is noticed. A field the struct declares and
+// GitLab stops sending surfaces in `scripts/gates api-fields` instead.
 
 // decodeReporting unmarshals data into out and calls drift once for each
 // field of the response out does not model.

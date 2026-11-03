@@ -10,8 +10,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The phase-0 reads. Each builds its Call as a literal so the
-// api-coverage gate can bind it to an operation.
+// The core reads. Each builds its Call as a literal so the api-coverage
+// gate can bind it to an operation.
 
 // GetMetadata reads the instance's version and edition. It needs
 // authentication.
@@ -40,7 +40,7 @@ func (c *Client) TokenInfo(ctx context.Context) (*gitlab.TokenInfo, error) {
 // A path is read at most once per call context (WithCall), and then not
 // again for a few minutes in this process; a move GitLab reports
 // forgets what the process remembered. A proxy that decodes %2F then
-// breaks at most this one request (§6.1).
+// breaks at most this one request.
 //
 // An id is returned as given, with its path when the process knows it,
 // and is never read for it.

@@ -146,9 +146,15 @@ func withoutGoModBump(root, from, to string, files []string) ([]string, error) {
 }
 
 // goModOutsideRequires is go.mod with its require entries and blank lines
-// taken out. A line is read with its comment cut, since the go command
-// keeps a comment after `require (` and after `)` (docs/architecture.md
-// §18). Only a line shaped like a require entry is taken out, so anything
+// taken out. A line is read with its comment cut, because Go 1.27's
+// `go mod edit -fmt` keeps a comment after `require (` and after `)` in
+// a block of two or more entries, and a block closed by `) // comment`
+// must still close.
+// The Go reference allows a comment on any line and is silent on which
+// ones the formatter keeps.
+// https://go.dev/ref/mod#go-mod-file-lexical
+//
+// Only a line shaped like a require entry is taken out, so anything
 // else stays in wherever it sits. read is false unless the module line was
 // seen and every require block closed: a comparison that read less waives
 // nothing.

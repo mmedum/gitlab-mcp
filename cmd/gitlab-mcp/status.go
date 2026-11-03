@@ -450,7 +450,7 @@ func (d *doctor) run(ctx context.Context, cfg config.Config, s *app.Settings) {
 	d.report(true, "/user", "signed in as "+u)
 }
 
-// writeScope says where writes may go (§4.7): confined by
+// writeScope says where writes may go: confined by
 // GITLAB_MCP_WRITE_NAMESPACES, or anywhere the token can write.
 func writeScope(cfg config.Config) string {
 	switch {

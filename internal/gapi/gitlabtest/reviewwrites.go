@@ -17,7 +17,7 @@ import (
 // Threads, replies and reviews on a merge request. A diff position is
 // checked as GitLab checks it: the three SHAs must be the merge request's
 // current diff_refs, and the line must be in that file's diff, or the
-// note has no line code and GitLab refuses it (§2.9).
+// note has no line code and GitLab refuses it.
 
 // ------------------------------------------------------------ positions
 

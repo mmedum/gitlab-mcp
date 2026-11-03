@@ -13,7 +13,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/tsv"
 )
 
-// The API-fields gate is api-coverage one level down (§8b): for every
+// The API-fields gate is api-coverage one level down: for every
 // operation the client calls, every query parameter and body field it
 // sends exists on that operation, and every response field a wire struct
 // decodes exists in the operation's schema, with a Go kind that can hold
@@ -27,8 +27,8 @@ import (
 // added to a wire type, and the gate asks about it on that commit.
 //
 // And one rule with no exception: no wire struct declares a field whose
-// name ends in _token. A project read once carried a runner registration
-// token, and a field that is never decoded cannot leak (§8b).
+// name ends in _token. A project read can carry a runner registration
+// token, and a field that is never decoded cannot leak.
 
 const (
 	fieldsFile = "testdata/api-fields.tsv"
@@ -411,13 +411,14 @@ func wireStructs(pkg parsedPackage) map[string]*ast.StructType {
 	return out
 }
 
-// tokenFields refuses any wire field named like a token.
+// tokenFields refuses any wire field named like a token (D-61).
 func tokenFields(structs map[string]*ast.StructType) []string {
 	var problems []string
 	for _, name := range slices.Sorted(maps.Keys(structs)) {
 		for _, f := range structs[name].Fields.List {
 			if tag := jsonTag(f); strings.HasSuffix(tag, "_token") || tag == "token" {
-				problems = append(problems, fmt.Sprintf("%s.%s decodes %q: no wire type may carry a field named like a token (§8b)",
+				problems = append(problems, fmt.Sprintf("%s.%s decodes %q: no wire type may carry a field named like a token, "+
+					"since a field never decoded cannot leak",
 					name, fieldName(f), tag))
 			}
 		}

@@ -7,13 +7,17 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The Ship and Destructive calls of phase 3 (docs/architecture.md §4.3):
-// merging and approving, running and retrying CI, and deleting a branch
-// or a comment. The tools that reach them are registered only when the
-// person running the server turned their kind on.
+// The Ship and Destructive calls: merging and approving, running and
+// retrying CI, and deleting a branch or a comment. The tools that reach
+// them are registered only when the person running the server turned
+// their kind on.
 
 // MergeBody is PUT …/merge_requests/:iid/merge. SHA is the witness:
-// GitLab refuses with 409 when the source branch's head is another.
+// GitLab refuses with 409, not 400, when the source branch's head is
+// another, and approving does the same. Checked by the live steps
+// "a merge with a stale sha is refused" and
+// "an approval with a stale sha is refused".
+// https://docs.gitlab.com/api/merge_requests/
 type MergeBody struct {
 	SHA                      string `json:"sha"`
 	Squash                   *bool  `json:"squash,omitempty"`
@@ -120,7 +124,7 @@ type PipelineCreate struct {
 }
 
 // CreatePipeline runs a pipeline for a ref. It creates one, so it is not
-// repeated (§4.5).
+// repeated.
 func (c *Client) CreatePipeline(ctx context.Context, p Project, in PipelineCreate) (*gitlab.PipelineDetail, error) {
 	var out gitlab.PipelineDetail
 	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/pipeline", Args: []string{p.segment()}, Body: in,
@@ -133,7 +137,7 @@ func (c *Client) CreatePipeline(ctx context.Context, p Project, in PipelineCreat
 // answers 200 with the pipeline, 405 when the merge request has no
 // commits, and 400 when the pipeline is not saved, a missing permission
 // included (lib/api/merge_requests.rb). It creates one, so it is not
-// repeated (§4.5).
+// repeated.
 func (c *Client) CreateMergeRequestPipeline(ctx context.Context, p Project, iid int64) (*gitlab.PipelineDetail, error) {
 	var out gitlab.PipelineDetail
 	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/pipelines", Args: []string{p.segment(), idArg(iid)},
@@ -219,7 +223,11 @@ func (c *Client) GetMergeRequestNote(ctx context.Context, p Project, iid, note i
 
 // shownSince is the If-Unmodified-Since for a time GitLab showed: it
 // shows times to the millisecond and compares them to the microsecond,
-// so a shown time stands for the end of its millisecond (spike N).
+// so a shown time stands for the end of its millisecond. GitLab's REST
+// page names the 412 but not the precision. Checked by the live steps
+// "how a comment delete holds If-Unmodified-Since" and
+// "a comment delete with a stale witness is refused".
+// https://docs.gitlab.com/api/rest/troubleshooting/
 func shownSince(shown time.Time) time.Time {
 	return shown.Truncate(time.Millisecond).Add(time.Millisecond - time.Microsecond)
 }

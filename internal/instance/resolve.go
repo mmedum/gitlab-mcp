@@ -85,7 +85,7 @@ var reservedFirst = map[string]bool{
 
 // ResolveURL turns a GitLab web URL on this instance into tool
 // arguments. A URL on another host is refused, naming the configured
-// instance (§6.1).
+// instance.
 func (i Instance) ResolveURL(raw string) (Ref, error) {
 	if i.IsZero() {
 		return Ref{}, invalidf("no GitLab instance is configured")

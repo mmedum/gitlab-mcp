@@ -17,11 +17,11 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/render"
 )
 
-// The Ship kind (§4.3): merging, approving, and running CI. The tools
-// that reach here exist only when GITLAB_MCP_ENABLE_SHIP is on. Merge
-// and approve carry the head sha the caller read, which GitLab holds
-// (§4.6); the rest read the pipeline or job first, so the result can say
-// what the call changed (§4.11).
+// The Ship kind: merging, approving, and running CI. The tools that
+// reach here exist only when GITLAB_MCP_ENABLE_SHIP is on. Merge and
+// approve carry the head sha the caller read, which GitLab holds; the
+// rest read the pipeline or job first, so the result can say what the
+// call changed.
 
 // ------------------------------------------------------------- merging
 
@@ -123,7 +123,11 @@ func (s *Service) mergeFailed(ctx context.Context, t target, iid int64, sha stri
 	var e *gapi.Error
 	if errors.As(err, &e) && (e.Status == 405 || e.Status == 406 || e.Status == 422) {
 		// GitLab's 405 "Method Not Allowed" and 422 "Branch cannot be
-		// merged" say only no (lib/api/merge_requests.rb).
+		// merged" say only no, and its 409 only that sha is not the head
+		// (v19.4.1-ee), so the reason is read back. Checked by the live
+		// steps "a merge with a stale sha is refused" and "a squash merge
+		// is previewed".
+		// https://docs.gitlab.com/api/merge_requests/
 		return model.MergeWrite{}, gapi.Errf(gapi.ClassConflict, "GitLab would not merge it now, and nothing was merged: its "+
 			"detailed_merge_status is %q. get_merge_request shows the checks; auto_merge merges once they pass", after.DetailedMergeStatus)
 	}
@@ -155,7 +159,7 @@ func errNoSHA(what string) error {
 
 // ApproveMergeRequest approves a merge request at the head the caller
 // read. An approval is someone's sign-off another person's merge rule
-// counts, which is why it is Ship (§4.3, §17.2).
+// counts, which is why it is Ship.
 func (s *Service) ApproveMergeRequest(ctx context.Context, raw string, iid int64, sha string) (model.ApprovalWrite, error) {
 	sha = strings.TrimSpace(sha)
 	if sha == "" {
@@ -224,9 +228,14 @@ func (s *Service) UnapproveMergeRequest(ctx context.Context, raw string, iid int
 }
 
 // approvalFailed reads the approvals after a failed approve or
-// unapprove: the answer may have been lost after it landed, and GitLab's
-// 401 for an approval it will not take is not a sign-in problem when the
-// same token can still read.
+// unapprove: the answer may have been lost after it landed. GitLab
+// answers an approval it will not take, given already or by an
+// ineligible approver, with 401 and no invalid_token marker, and an
+// unapprove with nothing to withdraw with 404 (v19.4.1-ee). That 401 is
+// not a sign-in problem when the same token can still read. Checked by
+// the live steps "the author approves their own MR" and "an approval is
+// withdrawn".
+// https://docs.gitlab.com/api/merge_request_approvals/
 func (s *Service) approvalFailed(ctx context.Context, t target, iid int64, sha string, err error, approve bool) (model.ApprovalWrite, error) {
 	if gapi.IsClass(err, gapi.ClassStale) {
 		return model.ApprovalWrite{}, err
@@ -310,7 +319,7 @@ func checkKeys(keys []string) error {
 }
 
 // RunPipeline runs a pipeline for a ref. Variable values are sent and
-// never shown: a result names their keys (§7.6).
+// never shown: a result names their keys (D-50).
 func (s *Service) RunPipeline(ctx context.Context, in PipelineRun) (model.PipelineWrite, error) {
 	if err := in.check(); err != nil {
 		return model.PipelineWrite{}, err
@@ -343,7 +352,9 @@ func (s *Service) RunPipeline(ctx context.Context, in PipelineRun) (model.Pipeli
 }
 
 // findPipeline settles a lost run_pipeline: a pipeline on the ref that
-// this account started through the API since the call began (§4.5).
+// this account started through the API since the call began. It does
+// not compare the pipelines' variables, since reading them returns their
+// values.
 func (s *Service) findPipeline(ctx context.Context, p gapi.Project, ref string, start time.Time) (string, error) {
 	me, err := s.me(ctx)
 	if err != nil {
@@ -373,7 +384,7 @@ func (s *Service) RunMergeRequestPipeline(ctx context.Context, raw string, iid i
 		// GitLab runs a fork's pipeline in this project, with its
 		// unprotected variables and its runners, when the project allows
 		// it, and in the fork otherwise. The setting is shown only to
-		// maintainers, so where it would run cannot be told (§17.14).
+		// maintainers, so where it would run cannot be told (D-47).
 		return model.MergeRequestPipelineWrite{}, gapi.Errf(gapi.ClassBlocked, "the merge request comes from a fork, and its pipeline "+
 			"would run the fork's code, in this project with its variables and runners or in the fork; nothing was sent. Review the "+
 			"fork's code, then run the pipeline from the merge request's Pipelines tab in GitLab")
@@ -408,8 +419,8 @@ func (s *Service) RunMergeRequestPipeline(ctx context.Context, raw string, iid i
 
 // mrPipelineKind names a merge request pipeline by its ref. A
 // same-project account that may not push to the source branch is
-// refused, not given a pipeline on the branch (§18 row 104), so these
-// two refs are the ones a create answers with.
+// refused with 400, not given a pipeline on the branch, so these two
+// refs are the ones a create answers with.
 func mrPipelineKind(ref string, iid int64) string {
 	switch ref {
 	case fmt.Sprintf("refs/merge-requests/%d/merge", iid):
@@ -426,7 +437,7 @@ func mrPipelineKind(ref string, iid int64) string {
 var permissionRefused = regexp.MustCompile(`(?i)insufficient permissions to create a new pipeline|do not have sufficient permission to run a pipeline`)
 
 // mrPipelineFailed names GitLab's refusals of a merge request pipeline
-// and settles a lost answer by reading (§4.5).
+// and settles a lost answer by reading.
 func mrPipelineFailed(err error, find func() (string, error)) error {
 	var e *gapi.Error
 	if !errors.As(err, &e) {
@@ -463,6 +474,13 @@ func (s *Service) newestPipeline(ctx context.Context, p gapi.Project) (int64, er
 // refs, newer than the newest pipeline before the call. GitLab filters
 // the listing and orders it by id, newest first, so its first row
 // answers: any match is newer than it or no newer than the floor.
+//
+// Every create makes a new pipeline, and GitLab also starts merge
+// request pipelines under the account's name for a push or a new merge
+// request, so only the floor tells this one apart. The create answers
+// 200 with the pipeline; async would answer 202 with none, so it is not
+// sent (v19.4.1-ee). Checked by the live step "an MR pipeline runs".
+// https://docs.gitlab.com/api/merge_requests/
 func (s *Service) findMRPipeline(ctx context.Context, t target, mr *gitlab.MergeRequest, floor int64, start time.Time) (string, error) {
 	me, err := s.me(ctx)
 	if err != nil {
@@ -481,7 +499,12 @@ func (s *Service) findMRPipeline(ctx context.Context, t target, mr *gitlab.Merge
 	return "", nil
 }
 
-// RetryPipeline retries a pipeline's failed and canceled jobs.
+// RetryPipeline retries a pipeline's failed and canceled jobs. GitLab
+// answers a retry, as it does a cancel, with the pipeline whether or not
+// anything changed (v19.4.1-ee), so the result compares the status
+// before and after. Checked by the live steps "a failed pipeline is
+// retried" and "a running pipeline is canceled".
+// https://docs.gitlab.com/api/pipelines/
 func (s *Service) RetryPipeline(ctx context.Context, raw string, id int64) (model.PipelineWrite, error) {
 	t, err := s.writeTarget(ctx, raw)
 	if err != nil {
@@ -519,8 +542,8 @@ func (s *Service) RetryPipeline(ctx context.Context, raw string, id int64) (mode
 var finished = []string{"success", "failed", "canceled", "skipped"}
 
 // cancelable are the pipeline statuses GitLab's cancel acts on, for any
-// pipeline but an external one (Ci::HasStatus::CANCELABLE_STATUSES,
-// §18 row 91).
+// pipeline but an external one, manual included
+// (Ci::HasStatus::CANCELABLE_STATUSES at v19.4.1-ee).
 var cancelable = []string{"created", "waiting_for_resource", "preparing", "waiting_for_callback", "pending", "running",
 	"manual", "scheduled"}
 
@@ -558,8 +581,10 @@ func (s *Service) CancelPipeline(ctx context.Context, raw string, id int64) (mod
 
 // cancelOutcome says what a cancel did from the pipeline read first and
 // GitLab's answer. GitLab cancels the jobs before it answers and
-// recomputes the pipeline's status after, so an answer that still reads
-// running is a cancel that took effect.
+// recomputes the pipeline's status after, in a worker, so an answer
+// that still reads running is a cancel that took effect (v19.4.1-ee).
+// Checked by the live step "a running pipeline is canceled".
+// https://docs.gitlab.com/api/pipelines/
 func cancelOutcome(before, answer *gitlab.PipelineDetail) (outcome, note string) {
 	switch {
 	case answer.Status == "canceled" || answer.Status == "canceling":
@@ -611,8 +636,11 @@ func (s *Service) RetryJob(ctx context.Context, raw string, id int64, inputs map
 }
 
 // inputNamesOf names the inputs sent, in order, refusing one without a
-// name; GitLab checks the rest against the specification that declares
-// them.
+// name. GitLab checks the rest against the job's own inputs and refuses
+// an unknown name with 400, but a job that declares none takes any and
+// uses none (v19.4.1-ee). Checked by the live steps "a job retry with an
+// input the job lacks is refused" and "a job is retried with an input".
+// https://docs.gitlab.com/api/jobs/
 func inputNamesOf(inputs map[string]any) ([]string, error) {
 	names := nonNil(slices.Sorted(maps.Keys(inputs)))
 	if slices.Contains(names, "") {
@@ -687,9 +715,8 @@ func (s *Service) PlayJob(ctx context.Context, raw string, id int64, vars []JobV
 	var e *gapi.Error
 	if errors.As(err, &e) && e.Class == gapi.ClassForbidden && e.Status == 403 && len(body) > 0 && strings.HasSuffix(e.Message, ": 403 Forbidden") {
 		// GitLab answers a bare 403, with no reason, when the project's
-		// minimum role for pipeline variables is above the account's
-		// (phase 3 live run), and for other refusals too, so the cause is
-		// offered, not stated.
+		// minimum role for pipeline variables is above the account's, and
+		// for other refusals too, so the cause is offered, not stated.
 		return model.JobWrite{}, gapi.Wrap(gapi.ClassForbidden, err, "GitLab refused to run the job with variables, saying only "+
 			"403 Forbidden. The cause may be that %s", gapi.PipelineVariablesRefused)
 	}
@@ -723,8 +750,14 @@ func autoMergeSet(mr *gitlab.MergeRequest) bool {
 
 // CancelAutoMerge stops a merge request from merging when its pipeline
 // succeeds. GitLab answers 201 whether or not it canceled, with the
-// outcome in the body (§18 row 109), so the body and a read afterwards
-// say what happened. Nothing is sent when no auto-merge is set.
+// outcome in the body's status, so the body and a read afterwards say
+// what happened. Nothing is sent when no auto-merge is set.
+//
+// A cancel that arrives while the merge runs clears the flag and answers
+// success, and the merge request merges anyway: the merge does not look
+// at the flag again (v19.4.1-ee). Checked by the live steps "an
+// auto-merge is canceled" and "an auto-merge is canceled again".
+// https://docs.gitlab.com/api/merge_requests/
 func (s *Service) CancelAutoMerge(ctx context.Context, raw string, iid int64) (model.AutoMergeCancel, error) {
 	t, err := s.writeTarget(ctx, raw)
 	if err != nil {
@@ -788,7 +821,7 @@ func cancelRead(t target, after *gitlab.MergeRequest, setBy string, res *gitlab.
 	failed := errors.As(err, &e)
 	if !failed || e.Status != 401 {
 		// GitLab cancels an auto-merge whose merge has already begun, and
-		// answers success, but the merge goes on (§18 row 109).
+		// answers success, but the merge goes on.
 		if out, done := mergingOrMerged(t, after, setBy, true); done {
 			return out, nil
 		}
@@ -931,14 +964,20 @@ type located struct {
 // ApplySuggestions commits suggestions from a merge request's diff
 // comments to its source branch, as the account, in one commit. GitLab
 // finds a suggestion by its id alone, so each is first found on this
-// merge request. The source branch is held to create_commit's rule
-// (§4.4): never the default branch or a protected one. The text is
-// someone else's and is committed under the account's name, so a text
-// with characters a reader would not see is refused, and the caller
-// passes each text as it read it, which is held against GitLab's: the
-// commit is what was read, and the client's prompt shows it (§4.12).
-// GitLab answers with the suggestions as they were before the commit and
-// without it, so the result is read back.
+// merge request. The source branch is held to create_commit's rule:
+// never the default branch or a protected one. The text is someone
+// else's and is committed under the account's name, so a text with
+// characters a reader would not see is refused, and the caller passes
+// each text as it read it, which is held against GitLab's: the commit is
+// what was read, and the client's prompt shows it.
+//
+// GitLab answers with the suggestions as they were before the commit,
+// so applied can still be false where the API docs show true, and no
+// field carries the commit; the result is read back. A second apply is
+// 400 and never commits twice (v19.4.1-ee). Checked by the live steps
+// "two suggestions apply in one commit", "an applied suggestion is
+// applied again" and "a suggestion applies after the head moved".
+// https://docs.gitlab.com/api/suggestions/
 func (s *Service) ApplySuggestions(ctx context.Context, in SuggestionsApplication) (model.SuggestionsApply, error) {
 	if err := in.check(); err != nil {
 		return model.SuggestionsApply{}, err
@@ -1082,7 +1121,7 @@ func (s *Service) suggestionsOn(ctx context.Context, p gapi.Project, iid int64, 
 // suggestionBranch reads the branch the commit would go to: the source
 // branch, in the fork it comes from when it does, which is held to the
 // write allow-list too. The default branch and a protected one are
-// refused, as create_commit refuses them (§4.4): GitLab would commit
+// refused, as create_commit refuses them: GitLab would commit
 // to either for an account that may push there.
 func (s *Service) suggestionBranch(ctx context.Context, t target, mr *gitlab.MergeRequest) (target, *gitlab.Branch, error) {
 	src := t
@@ -1113,7 +1152,7 @@ var fileChanged = regexp.MustCompile(`A file has been changed\.`)
 
 // applyFailed says what a failed apply did, by the class the client
 // gave the failure. A lost answer is settled by reading the suggestions
-// and the branch, never by applying again (§4.5).
+// and the branch, never by applying again.
 func (s *Service) applyFailed(ctx context.Context, t, src target, mr *gitlab.MergeRequest, in SuggestionsApplication, before string,
 	err error) error {
 	var e *gapi.Error

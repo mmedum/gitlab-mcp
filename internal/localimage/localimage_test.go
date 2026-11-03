@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-// The images are generated here, never copied from anywhere (§9.1).
+// The images are generated here, never copied from anywhere.
 
 func encoded(t *testing.T, enc func(*bytes.Buffer, image.Image) error) []byte {
 	t.Helper()

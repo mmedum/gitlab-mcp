@@ -7,14 +7,14 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The writes of phase 2: issues, comments, reviews, merge requests,
-// branches, commits and to-do items (docs/architecture.md §7).
+// The writes: issues, comments, reviews, merge requests, branches,
+// commits and to-do items.
 //
 // Every body is sent as given: the quick-action guard ran before the
-// service called here (§4.2), and a request struct's omitted fields are
-// left out of the JSON, because GitLab's PUT changes only what it is
-// sent (§4.6). None of these is declared Repeatable unless applying it
-// twice is the same as once; a create never is (§4.5).
+// service called here, and a request struct's omitted fields are left
+// out of the JSON, because GitLab's PUT changes only what it is sent.
+// None of these is declared Repeatable unless applying it twice is the
+// same as once; a create never is.
 
 // IssueCreate is POST /projects/:id/issues.
 type IssueCreate struct {
@@ -42,7 +42,11 @@ type IssueUpdate struct {
 	AddLabels    []string `json:"add_labels,omitempty"`
 	RemoveLabels []string `json:"remove_labels,omitempty"`
 	// AssigneeIDs is the whole set, computed from a fresh read: GitLab
-	// takes no add or remove for assignees.
+	// takes no add or remove for assignees, and an assignee change leaves
+	// the issue's updated_at where it was, so no witness catches one.
+	// GitLab's issues page does not say so. Checked by the live step
+	// "an issue is changed and closed".
+	// https://docs.gitlab.com/api/issues/
 	AssigneeIDs *[]int64 `json:"assignee_ids,omitempty"`
 	// MilestoneID 0 clears the milestone.
 	MilestoneID  *int64  `json:"milestone_id,omitempty"`
@@ -77,7 +81,7 @@ func (c *Client) CreateMergeRequestNote(ctx context.Context, p Project, iid int6
 }
 
 // UpdateIssueNote replaces the body of a comment on an issue. GitLab
-// holds no witness for an edit, so the caller reads first (§4.6).
+// holds no witness for an edit, so the caller reads first.
 func (c *Client) UpdateIssueNote(ctx context.Context, p Project, iid, note int64, body string) (*gitlab.Note, error) {
 	var out gitlab.Note
 	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/issues/{}/notes/{}", Args: []string{p.segment(), idArg(iid), idArg(note)},
@@ -87,7 +91,7 @@ func (c *Client) UpdateIssueNote(ctx context.Context, p Project, iid, note int64
 
 // UpdateMergeRequestNote replaces the body of a comment on a merge
 // request, one on a diff line included. GitLab holds no witness for an
-// edit, so the caller reads first (§4.6).
+// edit, so the caller reads first.
 func (c *Client) UpdateMergeRequestNote(ctx context.Context, p Project, iid, note int64, body string) (*gitlab.Note, error) {
 	var out gitlab.Note
 	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/merge_requests/{}/notes/{}", Args: []string{p.segment(), idArg(iid), idArg(note)},
@@ -171,7 +175,12 @@ func (c *Client) ResolveMergeRequestDiscussion(ctx context.Context, p Project, i
 	return &out, err
 }
 
-// ResolveIssueDiscussion resolves or reopens an issue's thread.
+// ResolveIssueDiscussion resolves or reopens an issue's thread. An issue
+// is resolvable, so GitLab serves the route, though its discussions page
+// documents resolving only a merge request's threads. Checked by the
+// live steps "a resolvable thread starts on an issue" and
+// "an issue thread resolves".
+// https://docs.gitlab.com/api/discussions/
 func (c *Client) ResolveIssueDiscussion(ctx context.Context, p Project, iid int64, discussion string, resolved bool) (*gitlab.Discussion, error) {
 	var out gitlab.Discussion
 	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/issues/{}/discussions/{}",
@@ -268,8 +277,10 @@ func (c *Client) CreateMergeRequest(ctx context.Context, p Project, in MergeRequ
 }
 
 // MergeRequestUpdate is PUT /projects/:id/merge_requests/:iid. A nil
-// field is not sent. GitLab takes no draft field: the title's "Draft:"
-// prefix is the draft state.
+// field is not sent. GitLab takes no draft field, and its OpenAPI file
+// publishes none on create or update: the title's "Draft:" prefix is the
+// draft state. Checked by the live step "an MR is changed in every field".
+// https://docs.gitlab.com/api/merge_requests/
 type MergeRequestUpdate struct {
 	Title              *string  `json:"title,omitempty"`
 	Description        *string  `json:"description,omitempty"`
@@ -299,8 +310,8 @@ type branchBody struct {
 }
 
 // CreateBranch creates a branch at ref. GitLab refuses a name that
-// exists, which guards this create itself (§2.11), but a retry after a
-// lost answer would still read as that refusal, so it is not repeated.
+// exists, which guards this create itself, but a retry after a lost
+// answer would still read as that refusal, so it is not repeated.
 func (c *Client) CreateBranch(ctx context.Context, p Project, branch, ref string) (*gitlab.Branch, error) {
 	var out gitlab.Branch
 	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/repository/branches", Args: []string{p.segment()},
@@ -328,11 +339,15 @@ type CommitAction struct {
 	Content  *string `json:"content,omitempty"`
 	Encoding string  `json:"encoding,omitempty"`
 	// LastCommitID is the witness: GitLab refuses the action with 400
-	// when the file's last commit is another (§2.10).
+	// when the file's last commit is another.
 	LastCommitID string `json:"last_commit_id,omitempty"`
 }
 
-// CommitCreate is POST /projects/:id/repository/commits.
+// CommitCreate is POST /projects/:id/repository/commits. GitLab's
+// OpenAPI file publishes this route with one file field and none of
+// these; testdata/api-fields.tsv records the difference. Checked by the
+// live step "a commit changes, moves and deletes files".
+// https://docs.gitlab.com/api/commits/
 type CommitCreate struct {
 	Branch        string         `json:"branch"`
 	StartBranch   string         `json:"start_branch,omitempty"`
@@ -367,7 +382,7 @@ type lintBody struct {
 // LintCIContent validates supplied configuration in the project's
 // context. It is a POST that changes nothing, so it may repeat and may
 // run under a dry run; a read-only token still cannot send it, because
-// read_api is enforced by method (§2.6).
+// read_api is enforced by method.
 func (c *Client) LintCIContent(ctx context.Context, p Project, content string, q LintQuery) (*gitlab.Lint, error) {
 	var out gitlab.Lint
 	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/ci/lint", Args: []string{p.segment()},
@@ -378,7 +393,7 @@ func (c *Client) LintCIContent(ctx context.Context, p Project, content string, q
 
 // UploadFile uploads a file to a project, for Markdown in its issues,
 // merge requests and comments to link. A create: GitLab keeps every
-// upload, so it is never repeated (§4.5).
+// upload, so it is never repeated.
 func (c *Client) UploadFile(ctx context.Context, p Project, name, contentType string, data []byte) (*gitlab.ProjectUpload, error) {
 	var out gitlab.ProjectUpload
 	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/uploads", Args: []string{p.segment()},

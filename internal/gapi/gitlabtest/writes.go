@@ -18,8 +18,8 @@ import (
 // threads, drafts, branches, commits, to-do items and the content lint.
 // Each acts as the token's user, and a private project the user cannot
 // see answers 404 before any of it runs, as a read does. Error bodies
-// follow GitLab's three shapes (§2.14): Grape's {"error": "x is
-// missing"} for a parameter, {"message": …} from a model or a service.
+// follow GitLab's three shapes: Grape's {"error": "x is missing"} for a
+// parameter, {"message": …} from a model or a service.
 
 // ------------------------------------------------------------ bodies
 

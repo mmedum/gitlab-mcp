@@ -28,8 +28,9 @@ func closedPort(t *testing.T) string {
 	return "http://" + addr
 }
 
-// The standard's own test: point everything at a closed port, and the
-// refetch fails loudly while the committed file does not move.
+// A refetch that half-writes the snapshot is worse than none: point
+// everything at a closed port, and the refetch fails loudly while the
+// committed file does not move.
 func TestAPIDiffLeavesTheSnapshotOnANetworkFailure(t *testing.T) {
 	base := closedPort(t)
 	t.Setenv("HTTPS_PROXY", base)

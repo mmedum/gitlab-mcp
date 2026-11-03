@@ -67,7 +67,7 @@ func New(opts Options) *mcp.Server {
 
 // logMethods logs every method but a tool call, which the tools log
 // themselves with their outcome class and rate bucket: the method, how
-// it ended and how long it took, and nothing it carried (§9.2).
+// it ended and how long it took, and nothing it carried (D-05).
 func logMethods(lg *slog.Logger) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {

@@ -9,11 +9,10 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The write tools of phase 2 (docs/architecture.md §7, §8). Every body
-// input is declared in Guarded, so register routes it through the
-// quick-action guard before the handler runs (§4.2); every one takes
-// dry_run, which register turns into a context the client refuses to
-// write under.
+// The write tools. Every body input is declared in Guarded, so register
+// routes it through the quick-action guard before the handler runs;
+// every one takes dry_run, which register turns into a context the
+// client refuses to write under.
 
 // visibleNote ends the description of every write others can see.
 const visibleNote = " The result names the project's visibility: in a public project, what is written is public."
@@ -103,7 +102,7 @@ type addCommentIn struct {
 }
 
 // diffLineIn is a line of a merge request's diff, as add_comment and
-// add_review_comment take it (§6.2).
+// add_review_comment take it.
 type diffLineIn struct {
 	File    string `json:"file,omitempty" jsonschema:"Comment on a line of this file of the merge request's diff, starting a thread there; the path as list_mr_files shows it"`
 	Line    int    `json:"line,omitempty" jsonschema:"With file: the line number on side"`

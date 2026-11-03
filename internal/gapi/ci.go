@@ -21,7 +21,7 @@ type PipelineQuery struct {
 	Username      string
 	UpdatedAfter  time.Time
 	UpdatedBefore time.Time
-	// CreatedAfter is how a lost run_pipeline is settled (§4.5).
+	// CreatedAfter is how a lost run_pipeline is settled.
 	CreatedAfter time.Time
 	OrderBy      string // id, status, ref, updated_at or user_id
 	Sort         string // asc or desc
@@ -92,7 +92,10 @@ func (c *Client) ListPipelineJobs(ctx context.Context, p Project, pipeline int64
 }
 
 // ListPipelineTriggerJobs lists a pipeline's trigger jobs, which the job
-// listing leaves out.
+// listing leaves out, through trigger_jobs: from 19.2 it replaces the
+// deprecated bridges route, served by the same handler. Checked by the
+// live step "a failed pipeline is read with its child pipeline".
+// https://docs.gitlab.com/api/jobs/
 func (c *Client) ListPipelineTriggerJobs(ctx context.Context, p Project, pipeline int64, q JobQuery, opts ListOptions) ([]gitlab.Bridge, Page, error) {
 	v := url.Values{}
 	setString(v, "scope", q.Scope)
@@ -112,13 +115,18 @@ func (c *Client) GetJob(ctx context.Context, p Project, id int64) (*gitlab.Job, 
 
 // MaxTraceRange is the most bytes one ranged read of a job's log may
 // ask for: GitLab refuses a larger byte_limit with 400
-// (Gitlab::Ci::Trace::Stream::LIMIT_SIZE; spike O).
+// (Gitlab::Ci::Trace::Stream::LIMIT_SIZE). Checked by the live step
+// "where a job log's size shows without reading it".
 const MaxTraceRange = 500 << 10
 
 // GetJobTrace reads a job's log as GitLab stored it, bytes, ANSI escapes
 // and section markers included: from offset, and limit bytes of it, or
-// to the end when limit is 0. An offset past the end reads nothing
-// (spike J).
+// to the end when limit is 0. byte_offset and byte_limit return the
+// exact bytes with no Content-Range, and an offset past the end is an
+// empty 200. GitLab's jobs page documents neither parameter. Checked by
+// the live steps "what byte_offset and byte_limit cut from a job log"
+// and "a job log is read in a byte window".
+// https://docs.gitlab.com/api/jobs/
 func (c *Client) GetJobTrace(ctx context.Context, p Project, id int64, offset, limit int) ([]byte, error) {
 	if limit < 0 || limit > MaxTraceRange || offset < 0 {
 		return nil, Errf(ClassUnexpected, "a job log range must start at 0 or later and read 1 to %d bytes", MaxTraceRange)

@@ -242,8 +242,8 @@ func TestToolsetsAll(t *testing.T) {
 	}
 }
 
-// TestReadOnlyWithAnEnableFlagNamesBoth is §9.4: refused at startup,
-// naming both settings.
+// TestReadOnlyWithAnEnableFlagNamesBoth: read-only with an enable flag
+// is refused at startup, naming both settings.
 func TestReadOnlyWithAnEnableFlagNamesBoth(t *testing.T) {
 	for _, flagName := range []string{EnvEnableShip, EnvEnableDestructive} {
 		_, err := load(t, nil, map[string]string{EnvReadOnly: "true", flagName: "true"})

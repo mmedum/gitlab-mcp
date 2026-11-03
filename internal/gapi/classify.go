@@ -13,7 +13,7 @@ import (
 )
 
 // envelope is what GitLab's error body said, from any of its four
-// shapes (§2.14):
+// shapes:
 //
 //	{"message": "404 Project Not Found"}
 //	{"message": {"title": ["can't be blank"]}}
@@ -121,7 +121,10 @@ func (e envelope) detail(status int) string {
 }
 
 // staleFile is the Files and Commits API refusing a last_commit_id that
-// is no longer the file's last commit. It answers 400, not 409 (§2.10).
+// is no longer the file's last commit. It answers 400 with this fixed
+// message, not 409, and GitLab's files page names no status for it.
+// Checked by the live step "a commit with a stale last_commit_id is refused".
+// https://docs.gitlab.com/api/repository_files/
 var staleFile = regexp.MustCompile(`(?i)has changed since you started editing it`)
 
 // alreadyExists is a create refused because its name is taken: a branch,
@@ -131,12 +134,18 @@ var alreadyExists = regexp.MustCompile(`(?i)already exists`)
 // jobState is a job refused for the state it is in: GitLab answers
 // "403 Forbidden - Job is not retryable" and "400 Bad request - Unplayable
 // Job" (lib/api/ci/jobs.rb, lib/api/helpers.rb), which asks the caller to
-// read the job, not a maintainer or the arguments.
+// read the job, not a maintainer or the arguments. GitLab's jobs page
+// names neither refusal. Checked by the live step
+// "a manual job no longer waiting is refused".
+// https://docs.gitlab.com/api/jobs/
 var jobState = regexp.MustCompile(`(?i)- (job is not retryable|unplayable job)$`)
 
 // pipelineVariables is GitLab refusing variables from an account below
 // the project's minimum role for them, which gitlab.com sets to no one on
-// a new project. It answers 400, but no argument fixes it.
+// a new project. It answers 400, but no argument fixes it; a manual job
+// with variables answers a bare 403 instead. Checked by the live step
+// "a manual job starts with variables and inputs".
+// https://docs.gitlab.com/ci/variables/
 var pipelineVariables = regexp.MustCompile(`(?i)insufficient permissions to set pipeline variables`)
 
 // PipelineVariablesRefused says why GitLab refuses variables from an
@@ -214,7 +223,7 @@ func (a answer) awardRefused() verdict {
 
 // rateLimited: GitLab did not act, so any method may try again, after
 // at least the wait it asked for. A plain-text body is the instance
-// throttle; JSON is one endpoint's application limit (§2.13).
+// throttle; JSON is one endpoint's application limit.
 func (a answer) rateLimited() verdict {
 	after := parseRetryAfter(a.h.Get("Retry-After"), time.Now())
 	which := "the instance's request throttle"
@@ -233,12 +242,13 @@ func (a answer) rateLimited() verdict {
 }
 
 // refused tells a bad token and a missing scope, both [auth], from a
-// role that refuses, [forbidden] (§3.2).
+// role that refuses, [forbidden].
 //
 // A 401 is the token only when GitLab marks it invalid_token: expired,
 // revoked or unknown, which a new token may clear, so the verdict says
-// to try one. GitLab also answers 401 for a merge the account may not
-// make (§2.15), where the token is fine and a new one changes nothing.
+// to try one. GitLab also answers 401, not 403, for a merge the account
+// may not make, where the token is fine and a new one changes nothing.
+// https://docs.gitlab.com/api/merge_requests/
 func (a answer) refused() verdict {
 	if a.status == http.StatusUnauthorized && invalidToken(a.env, a.h) {
 		v := a.fail(ClassAuth, "GitLab refused the access token for %s: it may have expired or been revoked. Run `gitlab-mcp login`. GitLab said: %s", a.name, a.detail)
@@ -264,9 +274,13 @@ func (a answer) refused() verdict {
 }
 
 // notFound tells the catch-all route, {"error": "404 Not Found"}, from a
-// missing resource. The route missing means a tier or edition the
-// account lacks (§2.14, spike F); a resource missing may be one the
-// token cannot see, since GitLab answers 404 for both (§2.15).
+// missing resource, {"message": "404 Project Not Found"}. The route
+// missing means a tier or edition the account lacks; a resource missing
+// may be one the token cannot see, since GitLab answers 404, not 403,
+// for both. A tier refusal is not always a 404: epics and iterations on
+// a Free group answer 403, which refused handles. GitLab's REST page
+// does not tell the two 404s apart.
+// https://docs.gitlab.com/api/rest/troubleshooting/
 func (a answer) notFound() verdict {
 	if a.env.message == "" && strings.EqualFold(strings.TrimSpace(a.env.topError), "404 Not Found") {
 		return a.fail(ClassUnsupported, "GitLab has no API route for %s here: it may need an edition or tier this account lacks", a.name)
@@ -301,7 +315,7 @@ func (a answer) clientError() verdict {
 		return a.fail(ClassConflict, "GitLab refused %s in the current state: %s", a.name, a.detail)
 	case a.status == http.StatusBadRequest && staleFile.MatchString(a.env.message):
 		// The Files and Commits APIs refuse a moved last_commit_id with
-		// 400, not 409 (§2.10).
+		// 400, not 409.
 		return a.fail(ClassStale, "the file changed since its last_commit_id was read: read it again and retry. GitLab said: %s", a.detail)
 	case a.status == http.StatusBadRequest && pipelineVariables.MatchString(a.env.message):
 		return a.fail(ClassForbidden, "GitLab refused %s: %s. GitLab said: %s", a.name, PipelineVariablesRefused, a.detail)
@@ -310,11 +324,12 @@ func (a answer) clientError() verdict {
 	case a.status == http.StatusPreconditionFailed:
 		return a.fail(ClassStale, "this changed since it was read: read it again and retry. GitLab said: %s", a.detail)
 	case a.status == http.StatusMethodNotAllowed && a.call.Method == http.MethodGet:
-		// Offset pagination past 50,000 rows on an endpoint with keyset
-		// (§2.12).
+		// Offset pagination past 50,000 rows on an endpoint with keyset.
+		// GitLab's limits page gives the offset limit but not this status.
+		// https://docs.gitlab.com/administration/instance_limits/
 		return a.fail(ClassInvalid, "GitLab refuses to page this deep with offsets: narrow the filters. GitLab said: %s", a.detail)
 	case a.status == http.StatusMethodNotAllowed:
-		// A moved project refuses every method but GET (§2.15).
+		// A moved project refuses every method but GET.
 		return a.fail(ClassInvalid, "GitLab does not allow %s here; if the project was renamed or moved, address it by its numeric id or new path. GitLab said: %s", a.name, a.detail)
 	case a.status == http.StatusRequestEntityTooLarge:
 		return a.fail(ClassInvalid, "%s is larger than GitLab accepts: %s", a.name, a.detail)
@@ -324,7 +339,10 @@ func (a answer) clientError() verdict {
 }
 
 // invalidToken reports a refusal of the token itself, which GitLab marks
-// invalid_token in the body or the challenge.
+// invalid_token in the body or the challenge for a revoked or expired
+// token. A malformed token gets a plain 401 with no marker, the only
+// shape GitLab's authentication page shows.
+// https://docs.gitlab.com/api/rest/authentication/
 func invalidToken(env envelope, h http.Header) bool {
 	// The GraphQL endpoint answers a token that resolves to no user with
 	// 401 and this message alone, without WWW-Authenticate

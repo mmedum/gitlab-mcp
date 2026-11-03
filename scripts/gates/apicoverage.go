@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -14,7 +13,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/tsv"
 )
 
-// The API-coverage gate (docs/architecture.md §8a, CLAUDE.md rule 18).
+// The API-coverage gate holds every published operation to a written
+// verdict (D-10).
 //
 // GitLab publishes far more than this server calls, and the gap is meant
 // to be a set of decisions. testdata/api-coverage.tsv is those decisions,
@@ -51,7 +51,7 @@ var realCoverageFloors = coverageFloors{rows: 300, calls: 40, used: 40}
 // client no longer makes fails, like any stale row.
 var offSnapshotCalls = map[string]string{
 	"GET oauth/token/info": "Doorkeeper's token introspection, served under the web root; the REST OpenAPI file does not describe OAuth",
-	"POST api/graphql":     "the GraphQL endpoint, for an operation REST has no route for; GitLab commits no GraphQL schema, so docs/architecture.md §8a lists each operation by hand",
+	"POST api/graphql":     "the GraphQL endpoint, for an operation REST has no route for; GitLab commits no GraphQL schema, so the function that sends each operation says in its doc comment why REST cannot, and graphQLOperations requires that comment to mention REST",
 }
 
 var verdicts = []string{"used", "gated", "deferred", "written-off"}
@@ -96,20 +96,15 @@ func apiCoverage(out io.Writer, _ []string) error {
 	problems = append(problems, callProblems...)
 	report, more := checkCoverage(snap, rows, calls, realCoverageFloors)
 	problems = append(problems, more...)
-	ops, opProblems, err := graphQLOperations(clientDir)
+	ops, opProblems, err := graphQLOperations(clientDir, graphQLFloor)
 	if err != nil {
 		return err
 	}
-	doc, err := os.ReadFile(stalenessArch)
-	if err != nil {
-		return err
-	}
-	listed, docProblems := listedGraphQL(string(doc))
-	problems = slices.Concat(problems, opProblems, docProblems, checkGraphQL(ops, listed, graphQLFloor))
+	problems = append(problems, opProblems...)
 	if err := gatekit.Problems(out, "API coverage", problems); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(out, "%s; %d GraphQL operations, each listed in §8a\n", report, len(ops))
+	_, _ = fmt.Fprintf(out, "%s; %d GraphQL operations, each sent from a function whose doc comment mentions REST\n", report, len(ops))
 	return nil
 }
 

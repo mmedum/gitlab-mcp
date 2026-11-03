@@ -13,8 +13,8 @@ import (
 )
 
 // The live-cover gate says how much of the tool surface the live driver
-// actually sent to a real instance (§13, the standard's §1), per tool
-// option.
+// actually sent to a real instance, per tool option (D-82). A claim that
+// the driver covers the surface goes stale each time the surface grows.
 //
 // Two files. testdata/live-cover-record.tsv is written by
 // scripts/livegitlab at the end of a run, from what went out through the
@@ -79,7 +79,7 @@ func readLiveRecord(path string) (map[string]int, []string) {
 		out[r.Fields[0]] = n
 	}
 	if len(out) == 0 && len(problems) == 0 {
-		problems = append(problems, path+" records nothing; run `make live` against a scratch project (docs/architecture.md §9.1). "+
+		problems = append(problems, path+" records nothing; run `make live` against a scratch project. "+
 			"An empty record passes every other check there is")
 	}
 	return out, problems

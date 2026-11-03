@@ -12,13 +12,19 @@ import (
 )
 
 // The signed-in account's own notifications and to-do items on an issue
-// or a merge request (§7.7, §18 row 102). GitLab answers 304 when the
-// state asked for already holds, which is unchanged, not a failure.
-// Subscribing sets a state and may repeat; adding a to-do is a create,
-// never repeated, and a lost answer is settled by reading (§4.5). Both
-// are held to the write allow-list by the item's project, as
-// mark_todos_done is (§4.7). register has already held type to its enum
-// and iid to at least 1.
+// or a merge request. Both are held to the write allow-list by the item's
+// project, as mark_todos_done is. register has already held type to its
+// enum and iid to at least 1.
+//
+// GitLab answers 304 with no body when the state asked for already
+// holds, which is unchanged, not a failure. A to-do is 304 only while a
+// pending one the account added is on the item, not any to-do as the API
+// docs say, and that check takes no lock: adding a to-do is a create,
+// never repeated, and a lost answer is settled by reading. Subscribing
+// sets a state and may repeat (v19.4.1-ee). Checked by the live steps
+// "an issue already subscribed is subscribed again" and "a to-do is
+// added again on an issue".
+// https://docs.gitlab.com/api/issues/
 
 // mrSubscribers is who GitLab lets subscribe to a merge request: its
 // finder asks for update_merge_request (lib/api/subscriptions.rb L19).

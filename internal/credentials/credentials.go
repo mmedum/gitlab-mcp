@@ -15,12 +15,12 @@
 // found.
 //
 // GitLab rotates the refresh token on every refresh and revokes the old
-// one at once (§2.3), so a refresh token from the environment works
-// exactly once. The pair it rotates into is saved to the keyring or the
-// file stamped with a hash of the variable's value, and while the
-// variable still holds that value the stored descendant is used in its
-// place. Without that, the second start after a refresh would present a
-// spent token.
+// one at once, so a refresh token from the environment works exactly
+// once. The pair it rotates into is saved to the keyring or the file
+// stamped with a hash of the variable's value, and while the variable
+// still holds that value the stored descendant is used in its place.
+// Without that, the second start after a refresh would present a spent
+// token.
 package credentials
 
 import (

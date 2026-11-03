@@ -12,7 +12,7 @@ const sniffBytes = 8000
 
 // IsBinary reports content that is not text: a NUL byte, or bytes that
 // are not UTF-8, in the first 8,000. Binary content is described by its
-// metadata, never shown as lossy text (§4.8).
+// metadata, never shown as lossy text.
 func IsBinary(b []byte) bool {
 	sample := b[:min(len(b), sniffBytes)]
 	if bytes.IndexByte(sample, 0) >= 0 {

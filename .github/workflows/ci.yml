@@ -74,6 +74,8 @@ jobs:
         run: make smoke
       - name: docs match the code
         run: make staleness
+      - name: references in the docs and code resolve
+        run: make docs
       - name: definition of done
         run: make checklist
       - name: CHANGELOG links

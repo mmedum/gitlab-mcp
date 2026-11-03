@@ -174,7 +174,7 @@ func mcpbCheck(out io.Writer, root string) error {
 // schema's validator and the packer's stamp read, keeps the last of a
 // repeat and each spelling apart, as Node's JSON.parse, the reference
 // host's, does. Every other check would read a document that is not the
-// one shipped. Claude Desktop was not probed (§18 rows 133 and 134).
+// one shipped. How Claude Desktop reads either is unverified.
 func mcpbCommitted(root string) ([]byte, mcpbManifest, []string, error) {
 	raw, err := os.ReadFile(filepath.Join(root, mcpbManifestPath)) //nolint:gosec // a repository path
 	if err != nil {
@@ -421,7 +421,8 @@ func mcpbEnvRefProblems(m mcpbManifest) []string {
 
 // mcpbDirname starts every command: the one path the specification
 // fixes to the bundle. What a relative command is resolved against, no
-// source says (§18 row 132).
+// source says, and the reference host spawns it as written.
+// https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md
 const mcpbDirname = "${__dirname}/"
 
 // mcpbResolve is the path in the bundle a command names, and whether it
@@ -657,7 +658,7 @@ func mcpbLicense(root string) string {
 
 // mcpbExcluded are the settings the server reads that the bundle does
 // not ask for, each with its reason. Every other setting is asked for,
-// development overrides aside (§12).
+// development overrides aside.
 var mcpbExcluded = map[string]string{
 	config.EnvLogLevel:                  "a diagnostic: Claude Desktop keeps the server's stderr in its own log",
 	config.EnvLogFormat:                 "a diagnostic, as the log level is",
@@ -734,11 +735,11 @@ func mcpbLoad(env map[string]string) (config.Config, error) {
 // defaults and from no settings at all, and refuses any difference: a
 // bundle install turns on nothing an unconfigured server leaves off.
 // Claude Desktop approves each tool, and a person can always allow one,
-// so this is the guard a bundle install keeps (§18 row 130). A switch
+// so this is the guard a bundle install keeps (D-91). A switch
 // is also asked as a boolean, so Desktop shows it as one, and a default
 // holds no ${...}: the gate reads a default as written, and a host may
 // substitute in it, as the reference host does a ${user_config.x}
-// declared after it (§18 row 135). The error is the defaults' own, when
+// declared after it. The error is the defaults' own, when
 // they do not start the server.
 func mcpbDefaultsProblems(m mcpbManifest) ([]string, error) {
 	opts := m.options()

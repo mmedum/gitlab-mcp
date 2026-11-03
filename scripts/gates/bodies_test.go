@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// A surface with writes, as phase 2 will have it: a body routed through
+// A surface with writes: a body routed through
 // the guard, a title and a project listed plain, a bool that is no
 // string, and a Ship tool.
 const writeSurface = `{"server":"gitlab-mcp","tools":[

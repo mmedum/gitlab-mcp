@@ -64,8 +64,8 @@ func TestSatisfied(t *testing.T) {
 	}
 }
 
-// TestEveryKindUnderEveryMode is the §9.4 table: a read_api token gets
-// Read and nothing else, an api token gets every kind.
+// TestEveryKindUnderEveryMode: a read_api token gets Read and nothing
+// else, an api token gets every kind.
 func TestEveryKindUnderEveryMode(t *testing.T) {
 	want := map[Mode][]Kind{
 		ModeReadOnly: {KindRead},

@@ -1,15 +1,13 @@
-// Package auth is the family's sign-in on GitLab's OAuth provider: the
-// person's own OAuth application, a loopback redirect on 127.0.0.1 with
-// a random port, PKCE S256, and a refreshing token source that survives
-// GitLab's immediate rotation (docs/architecture.md §10).
+// Package auth signs a person in to GitLab's OAuth provider: their own
+// OAuth application, a loopback redirect on 127.0.0.1 with a random
+// port, PKCE S256, and a refreshing token source that survives GitLab's
+// immediate rotation.
 //
-// It differs from the siblings only where GitLab forces it. The
-// application is named by its id, not a file, and is public, so no
-// secret is sent (§2.2). A refresh revokes the old pair at once (§2.3),
-// so refreshing happens under a cross-process lock and the new pair is
-// stored before it is used; see TokenSource. No `resource` parameter is
-// ever sent: one ending in /api/v4/mcp silently narrows the grant to
-// the mcp scope (§18 row 7).
+// The application is named by its id and is public, so no secret is
+// sent. A refresh revokes the old pair at once, so refreshing happens
+// under a cross-process lock and the new pair is stored before it is
+// used; see TokenSource. No `resource` parameter is ever sent: one
+// ending in /api/v4/mcp silently narrows the grant to the mcp scope.
 package auth
 
 import (
@@ -44,7 +42,7 @@ const DefaultHTTPTimeout = 60 * time.Second
 
 // verifierBytes makes a 64-character PKCE verifier. RFC 7636 allows 43
 // to 128; GitLab logs verifiers shorter than 43 and may refuse them
-// later (§2.2), so this stays well inside the range.
+// later, so this stays well inside the range.
 const verifierBytes = 48
 
 // maxBody bounds an OAuth endpoint's answer.
@@ -60,7 +58,10 @@ const (
 
 // ErrConfidential means GitLab refused the application as a public
 // client. The usual cause is the "Confidential" box, which GitLab ticks
-// by default when an application is created.
+// by default when an application is created: the browser consent then
+// succeeds, and the code exchange answers 401 invalid_client. GitLab's
+// page on creating an application does not mention the box.
+// https://docs.gitlab.com/integration/oauth_provider/
 var ErrConfidential = errors.New(`GitLab refused the application as a public client (invalid_client). ` +
 	`Open the application in GitLab (user settings > Applications), untick "Confidential", save, and run ` +
 	"`gitlab-mcp login` again. If it is already unticked, check the application id")
@@ -101,7 +102,8 @@ func IsInvalidGrant(err error) bool {
 type Application struct {
 	Instance instance.Instance
 	// ClientID is the application id GitLab shows. The application is
-	// public, so there is no secret.
+	// public, so GitLab exchanges its codes and refresh tokens with no
+	// secret, and there is none to keep.
 	ClientID string
 	// HTTPClient carries the transport and its proxy. It is
 	// copied; redirects are refused and Timeout applied.
@@ -204,8 +206,7 @@ func (a *Application) send(req *http.Request) ([]byte, error) {
 }
 
 // TransportError is a failure to reach an OAuth endpoint at all. Its
-// text carries no URL and no host (§9.2): the URL names the instance,
-// and on token info it once carried the token itself.
+// text carries no URL and no host, since the URL names the instance.
 type TransportError struct{ err error }
 
 func (e *TransportError) Error() string { return "auth: GitLab could not be reached: " + e.err.Error() }
@@ -223,8 +224,9 @@ func (a *Application) grant(body []byte) (*Grant, error) {
 		return nil, errors.New("auth: GitLab's token answer carries no access token")
 	}
 	tok := &oauth2.Token{AccessToken: tr.AccessToken, TokenType: tr.TokenType, RefreshToken: tr.RefreshToken}
-	// expires_in is read, never assumed: 7,200 s by default, and an
-	// administrator can set it as low as 300 (§2.3).
+	// expires_in is read, never assumed. GitLab's OAuth page shows only
+	// 7,200 s, but from 19.1 an administrator can set it as low as 300.
+	// https://docs.gitlab.com/api/oauth2/
 	if tr.ExpiresIn > 0 {
 		tok.Expiry = a.now().Add(time.Duration(tr.ExpiresIn) * time.Second)
 	}
@@ -277,7 +279,10 @@ func (a *Application) Refresh(ctx context.Context, refreshToken string) (*Grant,
 }
 
 // Revoke revokes a token at GitLab. Revoking the refresh token revokes
-// the access token issued with it.
+// the access token issued with it. A public client revokes with its
+// client_id alone; GitLab's OAuth page shows a client_secret in every
+// example and does not say that none is needed.
+// https://docs.gitlab.com/api/oauth2/
 func (a *Application) Revoke(ctx context.Context, token string) error {
 	if err := a.check(); err != nil {
 		return err
@@ -348,7 +353,7 @@ type LoginOptions struct {
 // "localhost": RFC 8252 §7.3 says the literal "avoids inadvertently
 // listening on network interfaces other than the loopback interface",
 // and GitLab ignores the port of a loopback IP literal when it compares
-// redirect URIs, while it compares localhost exactly (§2.1).
+// redirect URIs, while it compares localhost exactly.
 func (a *Application) Login(ctx context.Context, requested []string, opts LoginOptions) (*Grant, error) {
 	if err := a.check(); err != nil {
 		return nil, err
@@ -482,8 +487,12 @@ func (a *Application) Login(ctx context.Context, requested []string, opts LoginO
 	return g, nil
 }
 
-// authorizeURL builds the authorization request. Deliberately absent: a
-// `resource` parameter (§18 row 7) and a client secret.
+// authorizeURL builds the authorization request. It always sends an S256
+// challenge, though GitLab requires PKCE only of dynamically registered
+// applications. It never sends a client secret or a `resource`: GitLab
+// silently rewrites the scope of a request whose resource ends in
+// /api/v4/mcp to mcp. GitLab's OAuth page documents neither rule.
+// https://docs.gitlab.com/api/oauth2/
 func (a *Application) authorizeURL(redirectURI, state, codeChallenge string, requested []string) string {
 	q := url.Values{
 		"client_id":             {a.ClientID},

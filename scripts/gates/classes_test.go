@@ -12,9 +12,11 @@ const fixtureErrors = `package gapi
 type Class string
 
 const (
-	ClassInvalid  Class = "invalid"
-	ClassAuth     Class = "auth"
-	ClassPlanned  Class = "someday"
+	// ClassInvalid: bad arguments. The caller fixes them.
+	ClassInvalid Class = "invalid"
+	ClassAuth    Class = "auth" // not signed in; the caller runs login
+	// ClassPlanned: arrives later.
+	ClassPlanned Class = "someday"
 )
 
 var Classes = []Class{ClassInvalid, ClassAuth, ClassPlanned}
@@ -28,9 +30,6 @@ func signedOut() *Error { return &Error{Class: gapi.ClassAuth} }
 
 const note = "[invalid] is what a bad argument says"
 `
-
-const fixtureDoc = "## 6. Addressing\n\n### 6.5 Error classes\n\n| Class | Means |\n|---|---|\n" +
-	"| `invalid` | bad arguments |\n| `auth` | not signed in |\n| `someday` | later |\n\n## 7. Reading\n\n| `stale` | not in 6.5 |\n"
 
 var fixtureClassFloors = classesFloors{files: 2, classes: 3}
 
@@ -52,7 +51,7 @@ func writeClassFixture(t *testing.T, errorsSrc, emitter string) (string, string)
 func TestTheFixtureVocabularyHolds(t *testing.T) {
 	source, root := writeClassFixture(t, fixtureErrors, fixtureEmitter)
 	planned := map[string]string{"someday": "arrives with the write path in a later phase"}
-	report, problems, err := checkClasses(source, []string{root}, fixtureDoc, planned, fixtureClassFloors)
+	report, problems, err := checkClasses(source, []string{root}, planned, fixtureClassFloors)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,28 +68,18 @@ func TestTheClassesGateFailsEveryWay(t *testing.T) {
 	cases := []struct {
 		name            string
 		errors, emitter string
-		doc             string
 		planned         map[string]string
 		want            string
 	}{
-		{name: "a declared class the document lacks",
-			doc:  strings.Replace(fixtureDoc, "| `auth` | not signed in |\n", "", 1),
-			want: `declares "auth" and §6.5`},
-		{name: "a documented class nothing declares",
-			doc:  strings.Replace(fixtureDoc, "| `someday` | later |\n", "| `someday` | later |\n| `stale` | moved |\n", 1),
-			want: `§6.5 documents "stale"`},
-		{name: "a class documented twice",
-			doc:  strings.Replace(fixtureDoc, "| `someday` | later |\n", "| `someday` | later |\n| `invalid` | again |\n", 1),
-			want: `§6.5 lists "invalid" 2 times`},
+		{name: "a class with no comment",
+			errors: strings.Replace(fixtureErrors, "\t// ClassPlanned: arrives later.\n", "", 1),
+			want:   "declares ClassPlanned with no comment"},
 		{name: "a class listed twice",
 			errors: strings.Replace(fixtureErrors, "ClassAuth, ClassPlanned}", "ClassAuth, ClassPlanned, ClassInvalid}", 1),
 			want:   "Classes lists ClassInvalid 2 times"},
 		{name: "a class the list forgets",
 			errors: strings.Replace(fixtureErrors, "ClassAuth, ClassPlanned}", "ClassPlanned}", 1),
 			want:   "ClassAuth is declared and Classes does not list it"},
-		{name: "a list out of the table's order",
-			errors: strings.Replace(fixtureErrors, "{ClassInvalid, ClassAuth,", "{ClassAuth, ClassInvalid,", 1),
-			want:   "Classes is in the order [auth invalid someday]"},
 		{name: "a class nothing emits and nobody planned",
 			planned: map[string]string{},
 			want:    `"someday" is declared and nothing emits it`},
@@ -109,21 +98,18 @@ func TestTheClassesGateFailsEveryWay(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			errorsSrc, emitter, doc, pl := fixtureErrors, fixtureEmitter, fixtureDoc, planned
+			errorsSrc, emitter, pl := fixtureErrors, fixtureEmitter, planned
 			if tc.errors != "" {
 				errorsSrc = tc.errors
 			}
 			if tc.emitter != "" {
 				emitter = tc.emitter
 			}
-			if tc.doc != "" {
-				doc = tc.doc
-			}
 			if tc.planned != nil {
 				pl = tc.planned
 			}
 			source, root := writeClassFixture(t, errorsSrc, emitter)
-			_, problems, err := checkClasses(source, []string{root}, doc, pl, fixtureClassFloors)
+			_, problems, err := checkClasses(source, []string{root}, pl, fixtureClassFloors)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,7 +123,7 @@ func TestTheClassesGateFailsEveryWay(t *testing.T) {
 func TestTheClassesFloorsFire(t *testing.T) {
 	source, root := writeClassFixture(t, fixtureErrors, fixtureEmitter)
 	planned := map[string]string{"someday": "arrives with the write path in a later phase"}
-	_, problems, err := checkClasses(source, []string{root}, fixtureDoc, planned, classesFloors{files: 40, classes: 13})
+	_, problems, err := checkClasses(source, []string{root}, planned, classesFloors{files: 40, classes: 13})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +135,7 @@ func TestTheClassesFloorsFire(t *testing.T) {
 	}
 }
 
-// The real vocabulary, the real document and the real code.
+// The real vocabulary and the real code.
 func TestTheRealVocabularyHolds(t *testing.T) {
 	t.Chdir("../..")
 	var out strings.Builder

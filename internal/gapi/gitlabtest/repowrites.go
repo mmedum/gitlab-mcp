@@ -13,7 +13,7 @@ import (
 )
 
 // Branches and commits. A commit applies its actions atomically, checks
-// each file's witness against the last commit that touched it (§2.10),
+// each file's witness against the last commit that touched it,
 // and moves every open merge request whose source is that branch, as a
 // push does.
 

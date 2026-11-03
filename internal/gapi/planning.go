@@ -10,8 +10,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The phase-1 reads for planning and navigation: labels, milestones,
-// members, users, to-do items and search.
+// The reads for planning and navigation: labels, milestones, members,
+// users, to-do items and search.
 
 // LabelQuery filters ListLabels.
 type LabelQuery struct {
@@ -213,9 +213,11 @@ func (c *Client) SearchCommits(ctx context.Context, q SearchQuery, opts ListOpti
 
 // advancedSearch turns GitLab's refusal of a scope that a group or the
 // instance searches only with advanced search into [unsupported]. It is a
-// 400 whose words have changed between releases: "Scope supported only
-// with advanced search or exact code search" on gitlab.com (live,
-// 2026-09-26), "Scope not supported without Elasticsearch!" before.
+// 400 whose words differ by release: "Scope supported only with
+// advanced search or exact code search" on gitlab.com, "Scope not
+// supported without Elasticsearch!" on older ones. GitLab's search page
+// gives neither. Checked by the live step "code is searched across a group".
+// https://docs.gitlab.com/api/search/
 func advancedSearch(err error) error {
 	var e *Error
 	if !errors.As(err, &e) || e.Class != ClassInvalid {

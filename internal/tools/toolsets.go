@@ -9,8 +9,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The optional toolsets of phase 3 (docs/architecture.md §7.8), off
-// unless GITLAB_MCP_TOOLSETS names them.
+// The optional toolsets, off unless GITLAB_MCP_TOOLSETS names them.
 
 // ------------------------------------------------------------------ wiki
 
@@ -271,6 +270,11 @@ func getRelease() definition {
 	}
 }
 
+// createReleaseIn takes milestones by title. On Free a release takes
+// only the project's own; a group milestone needs Premium, as the API
+// docs say. Checked by the live step "a release is created with a new
+// tag".
+// https://docs.gitlab.com/api/releases/
 type createReleaseIn struct {
 	Project     idOrPath        `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`
 	TagName     string          `json:"tag_name" jsonschema:"The tag to release. When it does not exist, GitLab creates it at ref"`

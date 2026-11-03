@@ -183,7 +183,8 @@ func TestCancelOutcome(t *testing.T) {
 	}{
 		{"answered canceled", pl("running", "push"), pl("canceled", "push"), "canceled"},
 		{"answered canceling", pl("running", "push"), pl("canceling", "push"), "canceled"},
-		// GitLab recomputes the status after it answers (§18 row 91).
+		// GitLab recomputes the status after it answers, so a cancel can
+		// answer running.
 		{"answered before the status caught up", pl("running", "push"), pl("running", "push"), "canceled"},
 		{"manual jobs are canceled too", pl("manual", "push"), pl("manual", "push"), "canceled"},
 		{"finished before the cancel landed", pl("running", "push"), pl("success", "push"), "unchanged"},

@@ -12,7 +12,7 @@ import (
 // each method reports it. Subscribing sets a state, so it may repeat.
 // Adding a to-do is a create: GitLab's check for a pending one runs
 // before its insert without a lock, and a to-do marked done in between
-// lets a second through, so it is never repeated (§4.5).
+// lets a second through, so it is never repeated.
 
 const (
 	subscribeRepeats   = "subscribing twice leaves you subscribed"

@@ -23,7 +23,7 @@ import (
 )
 
 // leaks looks for anything from a real instance or account in the files
-// git would commit (docs/architecture.md §9.1).
+// git would commit (D-06).
 //
 // Every rule is anchored on a shape the server's generated fields cannot
 // take: an @ with a dotted domain, an https:// host, a GitLab token
@@ -97,6 +97,9 @@ var leaksPublicHosts = map[string]string{
 	"www.apache.org":                      "the license text",
 	"semver.org":                          "the versioning scheme the CHANGELOG follows",
 	"keepachangelog.com":                  "the CHANGELOG format",
+	"spec.commonmark.org":                 "the CommonMark specification the docs gate reads Markdown by",
+	"github.github.com":                   "GitHub Flavored Markdown's specification, for its tables",
+	"toml.io":                             "the TOML specification, for its multi-line strings",
 	"img.shields.io":                      "the README's release badge",
 	"pkg.go.dev":                          "public package documentation",
 	"go.dev":                              "the Go project",
@@ -105,6 +108,8 @@ var leaksPublicHosts = map[string]string{
 	"www.rfc-editor.org":                  "published RFCs",
 	"datatracker.ietf.org":                "published RFCs",
 	"claude.ai":                           "the client the bundle installs into",
+	"code.claude.com":                     "Claude Code's documentation",
+	"trojansource.codes":                  "the Trojan Source paper on bidirectional text in code",
 	"docs.github.com":                     "GitHub's public documentation",
 	"127.0.0.1":                           "loopback: the sign-in redirect and test servers",
 	"[::1]":                               "loopback over IPv6: test servers",
@@ -113,7 +118,7 @@ var leaksPublicHosts = map[string]string{
 // leaksGitLabPaths are gitlab.com paths that name GitLab's own pages or
 // public source rather than somebody's namespace.
 var leaksGitLabPaths = map[string]string{
-	"gitlab-org": "GitLab Inc.'s public source, which the evidence log cites",
+	"gitlab-org": "GitLab Inc.'s public source and issues, which comments and documents cite as sources",
 	"-":          "GitLab's own routes, such as /-/profile",
 	"api":        "the REST API root",
 	"oauth":      "the OAuth endpoints",

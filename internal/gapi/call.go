@@ -45,7 +45,11 @@ type Call struct {
 	// twice, such as "marking a todo done twice leaves it done". Empty
 	// means the method decides: GET, PUT and DELETE repeat, POST does
 	// not, and Once stops a PUT or DELETE repeating. A create is never
-	// declared repeatable (§4.5).
+	// declared repeatable: GitLab takes no idempotency key, so a repeated
+	// note, issue, commit, pipeline or fork is a second one. Only a merge
+	// request, a branch, a tag or a file refuses a duplicate itself.
+	// GitLab's REST page does not say either.
+	// https://docs.gitlab.com/api/rest/
 	Repeatable string
 	// NotModified is the reason a 304 answers this call rather than
 	// failing it, such as "already subscribed". GitLab answers 304 with no
@@ -72,11 +76,11 @@ type Call struct {
 	ReadOnly string
 	// Witness names the witness this write carries ("sha"). A 409 on a
 	// call with a witness means the witness moved, so it is stale rather
-	// than a conflict (§4.6).
+	// than a conflict.
 	Witness string
 	// UnmodifiedSince is sent as If-Unmodified-Since when set. GitLab's
 	// conditional deletes answer 412 when the resource changed after it,
-	// which is [stale] (§4.6).
+	// which is [stale].
 	UnmodifiedSince time.Time
 	// Bucket is the rate bucket the call is charged to, beyond the
 	// instance's own. The zero value is the general bucket only.
@@ -135,7 +139,7 @@ type Bucket int
 const (
 	// BucketGeneral is the instance-wide bucket every call is charged to.
 	BucketGeneral Bucket = iota
-	// BucketNotes is note creation: 60 a minute on gitlab.com (§2.13).
+	// BucketNotes is note creation: 60 a minute on gitlab.com.
 	BucketNotes
 )
 

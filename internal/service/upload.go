@@ -10,11 +10,13 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// Uploading an image for Markdown to embed (§7.10). The image is a local
-// file, read by internal/localimage from a directory the person named in
+// Uploading an image for Markdown to embed. The image is a local file,
+// read by internal/localimage from a directory the person named in
 // GITLAB_MCP_UPLOAD_DIRS. GitLab keeps an upload whether or not anything
-// links to it, so it is sent once (§4.5), and listing uploads needs the
-// Maintainer role and gives no link, so a lost answer stays unknown.
+// links to it, so it is sent once. Listing uploads needs the Maintainer
+// role and gives no link, so no read can tell whether a lost upload
+// landed, and its outcome stays unknown (v19.4.1-ee).
+// https://docs.gitlab.com/api/project_markdown_uploads/
 
 // Upload is upload_file's request.
 type Upload struct {
@@ -60,11 +62,13 @@ func (s *Service) UploadFile(ctx context.Context, in Upload) (model.UploadWrite,
 	return out, nil
 }
 
-// Who can open an uploaded image by its link (§18 row 112): GitLab
-// serves it to anyone in a public project, and in a private or internal
-// one too unless the project requires sign-in to view media files
-// (UploadsActions#bypass_auth_checks_on_uploads?, which decides an image
-// by its extension).
+// Who can open an uploaded image by its link: GitLab serves it to anyone
+// in a public project, and in a private or internal one too unless the
+// project requires sign-in to view media files
+// (UploadsActions#bypass_auth_checks_on_uploads? at v19.4.1-ee, which
+// decides an image by its extension). Checked by the live step "an image
+// uploads from an allowed directory".
+// https://docs.gitlab.com/security/user_file_uploads/
 const (
 	reachAnyone  = "anyone_with_link"
 	reachReaders = "project_readers"
@@ -72,7 +76,7 @@ const (
 )
 
 // imageRefused words a refusal from internal/localimage with this tool's
-// and its setting's names, and gives it its class (§6.5). The words name
+// and its setting's names, and gives it its class. The words name
 // neither the allowed directories nor what a file holds.
 func imageRefused(err error) error {
 	var e *localimage.Error
@@ -119,13 +123,15 @@ func imageRefused(err error) error {
 
 // maintainersNote is who reaches an upload without its link: listing
 // and downloading uploads by id needs the Maintainer role
-// (lib/api/markdown_uploads.rb at v19.4.1-ee, §18 row 116).
+// (lib/api/markdown_uploads.rb at v19.4.1-ee).
 const maintainersNote = "The project's Maintainers can list every upload and download it by its id, without the link."
 
 // metadataNote says what happens to the image's metadata: GitLab's
 // Workhorse removes a JPEG's when it stores it, keeping its size,
-// resolution and orientation, and leaves the other types' alone (§18 row
-// 118).
+// resolution and orientation, and leaves PNG, GIF and WebP alone, which
+// the upload docs do not say (workhorse/internal/upload/exif at
+// v19.4.1-ee). Workhorse acts only on a name ending .jpg, .jpeg or
+// .tiff, and localimage names a JPEG .jpg.
 func metadataNote(contentType string) string {
 	if contentType == "image/jpeg" {
 		return "GitLab removes a JPEG's metadata, such as EXIF location and camera details, when it stores it, keeping only " +

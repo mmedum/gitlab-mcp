@@ -14,8 +14,8 @@ import (
 )
 
 // DefaultRefreshMargin is how long before expiry a token is refreshed.
-// GitLab's shortest configurable lifetime is 300 s (§2.3), so a minute
-// is always less than a token lives.
+// GitLab's shortest configurable lifetime is 300 s, so a minute is
+// always less than a token lives.
 const DefaultRefreshMargin = time.Minute
 
 // Store is where the token pair lives between processes.
@@ -48,12 +48,16 @@ type TokenSourceOptions struct {
 // expiry. It implements gapi.TokenSource and is safe for concurrent use.
 //
 // GitLab spends a refresh token once and revokes the old pair the moment
-// it rotates (§2.3), and Claude Desktop and Claude Code may run a server
-// each on one profile. So a refresh happens under a cross-process file
-// lock; inside it the store is read again first, since another process
-// may have refreshed while this one waited; and the new pair is stored
-// before it is used. A refusal of the refresh token is checked against
-// the store once more before anyone is told to log in again.
+// it rotates, with no grace period: a second refresh with the old token
+// answers invalid_grant. GitLab's OAuth page says the old pair is
+// invalidated, not that a repeat fails. Claude Desktop and Claude Code
+// may run a server each on one profile. So a refresh happens under a
+// cross-process file lock; inside it the store is read again first,
+// since another process may have refreshed while this one waited; and
+// the new pair is stored before it is used. A refusal of the refresh
+// token is checked against the store once more before anyone is told to
+// log in again.
+// https://docs.gitlab.com/api/oauth2/
 type TokenSource struct {
 	app   *Application
 	store Store

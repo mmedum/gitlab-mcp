@@ -105,7 +105,8 @@ edition, the application the token was issued to, the granted scopes, and one ca
 as you. Each line is `[ok  ]` or `[FAIL]` with what to do. Hostnames,
 the application id and your username are masked as `{host 1}`,
 `{client-id 1}` and `{user 1}`, so the output is safe to paste into an
-issue. `docs/runbook.md` lists each failure and its fix.
+issue. [`docs/troubleshooting.md`](troubleshooting.md) lists each
+failure and its fix.
 
 `gitlab-mcp status` shows the profile and settings without the walk;
 `status --json` is the same for a script.
@@ -132,15 +133,10 @@ printed rather than one from an earlier attempt.
 
 ## If login says `invalid_client`
 
-GitLab refused the application as a public client. `login` says:
-
-```text
-GitLab refused the application as a public client (invalid_client). Open the application in GitLab (user settings > Applications), untick "Confidential", save, and run `gitlab-mcp login` again. If it is already unticked, check the application id
-```
-
-Open the application, untick **Confidential**, save, and log in again.
-Unticking it does not change the application id. If the box was already
-unticked, the id you passed is wrong.
+GitLab refused the application as a public client: **Confidential** is
+ticked. Untick it, save, and log in again; the application id does not
+change. [`docs/troubleshooting.md`](troubleshooting.md) has the full
+entry.
 
 ## Removing it
 

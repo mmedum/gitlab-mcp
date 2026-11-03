@@ -2,7 +2,7 @@
 // client: resolving a project once per call, the reads that take more
 // than one request, and turning wire types into the model a result
 // carries, with every piece of other people's text prepared by render
-// on the way (docs/architecture.md §4.1, §4.8).
+// on the way.
 package service
 
 import (
@@ -95,7 +95,7 @@ func (s *Service) self() string {
 }
 
 // parseProject reads a numeric id, a full path, or a web URL on the
-// configured instance (§6.1).
+// configured instance.
 func (s *Service) parseProject(raw string) (gapi.Project, error) {
 	raw = strings.TrimSpace(raw)
 	if strings.Contains(raw, "://") || (!s.inst.IsZero() && strings.HasPrefix(strings.ToLower(raw), strings.ToLower(s.inst.Host())+"/")) {
@@ -109,8 +109,9 @@ func (s *Service) parseProject(raw string) (gapi.Project, error) {
 }
 
 // project resolves the caller's project to its id and path, with at
-// most one read and none when the process already knows it, and reports
-// a move GitLab answered with (§6.1, §2.15).
+// most one read and none when the process already knows it (D-62), and
+// reports a move GitLab answered with: GitLab redirects a read of a
+// moved project and refuses any other method with 405.
 func (s *Service) project(ctx context.Context, raw string) (gapi.Project, model.ProjectRef, error) {
 	c, err := s.api()
 	if err != nil {

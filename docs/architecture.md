@@ -1,3161 +1,3075 @@
-# Architecture — gitlab-mcp
+# Architecture
 
-**Status: 4.2.0, 2026-11-01, built with Go 1.27.3: every write that
-changes or removes something says `destructiveHint: true`, and the six
-that only add are the `Adding` kind (§8); a live run against the scratch
-group behaved as expected, its transcript read.
-4.1.4, 2026-10-28: `get_merge_request`
-says when GitLab has not finished checking whether a merge request can
-merge, and to read again (§7.2, §18 row 136); spike R watches it live.
-4.1.3, 2026-10-24: the family sweep
-(§16a): every read of a server variable goes through `config.Lookup`, so
-a setting of spaces alone is unset, held by a scan with a floor; the
-bundle gate keeps documents out of the commands, holds the identity and
-the profile rule, refuses a repeated key and validates the stamped
-manifest. A live run against the scratch group behaved as expected,
-its transcript read. 4.1.2, 2026-10-24: the bundle gate holds
-the bundle's settings to the server's own, found by the reviews 4.1.0
-and 4.1.1 shipped without (§16a); the Ship field names every tool it
-registers. 4.1.1: the Claude Desktop bundle says Read-only excludes the
-two switches. 4.1.0: the bundle asks
-for every setting another client sets, each switch off by
-default, and names GitLab's privacy statement (§12, §18 rows 130 and
-131). Owed: the siblings' bundles follow the same shape
-(`~/.claude/mcp-server-standard.md` §10b), one at a time. 4.0.1: a
-blobs or wiki blobs search whose term matches a file's name reads
-again (§18 row 129). 4.0.0: `rerequest_review`
-asks a reviewer for a new review through the server's first GraphQL
-call, one fixed mutation (§4.10, §8a); `make_issue_public` publishes a
-confidential issue behind the destructive flag, and `update_issue`
-never does (§4.3); `make_issue_public`, `delete_label` and
-`delete_milestone` carry `requiresUserInteraction` (§4.12); the module
-path is `/v4`. 3.0.0 left
-per-call approval to the client (§4.12, issue #63), carried each
-suggestion's text as a witness (§7.3) and added merge request
-dependencies (§7.2, issue #62). 2.4.0 asked once in
-Claude Code rather than twice. 2.3.0: `upload_file` uploads an image from a
-directory `GITLAB_MCP_UPLOAD_DIRS` names (§7.10), and every request
-body is timed by its progress (§11). 2.2.1: a repeated delete that may
-have landed is `[ambiguous_outcome]` (§4.5). Phases 0 to 7, 2.1.0's
-nine tools, and 2.2.0's seven more for reviewing merge requests:
-`react`, `list_mr_versions`, `compare_mr_versions`,
-`update_review_comment`, `publish_review_comment`, and
-`apply_suggestions` and `cancel_auto_merge` (Ship), with reviewer
-states in `get_merge_request` (§16). §17.10 stands and §17.11 waits.** This document holds the platform facts, the design bets, a
-verdict on every API operation group, the phase plan and the spikes that
-must answer before the phases that depend on them.
+How `gitlab-mcp` is put together, and the decisions a contributor
+should not undo without a better reason than the one that put them
+here. Part 1 is the overview. Part 2, from [Decisions](#decisions), is
+one entry per decision, cited elsewhere by its D-ID. What was verified
+about GitLab lives in the comment at the code that depends on it, with
+the source linked and the live step that checks it named.
 
-## 1. Mission and scope
+## Context
 
-A production-grade Go MCP server for GitLab, distributed to other
-people. One binary, stdio, per-user sign-in, no hosted deployment. It
-works against **gitlab.com, and nothing else**: self-managed instances
-are out of scope (§4.9; maintainer, 2026-09-26, §14).
+`gitlab-mcp` is a Model Context Protocol server for GitLab. One Go
+binary runs as a subprocess of an MCP client and speaks MCP over stdio.
+It holds one person's OAuth tokens and calls GitLab's REST API v4, with
+wire types of its own (D-01, D-08). Where REST has no route for an
+operation, it sends a fixed GraphQL mutation through the same client
+path (D-09). Nothing is hosted. It talks to gitlab.com only (D-02).
 
-The server works **inside projects**: finding and reading issues and
-merge requests, reviewing a merge request the way a person does (drafts,
-inline comments, a submitted review), reading and changing the
-repository through branches and merge requests, and reading and — when
-the person opts in — driving CI. It stops at administration: instance
-and group settings, runners, CI variables, access tokens, deploy keys,
-webhooks and project deletion are out of scope, and §8a says why group
-by group.
+The parties around the server:
 
-### Why build it (research summary, checked 2026-09-25)
+- **The person** registers their own OAuth application on gitlab.com,
+  signs in once with `gitlab-mcp login`, and every call acts as them,
+  with their own access (D-66).
+- **The authors** wrote the issues, merge requests, comments, reviews,
+  commit messages, files, wiki pages, snippets, release notes and job
+  logs the server reads. Many write in public projects anyone can post
+  to, and some write to steer an assistant, so their text is data and
+  never instructions (D-13).
+- **The operator** decides what the server may do, through
+  `GITLAB_MCP_*` settings the client passes at start: read-only mode,
+  the Ship and Destructive switches, the toolsets, the write namespaces
+  and the upload directories (D-21, D-30, D-32, D-38, D-44). The
+  operator is usually the person, setting up their own client.
+- **The client** draws the approval prompt for each call from the tool
+  annotations and its own rules. The server asks the person nothing
+  itself (D-26).
+- **The model** chooses the calls and their arguments. It can be wrong,
+  or persuaded by content somebody else wrote, so nothing it sends
+  widens what the operator registered (D-21, D-28).
 
-Nine servers were surveyed; their trackers are where §3 comes from.
+The server talks to gitlab.com through:
 
-- **GitLab's built-in MCP server** (`/api/v4/mcp`). Beta, GA planned for
-  19.5; Free tier since 19.2; about 56 tools, most introduced in 19.3 and
-  19.4. Streamable HTTP only — a stdio client needs a Node bridge. OAuth
-  only, through Dynamic Client Registration with the `mcp` scope, rate
-  limited to 10 registrations an hour per IP; personal access tokens are
-  an open request. It must be switched on by a group owner or an
-  administrator. Its toolset and allow-list headers filter `tools/list`
-  but not `tools/call`, by design
-  (<https://gitlab.com/gitlab-org/gitlab/-/issues/631017>). It has no
-  read-only mode, no draft notes and no todos, and its note tools refuse
-  lines starting with `/` to avoid quick actions. Its `manage_pipeline`
-  deletes a pipeline when given only an id.
-- **GitLab's CLI in MCP mode.** An experiment: about 200 tools generated
-  from CLI commands, no filtering, and a raw authenticated API tool.
-- **The archived reference server.** Nine tools, PAT only, unmaintained.
-- **The most-starred community server** (about 2,000 stars). Around 260
-  tools behind toolset flags; fifteen published security advisories in
-  2026, three critical: local file read leading to token exfiltration,
-  SSRF, DNS rebinding, path traversal through unencoded ids, a token
-  forwarded across a redirect, and read-only mode bypassed through a raw
-  GraphQL tool and verb heuristics.
-- **A Go community server** with near-total coverage (865–1,091 actions,
-  most behind a find-and-execute pair). Its tracker shows the cost of
-  that breadth: a `read_api` token offered every write tool, a
-  permission refusal reported as an expired token, a branch name
-  escaped twice, GraphQL errors rendered as empty results.
-- Four smaller community servers, and GitHub's and Atlassian's official
-  servers for patterns: toolsets, a read-only mode that beats every
-  other setting, lockdown of content from untrusted authors, and an
-  interactive OAuth path beside a headless token path.
+- the REST API v4, for everything a tool reads or writes;
+- the GraphQL endpoint, only for a mutation REST has no route for
+  (D-09);
+- GitLab's OAuth endpoints, for login, refresh and revocation.
 
-What none of them offers together, and what this server is for: a local
-stdio binary that signs in to gitlab.com exactly as its Google siblings
-do and keeps its token in the OS keyring; **a curated surface of about sixty tools** rather
-than an API mirror; **gating enforced by registration**, so a tool that
-is off cannot be called; **no quick action ever executed by what it
-writes**; reviews built the way people review, with the server — not the
-model — computing where an inline comment lands; reads with a stated
-budget, job logs included; and releases that can be verified from
-outside.
+Nothing else is reached, and a token goes only to the instance that
+issued it (D-03, D-65).
 
-GitLab's built-in server is the one to watch (§17.10). If it gains stdio,
-tokens, enforced filtering and a read-only mode, most of this list is
-answered by GitLab.
+It works inside projects: issues, merge requests, reviews, the
+repository and CI (D-11). Wiki pages, snippets, releases and tags,
+deployments, activity and planning writes are toolsets, off by default
+(D-32).
 
-### Non-goals
+It is not an administrator's tool (D-11), a reader of CI variables
+(D-95), a webhook receiver (D-97), an API escape hatch (D-94) or a
+server for self-managed instances (D-98). It never deletes a project or
+force-pushes (D-96).
 
-- **Self-managed instances.** gitlab.com only: no instance setting, no
-  private CA, no version gating (§4.9, §14).
-- **Administration.** Instance settings, users, runners, group and
-  project settings, access tokens, deploy keys and tokens, webhooks,
-  integrations, audit events. §8a.
-- **CI variables and secure files.** Reading them puts secrets into a
-  model's context; writing them is a supply-chain lever. Written off.
-- **Deleting projects or groups, force pushes, protected-branch
-  changes.** Written off, not gated.
-- **An API escape hatch.** No raw REST or GraphQL tool. The most-starred
-  server's read-only bypasses all came through one.
-- **Push.** Webhooks need a listener a stdio process does not own.
-- **Premium and Ultimate planning objects** — epics, iterations,
-  vulnerabilities — before 1.0. §17.11.
-- **Container registry and package contents.** Deferred.
-- **A hosted or HTTP transport.** stdio only.
+It exists so that GitLab content is read without steering the
+assistant, so that nothing it writes runs a quick action, so that
+merging and deleting stay absent unless the operator enables them, and
+so that reviews land where a person would put them.
 
-## 2. Hard constraints from the platform
+## Quality goals
 
-Each is checked against GitLab's source at master `829b21d2` (VERSION
-`19.5.0-pre`, 2026-09-25), the OpenAPI v3 file in that tree, Doorkeeper
-v5.9.3, RFCs, or a GitLab page; §18 has the row and marks which.
+In priority order:
 
-1. **Sign-in is Doorkeeper OAuth 2.0.** A loopback redirect on an IP
-   literal may use any port: when both the registered and the requested
-   URI are loopback, Doorkeeper nils both ports before comparing,
-   citing RFC 8252 §7.3. `localhost` is not an IP literal and gets no
-   such relaxation. Scheme, host and path must still match, and plain
-   `http` is accepted for loopback. GitLab's own MCP page says the
-   redirect "must exactly match"; the code says otherwise for loopback,
-   and spike A settles it on a live instance. §10.
-2. **A public client needs no secret, and PKCE is not enforced.** An
-   application with `confidential: false` exchanges codes and refresh
-   tokens without a secret. GitLab enforces PKCE only for dynamically
-   registered applications; S256 is supported and this server always
-   sends it. Verifiers shorter than 43 characters are logged and may be
-   refused later.
-3. **Refresh tokens rotate with no grace.** A refresh revokes the old
-   access and refresh tokens at once, under a lock; a second refresh
-   with the old token is `invalid_grant`. Access tokens last
-   `expires_in` seconds — 7,200 by default; configurable by
-   administrators from 19.1 down to 300 (self-managed only; out of
-   scope). §10.
-4. **Dynamic Client Registration cannot mint an `api` token.** It
-   creates public PKCE clients whose scope is forced to `mcp`, prefixes
-   their name `[Unverified Dynamic Application]`, is rate limited per
-   IP, and can be switched off. It is for GitLab's own endpoint.
-5. **Device authorization (RFC 8628) exists and is off per application.**
-   GA in 17.9; `POST /oauth/authorize_device`, user code valid 300 s.
-   Applications created after the 18.10 migration have
-   `device_code_enabled` false unless someone ticks it; the OAuth
-   provider page does not mention the toggle. Not used (§10).
-6. **Scopes cannot separate the writes this server cares about.** REST
-   enforces `api` on every method and `read_api` on GET and HEAD only.
-   Every issue, merge request, note, commit and pipeline write needs
-   `api`, which also permits merging, approving, running pipelines and
-   deleting. The narrower `mcp` scope covers a handful of routes tagged
-   for GitLab's own server and not note creation or issue update.
-   Registration is the only control. §4.3.
-7. **Personal access tokens expire.** Expiry has been mandatory since
-   16.0, at most 365 days (400 behind a flag), at midnight UTC;
-   administrators can relax it on self-managed (out of scope).
-   Fine-grained tokens are GA from 19.2 and cover about 1,270 of about
-   1,583 route declarations. Not used (§10); recorded because policy on
-   them is what people will ask about.
-8. **Quick actions run through the API.** Creating a note or creating or
-   updating an issue or merge request executes every quick-action line
-   in the body — `/close`, `/merge`, `/assign`, `/move`, `/label`,
-   `/approve` and the rest. A note that is only commands returns 202 and
-   saves nothing. There is no parameter to turn this off, and the API
-   reference does not mention it. A command is a paragraph line matching
-   `^/<name>`; code blocks, block quotes, HTML blocks and inline code are
-   skipped. §4.2.
-9. **There is no `If-Match` and no idempotency key.** Nothing in
-   `lib/api` reads either. Issues and merge requests have a
-   `lock_version`, but only the web controllers accept it. Weak ETags
-   on GET serve conditional reads only (spike H). §4.6.
-10. **Where a guard exists, it is per API.** The Files API takes
-    `last_commit_id` and refuses a mismatch with **400**, not 409. The
-    Commits API takes `last_commit_id` per action and `start_sha`. Merge
-    and approve take `sha` and refuse a mismatch with **409**, and a
-    group may require it (400 when absent; one surveyed server broke on
-    exactly this in 19.2). Issue, merge request, note and wiki updates
-    have no guard.
-11. **Creates are not idempotent.** A retried note, issue, commit,
-    pipeline or fork is a second one. A merge request for a source and
-    target that already have an open one is refused 409, and branches,
-    tags and files refuse an existing name — those guard themselves.
-12. **Pagination is offset or keyset, and both have edges.** `per_page`
-    defaults to 20 and caps at 100. `X-Total` and `X-Total-Pages` vanish
-    once a count reaches 10,000. On endpoints that support keyset, an
-    offset past 50,000 rows is **405**. Keyset is followed through the
-    `Link: rel="next"` header, never constructed. §7.1.
-13. **Rate limits differ by deployment and are reported unevenly.**
-    gitlab.com: 2,000 authenticated API requests a minute per user;
-    60 notes a minute; 200 issues a minute; 100 searches a minute; 50
-    group listings a minute; 25 pipeline creations a minute per
-    project, user and commit; tier-aware limits proposed at 100 a minute
-    for Free. `RateLimit-*` headers describe only the Rack::Attack
-    throttles; an application limit can answer 429 while
-    `RateLimit-Remaining` shows quota. A Rack::Attack 429 body is plain
-    text; an application 429 is JSON. Self-managed instances ship the
-    general throttles off (self-managed only; out of scope). §11.
-14. **Errors come in four shapes.** `{"message": "404 Project Not
-    Found"}`; `{"message": {"field": ["…"]}}` for validation (400 or
-    422); `{"message": {"error": "…"}}` for spam and application limits;
-    `{"error": "…"}` for parameter validation and **for a route that
-    does not exist**, which the catch-all answers `{"error": "404 Not
-    Found"}`. That last shape is how a route the account's tier lacks —
-    or, on self-managed (out of scope), an older instance's — is told
-    apart from a missing resource (spike F).
-    §6.5.
-15. **404 hides private resources.** A project the token cannot read is
-    404, not 403. Merging without permission is **401**, not 403. A
-    moved project redirects GET and refuses other methods with 405.
-16. **A project is a numeric id or a percent-encoded full path**
-    (`group%2Fsub%2Fproject`), and reverse proxies that decode `%2F`
-    break the second. Issues and merge requests are addressed by project
-    plus `iid`, the number people see as `#12` and `!12`. §6.1.
-17. **Sizes.** Titles 255 characters; descriptions and notes 1,048,576
-    bytes by default. Diffs: 200 KB per patch, 1,000 files and 50,000
-    lines by default before `collapsed` and `too_large` apply. Job logs
-    read in windows of at most 500 KB through undocumented
-    `byte_offset` and `byte_limit` parameters (spike J). Commits over
-    20 MB are throttled and over 300 MB refused on gitlab.com.
-18. **Tier is not advertised.** `/api/v4/metadata` gives `version`,
-    `revision` and `enterprise` and needs authentication; there is no
-    plan field a normal user can read, and a licensed-feature refusal is
-    404 in some routes and 403 in others. The OpenAPI file marks tier on
-    3 of 1,862 operations. Tier is probed, never assumed. The version
-    matters only on self-managed (out of scope): gitlab.com runs the
-    newest release, so the version is informational here. §7.9.
-19. **The machine-readable surface is the OpenAPI v3 file.**
-    `doc/api/openapi/openapi_v3.yaml` is generated from the Grape routes
-    and checked current in GitLab's CI: 1,384 paths and 1,862
-    operations at `19.5.0-pre`. It omits experimental work-item routes
-    and most policy routes, includes 11 internal paths, and leaves 526
-    operations without a response schema. The v2 file is deprecated.
-    The GraphQL schema is not committed, so the GraphQL operations
-    used are listed by hand in §8a.
+1. **Content never steers the assistant through the server.** Content
+   is marked, hidden text is counted, nothing is fetched, secrets in CI
+   output are masked, and the server's own text never repeats an
+   instruction (D-13, D-14, D-15, D-16, D-17).
+2. **Nothing the server writes runs a command.** Every body passes one
+   quick-action guard that refuses by default (D-18, D-19).
+3. **A persuaded call cannot ship, delete or widen access unless the
+   operator enabled it.** Ship and Destructive tools are unregistered by
+   default. Code reaches a protected branch only through a merge
+   request. Writes stay in the allowed namespaces, and nothing is made
+   more visible except by its own Destructive tool (D-21, D-22, D-33,
+   D-38, D-39, D-40, D-41).
+4. **A write changes only what was read and named, and is never
+   repeated blind.** Writes carry witnesses, omitted means unchanged, a
+   lost answer is settled by reading, and every write takes `dry_run`
+   (D-29, D-34, D-36, D-37).
+5. **The stream, the logs and the repository stay clean, and the
+   surface is a contract.** Stdout carries frames only, logs carry no
+   payload, the repository holds nothing real, and a released name or
+   field keeps working (D-04, D-05, D-06, D-78).
 
-### What the API cannot do (so we don't promise it)
+## Codemap
 
-- Say whether a failed create happened. Only a read afterwards can.
-- Guard an issue, merge request or wiki update against a concurrent
-  edit. §4.6 narrows the window; it cannot close it.
-- Report the account's tier or plan to an ordinary user.
-- Store a body without evaluating quick actions in it.
-- Say which rate limit a request will hit before it hits it.
+- `cmd/gitlab-mcp` is the program. With no subcommand it serves;
+  `login`, `logout`, `status`, `doctor`, `--dump-schemas` and
+  `--version` are the rest. It names stdout and stderr once and passes
+  them down (D-04). It checks every argument for a help token before
+  dispatch, so `logout --help` deletes nothing, and prints errors
+  through the redactor (D-05).
+- `internal/app` is the startup assembly every entry point shares: the
+  profile, the OAuth application, the transport, the token source, the
+  client and the server. It reads the token's scopes without refreshing
+  (D-69), starts signed out (D-70), and withholds a token from an
+  instance that did not issue it (D-03).
+- `internal/auth` runs the loopback OAuth flow with PKCE and `state`,
+  and holds the token source, the cross-process refresh lock and
+  revocation (D-66, D-67, D-68, D-72).
+- `internal/config` reads the `GITLAB_MCP_*` environment and the bound
+  flags through one reader, validates them once, refuses a removed
+  setting, and keeps the registry of every variable the server reads.
+  Its one test override is loopback only (D-02, D-73).
+- `internal/credentials` stores and finds the token pair: the
+  environment, then the OS keyring, then an owner-only file with a
+  warning on every use (D-71).
+- `internal/diffpos` computes GitLab's position for an inline comment
+  from a unified diff and the version's refs, with no network (D-53).
+- `internal/fileperm` restricts a file to the account that wrote it,
+  with a protected access list on Windows (D-71).
+- `internal/gapi` is the raw REST client and the GraphQL mutations. It
+  holds the rules every request shares: the token to its instance only,
+  no redirect followed, paths escaped once, the rate model, retries by
+  method, progress timeouts and the body cap, no write under a dry run,
+  and the error classes (D-09, D-29, D-35, D-62, D-65, D-74, D-75,
+  D-76).
+- `internal/gapi/gitlabtest` is the in-memory GitLab the tests, the
+  evals and the smoke gate run against, generated and never recorded,
+  modeling what GitLab was seen to do (D-07).
+- `internal/gitlab` holds the wire types, written by hand for the
+  fields used. No field ends `_token` (D-08, D-10, D-61).
+- `internal/instance` holds the base URL, gitlab.com or the loopback
+  test override, checks origins against it, reads the version and
+  edition, and turns GitLab web URLs into tool arguments for
+  `resolve_url` (D-02, D-63).
+- `internal/localimage` reads an image from an allowed directory
+  through `os.Root`, checks it is a regular file and sniffs its type,
+  with no network (D-44, D-45).
+- `internal/model` is the server's view of what GitLab returns: the
+  shapes each result carries as `structuredContent` under its output
+  schema (D-77, D-78).
+- `internal/quickaction` finds the lines GitLab would run as quick
+  actions, following GitLab's extractor, and escapes them on request,
+  with no network (D-18, D-19).
+- `internal/redact` masks hosts, paths, accounts, ids and tokens in
+  what `status`, `doctor` and errors print, and the token and key
+  shapes in job output (D-05, D-16).
+- `internal/render` writes the readable half of every result: the
+  per-call boundary, hidden-text handling, link hosts, the budgets and
+  the job-log rendering, held by golden files (D-13, D-14, D-15, D-54).
+- `internal/scopes` holds the scope for each mode and what each kind
+  needs, and generates the blocks [setup.md](setup.md) carries (D-30,
+  D-31, D-66).
+- `internal/server` wires the MCP SDK: the instructions built from the
+  configuration, the resources, the per-call log line and the schema
+  dump (D-05, D-21, D-81).
+- `internal/service` holds orchestration and policy: project
+  resolution, the write allow-list, the protected-ref guard, witnesses,
+  settle reads, budgets and paging. It is where a GitLab failure
+  becomes a `[class]` tool error (D-33, D-34, D-36, D-37, D-38, D-54,
+  D-55).
+- `internal/tools` defines the MCP tools, each added through
+  `register`, whose `Kind` decides the annotations, registration, the
+  quick-action guard, the dry-run context, `confirm` and both halves of
+  the reply (D-20 to D-29, D-77, D-79).
+- `internal/userconfig` stores non-secret per-profile state: the
+  instance a profile signed in to, its application, the account and the
+  granted scopes. It refuses a config directory outside the home
+  directory.
+- `internal/version` holds the version the build stamps in, with the
+  module's build info as a fallback.
 
-## 3. Requirements distilled from other servers' failures
+Beside the packages, `scripts/gates` is every check the repository runs
+on itself, written in Go behind one registry (D-86, D-87).
+`scripts/livegitlab` is the live driver (D-82, D-83). `scripts/evals`
+scores a model driving the tools (D-85). `scripts/internal` holds what
+the gates and drivers share: the stdio client, the transcript writer,
+the redactor, git helpers and the TSV reader (D-84). `packaging/mcpb`
+holds the Claude Desktop bundle's manifest (D-91, D-92). `testdata`
+holds the released surface, the OpenAPI snapshot and its verdicts, the
+field verdicts and the live waivers (D-10, D-78, D-82).
 
-Each traced to a public report in §1's servers; §18 has the evidence.
+## Request flow
 
-1. Sign-in survives its own refresh: a token never refreshed after
-   startup, and a second process spending the same refresh token, both
-   end in a forced re-login.
-2. 401 and 403 are told apart and the missing scope is named; a
-   permission refusal was reported as an expired token.
-3. A `read_api` token is never offered a write tool.
-4. The base URL is normalized: a host, a URL, a URL ending `/api/v4`, a
-   sub-path install; `/api/v4` duplicated and `http` refused were both
-   reported. *Here there is no base URL to configure: the instance is
-   gitlab.com (§4.9).*
-5. A private CA, `HTTPS_PROXY` and `NO_PROXY` work; self-signed
-   instances were the most-reported setup failure. *Here the proxies
-   from the environment work; a private CA is self-managed only and out
-   of scope (§4.9).*
-6. Every path segment is escaped exactly once, from typed parts; a
-   branch with a slash escaped twice, and an unencoded id walked `../`
-   to other endpoints.
-7. A token is never sent to another host, and no URL taken from a
-   response body is fetched.
-8. Lists never truncate silently and say how to continue; labels capped
-   at 20 without saying so, a keyset cursor that never advanced, and a
-   filtered-after-paging empty page reported as the end.
-9. Output is bounded: a single list call returned 120–180k tokens of
-   embedded objects.
-10. Diffs keep `too_large` and `collapsed`, are fetched per file, and
-    binary content is never decoded as text.
-11. Job logs are read as a tail or a byte range, ANSI stripped, with a
-    `failed_only` path.
-12. `iid` and project are required, named consistently, and explained;
-    optional `project_id` sent a model into a 404 loop.
-13. Inline comments land: the position is computed by the server from
-    the diff and the merge request's diff refs; `line_code can't be
-    blank` was the most-reported write failure.
-14. Reviews are first-class: drafts, then one submission.
-15. `sha` is carried on merge and approve.
-16. Schemas stay flat: no top-level `anyOf`, shallow nesting, every
-    property typed; null and empty optional values mean absent.
-17. Nothing written executes a quick action.
-18. Gating is enforced on call, not only on listing; a destructive
-    default (delete when only an id is given) is never a default.
-19. Secret fields are stripped from project reads; a runner registration
-    token leaked through one.
-20. Content from issues and merge requests is untrusted; hidden-prompt
-    exfiltration through GitLab content has been demonstrated publicly.
+A tool call crosses the layers in one direction:
 
-## 4. Core design bets
+```
+MCP client
+   │  JSON-RPC over stdio; stdout carries nothing else
+   ▼
+internal/server     SDK session, tools, resources, one log line per call
+   ▼
+internal/tools      decode the input; register applies the Kind:
+   │                annotations, gating, the quick-action guard,
+   │                confirm, the dry-run context, both halves of the reply
+   ▼
+internal/service    project resolution, allow-list, protected refs,
+   │                witnesses, settle reads, budgets, [class] errors
+   ├──► internal/quickaction, internal/diffpos, internal/localimage
+   ├──► internal/model   the server's view of GitLab
+   └──► internal/render  the readable half and its boundaries
+   ▼
+internal/gapi       one request: token to its instance only, no redirect,
+   │                paths escaped once, rate model, retry by method,
+   │                no write under a dry run, classify
+   ▼
+internal/auth       refresh under a cross-process lock
+   ▼
+gitlab.com REST v4, its GraphQL mutations, GitLab OAuth
+```
 
-### 4.1 Content is data, never instructions
+### Start
 
-Issue and merge request text, comments, review threads, commit messages,
-file contents, wiki pages, snippets, release notes and job logs are
-written by people other than the person using the server, often in
-public projects anyone can post to. GitLab's own MCP documentation
-tells users they are "responsible for guarding against prompt
-injection". This server cannot stop a model from being persuaded; it can
-make the persuasion visible, keep the dangerous tools off by default and
-never add its own voice to the attacker's.
+`main` loads the configuration and refuses a bad one before it
+announces itself: read-only mode with an enable switch, a removed
+setting still on, an upload directory that is relative, a root or the
+home directory, or a test override that is not loopback (D-02, D-30,
+D-44, D-73). `app` reads the token's scopes while the access token is
+fresh, and never refreshes (D-69). With no sign-in the server serves
+anyway, and each call answers `[auth]` naming `login` (D-70). A token
+whose scopes cannot serve the mode is the one fatal outcome (D-31).
+`register` adds every tool. A Ship or Destructive tool without its
+switch, a toolset that is off, or a kind the scopes cannot serve is
+left out (D-20, D-21, D-32).
 
-1. **Boundaries.** Rendered content sits inside a delimited block
-   naming its origin — kind, project, iid or path, author username —
-   with a boundary token generated per call so the content cannot close
-   the block itself. `structuredContent` carries the same text in fields
-   named `untrusted_*`.
-2. **Hidden text is removed and counted.** Zero-width and
-   bidirectional-control characters and HTML comments are dropped from
-   Markdown before it is shown, and the result says how many characters
-   were dropped. In code — files, diffs, commit messages — the same
-   characters are made visible as `<U+202E>` and counted instead, because
-   dropping them would silently alter text the caller may edit, and they
-   are how Trojan Source hides code. Rendered HTML is never requested.
-   Names other people choose and the text prints outside a block —
-   file paths, branches, labels, topics — get the same visible form for
-   control characters as well, so a newline in a file name cannot start
-   a line that reads as the server's; a display name such as a commit
-   author is folded onto one line.
-3. **Nothing is fetched.** No image, attachment or link in content is
-   followed. Links render as text with their host shown, the host read
-   as a browser reads it: the authority ends at the first `/`, `?`, `#`
-   or `\`, so an `@` after one of them cannot make an outside link
-   look like the instance's.
-4. **Job logs are masked.** Every token shape GitLab documents
-   (`glpat-`, `gloas-`, `gldt-`, `glrt-`, `glcbt-` and the rest, list
-   fixed at phase 0 from the token-prefix page) and common cloud key
-   shapes are replaced before rendering, and the result counts the
-   masks. GitLab's own masking covers only masked variables.
-5. **Authorship is shown.** Every rendered comment and description
-   names its author's username, and where the call already has it, the
-   author's role in the project. Content from authors below Developer
-   in public projects is not withheld, as GitHub's lockdown does: §17.3
-   says why.
-6. **The server's own text never relays content.** Tool descriptions
-   and the server instructions say content is untrusted, and no result
-   ever phrases what content says as something to do.
+### A read
 
-### 4.2 Nothing written runs a quick action
+A client calls `get_merge_request` on a merge request in a public
+project. The service resolves the project once, to its numeric id
+(D-62). It then reads the merge request, its approvals, its reviewers
+and its linked lists at once. Each list is best effort and says it is
+GitLab's, which leaves out what the account cannot see (D-54).
 
-§2.8 makes every body this server sends a command channel: a comment
-reading `/merge` merges, whatever the Ship flag says. So one package,
-`internal/quickaction`, owns every Markdown body on its way out.
+The description is cut at its budget, at a paragraph boundary, with the
+offset to continue from (D-54). Hidden characters are dropped and
+counted, and links show their host and are never fetched (D-14, D-15).
+The description sits in a block whose token is drawn per call and
+which names its origin and author. The structured half carries the same
+text in `untrusted_*` fields (D-13, D-77). When GitLab has not finished
+working out whether the merge request can merge, the result says to
+read again in a few seconds.
 
-1. It parses the body the way GitLab's extractor does — paragraphs only,
-   skipping fenced and indented code, block quotes, HTML blocks and
-   inline code — and finds every line that GitLab would read as a
-   command, known name or not (GitLab's list grows every release, and an
-   unknown command is harmless only until it is known).
-2. **Default: refuse.** The call is `[blocked]` and names each line and
-   its number. Nothing is sent.
-3. **`escape_commands: true`** rewrites each such line with a leading
-   backslash, which CommonMark renders as the same visible text and the
-   extractor no longer matches (spike E proves both halves on a live
-   instance). The result says which lines were escaped.
-4. **There is no opt-in to execute.** Every effect a quick action has is
-   a field on a tool, under that tool's kind.
-5. A 202 from note creation means commands ran and nothing was saved.
-   The server treats it as a defect of the guard: `[unexpected]`, logged
-   at error.
+`get_job_log` on a failed job reads a byte window from the end of the
+stored log. It folds sections, strips ANSI codes, and masks token and
+key shapes before anything is shown (D-16, D-56).
 
-`scripts/gates bodies` derives every string input of every write tool
-from the schema dump and fails on one that is
-neither routed through the guard nor listed as a plain field with a
-reason.
+### A comment, then a merge
 
-### 4.3 Kinds, and what registration enables
+A client calls `add_comment` on a merge request. `register` passes the
+body through the quick-action guard. A `/merge` line is `[blocked]`,
+naming the line, unless `escape_commands` asks for it to be escaped
+(D-18, D-19). The service holds the project to
+`GITLAB_MCP_WRITE_NAMESPACES` (D-38). With `dry_run`, the call returns
+the request body and the guard's verdict, and the client refuses any
+write under that context (D-29).
 
-Five kinds, decided in one `register` (`CLAUDE.md` rule 14):
+The POST is sent once. If it times out after it was written, the
+service reads the notes newest first for this account's comment with
+this body. It reports created, not created or unknown, and never posts
+again (D-34, D-35). An inline comment's position is computed by the
+server from the diff and the version's refs, never by the model
+(D-53).
 
-| Kind | What | Registered |
-|---|---|---|
-| Read | every GET | always |
-| Write | every write that changes or removes something, starts a pipeline or links items: edits, comments, reactions, reviews and draft comments, branches, tags, merge requests, issue and merge request links, commits to unprotected branches, wiki, snippets, to-dos done; annotated destructive | unless read-only |
-| Adding | a new issue, label, milestone, snippet, to-do or upload, changing nothing already there and starting nothing; the one kind of write annotated not destructive (§18 row 137) | unless read-only, as Write |
-| Ship | merge, approve, unapprove, cancel an auto-merge, apply review suggestions, run, retry, play and cancel CI, create a release | `GITLAB_MCP_ENABLE_SHIP=true` |
-| Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, plus `confirm: true` per call |
+`merge_merge_request` exists only under `GITLAB_MCP_ENABLE_SHIP` (D-21,
+D-22). It takes the head `sha` the caller reviewed. GitLab refuses a
+moved head with 409, which is `[stale]` (D-36). A lost answer is
+settled by reading the merge request back, and the result says what
+changed, read back rather than assumed (D-34, D-42).
 
-Ship is its own kind because it is where a persuaded call stops being a
-record someone can edit and becomes an effect: code in the default
-branch, a deployment job run, a sign-off another person's merge rule
-counts. §2.6 rules out the scope as the control, and the standard's §3
-already says an annotation is not a control and a registered tool can
-run unattended. A submitted review that would approve (`reviewer_state:
-approved`) is Ship-dependent: without the flag the call is `[blocked]`
-naming it. Making a confidential issue public shows it to everyone who
-can see the project's issues, the widening `move_issue` refuses, and an
-injected "it was confidential by mistake" asks for exactly that (1.0
-security review). From 2026-10-23 it is its own Destructive tool,
-`make_issue_public`, and `update_issue` refuses `confidential: false` on
-a confidential issue whatever the flags: a client's approval of
-`update_issue` would otherwise carry it unseen (standard §3, writes by
-class; §18 row 127).
+### Login and refresh
 
-The standard's rule that destructive tools are unregistered is held.
-One sibling registers deletions and refuses per call, arguing that a
-tool that does not exist cannot explain itself; here the server
-instructions name the flags and what they add, which answers that
-without registering the tool (§17b).
+`gitlab-mcp login --client-id` prints the scopes it will ask for, opens
+GitLab's consent page, and listens on a random `127.0.0.1` port with
+PKCE S256 and `state`. `--no-browser` prints the URL and the `ssh -L`
+line to forward it (D-66).
 
-Toolsets sit beside kinds (§8): `wiki`, `snippets`, `releases`,
-`deployments`, `activity` and `planning` are off by default, so the
-default surface, sixty-six tools, holds the work inside a project's
-issues, merge requests, reviews, repository and CI. A read joins the
-default when it answers a question a default tool acts on: `list_boards`
-did, beside `list_labels` and `list_milestones`, since a board's columns
-are read with `search_issues` (maintainer, 2026-09-30). The count is not
-held under a client's grouping point: VS Code groups by the whole
-request's tools, its own built-ins included, and the only hard cap found
-is 128 tools per request (§18 row 123). With Ship and Destructive both
-on, the surface is eighty-two tools; both flags are opt-in. `GITLAB_MCP_READ_ONLY=true` beats every other setting.
+The token pair goes to the OS keyring, or to an owner-only file with a
+warning on every use. The environment overrides both (D-71). GitLab
+revokes the old pair the moment it rotates, so a refresh runs under a
+file lock, the new pair is stored before it is used, and an
+`invalid_grant` re-reads the store before asking for a login (D-67).
+An access token refused as `invalid_token` is dropped, and a read is
+sent once more (D-68). `logout` revokes at GitLab and names the
+profiles that share the application (D-72).
 
-### 4.4 Code reaches a protected branch only through a merge request
+## Invariants
 
-`create_commit` refuses the project's default branch and every
-protected branch: one that exists by its own `protected` flag, one it
-would create by the protected-branch rules, read at call time, and
-refused when there are more rules than one read covers. It can create
-the branch it commits to (`start_branch`). `apply_suggestions` refuses a
-merge request whose source branch is the default or a protected one in
-the same way, before anything is sent: GitLab would commit the
-suggestions there for an account that may push. `create_branch` refuses a
-name the rules cover in the same way, since a new protected branch at a
-ref of the caller's choosing is code in a protected branch no merge
-request showed (phase 2 security review). The merge request is the
-review boundary, as a draft is in a mail server: everything that lands
-in a protected branch existed first as a merge request a person could
-read. Merging it is Ship.
+- Stdout carries only MCP JSON-RPC frames (D-04).
+- No log line carries a host, a path, a branch, a title, a body, a
+  username or a search term (D-05).
+- Nothing in the repository identifies a real instance, account or
+  person (D-06).
+- A token is sent only to the instance that issued it, and never across
+  a redirect to another origin (D-03, D-65).
+- Content is returned only inside a boundary, and the server's own text
+  never relays it (D-13, D-17).
+- Nothing content references is fetched (D-15).
+- No body the server sends runs a quick action (D-18).
+- Ship and Destructive tools exist only under their switches, and every
+  Destructive call takes `confirm` (D-21, D-28).
+- No write creates or moves a protected branch or tag (D-33).
+- Every write stays inside `GITLAB_MCP_WRITE_NAMESPACES` when it is
+  set (D-38).
+- No write makes content more visible, except `make_issue_public`
+  (D-39, D-40, D-41).
+- A create is never repeated blind (D-34).
+- A write GitLab cannot guard carries a witness, and is refused
+  `[stale]` when the target moved (D-36).
+- A dry run writes nothing (D-29).
+- The server never asks the person a question (D-26).
+- `upload_file` reads only from the directories `GITLAB_MCP_UPLOAD_DIRS`
+  names (D-44).
+- Every reply carries `structuredContent` and a different text
+  rendering (D-77).
+- A read never silently returns less than it found (D-54).
+- A released tool name, output field or resource URI changes only in an
+  acknowledged major release (D-78).
+- The live driver reads and writes only inside scratch projects it made
+  (D-83).
 
-### 4.5 A create is never retried; ambiguity is settled by reading
+## Cross-cutting concerns
 
-§2.11. The client retries a POST only where GitLab turned it away before
-acting — a 429 — and never on a timeout, a cancellation, a reset
-connection or a 5xx after the request was written. A create canceled or
-timed out once it may have been written is `[ambiguous_outcome]`.
-A delete repeated after an attempt that may have landed, whose repeat
-answers 404, is `[ambiguous_outcome]` too: the first attempt may have
-deleted it, and the tools that delete read back to settle it.
+**Configuration.** Every setting is a `GITLAB_MCP_*` variable, and most
+have a flag bound to them. A flag overrides the environment, and the
+environment overrides the default. Every reader goes through
+`config.Lookup`, which drops the spaces around a value. Validation runs
+once at start, and a removed setting is refused with its replacement
+(D-73). The full list is in [configuration.md](configuration.md).
 
-On an ambiguous failure the tool returns `[ambiguous_outcome]` having
-already done the read that settles it, each against the call's start
-time and the signed-in user:
+**Untrusted content.** Content is shown inside a block whose boundary
+token is drawn per call, and the structured half names the same text
+`untrusted_*` (D-13). Hidden text is removed from Markdown and made
+visible in code, and counted either way (D-14). Nothing content links
+to is fetched (D-15). Job logs, artifacts and test output are masked
+for token and key shapes (D-16). The server's own text never phrases
+content as something to do (D-17). [security.md](security.md) holds
+the threat model.
 
-| Create | Settled by |
-|---|---|
-| note, draft note | the noteable's notes newest-first, author and body equal |
-| issue, merge request | the project's issues or merge requests by author, `created_after`, title equal |
-| commit | the branch head: moved, with this author and message |
-| pipeline | pipelines on the ref, source `api`, `created_after` |
-| merge request pipeline | pipelines on the merge request's `…/head` and `…/merge` refs, source `merge_request_event`, by this account, `created_after`, newer than the project's newest pipeline read just before the create |
-| release | the release by tag name |
-| spent time added or reset | the item's total spent: moved by exactly the amount, or at zero after a reset |
-| an estimate never confirmed (it repeats, so this is after its retries) | the item's estimate: at the value asked or not |
-| a to-do added for oneself | the account's pending to-dos it added on the item, created since shortly before the call |
-| an emoji reaction | the account's reactions on the item or comment before and after: one that is new is the add's |
-| one draft published | the threads, for this account's comment with the draft's text newer than every note read before the call: a reply in its thread, or a new thread at the draft's place; then the draft. GitLab saves the comment before it deletes the draft, with no transaction, so not published needs both a complete search that finds none and the draft still there |
-| a snippet change that creates, deletes or moves a file | the snippet's files and `updated_at` |
-| suggestions applied | each suggestion's `applied` on the merge request's diff comments, and the source branch's head: all applied is applied, by this call when the head is one commit on by the account, by this call or another otherwise; anything else read right after the failure is unknown, since GitLab may still be committing |
-| an image uploaded | nothing can: listing a project's uploads needs the Maintainer role and gives no link, so a lost answer stays unknown, the result says a repeat would leave the first upload, if it landed, with nothing linking to it, and the person decides (§7.10, §18 row 116) |
+**Kinds and approval.** Every tool has one kind. Read is every GET,
+always registered. Write changes or removes something, and Adding only
+adds; both are registered unless the server is read-only. Ship merges,
+approves, rebases, applies suggestions, moves an issue, runs CI or
+creates a release, and is registered only under
+`GITLAB_MCP_ENABLE_SHIP`. Destructive deletes or makes an issue public,
+and is registered only under `GITLAB_MCP_ENABLE_DESTRUCTIVE` (D-20 to
+D-24). Registration, `confirm`, the guards, the witnesses and `dry_run`
+hold on every client. The annotations and Claude Code's
+`requiresUserInteraction` mark shape the client's prompt and hold
+nothing on their own (D-25 to D-29). The README lists the tools.
 
-Found means **created**, and the result carries it. Not found means
-**not created**, and the result says so without creating it. Anything
-else stays **unknown**, and the result says not to repeat the call.
+**Errors.** Every tool error is `[class] message`, and the class tells
+the caller what to do next. The vocabulary is closed and declared in
+`internal/gapi/errors.go`, where each class's comment says what it
+means and what the caller should do (D-74).
 
-A to-do added for oneself looks deduplicated, since GitLab answers 304
-while a pending one the account added is on the item, but it is a
-create all the same: the check runs before the insert without a lock
-or a unique index, and a to-do marked done in between, which a comment
-or a close does on its own, lets a second through (§18 row 102). So
-`add_todo` is never repeated. Subscribing sets a state and repeats; a
-304 after a retry is reported as the first attempt's change, since it
-most likely was. An emoji reaction is unique per account, item and
-name, but GitLab refuses a second with 404, so a repeat would read as a
-failure: `react` never repeats an add, and a reaction the read after
-finds that the read before did not is reported added, since a reaction
-is a state, not a record someone could have made twice. Either read
-falling short of the whole list leaves it unknown. Removing one
-repeats; after any failure the reaction is read back by id, and gone is
-removed, by the call or its repeat, while a failed read is unknown
-(§18 row 106).
+**Rate and retries.** Requests share a per-instance token bucket and a
+concurrency cap, and GitLab's known application limits, such as notes,
+have buckets of their own (D-75). A read retries a transient failure. A
+POST is retried only when GitLab turned it away with 429, and a create
+never otherwise (D-35). Every request is bounded by progress timeouts
+and a body cap (D-76).
 
-### 4.6 A write carries a witness, and never destroys what it cannot see
+**Logging.** `slog` to stderr, as text or JSON. A line names the
+method, the tool, the outcome, the milliseconds, the rate bucket and a
+truncated id, and nothing from GitLab. Transport errors are stripped of
+path, query and host before they are logged, since a search term and a
+project path travel in the URL (D-05).
 
-- **Files and commits:** an update or delete action requires the
-  `last_commit_id` that `get_file` returned; GitLab enforces it (400,
-  mapped to `[stale]`).
-- **Merge and approve:** require `sha`, the head the caller read;
-  GitLab enforces it (409, `[stale]`).
-- **Issue and merge request updates:** no API guard (§2.9). The
-  tool requires the `updated_at` the caller read, re-reads, refuses
-  `[stale]` if it moved, and sends only the fields given. The window
-  between the re-read and the PUT is not closed, and the result does
-  not claim it is (§17b).
-- **Time tracking:** no API guard either. `track_time` requires the
-  item's `updated_at`, re-reads and refuses `[stale]` as the updates
-  do, with the same window open. GitLab does not move `updated_at` when
-  spent time is added or reset, so either also requires
-  `total_time_spent`, the seconds spent the caller read, and is refused
-  `[stale]` if the total moved: that is what catches the same time sent
-  twice. The result gives both for the next call (§18 row 101).
-- **Comment edits:** GitLab's note PUT ignores `If-Unmodified-Since`
-  (§18 row 93), so `update_comment` re-reads and compares `updated_at`
-  as the issue updates do, with the same window open. The same text
-  asked again reads as unchanged before the witness is compared, so an
-  edit repeated after a lost answer is not `[stale]`. The answer is
-  read back: an `updated_at` that did not move is `[unexpected]`, and a
-  text stored otherwise is reported.
-- **Snippet edits:** GitLab's snippet PUT checks no witness (§18 row
-  103), so `update_snippet` re-reads and compares `updated_at` as the
-  comment edits do, with the same window open. A change to content or
-  files is a commit, and GitLab moves `updated_at` again once its
-  post-receive job runs, after the answer, so the result gives no
-  `updated_at` then: the next witness is read with `get_snippet`.
-- **Draft review comments:** GitLab exposes no time or version for a
-  draft (`lib/api/entities/draft_note.rb`), so `update_review_comment`
-  takes `note_sha256`, a hash of the draft's text as
-  `list_review_comments` or `add_review_comment` gave it, re-reads the
-  draft and refuses `[stale]` if it moved, with the same window open.
-  The same text asked again reads as unchanged first. GitLab's PUT
-  clears a position it is not sent, so the draft's own is sent back and
-  the answer is checked for it (§18 row 111). Publishing a draft
-  carries no witness: the draft is read, refused if it holds a quick
-  action, and then published, and a change made in that window is not
-  caught.
-- **Wiki pages:** GitLab's wiki API exposes neither a version nor an
-  `updated_at` (`lib/api/entities/wiki_page.rb`), so the witness is
-  `content_sha256`, a hash of the content `get_wiki_page` returned. A
-  change or delete re-reads, compares, and refuses `[stale]`; the same
-  window stays open.
-- **Deletes:** a branch carries its head `sha`, compared with a fresh
-  read, since GitLab's own branch delete checks only an author date. A
-  comment or a snippet carries its `updated_at`, sent as
-  `If-Unmodified-Since`, which GitLab enforces (412, `[stale]`): the one
-  conditional request its REST API honors for the deletes this server
-  makes. Both go through the same check, so a snippet's is sent as a
-  comment's is, to the end of the millisecond shown (§18 rows 62, 103).
-- **Reactions:** GitLab's reaction routes take no witness and none is
-  needed: a reaction is added or removed, never replaced. `react` reads
-  the account's reactions first, sends nothing when the state asked for
-  holds, and removes by the id that read found, so it never removes
-  another reaction or someone else's (§18 row 106).
-- **Omitted means unchanged.** GitLab's PUT changes only the parameters
-  sent, and the server sends only what the caller gave.
-- **Lists change by add and remove.** Labels through GitLab's own
-  `add_labels` and `remove_labels`; assignees and reviewers as a
-  computed set from the re-read, never a replacement the caller typed.
-- **A description replaced wholesale** reports how many characters and
-  lines it removed.
+**Scopes.** Read-only mode asks for `read_api`, and every other mode
+for `api`. GitLab offers nothing between them for these writes, so
+registration is the control (D-21, D-30). A changed mode needs a new
+`login`, and startup says so (D-31). The application's settings are in
+[setup.md](setup.md).
 
-### 4.7 Writes stay where they are allowed
+**Testing.** The unit suite runs against `internal/gapi/gitlabtest`,
+which encodes what GitLab was seen to do (D-07). A fuzz target holds
+that an escaped body never yields a command, and table tests hold the
+guard to GitLab's extractor (D-18, D-19). Table tests over generated
+diffs hold the inline positions (D-53), and golden files hold the
+renderers. `TestLogsNeverCarryThePayload` drives every tool with
+canaries (D-05). `make live` drives the shipped binary against
+gitlab.com and is the only check that can show a belief wrong, and
+`make live-cover` fails on a tool option no live step drives (D-82,
+D-83). Evals score planted instructions (D-85). How to run a live check
+is in [CONTRIBUTING.md](../CONTRIBUTING.md#the-live-run).
 
-The toxic flow that matters here is private content written somewhere
-public: a model reads a private repository, then a public issue tells it
-to post what it read. Two layers:
+**Documentation.** A decision lives once, in part 2 here. What was
+verified about GitLab lives in the comment at the line that depends on
+it: the behavior, the source link, where GitLab's documentation is
+wrong or silent, and the live step that checks it. A refuted belief
+goes at that line or in a decision's `Rejected:` line. Every API
+operation's verdict is in `testdata/api-coverage.tsv`, and every
+field's in `testdata/api-fields.tsv` (D-10). Why REST cannot do a
+GraphQL operation is in the doc comment of the function that sends it
+(D-09). The docs gate holds every D-ID citation to an entry, every
+"Held by" cell to a gate or test that exists, and the codemap to the
+tree. The staleness gate holds the README,
+[configuration.md](configuration.md) and [setup.md](setup.md) to the
+code.
 
-1. **`GITLAB_MCP_WRITE_NAMESPACES`**, when set, confines every Write,
-   Ship and Destructive call to projects under those namespaces; any
-   other target is `[blocked]` naming the setting. This is the control.
-   `doctor` says whether it is set. `mark_todos_done` is held to it by
-   each item's project, read once for that when the setting is on;
-   `add_todo` and `subscribe` by the item's project, as any write.
-2. Every write result names the target project's visibility, so a write
-   to a public project is visible as one.
+## Decisions
 
-Snippets carry their own visibility, whatever the project's. So
-`create_snippet` makes only private snippets, and `update_snippet`
-writes only to a private one: an internal or public snippet, even your
-own, is `[blocked]`, since writing into it would publish what is
-written as surely as creating a public one.
+| ID | Decision | Status | Held by |
+| --- | --- | --- | --- |
+| D-01 | One stdio binary per person, signed in with their own OAuth application | accepted | smoke, TestServeSignedOutEndsCleanlyOnAClosedStdin, review |
+| D-02 | The server talks to gitlab.com only, and its one test override is loopback | accepted | TestNoInstanceSetting, TestTestInstanceIsLoopbackOnly, TestTheTestInstanceIsLoggedAtWarn, TestDoctorRefusesATestInstanceThatIsNotLoopback, staleness, mcpb |
+| D-03 | A token goes only to the instance that issued it | accepted | TestATokenStaysWithTheInstanceThatIssuedIt, TestTokenNeverLeavesTheInstance, TestAnEnvironmentTokenReachesTheTestInstance |
+| D-04 | Stdout carries only MCP JSON-RPC frames | accepted | forbidigo, smoke, TestSessionReportsStrayStdout |
+| D-05 | Logs record the call, never the payload | accepted | TestLogsNeverCarryThePayload, TestTransportErrorsCarryNoPathOrQuery, TestTransportErrorsCarryNoHostName, TestUnclassifiedErrorsCarryNoURL, TestLoggerOnlyAttachedAtDebug, TestSettingsNeverPrintTheHostTheApplicationOrTheToken |
+| D-06 | Nothing in the repository identifies a real instance, account or person | accepted | leaks, secrets, leaks-history, TestLeaksAllowListHasReasons, TestLeaksFind, TestLeaksTree, TestLeaksHistory |
+| D-07 | Fixtures are generated, and the in-memory GitLab models what GitLab was seen to do | accepted | TestGeneratedDataIsSynthetic, TestQuickActions, TestErrorShapes, TestOffsetHeadersAndTheirEdges, TestMovedProject, TestInstancesMintTheirOwnTokens |
+| D-08 | Own wire types over REST, and no code imported from another project | accepted | depguard, api-fields, TestNoTokenFields |
+| D-09 | GraphQL is used only where REST has no route, one literal per operation through the REST client's path | accepted | api-coverage, TestGraphQLOperationsReadsMutateCalls, TestRerequestReviewMapsGraphQLErrors |
+| D-10 | Every published API operation and field has a written verdict | accepted | api-coverage, api-fields, TestTheRealRecordHolds, TestTheCommittedSnapshotIsComplete, TestAPIDiffLeavesTheSnapshotOnANetworkFailure, TestTheCommittedFieldRecordParses |
+| D-11 | The server works inside projects and stops at administration | accepted | api-coverage, review |
+| D-12 | A convention is verified against GitLab's source, a specification or a live probe before it is adopted | accepted | review, live |
+| D-13 | Content is marked as data inside a per-call boundary that names its origin and author | accepted | TestBoundaryCannotBeClosed, TestNewBoundaryIsFreshPerCall, TestBoundaryCannotBeClosedByContent, evals-check |
+| D-14 | Hidden text is removed from Markdown and made visible in code, and counted | accepted | TestMarkdownRemovesHiddenText, TestCodeMakesHiddenTextVisible, TestInvisibleNamesWhatAReaderCannotSee, TestFieldsCannotStartALine, TestDescriptionBudgetAndHiddenText, TestCommitCountsHiddenTextOnce |
+| D-15 | Nothing content references is fetched | accepted | TestLinks, review |
+| D-16 | Job logs, artifacts and test output are masked for token and key shapes | accepted | TestLog, TestTokensEveryPrefix, TestMaskSecrets, TestGetJobLogMasksAKeyOpenedEarlier, TestGetJobLogMasksAnIndentedKeyOpenedEarlier, TestGetTestReportMasksAndBoundsEveryField, TestJobArtifacts |
+| D-17 | The server's own text never relays content | accepted | evals-check, review |
+| D-18 | Every body passes one quick-action guard, which refuses by default | accepted | bodies, TestFind, TestCheck, TestTheGuardRefusesAQuickActionBeforeTheHandler, TestTheGuardedInputsAreDeclared, TestA202FromANoteIsADefect, TestPublishingADraftWithAQuickActionIsRefused, TestSubmitReviewRefusesDraftsWithQuickActions, live |
+| D-19 | `escape_commands` escapes a command line, and nothing opts in to run one | accepted | TestEscape, FuzzEscapeNeverYieldsCommand, TestTheGuardEscapesWhenAsked, TestUpdateCommentEscapesAQuickAction, live |
+| D-20 | Every tool goes through one `register`, whose kind decides its annotations, gating and reply | accepted | TestRegisterRefusesAWriteMissingARule, TestAnnotationsAndMeta, TestFullSurfaceRegistersEverything, TestGate |
+| D-21 | Ship and Destructive tools are registered only under their flags | accepted | TestShipAndDestructiveAreRegisteredOnlyByTheirFlags, TestGate, TestEveryKindUnderEveryMode, TestInstructionsNameOnlyRegisteredTools, smoke |
+| D-22 | Ship is where a persuaded call becomes an effect | accepted | TestShipAndDestructiveAreRegisteredOnlyByTheirFlags, TestAnApprovingReviewWithShip, review |
+| D-23 | A pipeline a Write starts stays Write | accepted | review |
+| D-24 | Only a write that adds and starts nothing is annotated not destructive | accepted | TestOnlyToolsThatAddSayTheyAreNotDestructive, TestAnnotationsAndMeta |
+| D-25 | `openWorldHint` is false only for a write whose effect only the account sees | accepted | TestOwnOnlyWritesAreNotOpenWorld |
+| D-26 | Per-call approval is the client's, and the server asks the person nothing | accepted | TestRemovedRequirePrompt, TestLogsNeverCarryThePayload, review |
+| D-27 | `requiresUserInteraction` marks only the writes that reach past one item and cannot be undone | accepted | TestOnlyWritesThatReachBeyondTheItemPrompt, TestAnnotationsAndMeta |
+| D-28 | Every Destructive call takes `confirm: true` | accepted | TestDestructiveNeedsConfirm |
+| D-29 | Every write takes `dry_run`, and a dry run cannot write | accepted | TestDryRunRefusesEveryWrite, TestDryRunsSendNothing, TestDryRunReachesTheClient, TestADryRunLetsAReadOnlyPostThrough, outcomes |
+| D-30 | Read-only mode asks for `read_api` and beats every other setting | accepted | TestReadOnlyWithAnEnableFlagNamesBoth, TestAReadAPITokenCannotServeWrites, TestForMode, TestEveryKindUnderEveryMode, smoke |
+| D-31 | A changed scope needs a new login, and startup says so | accepted | TestStatusNamesAScopeTheLastLoginLacks, TestServeRefusesATokenThatCannotServeTheMode, TestMissing, TestSatisfied |
+| D-32 | Toolsets hold what lies outside a project's issues, merge requests, repository and CI, off by default | accepted | TestGate, TestToolsetsAll, TestSurfaceCounts |
+| D-33 | No write creates or moves a protected branch or tag; code reaches one through a merge request | accepted | TestCodeReachesMainThroughAMergeRequest, TestApplySuggestionsRefusesAProtectedSourceBranch, TestProtectedMatchIsGitLabsWildcard, TestCherryPickAndRevert, TestRebaseMergeRequest, TestTagWrites, TestDeleteBranch |
+| D-34 | A create is never repeated, and an ambiguous outcome is settled by reading | accepted | TestServerErrorsRetriedForGetNeverForCreate, TestCanceledCreateIsAmbiguous, TestRepeatedDeleteAnswering404IsAmbiguous, TestALostCreateIsSettledByReading, TestALostTodoIsSettledNotSent, TestALostUploadIsNotSentAgain, TestRunPipelineWhoseAnswerWasLostIsNotRepeated, TestDeleteWhoseAnswerWasLostIsReportedDeleted, live |
+| D-35 | Retries follow the HTTP method, and a 429 is retried for any method | accepted | TestServerErrorsRetriedForGetNeverForCreate, TestRateLimitedPostIsRetried, TestRateLimited429IsRetriedHonoringRetryAfter, TestBackoffIsJitteredWithRetryAfterFloor, TestRetryAfterPastDeadlineIsNotSlept, TestOnceContradictionsAreRefused, TestCreateRepeatedOnlyAfterAFailedDial |
+| D-36 | A write carries a witness, and is refused `[stale]` when it moved | accepted | TestMergeAfterAPushIsStale, TestUpdateIssue, TestDeleteCommentEditedAfterTheReadIsStale, TestDeleteSnippetChangedAfterTheReadIsStale, TestARepeatedTrackTimeIsUnchangedNotStale, TestUpdateReviewComment, descriptions, live |
+| D-37 | Omitted means unchanged, and lists change by add and remove | accepted | TestUpdateIssue, review |
+| D-38 | `GITLAB_MCP_WRITE_NAMESPACES` confines every write, and unset means everywhere | accepted | TestTheWriteAllowList, TestTodosAreHeldToTheAllowList, TestSubscriptionsAndNewTodosAreHeldToTheAllowList, TestReactionsAreHeldToTheAllowList, TestSnippetWritesHoldToTheAllowList, TestUploadFileIsHeldToTheAllowList, TestApplySuggestionsHoldsTheForkToTheAllowList, TestDoctorSaysWhereWritesAreConfined |
+| D-39 | Snippets are created and written only when private | accepted | TestCreateSnippetIsPrivate, TestUpdateSnippetWritesOnlyPrivateSnippets |
+| D-40 | Making a confidential issue public is its own Destructive tool | accepted | TestOnlyMakeIssuePublicMakesAnIssuePublic, TestUpdateIssueNeverSendsPublicForAPublicIssue |
+| D-41 | `move_issue` never moves an issue where more people can see it | accepted | TestMoveIssue |
+| D-42 | Results say what changed, read back, item by item | accepted | outcomes, TestTheRealServiceStatesNoOutcomeFromTheRequest, TestMarkTodosDone |
+| D-43 | A comment, a draft or a snippet is edited or deleted only by its author | accepted | TestUpdateComment, TestReviewCommentsAreYourOwnDrafts, TestSnippetWritesAreYourOwn, TestDeleteComment |
+| D-44 | `upload_file` reads only from `GITLAB_MCP_UPLOAD_DIRS`, through `os.Root`, after the project is checked | accepted | TestUploadFileReadsOnlyFromTheSettingsDirectories, TestUploadFileIsHeldToTheAllowList, TestUploadFileSendsNothingUntilItMay, TestRefusals, TestALinkThatStaysInsideIsFollowed, TestAnAllowedDirectoryThatIsALinkWorks, TestTheOpenFileIsTheOneChecked, TestUploadDirsRefuseWhatHoldsEverything, TestUploadDirsRefuseHomeInAnotherCase |
+| D-45 | `upload_file` sends only an image, at most 10 MiB, named for its bytes | accepted | TestReadsAnImageAndNamesItByItsType, TestTheSizeCap, TestAnUploadIsNamedForItsBytes, TestRefusals |
+| D-46 | `apply_suggestions` carries each suggestion's text as its witness | accepted | TestApplySuggestionsHoldsTheText, TestSuggestionsWithHiddenCharacters, TestApplySuggestionsRefusedBeforeSending, TestApplySuggestionsWhoseAnswerWasLost |
+| D-47 | A merge request pipeline for a fork is refused | accepted | TestRunMergeRequestPipelineRefusals |
+| D-48 | `lint_ci` refuses supplied content that holds an `include:` | accepted | TestSuppliedLintContentMayNotInclude, TestLintSuppliedContent |
+| D-49 | Release asset links point only into the release's own project | accepted | TestCreateReleaseWithAssetLinks |
+| D-50 | Variable values are sent and never shown | accepted | TestRunPipeline, TestRetryAndPlayJobWithInputs |
+| D-51 | `rerequest_review` refuses a reviewer who approved or has not reviewed | accepted | TestRerequestReviewRefuses, TestALostRerequestIsSettledByReading |
+| D-52 | Reviews are drafts, published together or one at a time | accepted | TestAReviewIsDraftedThenSubmitted, TestPublishReviewComment, TestALostPublishIsSettledByReading |
+| D-53 | The server computes where an inline comment lands | accepted | TestComputePlacesEachKindOfLine, TestComputeAgreesWithTheAlignmentOnGeneratedDiffs, TestAnInlineCommentLandsWhereAsked, live |
+| D-54 | Every read has a budget and names what it left out | accepted | TestDiscussionsOverTheBudget, TestCommitDiffBudget, TestCommitMessageBudget, TestDescriptionBudgetAndHiddenText, TestGetMRDiffContinuesACutDiff, TestGetProjectDescriptionOffset, TestListBoardsBudget |
+| D-55 | A listing pages by an opaque token bound to its query and says whether it is complete | accepted | TestPageTokenBoundToItsQuery, TestTotalUnknownPastTheLimit, TestOffsetCapIs405AndKeysetWalksPastIt, TestLinkNext, TestSearchProjectsPagesToCompletion |
+| D-56 | `get_job_log` reads a byte window, and only what its edges need | accepted | TestGetJobLogTail, TestGetJobLogReadsOnlyTheWindow, TestGetJobLogOfAShortLogIsOneRead, TestGetJobLogFailedOnlyInALongLog, live |
+| D-57 | `compare_mr_versions` compares the versions' heads straight, in the target project | accepted | TestCompareMRVersions, TestCompareMRVersionsAfterRebase, TestCompareMRVersionsContinuesAgainstTheSameVersion |
+| D-58 | `list_item_events` merges GitLab's event lists into one bounded history, newest first | accepted | TestListItemEvents, TestListItemEventsCursor, TestListItemEventsPastTheReadLimit, TestListItemEventsWithoutAPageCount, TestListItemEventsDedupes |
+| D-59 | `list_boards` gives each list the `search_issues` arguments that return its issues | accepted | TestListBoards, TestBoardListSearchTitles, TestListBoardsPastTheReadCap |
+| D-60 | `get_test_report` reads the whole report and says when it may be partial | accepted | TestGetTestReport, TestGetTestReportRunningAndEmpty, TestGetTestReportTooLarge |
+| D-61 | `get_project` never decodes a secret field | accepted | TestGetProjectNeverCarriesSecretFields, TestNoTokenFields, TestProjectPathEscapedOnceAndSecretsNeverDecoded, api-fields |
+| D-62 | Every path segment is escaped once, and a project resolves once per call | accepted | TestFillPath, TestDotSegmentsRefusedBeforeSending, TestResolveProjectOncePerCall, TestGetFileEscapesPathAndRef, TestProjectPathEscapedOnceAndSecretsNeverDecoded |
+| D-63 | An issue or merge request is a project plus its `iid` | accepted | TestResolveURL, TestDescriptionsFollowTheHouseStyle, review |
+| D-64 | Labels resolve by exact name and are never created on assignment | accepted | TestCreateIssue, review |
+| D-65 | No redirect is followed and no URL from a response is called, but a same-origin next page or moved project | accepted | TestRedirectsElsewhereAreNeverFollowed, TestNextLinkOffInstanceIsNotFollowed, TestMovedProjectFollowedOnceForGet, TestMovedProjectKeepsTheQuery, TestMovedToKeepsTheRequestButTheProject |
+| D-66 | Sign-in is the person's own public OAuth application over a loopback redirect with PKCE | accepted | TestLoginRunsPKCEOnALoopbackPortAndReportsTheGrant, TestLoginAcceptsAnyLoopbackPort, TestTheVerifierIs64CharactersAndTheChallengeIsS256, TestLoginIgnoresACallbackWithoutItsState, TestLoginToAConfidentialApplicationSaysToUntickIt, TestRedirectURIHasNoPort, TestSetupBlock, staleness, live |
+| D-67 | A refresh token is spent once, under a cross-process lock | accepted | TestTwoProcessesRefreshOnceAndShareTheResult, TestInvalidGrantRereadsTheStoreBeforeGivingUp, TestAStoreUnreadableUnderTheLockSpendsNothing, TestACanceledCallDoesNotLoseTheRotatedPair, TestCloseWaitsForARefreshAndRefusesTheNext, TestTheLockWaitIsBounded, live |
+| D-68 | A refused access token is dropped, and a read is sent once more | accepted | TestARefusedTokenIsDroppedOnce, TestARejectedTokenIsDroppedAndTheStoreReread, TestARejectedCreateIsNotRepeated |
+| D-69 | Startup reads the token's scopes and never refreshes | accepted | TestProbeNeverRefreshes, TestProbeReadsTheScopes, TestProbeRefreshesWhenNoLoginRecordedTheScopes, TestProbeIgnoresTheLoginsScopesForAnEnvironmentToken |
+| D-70 | The server starts and serves signed out, and errors surface per call | accepted | TestSignedOutServerAnswersAuth, TestResolveWithNoProfileStartsSignedOut, TestAnUnreachableInstanceStillGetsAServer, TestDumpSchemasNeedsNoConfigurationOrCredentials, TestServeEndsCleanlyWhenTheClientGoes, smoke |
+| D-71 | Credentials resolve environment, then keyring, then an owner-only file | accepted | TestEnvironmentWins, TestFileFallbackWarnsEveryTime, TestFileIsOwnerOnly, TestKeyringSaveDropsAStalePlaintextCopy, TestFailedKeyringSaveDoesNotLeaveAnOlderPairInCharge, TestRestrictToOwnerSetsAProtectedACL, TestDecoyKeyringIsInPlace |
+| D-72 | `logout` revokes at GitLab and names the profiles that share the application | accepted | TestLogoutRevokesAndNamesProfilesOnTheSameApplication, TestLogoutWaitsForARefreshInProgress |
+| D-73 | Configuration is `GITLAB_MCP_*`, read through one reader and validated once | accepted | TestEveryReadOfAVariableGoesThroughLookup, TestASettingOfSpacesIsUnset, TestEveryVariableTheCodeNamesIsInTheRegistry, TestInvalidValuesReportedTogether, TestRemovedRequirePrompt, staleness |
+| D-74 | Every error is `[class] message` from a closed vocabulary | accepted | classes, TestClassesAreTheClosedThirteen, TestErrorText, TestTheRealVocabularyHolds, TestErrors |
+| D-75 | Requests are paced by a per-instance rate model, with buckets for GitLab's known application limits | accepted | TestRateModelLowersOnHeaders, TestConcurrencyCap, TestNotesBucketIsSeparate |
+| D-76 | Every request is bounded by progress timeouts and a 32 MiB body cap | accepted | TestHeaderTimeout, TestStalledBodyIsCut, TestBodyCap, TestAWriteIsTimedByItsProgress, TestABodyCanBeReplayed, TestHTTPTimeoutBounds |
+| D-77 | A reply carries `structuredContent` and a different text rendering | accepted | TestBothHalvesDiffer, TestEveryOutputHasASchema |
+| D-78 | The released tool surface is a contract | accepted | schema-diff, schema-ack, TestUndeclaredBreaks, TestSchemaDiffAgainstTheLastTagInAWorktree, TestSchemaAckNeedsEveryItemNamed, TestABreakIsABreakOfARelease |
+| D-79 | Input schemas stay flat, and arguments are decoded leniently | accepted | TestLenient, TestLenientArguments, TestEnumErrorsNameTheSetSorted, review |
+| D-80 | Every tool and input is described, and a witness says it is not a retry signal | accepted | descriptions, TestDescriptionsFollowTheHouseStyle, TestTheDescriptionsGateFailsEveryWay |
+| D-81 | Resources carry the same text as their tools | accepted | TestResourcesCarryTheToolsText, TestResourceErrors, smoke |
+| D-82 | Green gates are not done: a live run drives every tool option, and a person reads its transcript | accepted | live, live-cover, TestLiveCoverFailsEveryWay |
+| D-83 | The live driver reads only what it wrote, in scratch projects it makes and deletes | accepted | TestEveryStepStaysInTheScratchProject, TestConfinedRefusesAStepOutside, TestWritesNameOnlyTheRunsAccount |
+| D-84 | The drivers print only through one redacting writer | accepted | transcript, TestTranscriptRefuses, TestTranscriptCoversTheDrivers, TestPrinterMasksEveryLine, TestIdsAResultCarriesAreMasked |
+| D-85 | Evals score planted instructions against the in-memory GitLab, fail-closed | accepted | evals-check, TestTheFenceIsClosedAtTheSource, TestReadEventFailsAToolOutsideTheFence, TestScorers |
+| D-86 | Every gate asserts a floor on how much it read | accepted | TestTheClassesFloorsFire, TestSmokeFloorFires, TestPinsFloors, TestTranscriptFloorOnFiles, TestFloor |
+| D-87 | Every check is Go in one registry, and `make check` and CI run the same set | accepted | parity, checklist, TestEveryCommandDeclaresAMode, TestParityRefuses, TestChecklist, TestCoverpkgIsTheMakefiles |
+| D-88 | Every tool runs at one exact pinned version through `go run` | accepted | pins, TestPinsRefuses, TestPinsPassesWhenTheyAgree |
+| D-89 | A release is reproducible, signed and attested, from a tag whose CI is green | accepted | release, goreleaser-check, actionlint, TestReleaseRefuses, review |
+| D-90 | The registry entry is published from the signed checksums, never for a prerelease | accepted | server-json, TestServerJSONPublish, TestServerJSONRules |
+| D-91 | The bundle asks for every setting, with defaults that start the server as no settings do | accepted | mcpb, TestMcpbUserConfigIsDerivedFromTheSettings, TestMcpbFieldDiffNamesTheFieldsThatDiffer, TestMcpbRefusedCombinationsAreDeclared, TestMcpbACredentialFieldIsSensitive |
+| D-92 | The bundle manifest is held to its vendored schema, read as every host reads it | accepted | mcpb, TestMcpbRefusesARepeatedKey, TestMcpbRefusesEachBreak, TestMcpbArgsAreReadAsAList, TestMcpbStampHoldsTheStampedManifestToTheSchema, TestVendorSchemasLoadAndCarryTheirFloor |
+| D-93 | The CHANGELOG section is the release note | accepted | changelog, changelog-links, TestReleaseNotes, TestChangelogPR |
+| D-94 | A tool sends a raw REST or GraphQL request | rejected | — |
+| D-95 | Tools read or write CI variables and secure files | rejected | — |
+| D-96 | Deleting projects or groups, force pushes and protected-branch changes sit behind a flag | rejected | — |
+| D-97 | Events arrive by webhook | rejected | — |
+| D-98 | The server serves self-managed instances | rejected | — |
+| D-99 | Content from authors below Developer in public projects is withheld | rejected | — |
+| D-100 | A client id ships in the binary | rejected | — |
+| D-101 | Personal access tokens or the device flow sign the person in | rejected | — |
+| D-102 | The server confirms a write by asking the person through elicitation | rejected | — |
 
-Whether the allow-list should default to something narrower than
-"everywhere the token can write" is §17.9.
+### D-01 One stdio binary per person, signed in with their own OAuth application
 
-### 4.8 Reads are bounded and say what they left out
+The server is one Go binary that runs as a subprocess of the MCP client
+and speaks MCP over stdio. It holds one person's OAuth tokens and calls
+gitlab.com as that person. Nothing is hosted, and there is no shared
+deployment.
 
-Every read has a budget in characters, stated in the result. A
-discussion list renders newest-first up to the budget and lists the rest
-by id, author and date with a cursor. A long description is cut at a
-paragraph boundary with the offset to continue from. Diffs are listed
-per file first (`list_mr_files`), then fetched by file. Job logs are a
-tail by default, with `byte_offset` to page and `failed_only` to jump to
-the failing section. Binary files return their size, type and blob id,
-never lossy text. List projections are compact: an embedded project,
-milestone or pipeline becomes its id and name.
+Each person registers their own OAuth application on gitlab.com, under
+their user settings or a group's, and signs in with
+`gitlab-mcp login --client-id`. Nothing deployer-specific is built into
+the code, the repository or a release, so a copy of the binary carries
+no one's application or token
+([OAuth provider](https://docs.gitlab.com/integration/oauth_provider/)).
 
-**A read never silently returns less than it found**: every omission is
-named and continuable. Budgets, in characters: a description 20,000; a
-file or a merged CI configuration 60,000; discussions or review drafts
-30,000 a page and one comment 6,000; the diffs of a commit, a merge
-request or a comparison 40,000; a commit message 8,000; one search
-excerpt 1,000; a wiki page or a snippet file 60,000, as a file; release
-notes 20,000, as a description. A job log is windowed in bytes of the stored log: 40,000
-by default, at most 100,000, each window widened to whole lines so no
-secret straddles its edge. A comparison lists 100 commits at a time.
-Every omission is continuable: a project description by `offset`, and
-one file's diff larger than the diff budget by `diff_offset`.
+The reason is reach. A GitLab account can read an organization's code
+and other people's words, and an `api` token can merge, approve and
+delete. Per-person sign-in keeps every call inside that person's own
+access, and keeps their token in their own keyring rather than in a
+service someone else runs.
 
-### 4.9 gitlab.com, and nothing else
+Rejected: a hosted or HTTP transport, which this repository has nothing
+to run.
+Cost: each person registers an OAuth application on gitlab.com once,
+with Confidential unticked, before the first `login`.
+[setup.md](setup.md) says exactly what to enter.
 
-The instance is `https://gitlab.com`, fixed in the code
-(`instance.GitLabCom`); no setting names another (§14, 2026-09-26).
-Proxies come from the standard environment variables and trust from the
-system's certificate authorities.
+### D-02 The server talks to gitlab.com only, and its one test override is loopback
+
+The instance is `https://gitlab.com`, fixed in the code. No setting
+names another. Proxies come from `HTTPS_PROXY` and `NO_PROXY`, and trust
+from the system's certificate authorities.
 
 One development override exists, `GITLAB_MCP_TEST_INSTANCE`, with no
-flag: the tests, the evals and the smoke gate point the binary at the
-in-memory instance with it. It is refused at startup unless its host is
-loopback (`127.0.0.1`, `::1` or `localhost`), so it can never send a
-token to another real host, and it is logged at warn when set. It is
-documented in `docs/development.md` only; the staleness gate keeps it
-out of `docs/configuration.md` and the `mcpb` gate out of the bundle.
-Plain `http` is accepted for loopback alone.
+flag. The tests, the evals and the smoke gate point the binary at the
+in-memory GitLab with it. It is refused at startup unless its host is
+loopback (`127.0.0.1`, `::1` or `localhost`), so it can never carry a
+token to another real host, and it is logged at warn when set. Plain
+`http` is accepted for loopback alone. The staleness gate keeps it out
+of [configuration.md](configuration.md), and the `mcpb` gate out of the
+bundle.
 
-gitlab.com runs the newest release, so no tool is gated by version.
-`get_me` and `doctor` read `/api/v4/metadata` to report the version and
-edition, as information. A route the account's tier lacks — a
-Premium-only route on a Free namespace — gets `[unsupported]` from the
-catch-all shape of §2.14.
+The reason is one place to be right. gitlab.com runs the newest
+release, so no tool is gated by version, and nothing needs a private
+CA, a plain-`http` permission or a base URL to normalize.
 
-A profile records the instance it signed in to, and its token is sent
-nowhere else: a profile signed in to the test instance never sends its
-token to gitlab.com, and the reverse (§10).
+Rejected: self-managed instances, with an instance setting, a private
+CA, plain `http` and version gating (D-98).
+Cost: the version and edition are information only. `/api/v4/metadata`
+gives no plan on gitlab.com, where its `plan` field is null because
+plans belong to namespaces
+([metadata](https://docs.gitlab.com/api/metadata/)). So a route the
+account's tier lacks answers `[unsupported]`, and the tier is never
+read in advance.
 
-### 4.10 Own wire types, REST first
+### D-03 A token goes only to the instance that issued it
 
-Hand-written structs for the fields used, REST called directly. REST
-because it is the surface GitLab describes machine-readably (§2.19),
-because `read_api` maps onto it exactly (§2.6), and because every
-surveyed read-only bypass came through GraphQL. §8b records every field
-of every schema the tools touch with a verdict.
+A profile records the instance it signed in to: gitlab.com, or the test
+instance in development. Its token is sent nowhere else. A profile
+signed in to the test instance never sends its token to gitlab.com, and
+a gitlab.com profile never sends its token to the test instance.
 
-GraphQL is used only for an operation REST has no route for (maintainer,
-2026-10-23, §14). Each operation is a literal in
-`internal/gapi/graphql.go`, sent through the same client path as REST:
-the token and its refresh, the rate model, no redirect followed, a write
-never repeated, and the dry-run context that refuses a write. There is
-no raw GraphQL tool and no GraphQL client library, so the bypass that
-made the design REST-only cannot arise, and no GraphQL operation is a
-read, so read-only mode, whose `read_api` token cannot mutate, registers
-none. §8a lists each operation and why REST cannot do it.
+When the instance in use is not the one the profile records, the
+token is withheld before any request is built. Every call answers
+`[auth]`, naming the mismatch and saying to log in again. A token from
+`GITLAB_MCP_REFRESH_TOKEN` has no profile record, and goes to the
+instance the same environment names.
 
-### 4.11 Results say what changed
+The reason is the override. `GITLAB_MCP_TEST_INSTANCE` points the same
+binary, the same profile directory and the same keyring at another
+host (D-02). Without the record, setting the override in one shell
+would hand a real gitlab.com token to whatever listens on that loopback
+port, and a test token would be sent to gitlab.com.
+
+Rejected: a token keyed by profile alone, which would follow whatever
+base URL the process was started with.
+Cost: a profile signed in to the other instance answers `[auth]` on
+every call until `login` runs again for the instance in use.
+
+### D-04 Stdout carries only MCP JSON-RPC frames
+
+MCP's stdio transport says the server "MUST NOT write anything to its
+`stdout` that is not a valid MCP message", and "MAY write UTF-8 strings
+to its standard error (`stderr`) for logging purposes"
+([transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)).
+A stray print corrupts the JSON-RPC stream, and the client silently
+stops working.
+
+So logs go to stderr through `slog`. `main` names the process's streams
+once and passes them down as `io.Writer`. forbidigo refuses `fmt.Print*`
+and `os.Stdout` everywhere else, with `cmd/` and `scripts/` excluded.
+Its rules carry their own messages, so a settings block that fails to
+load shows up as forbidigo's default message. The smoke gate drives the
+shipped binary over stdio and fails on any line that is not a frame.
+`TestSessionReportsStrayStdout` holds the smoke gate's own detection.
+`--dump-schemas` writes JSON to stdout because it does not serve.
+
+Rejected: a print to stdout anywhere but `main`, even behind a debug
+setting, since one stray line breaks the stream at any level.
+Cost: only `main` names the process's streams; everything else takes an
+`io.Writer`.
+
+### D-05 Logs record the call, never the payload
+
+A call line carries the method, the tool, the outcome, the
+milliseconds, the rate bucket and an id truncated to six characters. It
+never carries a host, a namespace or project path, a branch, a file
+path, a title, a body, a username, an email or a search term.
+
+A GitLab account reaches an organization's code and its people's
+words. A log somebody pastes into a bug report has to be safe by
+construction rather than by their care.
+
+The subtle leak is the request URL. A project path, a branch and a
+search term all travel in it, and a transport failure renders the whole
+URL. So `gapi` and `auth` strip path, query and host names from
+transport errors before anything logs them. The SDK's own logger runs
+only at debug. `Settings` redacts through both `LogValue` and `String`,
+and `status`, `doctor` and errors print through the redactor.
+
+`TestLogsNeverCarryThePayload` drives every registered tool with
+canaries in every string argument, at debug, and fails if one appears
+in the log or if the log is empty.
+
+Rejected: `LogValue` alone on the settings, since `%+v` reads
+unexported fields and prints the token.
+Cost: a transport error's text is replaced with the kind of failure it
+was, and a failure is diagnosed from the method, the tool, the outcome
+and the class alone.
+
+### D-06 Nothing in the repository identifies a real instance, account or person
+
+The repository is public, and the server is built by running it against
+a real account. Nothing deployer-specific lands here: no hosts,
+namespaces, project paths, usernames, emails, numeric ids, OAuth
+application ids, tokens, or text from real issues, merge requests,
+comments, code or job logs. That holds for code, docs, fixtures,
+goldens, transcripts, commit and tag messages, pull requests and logs.
+
+A GitLab instance mixes three payloads: other people's words, an
+organization's code, and CI output that can carry secrets. Any of them
+in a public repository is a leak nobody can take back.
+
+The leak gate is an allow-list anchored on shapes the server's generated
+fields cannot take: an `@` before a dotted domain outside the example
+and invalid set, an `https://` host outside that set, any GitLab token
+prefix, `gitlab.com/` followed by a namespace outside the fixture set,
+and the OAuth shapes. It decodes base64url blobs, treats a tracked
+binary as a finding and prints findings redacted. `make leaks-history`
+reads every blob, commit message and tag. gitleaks covers credentials
+through `make secrets`, with a rule for every GitLab token prefix.
+
+Rejected: allow-listing by path, or an inline `gitleaks:allow`, either
+of which exempts whatever lands there next.
+Cost: the exemption list is asserted, so each entry carries a reason
+and is an argued decision.
+
+### D-07 Fixtures are generated, and the in-memory GitLab models what GitLab was seen to do
+
+`internal/gapi/gitlabtest` is an in-memory GitLab served at the REST
+paths the client calls. Its instance is built from code: users from a
+fixed synthetic list, groups and projects under `example`-prefixed
+namespaces, hosts at `gitlab.example.com` and `.invalid`, bodies and
+diffs from templates, and ids from counters in a fixed range. A fixture
+copied from a live response is itself the leak, whatever a scanner says
+about it.
+
+The fake behaves as GitLab was seen to behave where the server's logic
+depends on it. Quick actions run from note bodies and descriptions, so
+a missing guard fails a test. A stale `last_commit_id` answers 400 and
+a moved head 409. A private project answers 404, and an unknown route
+answers the catch-all shape. Offset and keyset paging carry their
+10,000 and 50,000 edges. Refresh tokens rotate at once. A 429 comes in
+both body shapes. A moved project's GET redirects to its numeric id.
+Each world mints its own tokens, so two runs cannot share a sign-in.
+
+Rejected: a fixture copied from a live response.
+Cost: a wrong fake agrees with the code written from it. Only a live
+run catches the shared mistake (D-82).
+
+### D-08 Own wire types over REST, and no code imported from another project
+
+`internal/gapi` calls GitLab's REST API v4 directly, and
+`internal/gitlab` holds wire types written by hand for the fields the
+server uses. Nothing imports a GitLab or GraphQL client library, and
+nothing imports another project's server code.
+
+REST is the surface GitLab describes machine-readably, in the OpenAPI
+file its CI keeps current
+([OpenAPI v3 file](https://gitlab.com/gitlab-org/gitlab/-/blob/v19.4.1-ee/doc/api/openapi/openapi_v3.yaml)).
+Its `read_api` scope maps onto it exactly, by HTTP method
+([REST authentication](https://docs.gitlab.com/api/rest/authentication/)).
+A client library's generated types would decide which fields exist,
+where this server needs an argued list. Machinery shared with other
+servers is ported, verified here and owned here, so a fix elsewhere
+arrives as a change someone read.
+
+The client stays small enough to read in full. Each operation it calls
+has a verdict, and each field it decodes or sends is held to the
+snapshot (D-10). No wire struct carries a field ending `_token`
+(D-61). depguard refuses the import of a client library.
+
+Rejected: a GitLab client library; depending on another project's code.
+Cost: every field is hand-written and needs a verdict, and a field
+GitLab adds stays unread until someone records it. The client reports
+such a field as drift rather than failing the call.
+
+### D-09 GraphQL is used only where REST has no route, one literal per operation through the REST client's path
+
+GraphQL is used only for an operation REST has no route for. Each
+operation is one string literal in `internal/gapi/graphql.go`, sent
+through the same client path as REST: the token and its refresh, the
+rate model, no redirect followed, a write never repeated, and the
+dry-run context that refuses a write. The function that sends it says
+in its doc comment why REST cannot do it.
+
+Re-requesting a review is one. GitLab's REST API has no route for it,
+while GraphQL has `mergeRequestReviewerRereview`
+([GraphQL reference](https://docs.gitlab.com/api/graphql/reference/)).
+The rule keeps what made REST the default: the read-only bypasses
+published against another GitLab server came through GraphQL. With one
+literal per operation and no tool that takes a query, that bypass
+cannot arise.
+
+`api-coverage` reads the root field of every `mutate` call, which must
+be a string literal and the first field its query selects. It refuses
+a `mutate` call from a function whose doc comment does not mention
+REST, and a call to `api/graphql` outside `mutate`.
+
+Rejected: a GraphQL client library; the GraphQL schema as the coverage
+source, since GitLab generates it and does not commit it; a record of
+the operations apart from the code, which repeats the call site's
+reason and drifts from it.
+Cost: each reason is written by hand, and the gate checks only that
+the comment mentions REST, not that the reason holds. None is a read,
+so read-only mode, whose `read_api` token cannot mutate, registers
+none.
+
+### D-10 Every published API operation and field has a written verdict
+
+`scripts/gates api-diff` fetches GitLab's OpenAPI v3 file at a named
+release tag into `testdata/openapi-v3.snapshot.json`, recording the
+source URL, the tag, the SHA-256 and the date. It is never edited by
+hand. `testdata/api-coverage.tsv` gives every published operation a
+verdict: used, with the client method that calls it; gated; deferred;
+or written off with a reason. A prefix write-off carries a reason and a
+count of what it covers.
+
+`api-coverage` holds that in three directions, binding each row to its
+operation by the verb and path the client's code builds. `api-fields`
+holds both sides of every operation a client method calls: each query
+parameter and body field sent exists on it, and each response field
+decoded exists in its schema or carries a verified omission in
+`testdata/api-fields.tsv`.
+
+The file is generated from GitLab's routes and checked current in
+GitLab's own CI, so it is more reliable than a reference page
+([OpenAPI v3 file](https://gitlab.com/gitlab-org/gitlab/-/blob/v19.4.1-ee/doc/api/openapi/openapi_v3.yaml)).
+A list held against it turns "the operations used" into an argued list.
+
+Rejected: editing the snapshot by hand; the deprecated OpenAPI v2 file.
+Cost: hundreds of operations publish no response schema, so the
+omission list is long and itself floored. `api-diff` is manual, so a
+new operation waits until the release checklist in
+[release.md](release.md) runs it.
+
+### D-11 The server works inside projects and stops at administration
+
+The server works inside projects: finding and reading issues and merge
+requests, reviewing a merge request the way a person does, reading and
+changing the repository through branches and merge requests, and
+reading CI and, when the operator opts in, driving it. It stops at
+administration.
+
+Out of scope are instance and group settings, users, runners, project
+settings, access tokens, deploy keys and tokens, webhooks, integrations
+and audit events. `testdata/api-coverage.tsv` writes each group off with
+its reason.
+
+The reason is reach. An assistant persuaded by content can do whatever
+its tools allow, and administration turns one persuaded call into a
+change for every project and person below it. Inside a project the
+person can read what changed and undo most of it, and the guards of
+D-33, D-36 and D-38 apply. Credentials and infrastructure have no
+assistant task worth that risk.
+
+Rejected: instance and group settings, users, runners, access tokens,
+deploy keys, webhooks, integrations and audit events.
+Cost: a task that needs any of these, such as adding a member or a
+webhook, is done by a person in GitLab's own interface. Premium and
+Ultimate planning objects are not covered yet (#94).
+
+### D-12 A convention is verified against GitLab's source, a specification or a live probe before it is adopted
+
+A belief about GitLab is adopted only after it is checked against
+GitLab's source at a stated version, the OpenAPI snapshot, a
+specification or RFC, or a live probe on gitlab.com. The verdict is
+recorded in the comment at the line that depends on it, with the source
+linked, where GitLab's documentation is wrong or silent, and the live
+step that checks it named.
+
+The reason is that GitLab's reference pages are often wrong or silent
+on what this server depends on. GitLab's MCP page says a redirect must
+match exactly, but GitLab ignores the port of a loopback IP literal, as
+RFC 8252 §7.3 asks. The API reference never says that notes and
+descriptions run quick actions
+([quick actions](https://docs.gitlab.com/user/project/quick_actions/)).
+A stale file witness answers 400, not 409, and a merge the role does
+not allow answers 401, not 403. Each is read in the source and checked
+live.
+
+Source beats prose, and a live probe beats both, because every fake in
+`internal/gapi/gitlabtest` is written from what was believed (D-07).
+
+Rejected: a reference page, or another server's code, as evidence.
+Cost: each new behavior waits for a source read or a live run, and a
+live probe needs a person, a sign-in and a scratch group.
+
+### D-13 Content is marked as data inside a per-call boundary that names its origin and author
+
+Issue and merge request text, comments, review threads, commit
+messages, file contents, wiki pages, snippets, release notes and job
+logs are written by people other than the person using the server,
+often in public projects anyone can post to. GitLab's own MCP page
+tells its users they are "responsible for guarding against prompt
+injection"
+([GitLab MCP server](https://docs.gitlab.com/user/model_context_protocol/mcp_server/)).
+
+So rendered content sits inside a delimited block naming its origin:
+the kind, the project, the issue, merge request or path, and the
+author's username. The block's token is drawn per call, so text written
+before the call cannot know it, and markers inside the text are
+defused. A notice before the first block names the token and says the
+text is data. `structuredContent` carries the same text in fields named
+`untrusted_*`.
+
+Tests hold that content cannot close a block, and that the token is
+fresh per call. The evals score planted instructions against these
+blocks (D-85).
+
+Rejected: withholding content from authors below Developer in public
+projects (D-99).
+Cost: the server cannot stop a model from being persuaded. It can only
+make the persuasion visible, keep the dangerous tools off by default
+(D-21), and never add its own voice to it (D-17).
+
+### D-14 Hidden text is removed from Markdown and made visible in code, and counted
+
+Zero-width and bidirectional-control characters and HTML comments are
+dropped from Markdown before it is shown, and the result says how many
+characters were dropped. In code, which is files, diffs, commit
+messages and suggestions, the same characters are made visible as
+`<U+202E>` and counted instead.
+
+Dropping them from code would silently alter text the caller may edit,
+and they are how Trojan Source hides code
+([Trojan Source](https://trojansource.codes/), CVE-2021-42574).
+Names other people choose and the text prints outside a block, such as
+file paths, branches, labels and topics, get the same visible form for
+control characters, so a newline in a file name cannot start a line
+that reads as the server's. A display name such as a commit author is
+folded onto one line.
+
+A suggestion's body as Markdown would hide such an edit, so
+`list_discussions` shows each suggestion's exact text apart, and
+`apply_suggestions` refuses a suggestion holding an invisible character
+(D-46).
+
+Rejected: dropping hidden characters from code, which changes text the
+caller may edit and hides a Trojan Source edit.
+Cost: a reader of code sees `<U+202E>` and its kin where an editor
+would show nothing, and a count beside each result.
+
+### D-15 Nothing content references is fetched
+
+No image, attachment or link in content is followed. Links render as
+text with their host shown. The host is read as a browser reads it:
+the authority ends at the first `/`, `?`, `#` or `\`, so an `@` after
+one of them cannot make an outside link look like gitlab.com's.
+
+A fetch is an action content chose, and hidden-prompt exfiltration
+through GitLab content has been demonstrated publicly. A URL carries
+whatever was put in it to the host that serves it. Showing the host
+lets the reader see where a link goes without the server going there.
+
+The rule reaches the client too. Rendered HTML is never requested, so
+GitLab's Markdown renderer adds no images or links of its own, and no
+URL a response carries is called (D-65).
+
+Rejected: requesting rendered HTML, which would bring GitLab's image
+and link rendering into the result.
+Cost: an image in an issue is seen only as its link text and host, and
+a reader opens it in GitLab to see it.
+
+### D-16 Job logs, artifacts and test output are masked for token and key shapes
+
+Job logs, job artifacts read as text and test report output are masked
+before rendering. Every token shape GitLab documents is replaced:
+`glpat-`, `gloas-`, `gldt-`, `glrt-`, `glrtr-`, `glcbt-`, `glptt-`,
+`glft-`, `glimt-`, `glagent-`, `glwt-`, `glsoat-`, `glffct-`,
+`_gitlab_session=` and the runner registration prefix
+([token prefixes](https://docs.gitlab.com/security/tokens/)). Common
+cloud key shapes and private key blocks are masked too, and the result
+counts the masks.
+
+GitLab's own masking covers only variables marked masked
+([CI/CD variables](https://docs.gitlab.com/ci/variables/)), and CI
+output prints whatever a script echoes. A window is widened to whole
+lines, so no secret straddles its edge. A window that starts inside a
+private key block is masked whole: the read looks 256 KB before the
+window for a header with no footer after it. A one-line field of a
+test report has hidden characters removed before the masks run, so a
+zero-width space cannot split a token past them.
+
+Rejected: relying on GitLab's masking; walking back line by line to a
+key's header, since CI tools prefix lines in too many ways.
+Cost: a custom personal-access-token prefix cannot be matched by shape,
+and a `BEGIN` line quoted in an error message can mask the rest of a
+window.
+
+### D-17 The server's own text never relays content
+
+The tool descriptions and the server instructions say content is
+untrusted. No result phrases what content says as something to do. The
+server's own text, its notices, summaries and next steps, is written
+from fields the server computed, never from a sentence someone else
+wrote.
+
+A model reads the server's text as more trustworthy than the content
+inside a block (D-13). A summary that said "the issue asks you to
+merge !12" would lend an injected instruction the server's voice, which
+is the one thing the boundary exists to prevent. Content reaches the
+result only through a block, and the server never paraphrases it.
+
+The evals plant instructions in content and score whether the model
+followed them, and the self-check drives a run that obeys the steer
+through the real server and holds it to fail (D-85). Review holds the
+wording of descriptions and instructions.
+
+Rejected: a summary or next step that repeats what content asks for,
+even as a quote outside a block.
+Cost: a result never says what a description or comment wants done.
+The model reads the block itself and decides with the person.
+
+### D-18 Every body passes one quick-action guard, which refuses by default
+
+GitLab runs quick actions from the bodies the API sends. Creating a
+note, or creating or updating an issue's or a merge request's
+description, executes every command line in it: `/close`, `/merge`,
+`/assign`, `/approve` and the rest. A note that is only commands
+answers 202 and saves nothing. No parameter turns this off, and the API
+reference does not say so
+([quick actions](https://docs.gitlab.com/user/project/quick_actions/);
+[`issuable_base_service.rb`](https://gitlab.com/gitlab-org/gitlab/-/blob/v19.4.1-ee/app/services/issuable_base_service.rb)).
+A comment reading `/merge` would merge, whatever the Ship switch says.
+
+So `internal/quickaction` owns every Markdown body on its way out. It
+parses the body as GitLab's extractor does, on CommonMark's block
+structure, and finds every line GitLab would read as a command, known
+name or not. By default the call is `[blocked]`, naming each line, and
+nothing is sent. A draft written elsewhere is refused at publishing. A
+202 from note creation is a defect of the guard, `[unexpected]`.
+`make bodies` derives every string input of every write from the schema
+dump and fails on one neither guarded nor listed plain with a reason.
+
+Rejected: a regular expression matching GitLab's extractor, which
+cannot see the block structure; matching only the command names GitLab
+knows, since an unknown one is harmless only until it is known.
+Cost: the guard over-detects on purpose. Any line starting `/word`
+counts, and so does a line under either reading of an ambiguous
+backtick pairing.
+
+### D-19 `escape_commands` escapes a command line, and nothing opts in to run one
+
+`escape_commands: true` rewrites each command line with a leading
+backslash. CommonMark renders the escaped line as the same visible text
+([backslash escapes](https://spec.commonmark.org/0.31.2/#backslash-escapes)),
+and GitLab's extractor, which matches a line starting `/`, no longer
+reads it as a command
+([`extractor.rb`](https://gitlab.com/gitlab-org/gitlab/-/blob/v19.4.1-ee/lib/gitlab/quick_actions/extractor.rb)).
+The result says which lines were escaped.
+
+There is no opt-in to execute. Every effect a quick action has, closing,
+labeling, assigning, merging, is a field on a tool under that tool's
+kind, so the switches and guards apply to it. An opt-in would let a
+persuaded call merge through `add_comment` with Ship off.
+
+A fuzz target holds that an escaped body never yields a command, and
+that removing the inserted backslashes gives the body back. The live
+step "where GitLab runs a quick action from an API body" checks both
+halves on gitlab.com.
+
+Rejected: an opt-in that lets a body run its commands.
+Cost: where GitLab's backtick pairing differs from CommonMark's, or
+inside multi-line raw inline HTML, the backslash shows in the rendered
+text, which is the safe direction.
+
+### D-20 Every tool goes through one `register`, whose kind decides its annotations, gating and reply
+
+Every tool is added through one `register`, and its `Kind` decides what
+every tool shares: the annotations, whether it is registered at all,
+the toolset and scope gating, `_meta`, the quick-action guard on the
+inputs it declares, the dry-run context, `confirm`, decoding, errors,
+both halves of the reply and the log line. A handler validates its
+input, calls the service and returns the model.
+
+Rules kept by hand at every call site are ways to be quietly wrong. A write that forgot its guard, its `dry_run` or its annotation
+would pass every test that did not think to look. With one `register`,
+a kind is a decision made once, and a test can drive every kind under
+every mode.
+
+`register` refuses at start a write missing a rule: no `dry_run`, no
+`escape_commands` beside a guarded input, a guarded input that does not
+exist or is not a string, a guarded read, or `PromptEveryCall` outside
+Destructive. The refusal fails in every configuration, not only the
+one with the switch on.
+
+Rejected: annotations, gating and guards set per tool by hand.
+Cost: moving a tool between kinds or toolsets changes what it does on
+every client, so the project's maintainers decide it, and the schema
+diff shows it.
+
+### D-21 Ship and Destructive tools are registered only under their flags
+
+Ship tools are registered only under `GITLAB_MCP_ENABLE_SHIP=true`, and
+Destructive tools only under `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`. A tool
+that is not registered cannot be called, whatever the model is told.
+`GITLAB_MCP_READ_ONLY=true` beats both.
+
+GitLab's scopes cannot separate these writes. `api` "Grants complete
+read/write access to the API", and every issue, note, commit and
+pipeline write needs it, so the same token can merge, approve, run
+pipelines and delete
+([scopes](https://docs.gitlab.com/integration/oauth_provider/)).
+`read_api` covers only GET and HEAD. So the scope cannot be the control,
+and neither can an annotation or a prompt, which a client may skip or a
+person may wave through. GitLab's own MCP server filters its tool
+listing but not its tool calls, which shows where "listed but callable"
+ends.
+
+The server instructions name each switch that is off and what it would
+add, so a model asked to merge can say why it cannot. The smoke gate and
+the registration tests hold every kind under every mode.
+
+Rejected: registering every tool and refusing per call; the OAuth
+scope; an annotation, a prompt or a per-call flag.
+Cost: the default `api` token can merge, approve and run pipelines, so
+anything else holding it can. Leaving Ship unregistered stops this
+server doing so, and the token lives in the keyring for that reason.
+
+### D-22 Ship is where a persuaded call becomes an effect
+
+Ship is the kind where a persuaded call stops being a record someone can
+edit and becomes an effect: code in the default branch, a deployment job
+run, a sign-off another person's merge rule counts, an issue's content
+published in another project. Ship merges, approves and unapproves,
+cancels an auto-merge, applies review suggestions, rebases, moves an
+issue, runs, retries, plays and cancels CI, and creates a release.
+
+Approving is Ship. An approval is a person's sign-off that other
+people's merge rules count
+([approvals](https://docs.gitlab.com/api/merge_request_approvals/)),
+and an injected "approve this" is exactly what the switch exists to
+refuse. A submitted review whose `reviewer_state` is `approved` is
+`[blocked]` without the switch, naming it. Rebasing rewrites the source
+branch and resets approvals, and takes the head `sha` as its witness.
+
+Cherry-pick and revert stay Write. They commit to a branch as
+`create_commit` does, under the same refusal of the default and
+protected branches (D-33), so they cannot reach what merging reaches.
+
+Rejected: approving as Write, as the most common review action and
+reversible; cherry-pick and revert as Ship, since the protected-branch
+guard makes them Write.
+Cost: with Ship off, a review that would approve is `[blocked]`, and the
+person approves in GitLab.
+
+### D-23 A pipeline a Write starts stays Write
+
+A commit, a new branch, a new merge request or a new tag starts the
+pipelines a push starts. These tools stay Write, or Write in the
+`releases` toolset for a tag, and are not gated as Ship.
+
+Such a pipeline runs with the account's own permissions and the
+project's unprotected variables only. A protected variable "is only
+available in pipelines that run on protected branches or protected
+tags" ([CI/CD variables](https://docs.gitlab.com/ci/variables/)), and
+no Write reaches a protected branch or tag (D-33). The pipeline is the
+one the account's own push would run, which is the test suite a merge
+request is reviewed by. Gating it would gate every commit.
+
+`docs/security.md` says so, and annotates these tools destructive
+because they start something (D-24).
+
+Rejected: appending `[skip ci]` to commits made without Ship, which
+would stop the checks a merge request is reviewed by.
+Cost: a commit, a new branch or a new merge request starts the push
+pipelines with the account's permissions and the project's unprotected
+variables. A project whose unprotected variables hold secrets exposes
+them to code the model wrote.
+
+### D-24 Only a write that adds and starts nothing is annotated not destructive
+
+The `Adding` kind is a write that only adds and starts nothing: a new
+issue, label, milestone or snippet, a to-do, an upload. It is the only
+write annotated `destructiveHint: false`. Every other write, including
+one a person could edit back, says `destructiveHint: true`.
+
+The MCP schema defines the hint: "If false, the tool performs only
+additive updates"
+([schema](https://modelcontextprotocol.io/specification/2025-11-25/schema)).
+A write that replaces text, removes a label or starts a pipeline is not
+additive, whether or not someone can restore it. Clients prompt by this
+hint, so a false one would let a client run a change without asking.
+
+A kind rather than a flag keeps it one decision in `register` (D-20).
+Several writes that look additive do more. `create_tag`, `create_branch`
+and `create_merge_request` can start a pipeline. The link tools can
+make one item hold another. `add_review_comment` can resolve a thread
+when the review is submitted. Each stays Write.
+
+Rejected: `destructiveHint: false` on any write a person can edit back;
+a flag rather than a kind for Adding; Adding for `create_tag`,
+`create_branch`, `create_merge_request`, the link tools and
+`add_review_comment`.
+Cost: claude.ai and Codex prompt for every write that changes or
+removes something. VS Code ignores the hint and prompts for every tool
+without `readOnlyHint`.
+
+### D-25 `openWorldHint` is false only for a write whose effect only the account sees
+
+`openWorldHint` is true for every write but those whose effect only the
+signed-in account sees: `add_todo`, `subscribe`, `mark_todos_done` and
+`update_review_comment`. Each is marked `OwnOnly` on its spec in
+`register`, and `register` derives the hint from that mark and the
+kind.
+
+The MCP schema says the hint is true when "this tool may interact with
+an 'open world' of external entities" and false when "the tool's domain
+of interaction is closed"
+([schema](https://modelcontextprotocol.io/specification/2025-11-25/schema)).
+A to-do, a subscription and a draft are the account's own until it
+publishes or acts: nobody else sees them. Every other write lands where
+other people read it, in a thread, a branch, a pipeline or a project's
+labels.
+
+A test holds that only `OwnOnly` writes say false, so a new write is
+open-world unless someone argues otherwise.
+
+Rejected: `openWorldHint: false` for any write that touches one item, or
+for a write the account could undo.
+Cost: reactions are seen by everyone who can see the item, so `react`
+keeps `openWorldHint` true, though it adds nothing but an emoji.
+
+### D-26 Per-call approval is the client's, and the server asks the person nothing
+
+The server asks the person nothing. No tool puts a question through MCP
+elicitation, and per-call approval is the client's.
+
+The specification puts it there. Clients SHOULD "Prompt for user
+confirmation on sensitive operations" and "Show tool inputs to the user
+before calling the server"
+([tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)).
+A server's question is not that prompt. Clients answered such a question
+with nobody there, did not draw it, left it hanging, or cut its message
+short, and a question on every call is answered without reading. So the
+controls are the ones that hold on every client: registration (D-21),
+`confirm` (D-28), the guards and witnesses (D-33, D-36, D-38, D-40),
+and `dry_run` (D-29). A call's arguments carry what a prompt needs to
+show, as `apply_suggestions` carries each suggestion's text (D-46).
+
+The removed `GITLAB_MCP_REQUIRE_PROMPT` is refused at start, since
+ignoring it would allow what its owner set it to stop. Every tool test
+runs through a client whose elicitation handler fails the test.
+
+Rejected: confirming writes through elicitation (D-102).
+Cost: a client that runs with nobody watching makes every registered
+write, so Ship and Destructive stay off for one. `upload_file`'s guards
+are the directories and the allow-list alone.
+
+### D-27 `requiresUserInteraction` marks only the writes that reach past one item and cannot be undone
+
+`delete_label`, `delete_milestone` and `make_issue_public` carry Claude
+Code's `_meta["anthropic/requiresUserInteraction"]: true`, set by
+`PromptEveryCall` on their spec. No other tool carries it, and only a
+Destructive tool may.
+
+Claude Code shows such a tool's permission prompt on every call, "even
+in `acceptEdits`, `auto`, and `bypassPermissions` permission modes", and
+"Allow rules that match the tool don't skip the prompt either"
+([Claude Code MCP](https://code.claude.com/docs/en/mcp)). That is
+right only for a write that reaches past one item and cannot be undone.
+A deleted label or milestone is taken off every issue and merge request
+that carried it. A confidential issue made public is read by everyone
+who can see the project, and what they read cannot be taken back.
+
+For every other tool, the operator decides in Claude Code with
+`permissions.allow` and `ask`, and the README gives `ask` rules for the
+writes that ship, publish, upload or delete.
+
+Rejected: no tool carrying the mark; the mark on deletes that remove one
+item, such as a comment or a branch.
+Cost: Claude Code prompts on every such call and denies it where no
+prompt can be drawn, as in `-p` or `dontAsk`, so an unattended run
+cannot make these writes.
+
+### D-28 Every Destructive call takes `confirm: true`
+
+Every Destructive call takes `confirm: true`. Without it the call is
+refused before anything is read or sent, and the refusal names the
+argument. The witness from the caller's read is required as well: a
+branch's head `sha`, a comment's or a snippet's `updated_at`, a wiki
+page's content hash, a tag's commit.
+
+The switch is set once for a whole session, so it says the operator
+allows deletes, not that this call means one. `confirm` makes each
+delete say so in its own arguments, where a client's prompt shows it.
+A delete is then never what a call does by default, the way a tool that
+deletes whatever id it is given makes one.
+
+`register` refuses at start a Destructive tool without a `confirm`
+input, and refuses each call without `confirm: true`, a dry run aside.
+A test holds every Destructive tool to it.
+
+Rejected: a Destructive tool that acts without `confirm` once its switch
+is on.
+Cost: `confirm` is an argument the model writes, so it is never the
+person's approval. The person's approval is the client's prompt
+(D-26).
+
+### D-29 Every write takes `dry_run`, and a dry run cannot write
+
+Every write tool, of any kind, takes `dry_run`. A dry run returns what
+would be sent, and for a body what the quick-action guard would do,
+without writing.
+
+The flag puts the call on a context under which `internal/gapi` refuses
+every write: a POST, PUT or DELETE is answered before it reaches the
+network. A preview that worked by convention, a branch each handler
+must remember, would turn into a write the day one handler forgot. Here
+the client holds the line for every tool and every GraphQL mutation
+alike (D-09).
+
+A preview may read what it has to show. A dry run reads a merge
+request's state, the protected-branch rules, the image for an upload,
+or GitLab's own cherry-pick dry run. `lint_ci`'s POST of supplied
+content declares itself read-only on its call, so it runs under a dry
+run and states no outcome. The `outcomes` gate holds that no write
+result claims an outcome from the request alone.
+
+Rejected: a dry run kept by a branch in each handler.
+Cost: a dry run makes the reads its preview needs, so it costs rate
+budget and can fail as a read fails.
+
+### D-30 Read-only mode asks for `read_api` and beats every other setting
+
+`GITLAB_MCP_READ_ONLY=true` registers only Read tools and asks for
+`read_api` at login. It beats every other setting: read-only with either
+enable switch is refused at startup, naming both.
+
+GitLab enforces `read_api` by HTTP method, GET and HEAD, which is
+exactly the REST surface's reads
+([REST authentication](https://docs.gitlab.com/api/rest/authentication/)).
+A `read_api` token cannot write whatever a tool tries. Registering the
+reads alone makes the server's surface agree with the token's, so a
+model is never offered a write the token will refuse. A token whose
+granted scopes cannot serve the mode is refused at startup, naming the
+scope (D-31), so a `read_api` token never gets a write tool, whatever
+the switches say.
+
+No GraphQL operation is a read, so read-only mode registers none of them
+(D-09).
+
+Rejected: offering write tools to a `read_api` token, as another GitLab
+server did.
+Cost: an `api` token from an earlier login keeps working in read-only
+mode until `logout` and `login --read-only` replace it. Read-only then
+narrows the surface, not the token.
+
+### D-31 A changed scope needs a new login, and startup says so
+
+Startup reads the token's granted scopes and compares them with the
+mode's. A token that cannot serve the mode, such as a `read_api` token
+with writes on, is refused before the server announces itself, naming
+the missing scope. `status` names a scope the last login lacks.
+
+A refresh never adds scope. OAuth forbids a refresh from asking for "any
+scope not originally granted by the resource owner"
+([RFC 6749 §6](https://www.rfc-editor.org/rfc/rfc6749#section-6)), so
+turning read-only off needs a new consent, which only `login` asks for.
+Saying so at startup turns a setting change into one clear message
+instead of a write refused mid-task.
+
+This is the one fatal outcome at startup (D-70). Every other failure
+there is logged and the server starts.
+
+Rejected: failing on the first call, where the refusal arrives as one
+tool's error in the middle of a task.
+Cost: a person who changes the mode runs `login` again before the
+server starts, and a client shows the server as failed until then.
+
+### D-32 Toolsets hold what lies outside a project's issues, merge requests, repository and CI, off by default
+
+Toolsets sit beside kinds. `wiki`, `snippets`, `releases`,
+`deployments`, `activity` and `planning` are off by default, and
+`GITLAB_MCP_TOOLSETS` adds them by name or with `all`. The default
+surface holds the work inside a project's issues, merge requests,
+reviews, repository and CI.
+
+The reason is focus. A tool a person never asked for is a choice the
+model can make wrongly, and a description it must read on every
+request. The toolsets hold what lies outside the daily path. Wiki
+pages, snippets and releases publish, deployments and activity read
+across infrastructure and people, and planning changes labels and
+milestones every issue shares. A read joins the default when it answers
+a question a default tool acts on. `list_boards` did, beside
+`list_labels` and `list_milestones`, since a board's columns are read
+with `search_issues`.
+
+The server instructions name each toolset that is off and what it would
+add.
+
+Rejected: holding the default tool count under a client's grouping
+point. VS Code groups by the whole request's tools, its own built-ins
+included, so no server count avoids it.
+Cost: a person who wants wiki pages, snippets or releases sets
+`GITLAB_MCP_TOOLSETS`, and the bundle asks for it.
+
+### D-33 No write creates or moves a protected branch or tag; code reaches one through a merge request
+
+No write commits to, creates or moves a protected branch or tag. Code
+reaches the default branch and every protected one only through a merge
+request a person can read, and merging it is Ship (D-22).
+
+`create_commit`, `cherry_pick_commit` and `revert_commit` refuse the
+default branch and every protected one: an existing branch by its own
+`protected` flag, a new one by the protected-branch rules read at call
+time. `create_branch` refuses a name the rules cover, since a new
+protected branch at a ref of the caller's choosing is code in a
+protected branch no merge request showed. `apply_suggestions` and
+`rebase_merge_request` refuse a default or protected source branch.
+`create_tag` refuses a name a protected-tag rule covers, and `delete_tag`
+a protected tag.
+
+GitLab's rules take wildcards, such as `release/*`
+([protected branches](https://docs.gitlab.com/user/project/repository/branches/protected/)),
+and an account allowed to push may push there. The guard does not rely
+on the account lacking the role. A branch's own flag reflects wildcard
+rules, so an existing branch needs no rule read.
+
+Rejected: a commit straight to a protected branch the account may push
+to.
+Cost: a new branch is refused when the project has more protected-branch
+rules than one read covers, since an unread rule might match it.
+
+### D-34 A create is never repeated, and an ambiguous outcome is settled by reading
+
+A create is never sent twice. A note, an issue, a commit, a pipeline, a
+release or a fork retried is a second one, and GitLab's REST API takes
+no idempotency key to stop it. A create canceled or timed out after it
+may have been written, or a delete repeated after an attempt that may
+have landed, is `[ambiguous_outcome]`.
+
+The tool has already done the read that settles it, against the call's
+start time and the signed-in account. A comment is sought among the
+notes newest first, an issue by author, time and title, a commit as the
+branch head, a pipeline by ref, source and time, a release by its tag.
+Found means created, and the result carries it. Not found means not
+created, and the result says so without creating it. Anything else
+stays unknown, and the result says not to repeat the call. Each settle
+read finds a fresh create on gitlab.com without waiting.
+
+`add_todo` is a create too: GitLab's 304 for a pending to-do runs before
+the insert without a lock, so a to-do marked done in between lets a
+second through.
+
+Rejected: telling a lost `run_pipeline` from another run by its
+variables, which reads their values (D-50).
+Cost: a second run on the same ref inside the settle window reads as
+this one. A lost upload stays unknown, since only a Maintainer can list
+uploads, and the person decides.
+
+### D-35 Retries follow the HTTP method, and a 429 is retried for any method
+
+Whether a request repeats follows its HTTP method. GET repeats. PUT
+repeats, since it sets fields to values. POST does not, except the calls
+declared repeatable at their site with the reason: marking a to-do
+done, approving and unapproving, cancelling, resolving. A create never
+repeats (D-34).
+
+A 429 repeats for any method, because GitLab refused before acting
+([rate limits](https://docs.gitlab.com/user/gitlab_com/rate_limits/)).
+`Retry-After` is a minimum, the backoff has full jitter, and an attempt
+never runs past the call's deadline. A Rack::Attack 429 body is plain
+text and an application limit's is JSON, and both are read. A create
+whose connection never opened repeats too, since nothing reached GitLab.
+
+The method decides by default and a call site must argue an exception,
+so a new POST is safe without anyone remembering. A call declared both
+repeatable and sent once is refused as a contradiction.
+
+Rejected: retrying every failure the same way, which repeats a create
+that landed.
+Cost: at most four attempts, never past the call's deadline, and a
+transient failure of a create reaches the caller as
+`[ambiguous_outcome]` rather than being tried again.
+
+### D-36 A write carries a witness, and is refused `[stale]` when it moved
+
+A write that could destroy what the caller did not see carries a
+witness from the caller's read, and is refused `[stale]` when the target
+moved.
+
+Where GitLab offers a guard, it is required. A file update or delete
+takes the `last_commit_id` `get_file` returned, which GitLab refuses
+with 400
+([repository files](https://docs.gitlab.com/api/repository_files/)).
+Merge, approve and rebase take the head `sha`, which GitLab refuses with
+409 ([merge requests](https://docs.gitlab.com/api/merge_requests/)). A
+comment or snippet delete sends `If-Unmodified-Since`, stretched to the
+end of the millisecond GitLab shows, which GitLab refuses with 412.
+
+Where GitLab offers none, the server reads, compares and refuses.
+Issue, merge request, comment, snippet and milestone updates take
+`updated_at`; `track_time` also takes `total_time_spent`, which moves
+when `updated_at` does not. A draft takes a hash of its text, a wiki
+page a hash of its content, a label a hash of what an update can
+change, and a branch delete the head `sha`. REST reads no `If-Match`,
+and `lock_version` is accepted only by the web controllers.
+
+Each witness input's description says it is NOT a retry signal (D-80).
+The same text asked again reads as unchanged before the witness is
+compared, so an edit repeated after a lost answer is not `[stale]`.
+
+Rejected: the `updated_at` a merge request's create answers with, which
+moves about a second later; an HTTP-date `If-Unmodified-Since`, cut to
+the second, which refuses nearly every delete.
+Cost: the window between the re-read and the write is not closed, and
+the result does not claim it is.
+
+### D-37 Omitted means unchanged, and lists change by add and remove
+
+An update sends only the fields the caller gave. GitLab's PUT changes
+only the parameters sent, so an input left out is left as it is.
+
+Lists change by add and remove. Labels go through GitLab's own
+`add_labels` and `remove_labels`
+([issues](https://docs.gitlab.com/api/issues/)). Assignees and
+reviewers go as a set computed from the server's fresh read, plus and
+minus what the caller named. A replacement list typed by the caller
+would drop whatever someone added since the caller read, with no
+witness to notice. A description replaced whole reports how many
+characters and lines it removed.
+
+An empty value cannot clear a field, since `""` means absent (D-79), so
+updates that can clear a description, a date or a priority take
+`clear_*` inputs.
+
+Rejected: a replacement list the caller typed.
+Cost: adding an assignee leaves an issue's `updated_at` in place, so a
+concurrent assignee change is not caught by the witness. `update_issue`
+computes the set from its own fresh read, so it does not lose one.
+
+### D-38 `GITLAB_MCP_WRITE_NAMESPACES` confines every write, and unset means everywhere
+
+When `GITLAB_MCP_WRITE_NAMESPACES` is set, every write of every kind is
+confined to projects under those namespaces. Any other target is
+`[blocked]`, naming the setting, before anything is sent. `doctor` and
+`get_me` say whether it is set.
+
+The flow that matters is private content written somewhere public. A
+model reads a private repository, and then a public issue tells it to
+post what it read. The allow-list cuts that flow at the write, whatever
+the model was persuaded of.
+
+It reaches every write's projects. `link_issues`, `link_merge_requests`
+and `move_issue` hold both projects. `apply_suggestions` holds a fork,
+since the commit lands there. `mark_todos_done`, `add_todo`, `subscribe`
+and `react` hold the item's project. `upload_file` holds the project
+before it reads the local file (D-44). Every write result names the
+target project's visibility, so a write to a public project shows as
+one.
+
+Rejected: a narrower default, since a default that refuses every write
+is one everyone overrides.
+Cost: unset, a write can go anywhere the account can write. `doctor`
+and `get_me` say so, and [security.md](security.md) advises setting it.
+
+### D-39 Snippets are created and written only when private
+
+`create_snippet` makes only private snippets, and visibility is not an
+input. `update_snippet` and `delete_snippet` act only on the account's
+own private snippets. An internal or public snippet, even the account's
+own, is `[blocked]`.
+
+A snippet carries its own visibility, whatever its project's
+([snippets](https://docs.gitlab.com/user/snippets/)). A public or
+internal snippet created by a model is how private content leaves, and
+writing into one that is already public publishes what is written as
+surely as creating it. Neither tool can change the visibility, so a
+snippet the server writes stays private.
+
+A change that creates, deletes or moves a snippet's file is a commit.
+It is sent once, and a lost answer is settled by reading the snippet's
+files and `updated_at` (D-34).
+
+Rejected: visibility as an input of `create_snippet` or
+`update_snippet`.
+Cost: a personal snippet sits in no namespace, so when
+`GITLAB_MCP_WRITE_NAMESPACES` is set, creating, changing or deleting one
+is refused.
+
+### D-40 Making a confidential issue public is its own Destructive tool
+
+Making a confidential issue public is its own tool, `make_issue_public`:
+Destructive, with `confirm: true`, the issue's `updated_at` as witness,
+and `requiresUserInteraction` (D-27). `update_issue` refuses
+`confidential: false` on a confidential issue whatever the switches, and
+sends nothing for an issue that is already public.
+
+A confidential issue is visible only to the project's members with the
+Planner role or above
+([confidential issues](https://docs.gitlab.com/user/project/issues/confidential_issues/)).
+Making it public shows it to everyone who can see the project's issues,
+and what they read cannot be taken back. An injected "it was
+confidential by mistake" asks for exactly that. A client's standing
+approval of `update_issue` would carry it unseen inside an ordinary
+edit, so it is a separate tool a client prompts for by name.
+
+Leaving the field out for a public issue matters too: sending
+`confidential: false` would undo a person's change made between the
+read and the write.
+
+Rejected: `confidential: false` on `update_issue`; gating it under the
+Ship switch.
+Cost: it needs `GITLAB_MCP_ENABLE_DESTRUCTIVE`, so an operator who
+enables only Ship cannot publish an issue from here.
+
+### D-41 `move_issue` never moves an issue where more people can see it
+
+`move_issue` is Ship. It takes the issue's `updated_at` as witness,
+holds both projects to `GITLAB_MCP_WRITE_NAMESPACES`, and refuses a
+target whose issues more people can see than the source's. An issue
+in a project whose issues are members-only counts as private, and a
+project whose audience cannot be read is refused too.
+
+A move copies the issue, its comments included, into another project
+([issues](https://docs.gitlab.com/api/issues/)). Into a wider audience,
+that publishes everything the issue and its thread hold to people who
+could not read it before. An injected "move this to the public tracker"
+is how a private issue would reach a public project, and a model has no
+way to know which comments were meant to stay in.
+
+A move to a project as private or more private stays possible, since it
+narrows who reads the issue.
+
+Rejected: a move as an ordinary write, under Write and without an
+audience check.
+Cost: both projects must be in the write allow-list when it is set, and
+a move into a wider audience is done by a person in GitLab.
+
+### D-42 Results say what changed, read back, item by item
 
 Every write reports the state it produced, read back rather than
 assumed: labels before and after, the commit created and the branch it
 moved, the discussion a comment joined, the pipeline started and its
-status. A write that changed nothing says so — "already closed" —
-rather than reporting success.
+status. A write that changed nothing says so, such as "already closed",
+rather than reporting success. A write over many items, such as
+`mark_todos_done`, reports each item on its own.
 
-### 4.12 Per-call approval is the client's
+GitLab's answers do not say whether a write took effect. Retrying a
+pipeline with nothing failed answers with the pipeline, changed or not,
+and so does cancelling a finished one. Cancelling an auto-merge answers
+201 whether it canceled or not, with the result in the body
+([merge requests](https://docs.gitlab.com/api/merge_requests/)). A
+result built from the request would claim effects GitLab never made.
 
-From 3.0.0 the server asks the person nothing. From 2.0.0 to 2.4.0 it
-put a form with no fields to the person, through MCP form elicitation,
-before seventeen writes. The maintainer removed it on 2026-10-22
-(issue #63, §14), on the evidence of §18 rows 124 and 125:
+The `outcomes` gate holds that every write result states its outcome on
+every branch. An AST check refuses a branch on a boolean request field
+that states an outcome without reading the response.
 
-- The specification puts consent to each tool call on the host, whose
-  client "SHOULD prompt for user confirmation on sensitive operations"
-  and show a call's inputs before it is made. It lets a server ask
-  through elicitation but never makes the answer consent: the client
-  gathers it "from the user or other sources".
-- Most widely used servers confirm nothing themselves: 83 of the 91
-  with risky writes among the 110 most used. The 8 that ask each pick
-  their own scope, from one tool to every write, and most treat the
-  question as a control. GitLab's own MCP server draws the line this
-  server draws: it refuses a tool set to Deny and passes Ask to the
-  client as a mark it calls "advisory".
-- Clients answered the question with nobody there (a Claude Code
-  `Elicitation` hook once installed, Codex with full access), did not
-  draw it (Claude Code's VS Code extension, and by open user reports
-  Claude Desktop's Code tab), left it hanging (Cowork), or cut its
-  message to three lines (the Claude Code terminal, by an open user
-  report). No client's allow and ask rules match it.
-- A question on every call is answered without reading, and one
-  expired while its person was away.
+Rejected: reporting success for a write that changed nothing.
+Cost: a write is followed by a read, or by GitLab's answer read field by
+field, so a result costs more than the request it reports.
 
-What stays is what holds on every client:
+### D-43 A comment, a draft or a snippet is edited or deleted only by its author
 
-1. **Registration.** A Ship or Destructive tool exists only with its
-   flag (§4.3). A client that runs with nobody watching gets neither.
-2. **`confirm: true`** on every delete.
-3. **Guards and witnesses.** Protected branches (§4.4), the write
-   allow-list (§4.7), the quick-action guard (§4.2), the `sha` and
-   `updated_at` witnesses (§4.6), a confidential issue made public only
-   by `make_issue_public`, and `upload_file`'s directories
-   (§7.10).
-4. **`dry_run`** on every write.
-5. **Annotations.** `destructiveHint` is true on every write but the
-   Adding ones, since the MCP schema reads `false` as "only additive
-   updates" (§18 row 137), so a client that prompts by annotation, as
-   claude.ai and Codex do, prompts for every write that changes or
-   removes, and for Ship and Destructive. VS Code ignores
-   `destructiveHint` and prompts on every tool without `readOnlyHint`,
-   which only the Read tools carry.
-   Three tools carry Claude Code's `anthropic/requiresUserInteraction`:
-   `delete_label` and `delete_milestone`, whose loss reaches every
-   issue and merge request, and `make_issue_public`, which opens an
-   issue to everyone; none can be undone (§18 rows 126 and 127). It
-   makes Claude Code prompt on every call whatever the operator's rules
-   say, and deny the call where no prompt can be drawn (`-p`,
-   dontAsk). For every other tool, the operator decides in Claude Code
-   with `permissions.allow` and `ask`; the README gives `ask` rules for
-   the writes that ship, publish, upload or delete.
-6. **What a client's prompt shows.** A client's prompt shows the call's
-   arguments. Where the question used to say what an argument means,
-   the argument now carries it: `apply_suggestions` takes each
-   suggestion's text, held against GitLab's as a witness and refused
-   `[stale]` when it differs (§7.3).
+`update_comment` and `delete_comment` act only on the account's own
+comments. The review tools act only on the account's own drafts, and
+`update_snippet` and `delete_snippet` only on the account's own
+snippets. Anything else is refused before anything is sent.
 
-`GITLAB_MCP_REQUIRE_PROMPT`, which refused the asking writes on a
-client that could not ask, went with the question. A configuration
-that still turns it on is refused at start: ignoring it would allow
-what its owner set it to stop. Leave the Ship and Destructive flags off
-for a client that runs with nobody watching.
+GitLab lets a Maintainer or Owner "Edit comments posted by other users"
+([permissions](https://docs.gitlab.com/user/permissions/)). Under the person's name,
+a persuaded call could then rewrite what a colleague said in a review
+or remove a comment that disagreed. The server writes as the person,
+so it writes only the person's own words.
 
-## 5. Module layout
+An edit keeps the comment in its thread, with its replies and its diff
+position. It takes the `updated_at` of the caller's read (D-36), and
+the same text asked again reads as unchanged. A draft's edit sends its
+own position back, since GitLab's PUT clears a position it is not sent.
 
-As `CLAUDE.md` "Where things go"; the staleness gate holds that list
-against `go list ./...`, so this section does not repeat it.
+Rejected: editing or deleting another person's comment where GitLab
+lets a Maintainer do it.
+Cost: a Maintainer who wants to edit or remove someone else's comment
+does it in GitLab.
 
-### 5a. Shared machinery: what the current version must carry
+### D-44 `upload_file` reads only from `GITLAB_MCP_UPLOAD_DIRS`, through `os.Root`, after the project is checked
 
-The sibling servers improve shared machinery wherever a problem happens
-to surface, so no single sibling holds the current version of any large
-piece. This table merges them: the base was merged across every sibling
-on 2026-09-24, and the rows marked **(09-25)** were added from a sibling
-release and a per-component comparison on 2026-09-25. Phase 0 builds to
-this list, and a gate or test is named for each claim where one exists.
-When a sibling fixes something shared, it is added here with the date.
+`upload_file` uploads an image from this machine for Markdown to embed.
+It reads only from the directories `GITLAB_MCP_UPLOAD_DIRS` names. Unset,
+it is `[blocked]` naming the setting, and a path outside them is
+`[blocked]` naming only the setting. Startup refuses a relative
+directory, a filesystem root, and the home directory or one holding it.
 
-**Pins.** Taken from upstream on 2026-09-24; no sibling was newer on
-2026-09-25; re-resolved at scaffold time on 2026-09-26, when two had moved. Every one is re-resolved against upstream at scaffold time,
-not copied from here.
+The project is read and held to the write allow-list first, so a call
+aimed elsewhere learns nothing about the path. The file opens through
+`os.Root` on the widest allowed directory that holds it, so neither
+`..` nor a symbolic link leads out
+([`os.Root`](https://pkg.go.dev/os#Root)). A symbolic link as the file,
+a directory, a FIFO or a device is refused. The file is checked with
+`Lstat`, opened without blocking and checked again, so one swapped in
+between is `[conflict]`.
 
-| Tool | Version |
-|---|---|
-| Go | 1.27.3 (moved 2026-10-22; `go-version-file: go.mod` in CI) |
-| MCP Go SDK | v1.8.0 |
-| jsonschema-go | v0.4.3 |
-| golangci-lint | v2.14.0 (moved 2026-09-26) |
-| goreleaser | v2.18.2 |
-| cosign | v3.1.3 (`cosign-release:` on the installer) |
-| syft | v1.52.0 (`syft-version:` on the installer) |
-| mcp-publisher | v1.8.1, its own sigstore bundle verified before extraction |
-| gitleaks | v8.30.1, run through `go run` by `make secrets`; the pre-commit hook's version compared with it |
-| govulncheck | v1.8.0 |
-| go-licenses | v1.6.0 (§17.6) |
-| actionlint | v1.7.12, run through `go run`, not Docker |
-| codeql-action | v4.38.2 (moved 2026-09-26) — labeled with the release tag, never a bundle tag |
-| mcpb manifest schema | v2.1.2 tag, `manifest_version` 0.3 |
+A local file reader is how a comment persuading a model to "attach" a
+key would send the key. The upload POST needs only read access to the
+project, and a Maintainer can download every upload by id
+([Markdown uploads](https://docs.gitlab.com/api/project_markdown_uploads/)),
+so a planted comment can aim an upload at a project its author
+maintains. The directories are the guard.
 
-Every action pinned to a full SHA with the version in a trailing
-comment. Newest seen across siblings on 2026-09-25: checkout v7.0.1,
-setup-go v7.0.0, golangci-lint-action v9.3.0, goreleaser-action v7.2.3,
-attest-build-provenance v4.2.2, cosign-installer v4.1.2,
-sbom-action/download-syft v0.24.2, upload-artifact v7.0.1. The
-golangci-lint and gitleaks actions are not used: every CI step is a
-`make` target, which runs both tools through `go run`.
+Rejected: MCP roots, which SEP-2577 deprecates; content as base64,
+which costs a large image hundreds of thousands of tokens; `O_NOFOLLOW`
+in place of `Lstat`, open and `os.SameFile`, since `os.Root` follows a
+final link anyway.
+Cost: the swap check and the non-blocking open have no test, since
+staging the race needs a test-only back door.
 
-**CI and release.**
+### D-45 `upload_file` sends only an image, at most 10 MiB, named for its bytes
 
-| Component | Must carry |
-|---|---|
-| `ci.yml` | every step is a `make` target, so parity holds by construction; ubuntu/macos/windows matrix, gates and coverage on all three; `defaults.run.shell: bash`; `timeout-minutes` on every job; `permissions: contents: read` at top; `persist-credentials: false` on every checkout; `concurrency` with `cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}`; `workflow_dispatch`; a full-history secrets job on every PR; `fetch-depth: 0` where schema-diff and staleness run; the schema dump uploaded as an artifact; lint and secrets as `make` targets rather than their actions; the same `-coverpkg` in CI and the Makefile, held by a test; `goreleaser check` and actionlint as targets |
-| PR base **(09-25)** | every PR-diff gate (changelog, schema-diff) measures against `git merge-base` of the fetched base branch, never `github.event.pull_request.base.sha`, which is stale in stacked PRs |
-| schema-change acknowledgment **(09-25)** | both sides built from commits, the merge-base and the head, never the merge-commit checkout; the whole dump compared, annotations and instructions included; each changed item named, as a whole word before the first `: `, in a footer of the commit message's footer block, `BREAKING CHANGE:` for a break of the last tag the base branch reaches and `SCHEMA-CHANGE:` for the rest (§18 row 138); the acknowledgment is an empty commit, never an amend |
-| `codeql.yml` | push, PR, weekly; bash default; a timeout |
-| `release.yml` | `workflow_dispatch` on a tag as well as the tag event; refuses a tag whose CI run is not green (`actions: read`, queried by head SHA); write permission raised only in the goreleaser job; `go test` before signing; notes lifted from the CHANGELOG into `$RUNNER_TEMP`; a reproducible-build check that builds one target twice and compares hashes; `subject-path` naming the archives, `checksums.txt` and `dist/*.mcpb`, comma-separated; the registry job skipped for a prerelease (`!contains(github.ref_name, '-')`) |
-| `publish-mcp.yml` | its own workflow, callable from the release and by dispatch for an old tag; job permissions `id-token: write` and `contents: read` only; `cosign verify-blob` on `checksums.txt` with the certificate identity pinned exactly to this repository's `release.yml` at the tag, before the hash is read; the publisher's identity pinned to its own release workflow at its tag; downloads to a file, never piped into `tar`; `server.json` generated at publish time and validated against the vendored registry schema |
-| `.goreleaser.yaml` | `go mod download` in the hook, never `tidy`; `CGO_ENABLED=0`; `-s -w -trimpath`; `{{ .Version }}` through ldflags, never `{{ .Tag }}`; `mod_timestamp: {{ .CommitTimestamp }}`; `universal_binaries` with `replace: false`, kept out of the archives by `ids`; zip for Windows; `files: [LICENSE, NOTICE, README.md]` (Apache-2.0 §4(d) carries NOTICE with distributions); `prerelease: auto`; the bundle packed in the universal binary's post hook and named in both `checksum.extra_files` and `release.extra_files`; a keyless cosign `--bundle` over the checksums; an SBOM per archive; a footer whose verification commands match the artifacts, with the exact certificate identity rather than a regexp |
-| `dependabot.yml` | weekly gomod and actions; `github/codeql-action*` grouped; gomod grouped on `minor` and `patch`; a `ci` commit prefix; no labels that do not exist |
-| `Makefile` | every tool run as `go run mod@version`, never from PATH, goreleaser included, so `pins` compares the Makefile's pin with the workflow's; `EXE` suffix on Windows; the gates built once; `release-rehearse` as `--snapshot --clean --skip=publish,sign,sbom`; manual targets `schema-baseline`, `leaks-history`, `mcpb-pack`, `schema-refetch`, `api-diff`, `evals`; `tidy` as `go mod tidy -diff`; `hooks` setting `core.hooksPath`; no comment claiming to be "everything CI runs" |
-| pre-commit | `.githooks/pre-commit` running `go run ./scripts/gates precommit`: gofmt, vet, leaks, and `gitleaks protect --staged --redact` (warning and skipping when absent), all problems collected before failing; no Python pre-commit framework |
-| `.golangci.yml` | `default: none` with the explicit set: errcheck, staticcheck, unused, govet (all but fieldalignment and shadow), gosec minus G104, gocritic, bodyclose, errorlint, nilerr, misspell (US locale), unparam, revive, gocyclo 25, unconvert, prealloc, makezero; forbidigo on `fmt.Print*` and `os.Stdout` with `analyze-types`, excluded for `cmd/` and `scripts/`; `formatters: [gofmt]`; `run.build-tags: [live, evals]`; `run.timeout: 5m` |
-| `.gitleaks.toml` | `[extend] useDefault = true`; rules for every GitLab token prefix (§4.1.4); synthetic values allow-listed by value, never by path; no inline `gitleaks:allow`; `example`, `test`, `invalid` domains and `go.sum` allowed |
-| `.gitattributes` | `* text=auto eol=lf`; `*.png`, `*.pdf` binary |
-| `.editorconfig` | utf-8, lf, final newline; tabs for Go and the Makefile; two spaces for YAML, JSON and Markdown |
-| `NOTICE` | unofficial, not affiliated with GitLab Inc., trademark note, Apache-2.0 |
-| issue and PR templates | `ISSUE_TEMPLATE/config.yml` with the private advisory link and "run `doctor` first"; the bug form asks for `doctor`, version, install method, the client and its version, flag state and a debug log, explains why those are safe to paste, and says what never to paste — "a tool result is your organization's code"; the PR template with Summary, Test plan and Notes and the schema-change footer |
-| `audit/` **(09-25)** | `audit/security-reviews/v<tag>.md`, the committed `/security-review` over `prev-tag..HEAD`; `audit/release-smoke/v<tag>.md`, the release verification record: gates, reproducible-build hashes, schema and spec re-fetches, bugs found, the maintainer's go-ahead |
-| `packaging/mcpb/manifest.json` | `$schema` at the pinned tag; `manifest_version` 0.3; placeholder version `0.0.0-dev`; `claude_desktop >= 0.10.0`; per-platform commands; `author`, `license`, `keywords`, `repository`, `documentation` and a `support` URL; `user_config` with `client_id`, `profile`, `read_only`, `enable_ship`, `enable_destructive`, `toolsets`, `write_namespaces` and `upload_dirs` (no instance: gitlab.com only), each defaulting so the server starts as an unconfigured one does; `privacy_policies` naming GitLab's; a `long_description` saying the bundle does not log you in; the README, `LICENSE` and `NOTICE` packed beside the binaries |
-| Linux launcher | generated by the packer from the same staging table that names the binaries; `set -eu`; x86_64/amd64 and aarch64/arm64 aliased; `exec`s; an unknown architecture to stderr, non-zero, suggesting `go install`; a missing or non-executable binary named |
+`upload_file` sends at most 10 MiB, a tenth of gitlab.com's 100 MiB
+attachment limit
+([GitLab.com settings](https://docs.gitlab.com/user/gitlab_com/)): far
+above a screenshot, and small enough to hold in memory and send in one
+request. The bytes must sniff as PNG, JPEG, GIF or WebP with
+`http.DetectContentType`, the function GitLab's Workhorse uses to set
+the type it serves. SVG is text that can carry script, and is refused.
 
-**Gates (`scripts/gates`, one command, one registry).**
+The name sent is the file's base name, every character but ASCII
+letters, digits, `.`, `-` and `_` made `_`, with the extension of the
+sniffed type in place of its own. GitLab "identifies files only by the
+file extension" when it decides whether Markdown embeds an upload and
+whether a private project serves it without sign-in
+([`file_type_detection.rb`](https://gitlab.com/gitlab-org/gitlab/-/blob/v19.4.1-ee/lib/gitlab/file_type_detection.rb)).
+The extension has to agree with the bytes, or a file could be served as
+something other than it is. No directory is sent.
 
-| Gate | Must carry |
-|---|---|
-| registry | each entry declares `manual`, `inCheck` or `inRelease`, with the zero value refused by a test; arity declared |
-| `parity` | targets mapped to CI steps by recipe, Makefile variables expanded, `run: \|` blocks read, commented lines stripped, a step's `name:` not counted as running it; every `vet -tags=` both ways; a gate implemented but never run fails, as does one run but not registered; release-only entries excused by name with a non-empty reason; floors on gates, prerequisites and matched lines |
-| `checklist` | `CLAUDE.md`'s definition-of-done block against the `check:` prerequisites, both ways |
-| `pins` | every `uses:` a 40-character SHA with a version comment; exact semver only (no `~`, range or `latest`), and a bundle-tag label refused; every action classified as installer or not, an unknown one failing; installer tool pins required; every Makefile/workflow pin pair compared, an unused pair a finding; workflows parsed as YAML; `${{ env.X }}` resolved; `defaults.run.shell` in every workflow; pre-commit and CI gitleaks versions equal; floors on workflows, actions, versions and installers |
-| `staleness` | prose counts held against the lists beside them, spelled-out numbers included; the package map against `go list`; every repository path a document names exists, with a floor; the README tool table and every env var, by its whole name, a letter of either case, a digit or `_` on either side making it a longer one and a `*` after it a pattern, and gate documented, both ways; the configuration page stating `userconfig.ProfileRule`; the status line against the newest tag or CHANGELOG heading; no version in prose; if Go changed since the last tag, a dependency bump aside **(10-11)**, the CHANGELOG has entries; **the OAuth application setup block in `docs/setup.md` generated from `internal/scopes` and `internal/auth` for every mode and compared exactly** |
-| `changelog`, `changelog-links` | a PR adds an entry unless it is a release cut or changes go.mod only in the modules it requires, the MCP SDK excepted **(10-11)**; every version heading has a link reference |
-| `release-notes` | the CHANGELOG section lifted verbatim, refusing an empty one |
-| `api-coverage` | offline against the committed OpenAPI snapshot, three directions (§8a); each row bound to its operation by verb and path from the client's AST; a `used` row names a real client method and no operation is claimed twice; prefix write-offs carry a reason of minimum length and a count of what they cover, and an operation matched by two rules fails; floors on operations, verdicts and client calls; **every GraphQL root field a `mutate` call sends listed in §8a's GraphQL table and every row sent; the field a string literal and the first field its query, a string constant, selects; a Call to `api/graphql` outside `mutate` refused; a floor (2026-10-23)** |
-| `api-diff` (manual) | fetches the OpenAPI file at a named GitLab release tag; one fetch for operations and fields; written through a temp file and rename; a fetch below the operation floor or a network failure leaves the snapshot untouched, **held by a test against a closed port**; the snapshot records source URL, tag, SHA-256 and date |
-| `api-fields` | request **and** response sides: every query parameter and body field the client sends exists on that operation, and every response field a wire struct decodes exists in its schema or carries a verified omission; recursive over inline objects; the Go kind can hold the declared type; floors on published and modeled fields |
-| `schema-diff` | a committed baseline so it works before the first tag; the full surface with every flag and toolset on; the previous tag built in a git worktree that is always removed; tools **and resources**; fails on a removed tool, a lost input or output field, or a new required input, unless a **Breaking:** entry above the tag's own CHANGELOG heading names the tool in backticks and no version heading there keeps the tag's major; the whole `mcp.Tool` dumped, `_meta` and output schema included; a floor on tools |
-| `descriptions` **(09-25)** | reads the `--dump-schemas` output, not the Go registry; fails on an empty dump, a missing description, more than one `IMPORTANT:` per description, and a witness input whose description lacks "NOT a retry signal" |
-| `bodies` | §4.2: every string input of a write tool is either routed through `internal/quickaction` or listed as a plain field with a reason; derived from the schema dump; a floor |
-| `leaks` | allow-list rules, each anchored on a shape generated fields cannot take (an `@` with a dotted domain; an `https://` host outside the example set; a GitLab token prefix; `gitlab.com/` followed by a namespace outside the fixture set; the OAuth shapes); every allow-list entry carries a reason, asserted; tracked and untracked-unignored files scanned; base64url blobs decoded and scanned; a tracked binary is a finding; history mode covering blobs, commit messages and tags, skipping author and committer lines, with a derived floor; findings printed redacted |
-| `transcript` | drivers cannot reach `os.Stdout`, `os.Stderr` or `log.*`; exactly one exempt package with exactly one write site, which redacts; an unlisted driver fails; a listed directory that is missing fails; the evals directory included; a floor on mentions |
-| `live-cover` | per tool **option**, recorded at run time through the stdio client; waivers in a TSV with verdict `undrivable` or `undriven` and a reason each, the ceiling on `undriven` only; a stale row fails; an empty record fails |
-| `smoke` | the shipped binary over stdio at two protocol revisions, the current one asserted present in the SDK's supported list; stdout carries only JSON-RPC frames; no `.` in tool names; a call with no credentials returns `[auth]`; read-only mode registers no write tool; resources and templates; **stdin closed the moment the last message is written**, so an abrupt disconnect with a request in flight must exit 0 (-32004/-32003 matched by code); awaited ids derived; the child reaped on EPIPE; the Windows `.exe` path |
-| `classes` | the closed vocabulary of §6.5 derived from the code and asserted both ways; duplicates found by count; a `Planned` list with reasons; a floor |
-| `coverage` | per package, scored on its own files, `cmd/` included; per-package floor overrides; each exemption with a reason; an all-exempt run fails; floors on packages and profile lines |
-| `outcomes` | every write's result states its outcome on every branch; an AST check that a branch on a boolean request field does not state an outcome without reading the response; floors on files and fields |
-| `mcpb` | the committed manifest read once from one root, with `LICENSE`, `go.mod` and the server's description constant beside it, by one function the gate and the packer both run; a key repeated in one object, or given twice in two cases, refused by an unambiguous path before any other check, and a document the key walk cannot read refused too, since the typed decode merges a repeat and matches a key whatever its case while a decode into a map, the schema's and the packer's, keeps the last and each spelling apart, as Node's `JSON.parse` does (§18 rows 133 and 134); the manifest validated from its raw bytes against the **vendored** schema chosen by its own `manifest_version`; each vendored schema embedded with a recorded SHA-256 and source URL, a mismatch refused; `$schema` matched as a whole URL at a full tag or SHA; `manifest_version` equal to the URL's; a floor at 0.3; entry point, every command and every override naming a staged program, never a document copied from the repository, and every command starting `${__dirname}/`, the one path the specification fixes to the bundle, so a relative or absolute one is refused (§18 row 132); `entry_point` the file the default command runs; `name` the binary's, `server.type` `binary`, and `compatibility.platforms` exactly the platforms the staging table has an entry point for; every override a claimed platform; each claimed platform spawning the file staged **for it**; every `${user_config.x}` in a composed value declared, and one spent in `env` either required or given a default and never `multiple`, since a host leaves it as written otherwise (§18 row 117); the keys derived from `config.Vars`, each setting left out excluded with its reason and every exclusion naming a setting that exists; the bundle's defaults starting the server exactly as no settings do, every field that differs named, an unexported one included, compared as `reflect.DeepEqual` would through `reflect.Value`, pointers by what they point to, and each switch asked as a boolean (§18 row 130); no default holding a `${...}`, which a host may substitute and the gate reads as written (§18 row 135); a field that sets a credential, which `config.Var.Secret` marks, sensitive, with a floor on the credentials marked; every combination of the switches started, unless the defaults do not start, and the refused ones held to a declared list both ways, each field in a refused pair titled and naming the other by its title, each untitled one reported once, whether or not the defaults start; the toolsets field naming every toolset; the profile field stating `userconfig.ProfileRule`, which a refused name's error states too; no `env` or `args` on a platform override, present but empty included, since a host substitutes an override for the base rather than merging, and the base's `args` an empty list, however it is spaced, since a flag there would escape every check on `env`; no excluded setting in `env`; `privacy_policies` not empty (§18 row 131); the no-login sentence; a `support` URL; the launcher's install hint naming the module `go.mod` declares, read by the one parser the `server-json` gate uses too, which takes tabs, a quoted path, a trailing comment and CRLF |
-| `mcpb-pack` (release) | every check the gate runs, through the gate's own function over the same root, before anything is staged; decode–encode stamping, never text substitution, and the stamped document validated against the vendored schema; `0755` on every staged binary; a fixed mtime asserted against a literal; globs matching exactly one file; the staged binary's `--version` read back; the archive's close and the temporary file's close checked before the rename; the packed archive read back |
-| `release` | goreleaser's config held against the release workflow: universal binaries via `ids`, the bundle in both `extra_files`, `subject-path` with a valid separator, signing and SBOM pins; a six-archive floor; one universal binary; no `changelog:` block; before-hooks that do not mutate the tree |
-| `server-json` | derived from go.mod with `/vN` stripped; the description (at most 100 characters) from the one constant the manifest also uses; the hash taken from `checksums.txt` with exactly one `.mcpb` row, **after** the signature check; validated against the vendored registry schema; HTTPS, release URL and identifier shape held by a test; `schema-refetch` (manual) compares vendored bytes with upstream under a timeout and writes nothing |
-| `deps` (manual) **(09-25)** | a direct dependency whose update is more than six months old fails unless go.mod says `// pinned: <reason>`; needs the network, so it stays out of `check` and is in the release checklist |
-| shared TSV reader | a trailing tab kept; duplicate keys refused |
+A refusal does not say what the bytes are, so a probe learns nothing
+about a file it may not upload.
 
-**Server core.**
+Rejected: SVG; a streamed body, which a retry would have to rebuild.
+Cost: bytes after a valid image header go too, though making such a
+file needs write access to this machine. Workhorse removes a JPEG's
+metadata, but a PNG's, GIF's or WebP's goes as it is in the file.
 
-| Component | Must carry |
-|---|---|
-| `cmd` | `run(args, stdin, stdout, stderr, env)` so the serve path is testable; `help`/`-h` exit 0; **every argument checked for a help token before dispatch**, so `login --help` never reads `--help` as a value and `logout --help` never deletes anything; an unknown command prints usage to stderr and exits non-zero; errors printed through a redactor; disconnect matched by JSON-RPC code; no refresh before serving; version from ldflags with a `debug.ReadBuildInfo` fallback, `canonical()` keeping the leading `v` |
-| `login`/`logout`/`status`/`doctor` | the siblings' commands, flags and output unchanged (§10); `--client-id`, and no instance flag (§4.9); the scopes printed before the browser opens and a grant narrower than asked warned about; `--no-browser` printing the URL and the exact `ssh -L` line; `status [--no-probe] --json` with a `schema_version`, running the same config load the server runs; `doctor` walking instance → TLS → version and edition → application → granted scopes → one `/user`, naming what is missing, with stable `{kind n}` placeholders and a redacted-count footer; `logout` revoking the token through `/oauth/revoke` and naming other profiles on the same application; the keyring replaced package-wide in tests by `TestMain`, with a decoy test proving it |
-| `auth` | loopback on `127.0.0.1:0` with the registered redirect `http://127.0.0.1/callback`; PKCE S256 with a 64-character verifier; `state` checked, a callback without it refused on its own while the login keeps waiting; `ReadHeaderTimeout` on the callback; a bounded HTTP client on the exchange and every refresh; the rotated pair persisted before it is used; **refresh under a cross-process file lock, the keyring re-read after `invalid_grant` before declaring re-login**; a store unreadable under the lock refused rather than the held refresh token spent; no refresh before the server serves while a login recorded the scopes; a refresh in progress waited for before exit; `expires_in` honored, never assumed; an access token refused as `invalid_token` dropped and the store re-read; transport errors stripped of their URL and of host names; a typed `ErrReauthorize` never retried; granted scopes stored; no `resource` parameter sent (§18 row 7) |
-| `scopes` | one source of truth per mode: `read_api` read-only, `api` otherwise; the per-tool requirement; `Satisfied` and `Missing`; the generator for `docs/setup.md` |
-| `credentials` | resolution **env → keyring → file**, documented as that order; per profile, keyring service `gitlab-mcp` and account the profile name, as the siblings do (the profile records the instance); `GITLAB_MCP_REFRESH_TOKEN`, named by `config` alone and read through `config.Lookup` in one place, `Store.EnvToken`, which `app` and `logout` ask, a nil `Env` being the process's environment for both, as the env source, and a pair rotated from it stamped with the env value's hash so the next start uses the stored pair rather than the revoked env token; a keyring save deletes a stale plaintext file; a keyring that refuses a save has its older entry deleted, and while both stores hold a pair the one saved last wins; `Delete` clears every store and joins errors; a silent keyring told apart from a missing login; a warning on every use of the plaintext file; temp file, rename, then ACL; a partial env set is an error |
-| `fileperm` | 0600 on Unix; a protected DACL on Windows restricting the file to the current user |
-| `userconfig` | profiles as the siblings have them — named, or `default`, with no default pointer — each recording the instance it signed in to (so its token goes nowhere else), application id, username and granted scopes; written atomically; profile names by regex; the config-dir override refused outside the home directory by real path unless `GITLAB_MCP_CONFIG_DIR_ALLOW_OUTSIDE_HOME=true` |
-| `config` | `Define(fs, env)` and `Build()` with errors joined; every variable read through `Lookup`, inside `Define` and out, so spaces alone are unset and the spaces around a value dropped, a test walking the whole registry with a reader for each variable read outside `Define`, and a scan of `cmd/`, `internal/` and `scripts/` refusing a read by a name it resolves, constants and aliases included, that does not go through `Lookup`, with a floor on the reads through it; every `GITLAB_MCP_` name spelled there in the registry, a `+` chain read in order, a run that a value completes being a prefix, with floors; a credential marked `Secret`; `GITLAB_MCP_` prefix (§18 row 30); timeouts bounded 1 s–10 m; negative flags named so the zero value is safe; no instance setting, and one development override, `GITLAB_MCP_TEST_INSTANCE`, env only and refused unless loopback (§4.9); an exported list of every variable, the override marked, which the staleness and `mcpb` gates read |
-| `redact` | host, namespace path, username, email, token and client-id masking for product output; redact before truncating; mask where text is produced, not in a Writer; an already-masked value still matched; id truncation and the redacting printer for maintainer tooling |
-| `server` | per-call log line with method, tool, outcome, milliseconds and rate bucket; the SDK's logger only at debug; instructions built from the configuration, naming only registered tools (a test holds it) and naming the flags that would add more; one description constant of at most 100 characters feeding the manifest and the registry; resource templates with `{x}`, never `{+x}`; resource not-found as `CodeInvalidParams` with a `[class]` message; the schema dump taking the SDK version from build info |
-| `app` | startup assembly reachable without `main`; the instance fixed to gitlab.com or the loopback test override, logged at warn when overridden; a profile signed in to another instance keeps its token; `Settings` with the token unexported and **both `LogValue` and `String` redacting**, because `%+v` reads unexported fields |
-| `tools` | one `register` deciding annotations, kind, toolset and scope gating (no version gating: §4.9), `_meta`, the dry-run context and the rendering; `FullSurface(cfg)` for the schema dump; `dry_run` found by reflection; an explicit output schema with `date-time` for times; `Content` set so the SDK does not duplicate the JSON; an `unexpected` class for anything unclassified |
-| tool errors **(09-25)** | a `hinted{hint, err}` type with `Unwrap`, checked before the API-error branch, so a tool's guidance survives an upstream failure while the class still comes from the wrapped error; `refuse(protecting, unlock)` always naming what it protects and the exact argument to pass; enums named sorted in validation errors |
-| `gapi` | write and repeatability derived from the HTTP method, POST failing closed, declared exceptions only; a POST retried only on 429; `Retry-After` honored as a minimum; full-jitter backoff; the rate model of §11; **`CheckRedirect` returning `http.ErrUseLastResponse`**, a moved project's GET redirect resolved by re-reading the new path only when it is same-origin under the API root, with the request's query kept when the `Location` carries none; `Link: rel="next"` accepted only same-origin under the API root; every path segment escaped exactly once from typed parts, `..` refused; a headers deadline then a stall guard per read; a body cap; non-JSON bodies reported by status, content type and a prefix; transport errors stripped of path, query and host names; a create canceled after it may have been written `[ambiguous_outcome]`; a 401 `invalid_token` dropping the token and repeating a repeatable call once; **a context under which the client refuses every write**; a closed `Class` type with `Retryable()`; a `User-Agent`; unknown-field drift reported by path; a per-call counter |
-| `ask` (2026-09-29) | **removed in 3.0.0** (§4.12): the server asks nobody, and only `delete_label`, `delete_milestone` and `make_issue_public` carry `requiresUserInteraction` (from 2026-10-23); the removed `*_REQUIRE_PROMPT` refused at start when on. Was: a form with no fields, `requestState` signed and single-use, every quoted value a code span (§18 rows 94–96, 124) |
-| logging test | every registered tool driven with canary values at debug; asserts the logs are non-empty and contain no canary |
+### D-46 `apply_suggestions` carries each suggestion's text as its witness
 
-## 6. Addressing
-
-### 6.1 Projects, issues and merge requests
-
-A project is given as its numeric id, its full path (`group/sub/project`)
-or its web URL; the server resolves it once per call to the numeric id
-and uses that for every later request, so a proxy that decodes `%2F`
-breaks at most the first. Results always show both the id and the path.
-
-An issue or merge request is a project plus `iid`, named `iid` in every
-tool and described as "the number shown as #12 for issues and !12 for
-merge requests". The global id is never asked for. Pipelines, jobs,
-discussions and notes use their own ids, which GitLab gives and the
-standard's §2 allows.
-
-`resolve_url` turns any GitLab web URL on the configured instance —
-issue, merge request, file at a line, commit, pipeline, job, compare,
-wiki page — into these arguments, and says which kind it was. A URL on
-another host is `[invalid]` naming the configured instance.
-
-### 6.2 Refs, paths and lines
-
-A ref is a branch, a tag or a SHA, passed through. A file path is
-relative to the repository root and escaped by the client. A diff line
-is `file`, `line` and `side` (`new` or `old`), optionally `end_line`;
-§7.4 turns it into GitLab's position.
-
-### 6.3 Users, labels and milestones
-
-Users by username, resolved to ids by the server; an unknown username is
-`[invalid]` naming it. Labels by name, exact, including scoped labels
-(`priority::high`); a name that does not exist is `[invalid]` naming it
-rather than silently creating one, since GitLab creates missing labels
-on assignment. Milestones by title within the project and its ancestor
-groups; two matches are `[ambiguous]` with both ids.
-
-### 6.4 Time
-
-RFC 3339 in and out. Filters (`created_after`, `updated_before`) are
-passed to GitLab as instants.
-
-### 6.5 Error classes
-
-Closed vocabulary, derived from the code by `scripts/gates classes` and
-asserted in both directions. The standard's six, plus seven this API
-forces:
-
-| Class | Means | Caller should |
-|---|---|---|
-| `invalid` | malformed or under-specified arguments, a line not in the diff, a label or user that does not exist, too large (§2.17) | fix the arguments |
-| `not_found` | no such project, issue, merge request, file or job — **or the token cannot see it**, and the message says so (§2.15) | check the id and access |
-| `auth` | not signed in, token expired or revoked, or scope missing (the scope is named) | run `login` |
-| `forbidden` | signed in, but the role or a project rule refuses this | ask a maintainer |
-| `conflict` | the state refuses it: branch exists, merge request already open, not mergeable | read and reconsider |
-| `stale` | the witness moved: file, head `sha` or `updated_at` (§4.6) | re-read and retry |
-| `ambiguous` | a milestone title or path matched more than one | pass an id |
-| `blocked` | a guard refused what the API would have allowed: quick action, protected branch, write allow-list, Ship-dependent review | pass the override, or don't |
-| `rate_limited` | §2.13, application or instance | wait; the message says how long |
-| `unavailable` | a transient upstream failure | retry |
-| `unsupported` | the account's tier or edition lacks the route, or the API cannot do this (§2) | see the message |
-| `ambiguous_outcome` | a create may or may not have happened (§4.5) | read the verdict; never repeat blind |
-| `unexpected` | anything unclassified, including a 202 from note creation | report it |
-
-## 7. Reading and writing
-
-### 7.1 Finding things
-
-`search_projects`, `search_issues` and `search_merge_requests` take the
-filters GitLab offers (state, labels, author, assignee, reviewer,
-milestone, `created_after`/`updated_after`, scope `mine` by default)
-and `max` (default 20, at most 100), plus `page_token`. The token is an
-opaque handle over the next page — keyset where the endpoint supports
-it, offset otherwise — and is refused if it was issued for another
-query. Every listing says whether it is complete; with a count past
-10,000 it says the total is unknown rather than inventing one.
-
-`search` covers GitLab's search API with the scope validated against
-the instance's edition: code, commits and notes across a group or the
-instance need advanced search, and a refusal is `[unsupported]` naming
-it. Project-scoped code search works on every edition.
-
-### 7.2 Reading an issue or a merge request
-
-`get_issue` and `get_merge_request` return the description inside a
-boundary, state, labels, assignees, milestone, dates, links, and a
-discussion summary (count, unresolved count, last activity). A merge
-request adds source and target branches, `diff_refs`, head `sha`,
-`detailed_merge_status`, draft state, the head pipeline's status,
-the approval state and each reviewer's review state (`unreviewed`,
-`review_started`, `reviewed`, `requested_changes`, `approved`,
-`unapproved`). The review states are GitLab's first page of 100, in
-GitLab's order, read at once with the rest and best effort as the
-approval state is; the result says when GitLab has more. `get_issue` also lists the merge requests related
-to the issue and those that close it when merged; `get_merge_request`
-the issues it closes and those it mentions, an external tracker's by
-its id when the id is shaped like one (anything else is left to the
-title, inside the boundary). Each list is GitLab's first page of 20,
-read at once with the rest and best effort, as the approval state is,
-and says when GitLab has more. A read continued from an offset does not
-read the lists again and leaves them null without comment. GitLab leaves out what the account cannot read, confidential
-issues included, and lists closing merge requests from the issue's own
-project only, so no list claims to be complete (§18 row 97).
-`get_merge_request` also lists its dependencies: `blocked_by`, the
-merge requests that must merge before it, and `blocks`, those that wait
-for it, each GitLab's first page of 20 by the same rules. A dependency
-on a merge request the account cannot read is counted as `hidden` and
-not named, since GitLab keeps the row and leaves the merge request out.
-A merged blocker no longer blocks and a closed one still does; the
-state is shown so the reader can tell (§18 row 122).
-After a push, `detailed_merge_status` is `preparing`, `checking`,
-`unchecked` or `approvals_syncing`, or `conflict` with `has_conflicts`
-false, until GitLab has worked out whether the merge request can merge.
-The single read asks GitLab to work it out, when the account may update
-the merge request, so `get_merge_request` says to read again in a few
-seconds rather than sending a parameter: `with_merge_status_recheck`
-belongs to the listings (§18 row 136).
-Both carry the item's `time_stats`: the estimate and the time spent,
-in seconds and in GitLab's short form, which gitlab.com writes in hours
-and minutes, and empty at zero. Both carry `upvotes` and `downvotes`,
-GitLab's counts of thumbsup and thumbsdown reactions; no other emoji is
-counted on the item. A comment's reactions are not shown: the notes
-GitLab returns carry none, and reading them is a request per comment.
-`list_discussions` renders threads newest-first
-under the budget, with position and resolved state for diff threads.
-`list_item_events` merges GitLab's resource events into one history,
-newest first: labels added and removed, state changes with the commit
-or merge request behind them, the milestone set or removed, and an
-issue's weight. GitLab lists each kind oldest first, by offset. Each
-kind is read from page 1 and then the pages its count names, four at a
-time, and the last page's next-page signal is followed until GitLab
-says the list is complete, since events added meanwhile add pages. At
-most ten pages of a hundred are kept, the newest; when older ones are
-not, the history covers only what came after that kind's oldest event
-kept, events of every kind at or before it are left out, and the result
-says so. The kinds are read at once, and the first failure cancels the
-rest. A kind whose page count GitLab no longer gives, past 10,000, or
-whose newest pages GitLab filtered empty, leaves no place to start the
-history, and the call fails `[unexpected]` rather than claim it whole.
-The cut assumes GitLab's event ids follow time, which an imported
-item's may not, and the tool says so. Events are merged once each by
-kind and id, since offset pages read at different moments can overlap.
-`max` and `page_token` page through the merged history; the token is
-the server's own and names the last event shown, so an event added
-between calls neither repeats nor skips one. GitLab drops label events
-whose label the account cannot read after cutting the page, and
-milestone events whose milestone is deleted or unreadable, so the
-history is GitLab's and says so; a deleted label's event is kept and
-shown as one. Label names are shown as names, milestone titles inside
-the boundary. Iteration events (Premium) are not read (§18 row 99).
-`link_issues` and `unlink_issues` relate two issues, both projects held
-to the write allow-list since a link shows on both.
-`link_merge_requests` and `unlink_merge_requests` add and remove a merge
-request dependency, with the same inputs and a required `link_type`,
-`blocks` or `is_blocked_by` from the first merge request's side, since
-both directions can hold at once. Both projects are held to the
-allow-list: GitLab notes the dependency on both merge requests. GitLab
-writes and removes it through the merge request that waits, by the
-other's number and project, so no global id reaches the model. Each
-reads that merge request's dependencies first and reports one that is
-already there, or not there, as unchanged; the create is never
-repeated, and a lost answer is settled by reading them again. The
-routes check no license, so on Free GitLab records the dependency and
-does not hold the merge; the descriptions say so (§18 row 122). `move_issue` (Ship)
-takes the issue's `updated_at`, holds both projects to the allow-list,
-and refuses a project more people can see than the one the issue is in.
-`track_time` sets or resets an issue's or a merge request's estimate
-and adds or resets its time spent, estimate first, one request each,
-after the `updated_at` witness and, for spent time, the
-`total_time_spent` witness. A value both set and reset in one call
-is refused, as is a call with neither. A duration is numbers with the units
-`mo`, `w`, `d`, `h` and `m`, or a bare number of hours; anything else
-is refused `[invalid]` before a read, because GitLab's parser drops
-words it does not know, so `5 foo` is five hours and a word alone as an
-estimate sets it to zero. A negative estimate, zero spent, and spent
-time that would go below zero or past four years are refused as GitLab
-would refuse them; an estimate past GitLab's integer limit is kept as
-the limit, as GitLab keeps it, and said. A request that would change
-nothing, an estimate already at that value or a reset of zero, is left
-out and said, before the witness is compared, so a call repeated after
-it landed reads as unchanged rather than `[stale]`. The estimate writes
-may repeat; adding or resetting spent time adds a timelog and is never
-repeated, and a lost answer is settled by reading the total, or the
-estimate for an estimate GitLab never confirmed (§4.5). A failure names
-the requests that landed before it and those not sent after it, and
-when anything may have landed it gives the `updated_at` a read now
-shows. A 403 names the role it takes: Planner for an issue, Developer
-for a merge request. The result gives the time stats before and after,
-as read back, and the new `updated_at`; when every write was confirmed
-but the read back fails, the after is GitLab's last answer, `updated_at`
-is null, and the result says so rather than failing (§18 row 101).
-`react` adds the account's emoji reaction to an issue, a merge request
-or a comment on one, or removes it. GitLab answers every refused
-reaction with 404, one already there included, so `react` reads the
-account's reactions first, up to ten pages of a hundred, and reports
-unchanged without a write when the state asked for holds. Past those
-pages, whether the account reacted is unknown and `reacted` is null;
-a removal there is refused `[unsupported]`, since GitLab cannot list
-one account's reactions alone. A name is checked for its shape before
-any read: lowercase letters, digits, `_`, `+` and `-`, with `:tada:`
-read as `tada`. GitLab keeps a reaction under its emoji's own name, so
-`+1` and `-1` are looked up as `thumbsup` and `thumbsdown`, and the
-result names the reaction as GitLab keeps it. GitLab words a refusal in
-the account's language, so no answer's text is read: after a 404 the
-reactions are read again, and one there is unchanged. Otherwise the
-404 keeps GitLab's reason and says what it may mean: an emoji GitLab
-does not know, custom emoji existing only in a group's projects; one
-already there under another of its names, with the account's reactions
-listed; a comment GitLab wrote, which a read of the comment names; or
-an item the account may not react to, such as a locked discussion of a
-project it is not a member of. A removal is read back by the
-reaction's id. Reacting to one's own item is
-allowed. A reaction on a comment moves the comment's `updated_at`,
-which `update_comment` and `delete_comment` compare; one on an issue or
-a merge request moves neither its `updated_at` nor anything a witness
-reads. Reactions are seen by everyone who can see the item, so `react`
-keeps `openWorldHint` true (§4.5, §4.6, §18 row 106).
-
-### 7.3 Reviewing a merge request
-
-`list_mr_files` lists changed files with their line counts and the
-`too_large`, `collapsed`, `generated_file`, renamed and binary markers.
-`get_mr_diff` returns the diff of named files under the budget. Paging
-by `file_offset` reads from the page of diffs that holds that file, so
-each page is read about once. One diff larger than the whole budget is
-cut and continued by `diff_offset`, as `get_commit` and `compare_refs`
-continue theirs. `list_mr_commits` lists commits.
-
-`list_mr_versions` lists the diff versions GitLab makes on each push,
-newest first, with each one's head, merge base, state and size.
-`compare_mr_versions` shows what changed between two of them, or since
-one to the newest, so a second review reads only what was pushed after
-the first. GitLab has no route for it. Its web page compares the
-repository from the older version's head to the newer's, straight
-(`A..B`, not from their merge base), so a squash or a rebase between
-versions does not hide the change; the tool calls the same compare in
-the target project, where GitLab keeps both heads, and bounds it as
-`compare_refs` does. After a rebase the diff also carries what the
-target branch gained in between, as GitLab's page shows it; the result
-says when the merge base moved, and that it is unknown when a version
-has no base. A cut result is continued with `to_version` set to the
-version it compared to, so a push between calls moves nothing. The
-result names the comparison `A..B`; its `web_url` is GitLab's compare
-page, which compares from the merge base unless told otherwise. A version's own route is not read: it
-returns every file's diff in one unpaged answer (§18 row 107).
-
-Commenting has two paths, both taking a body (§4.2) and an optional diff
-location (§6.2):
-
-- `add_comment` posts now — to an issue, a merge request, or a reply to
-  a discussion; `thread` starts a resolvable thread on either.
-  `update_comment` replaces the text of one of the caller's own
-  comments, which keeps its thread, its replies and its diff position.
-- `add_review_comment` creates a **draft note**; `list_review_comments`,
-  `update_review_comment` and `delete_review_comment` manage the
-  caller's drafts; `publish_review_comment` publishes one on its own,
-  and `submit_review` publishes them all at once with an optional
-  summary and `reviewer_state` (`reviewed`, `requested_changes`, or
-  `approved`, which needs Ship). Publishing one is its own tool rather
-  than an option of `submit_review`: GitLab's single publish takes
-  neither a summary nor a reviewer state and creates no review, and
-  its result is one comment, not counts. GitLab answers it 204 without
-  the comment, and also when it deleted the draft without saving one,
-  so the tool reads the threads afterwards: found, it reports the
-  comment; not found, the outcome is `lost` and the draft's text comes
-  back. A reply resolves its thread when it was drafted to and reopens
-  it otherwise, as GitLab does, and the dry run warns of the reopening.
-  A draft written elsewhere can hold a quick action, which GitLab runs
-  on publishing, so `publish_review_comment` refuses a draft with one,
-  and `submit_review` a review that includes one (§4.2).
-
-`resolve_discussion` resolves or reopens a thread on a merge request,
-or on an issue with `type: issue`. `rebase_merge_request` (Ship) takes
-the head `sha` reviewed and refuses a protected source branch. A draft on a line reports the
-`line_code` GitLab computed for it.
-
-`list_discussions` names the suggestion blocks of each diff comment
-with their ids, lines and whether GitLab has them applied, and shows
-each one's exact text, the lines it replaces and what it commits, each
-hidden or bidirectional character written out as `<U+202E>`, inside the
-untrusted boundary and cut at 2,000 characters. The comment's body shows
-the same text as Markdown, hidden characters dropped (§4.1), so the
-body alone would hide a Trojan Source edit.
-`apply_suggestions` (Ship) commits suggestions, one or several in one
-commit, to the merge request's source branch as the account, through
-`PUT /suggestions/:id/apply` or `/suggestions/batch_apply`. GitLab finds
-a suggestion by its id alone, so each id is first found among the merge
-request's own comments; an edit to a comment gives its suggestions new
-ids, so an id stands for the text it was read with and carries its own
-witness. A default or protected source branch is refused (§4.4), and so
-is a fork outside `GITLAB_MCP_WRITE_NAMESPACES` (§4.7), since the
-commit lands in the fork. A suggestion whose text holds a hidden,
-bidirectional or other invisible character is refused `[blocked]`,
-naming them: Unicode's default-ignorable characters, such as the
-Hangul fillers, which are identifiers that read as nothing, and the
-variation selectors, which make two names that read the same, U+FE0F
-after an emoji included. Each suggestion comes with its text as
-`list_discussions` shows it in `untrusted_to_content`, and a text that
-differs from GitLab's is refused `[stale]` before anything is sent: the commit is what was
-read, and a client's prompt for the call shows it (§4.12). The match is
+`apply_suggestions` (Ship) commits review suggestions to a merge
+request's source branch as the account. Each suggestion comes with its
+text as `list_discussions` shows it, and a text that differs from
+GitLab's is refused `[stale]` before anything is sent. The match is
 exact but for line endings and trailing newlines, since indentation is
-code. The call carries the text put in, not the lines it replaces:
-`list_discussions` shows those, and a client's prompt does not. A suggestion longer than the 2,000 characters `list_discussions`
-shows was never read whole and is refused `[unsupported]`. GitLab's 400 names why a suggestion does not
-apply: applied already, its lines changed, the merge request closed.
-Right after a push it refuses every one with "A file has been changed."
-until it has moved the comments to the new head, and the result says to
-try again shortly. The answer gives neither the commit nor an `applied`
-that reflects it, so the suggestions and the branch's head are read
-back. A lost answer is settled by the same read (§4.5): GitLab refuses
-an applied suggestion, so the PUT is never sent twice. Every one read
-applied is a landing, by this call when the head is one commit on from
-the head read before, by the account; otherwise a reviewer may have
-applied them in GitLab meanwhile, and the result says so. Anything less
-read right after a failure is unknown, since GitLab may still be
-committing (§18 row 110).
+code.
 
-`cancel_auto_merge` (Ship) stops a merge request set to merge when its
-pipeline succeeds. GitLab answers 201 whether it canceled or not, with
-the result in the body, so the tool reads `status`, then the merge
-request. Without an auto-merge it sends nothing. GitLab cancels the
-auto-merge of a merge request it is already merging, and answers
-success, but the merge goes on: so only an open merge request with no
-auto-merge set reads `canceled`; a locked one is `merging`, to be read
-again, and a merged one `merged`, the cancel too late. A merge request
-locked or merged before the call is reported so, and nothing is sent.
-The read afterwards settles every answer: a failure behind which no
-auto-merge is set is reported canceled (or as merging or merged), and a
-status that is neither `success` nor `error` is `[unexpected]`, never
-unchanged. Someone who may merge the merge request, or its author, can
-cancel; GitLab answers anyone else 401, which is `[forbidden]` here
-(§18 row 109).
+The commit is someone else's text, under the person's name. GitLab
+finds a suggestion by its id alone, and an edit to a comment gives its
+suggestions new ids
+([suggestions](https://docs.gitlab.com/api/suggestions/)). Carrying the
+text makes the commit what was read, and a client's prompt for the call
+shows it (D-26). A suggestion longer than `list_discussions` shows was
+never read whole and is refused `[unsupported]`. One holding an
+invisible character, a default-ignorable or a variation selector, is
+`[blocked]`, naming it (D-14).
 
-`rerequest_review` asks a reviewer for a new review through the one
-GraphQL mutation (§4.10, §8a). It reads the reviewers and the approvals
-first and refuses a reviewer who approved, by state or in the
-approvals, and one still unreviewed. The approval check is that read:
-the mutation carries no witness, so a reviewer who approves between the
-read and the mutation has that approval removed by GitLab, which writes
-a system note and asks them again. Only the reviewer can open that
-window (§16a).
+Each id is first found among the merge request's own comments. A
+default or protected source branch is refused (D-33), and so is a fork
+outside the write allow-list. A lost answer is settled by reading each
+suggestion's `applied` and the branch head (D-34).
 
-### 7.4 Where an inline comment lands
+Rejected: asking the person before applying; trimming surrounding white
+space, which lets indentation differ.
+Cost: the witness is the text put in, not the lines it replaces, so a
+client's prompt can show one plausible line for a suggestion that
+removes many. `list_discussions` shows the range (#95).
 
-The `diffpos` package builds GitLab's position from the model's `file`,
-`line` and `side`:
+### D-47 A merge request pipeline for a fork is refused
 
-1. read the merge request's latest diff version for `base_sha`,
-   `start_sha` and `head_sha`;
-2. read that file's diff and find the line in a hunk; a line outside
-   every hunk is `[invalid]` naming the nearest hunk ranges;
-3. classify it as added, removed or unchanged and set `new_line`,
-   `old_line` or both;
-4. compute `line_code` and, for a range, `line_range`;
-5. after creating, read the note back and report where it landed.
+`run_merge_request_pipeline` refuses a merge request from a fork,
+`[blocked]`, dry run included, before anything is sent. The refusal
+points to the merge request's Pipelines tab.
 
-It is table-tested against generated diffs in phase 2, before any tool
-uses it, and spike K checks it against a live instance.
+When a member of the target project triggers it, a fork's merge request
+pipeline runs in the target project with the fork's code and "the parent
+project's CI/CD settings, resources, and project CI/CD variables".
+GitLab warns that "Fork merge requests can contain malicious code that
+tries to steal secrets in the parent project", tells the reviewer to
+check the changes first, and shows no warning when the pipeline is
+triggered through the API
+([merge request pipelines](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/)).
+Whether the pipeline runs in the target or the fork depends on a
+project setting only Maintainers can read, so the server cannot tell
+which it would start. Checking the changes is the step a persuaded
+model skips.
 
-### 7.5 The repository
+This is the narrow choice. Allowing forks later, held to the allow-list
+in both projects and behind a reviewed flow, is an addition.
 
-`get_file` returns text inside a boundary with `last_commit_id`, blob
-id, size and encoding; binary content returns metadata only. `get_blame`
-names who last changed each run of lines. `cherry_pick_commit` and
-`revert_commit` add a commit to a branch under `create_commit`'s guard,
-and their dry run asks GitLab's own whether the change applies. Under
-the `releases` toolset, `create_tag` refuses a name a protected-tag rule
-covers and `delete_tag` a protected tag, and takes the tag's commit as
-its witness. `list_tree`
-pages with keyset. `list_branches`, `list_tags`, `list_commits`,
-`get_commit` (with a budgeted diff and the first 20 merge requests in
-the project that contain it, read by the commit's full id and only on
-a read without offsets) and `compare_refs`.
+Rejected: running a fork's code in the parent project from a tool call.
+Cost: the person runs a fork's pipeline from the merge request's
+Pipelines tab, where GitLab shows its warning.
 
-`create_branch` from a ref. `create_commit` takes a branch, an optional
-`start_branch`, a message and actions (`create`, `update`, `delete`,
-`move`); `update`, `delete` and `move` require the file's
-`last_commit_id`. It refuses protected branches (§4.4) and reports the
-commit and the branch head afterwards.
+### D-48 `lint_ci` refuses supplied content that holds an `include:`
 
-### 7.6 CI
+`lint_ci` reads a project's merged CI configuration at a ref by GET.
+Supplied content goes by POST, which is refused in read-only mode, and
+refused with an `include:` at any depth, found by parsing the YAML.
 
-`list_pipelines`, `get_pipeline` (with its failed jobs, and its failed
-trigger jobs with the downstream pipeline each started, which the job
-listing leaves out), `list_jobs`, `list_job_artifacts` and `get_job_artifact` (one text file,
-masked as a log is, under the file budget), `get_job_log` (tail by default;
-`byte_offset` and `byte_limit` to page; `failed_only`; ANSI stripped;
-collapsible sections folded to one line each; masked per §4.1), `lint_ci` (the project's
-configuration at a ref, by GET; supplied content by POST, refused in
-read-only mode, and refused with an `include:` at any depth, found by
-parsing: GitLab fetches what an include names while linting, so a URL in
-supplied content would be a way out no write control sees (§4.7, phase 2
-security review). The POST declares itself read-only on its `Call`, so
-it runs under a dry run and states no outcome.
+GitLab fetches what an include names while it lints
+([includes](https://docs.gitlab.com/ci/yaml/includes/)). An
+`include:remote` in supplied content is a URL the server would make
+GitLab fetch, and other include kinds read other projects' files with
+the account's access. That is a way out no write control sees: the
+allow-list holds projects written to, and a lint writes nothing. A
+configuration that includes is still linted, at its ref, through the
+GET that reads what the project already holds.
 
-A section's markers fold to one line naming the section where it
-starts, and nothing inside is hidden: folding the content would be an
-omission no offset continues. A line a carriage return overwrote shows
-as it was left, as GitLab's job page shows it. `failed_only` ends the
-window at the runner's `ERROR: Job failed` line and starts it at the
-section the job failed in, the last one of the job's own before that
-line, or as far back as the window allows.
+The POST changes nothing, so it declares itself read-only on its call.
+It runs under a dry run and states no outcome (D-29).
 
-`get_job_log` reads only the window and what its edges need, so a log
-of any size can be read (spike O). The size comes from the job's
-`trace` artifact once GitLab has archived the log. Otherwise the first
-500 KB are read: a shorter answer is the whole log, in one call as
-before, and a longer log is measured by one-byte reads past its end. `failed_only` reads back from the end 500 KB at a
-time until it finds the failure line; a section that began before
-what it read is named by its end marker. A window that starts inside a
-private key block is masked whole: the read looks 256 KB before the
-window for a header with no footer after it (§18 row 76).
+Rejected: linting supplied content as given, includes and all.
+Cost: supplied content is refused in read-only mode, where only the
+project's own configuration can be linted.
+
+### D-49 Release asset links point only into the release's own project
+
+`create_release` takes asset links only into the release's own project:
+under its web path or its API path, on gitlab.com's origin, with no
+credentials in the URL. Anything else is `[blocked]` before anything is
+sent. Links are taken at create only.
+
+A release page sends every reader wherever its links lead, and
+gitlab.com serves anyone's files. A link written by a persuaded model
+could point a project's users at a download from another project that
+looks like the release's own
+([release links](https://docs.gitlab.com/api/releases/links/)).
+Confining links to the project keeps every asset one the project's own
+members put there.
+
+`create_release` is Ship, since it creates a tag and starts tag
+pipelines (D-22), and it is in the `releases` toolset (D-32).
+
+Rejected: links anywhere; link writes on a published release, which
+would change where an existing page sends its readers.
+Cost: an asset hosted elsewhere, such as another project's package or
+an outside download site, is linked by a person in GitLab.
+
+### D-50 Variable values are sent and never shown
+
+`run_pipeline` takes variables and inputs. `retry_job` and `play_job`
+take values for the inputs a job declares. The values are sent to
+GitLab and never shown: a result names each variable and input with its
+value masked, and logs never carry either.
+
+A CI variable's value is often a secret. The result is read by the
+model and may be pasted anywhere, so a value the caller passed is not
+repeated back. The same reason writes off reading pipeline variables:
+GitLab's listing carries their values
+([pipelines](https://docs.gitlab.com/api/pipelines/)).
+
+GitLab refuses an input name a job's `inputs:` does not declare, but a
+job that declares none takes any input and uses none. So the result
+names the inputs sent, and a reader can see one that did nothing.
+
+Rejected: reading pipeline variables, whose listing carries their
+values.
+Cost: a lost `run_pipeline` cannot be told from another run on the same
+ref by its variables, so one inside the settle window reads as this one
+(D-34).
+
+### D-51 `rerequest_review` refuses a reviewer who approved or has not reviewed
+
+`rerequest_review` asks a reviewer for a new review through GraphQL's
+`mergeRequestReviewerRereview` (D-09). It reads the reviewers and the
+approvals first. A reviewer who approved, by state or in the approvals,
+is `[blocked]`. One still unreviewed is `[conflict]`: there is no review
+to ask for again, and no read could settle a lost re-request.
+
+GitLab's mutation sets the reviewer back to unreviewed, removes their
+approval, notifies them, and adds a to-do and a system note
+([GraphQL reference](https://docs.gitlab.com/api/graphql/reference/)).
+From an approver that strips a sign-off another person's merge rule
+counts, which is a Ship effect behind a Write tool. Refusing an approver
+keeps the tool to its job: asking for a new look after requested
+changes are addressed.
+
+A GraphQL answer with a payload and a top-level error means the
+mutation ran, so it is reported as done and not sent again.
+
+Rejected: refusing only by an `approved` state, since the approvals can
+list a reviewer under another state.
+Cost: the mutation carries no witness, so a reviewer who approves
+between the read and the mutation loses that approval. Only the
+reviewer can open that window, and GitLab notes it and asks them again.
+
+### D-52 Reviews are drafts, published together or one at a time
+
+Reviews are drafts. `add_review_comment` creates a draft note, and
+`list_review_comments`, `update_review_comment` and
+`delete_review_comment` manage the account's drafts.
+`publish_review_comment` publishes one on its own. `submit_review`
+publishes them all at once with an optional summary and
+`reviewer_state`: `reviewed`, `requested_changes`, or `approved`, which
+needs Ship (D-22).
+
+This is how people review in GitLab: comments gathered, then submitted
+together with a verdict and one notification
+([draft notes](https://docs.gitlab.com/api/draft_notes/)). Submitting
+together also keeps a review inside gitlab.com's limit on notes a
+minute, which the client paces in a bucket of its own (D-75).
+
+Publishing one is its own tool. GitLab's single publish takes no
+summary or reviewer state and creates no review. A reply resolves its
+thread when it was drafted to and reopens it otherwise, as GitLab does,
+and the dry run warns of the reopening. A draft holding a quick action
+is refused at publishing (D-18).
+
+Rejected: publishing one draft as an option of `submit_review`.
+Cost: GitLab answers a single publish 204 without the comment, and also
+when it deleted the draft without saving one. So a publish is settled by
+reading the threads, and a lost one returns the draft's text.
+
+### D-53 The server computes where an inline comment lands
+
+The server computes where an inline comment lands. The caller names a
+`file`, a `line` and a `side`, `new` or `old`, and optionally an
+`end_line`. `internal/diffpos` reads the merge request's latest diff
+version for its `base_sha`, `start_sha` and `head_sha`, finds the line
+in a hunk of that file's diff, sets `new_line`, `old_line` or both, and
+computes `line_code` and, for a range, `line_range`. After creating, the
+comment is read back and the result says where it landed.
+
+GitLab's position object is easy to get wrong and refuses a wrong one
+with little help ([discussions](https://docs.gitlab.com/api/discussions/)).
+"`line_code` can't be blank" was the most-reported write failure in
+other GitLab servers. The
+numbering follows GitLab's own parser: a removed line carries the new
+side's running counter and an added line the old side's
+([`parser.rb`](https://gitlab.com/gitlab-org/gitlab/-/blob/v19.4.1-ee/lib/gitlab/diff/parser.rb)).
+
+Table tests hold it over generated diffs, and the live step "whether
+diffpos positions land on GitLab's lines" holds it to gitlab.com.
+
+Rejected: the model computing GitLab's position from the diff.
+Cost: a line outside every hunk is `[invalid]`, naming the nearest hunk
+ranges, since GitLab cannot anchor a comment there.
+
+### D-54 Every read has a budget and names what it left out
+
+Every read has a budget in characters, stated in the result, and every
+omission is named and continuable. A discussion list renders newest
+first up to its budget and lists the rest by id, author and date with a
+cursor. A long description is cut at a paragraph boundary with the
+offset to continue from. Diffs are listed per file first, then read by
+file, and one diff larger than the budget continues by `diff_offset`.
+Binary files return their size, type and blob id, never lossy text. An
+embedded project, milestone or pipeline becomes its id and name.
+
+Unbounded reads fail in practice. One list call in another GitLab
+server returned 120,000 to 180,000 tokens of embedded objects, and
+another capped labels at 20 without saying so. A read that silently
+returns less than it found is worse than one that fails: the model
+reasons from it as complete.
+
+Linked lists, approvals and reviewer states are GitLab's first page,
+read best effort, and say when GitLab has more. GitLab leaves out what
+the account cannot read, so no such list claims to be complete. A read
+continued from an offset does not read them again.
+
+Rejected: an unbounded read; reading only the newest pages of threads,
+since a reply moves an old thread to the top.
+Cost: `get_issue` and `get_merge_request` walk up to ten pages of
+threads to count them, and each `list_discussions` page walks them
+again.
+
+### D-55 A listing pages by an opaque token bound to its query and says whether it is complete
+
+A listing takes `max` and `page_token`. The token is an opaque handle
+over the next page: keyset where the endpoint supports it, offset
+otherwise. It is refused when it was issued for another query. Every
+listing says whether it is complete.
+
+GitLab's paging has edges a client cannot see from one page. "if a
+query returns more than 10,000 records, GitLab doesn't return" `x-total`
+or `x-total-pages`
+([REST API](https://docs.gitlab.com/api/rest/)). An offset past 50,000
+rows answers 405 on an endpoint that supports keyset. Keyset is followed
+through the `Link: rel="next"` header, never constructed, and only when
+that link is same-origin under the API root (D-65). A token bound to its
+query stops a model from carrying one listing's cursor into another
+filter and reading the wrong rows as the continuation.
+
+Rejected: a keyset cursor the client constructs.
+Cost: past 10,000 GitLab drops the count, and the listing says the total
+is unknown rather than inventing one.
+
+### D-56 `get_job_log` reads a byte window, and only what its edges need
+
+`get_job_log` reads a window of the stored log in bytes: the tail by
+default, `byte_offset` and `byte_limit` to page, and `failed_only` to
+jump to the failure. Each window is widened to whole lines, so no secret
+straddles its edge (D-16). ANSI codes are stripped, sections fold to one
+line naming them, and a line a carriage return overwrote shows as it
+was left.
+
+GitLab's trace endpoint takes `byte_offset` and `byte_limit`, at most
+500 KB a call, which its API reference does not document
+([`jobs.rb`](https://gitlab.com/gitlab-org/gitlab/-/blob/v19.4.1-ee/lib/api/ci/jobs.rb);
+[jobs](https://docs.gitlab.com/api/jobs/)). A tail needs the log's
+size, which an archived log gives through its `trace` artifact. So a
+log of any size is read for the window and what its edges need, never
+whole. `failed_only` reads back from the end until it finds the runner's
+failure line, then starts at the section the job failed in.
+
+Rejected: a HEAD of the trace, which answered 0 for a finished log;
+reading the whole log, which a long job turns into megabytes.
+Cost: a log not yet archived is read 500 KB from its start and measured
+by one-byte reads past its end. `failed_only` can read 2 MB for a
+failing job that printed no failure line.
+
+### D-57 `compare_mr_versions` compares the versions' heads straight, in the target project
+
+`compare_mr_versions` shows what changed between two of a merge
+request's diff versions, or since one to the newest, so a second review
+reads only what was pushed after the first. GitLab has no route for it.
+The tool calls the repository compare in the target project, from the
+older version's head to the newer's, with `straight=true`, and bounds it
+as `compare_refs` does.
+
+That is what GitLab's own versions page compares. With `straight`, the
+compare runs directly from `from` to `to` rather than from their merge
+base ([repositories](https://docs.gitlab.com/api/repositories/)), so a
+squash or a rebase between versions does not hide the change. The
+target project keeps both heads, so the compare works for a fork's
+merge request too.
+
+The result says when the merge base moved, and that it is unknown when
+a version has no base. A cut result continues with `to_version` set to
+the version it compared to, so a push between calls moves nothing.
+
+Rejected: the version's own route, which returns every file's diff in
+one unpaged answer; a compare from the merge base, which hides what a
+rebase changed.
+Cost: after a rebase, the diff also carries what the target branch
+gained in between, as GitLab's page shows it.
+
+### D-58 `list_item_events` merges GitLab's event lists into one bounded history, newest first
+
+`list_item_events` merges GitLab's resource event lists into one
+history, newest first: labels added and removed, state changes with the
+commit or merge request behind them, the milestone set or removed, and
+an issue's weight. GitLab lists each kind oldest first, by offset
+([resource label events](https://docs.gitlab.com/api/resource_label_events/)).
+
+Each kind is read from page 1 and then the pages its count names, and
+the last page's next-page signal is followed, since events added
+meanwhile add pages. The newest pages are kept up to a cap. When older
+ones are not, the history covers only what came after that kind's
+oldest event kept, and says so. Events are merged once each by kind and
+id, since offset pages read at different moments overlap. The page
+token is the server's own and names the last event shown, so an event
+added between calls neither repeats nor skips one.
+
+GitLab drops label events whose label the account cannot read after
+cutting the page, so the history is GitLab's and says so. Iteration
+events, a Premium feature, are not read.
+
+Rejected: GitLab's offset as the page token, which could repeat or skip
+an event added between calls.
+Cost: the cut assumes event ids follow time, which an imported item's
+may not. A kind with no place to start, past GitLab's count or filtered
+empty, fails `[unexpected]` rather than claim the history whole.
+
+### D-59 `list_boards` gives each list the `search_issues` arguments that return its issues
+
+`list_boards` lists a project's issue boards with their lists in board
+order, and gives each list the `search_issues` arguments that return
+its issues. A milestone list's argument is the exact title GitLab holds.
+
+A board is how a team sees its work, but GitLab has no route that
+returns a board column's issues as the board shows them. `search_issues`
+is the read a default tool already has, so a board is read as lists of
+arguments for it. GitLab returns lists by kind first and names no kind,
+so the order comes from position and the kind from the key present
+([boards](https://docs.gitlab.com/api/boards/)). A board's milestone
+scope is carried into its label lists' arguments, where GitLab's code
+applies it. Other scope filters are shown in their own field. GitLab
+never returns the Open and Closed lists, so the result says whether the
+board shows them.
+
+GitLab includes every list with its board, so the server pages boards
+itself under a budget and says which boards it did not read.
+
+Rejected: a cleaned milestone title as the argument, which matches a
+different milestone or none.
+Cost: iteration and status lists, a milestone titled like a filter, such
+as `none` or `#upcoming`, and a board's weight get no argument, and the
+result says so.
+
+### D-60 `get_test_report` reads the whole report and says when it may be partial
 
 `get_test_report` reads the report GitLab builds from the JUnit reports
 a pipeline's jobs upload, child pipelines in the project included. It
-shows the counts, each suite's (failing suites first, at most 100 and a
-quarter of the budget), and the failed and errored cases: name, class,
-file, time and output. The output is `system_output`, where JUnit puts
-the failure; JUnit is GitLab's only test parser and never sets
-`stack_trace`, so that is not read. Names, suite errors and output are
-the project's tests' words, so they are masked as a log is (§4.1) and
-shown inside the boundary; a one-line field has hidden characters
-removed before the masks run, so a zero-width space cannot split a
-token past them, and is cut at 400 characters. Only an output's first
-16,000 characters are prepared, and it is cut at 4,000; a key block
-that runs past what is prepared is masked to its end. The cases shown
-stop at 40,000 characters, suite rows included, or 100 cases; `offset`
-continues by case. GitLab parses the report when asked, caches it up
-to two minutes and does not page it, so each call reads it again. While
-the pipeline or a child pipeline in the project has not finished, the
-report is partial, the cases can shift between calls, and the result
-says so. A report larger than the client reads (§11) falls back to the
-stored summary, counts and suite errors without cases, which a worker
-writes after each job and can be behind or empty; `offset` is then
-refused (§18 row 98).
+shows the counts, each suite's counts with failing suites first, and the
+failed and errored cases: name, class, file, time and output. The
+output is `system_output`, masked as a log is (D-16) and shown inside
+the boundary. `offset` continues by case.
 
-Ship: `run_pipeline` (ref, variables and inputs; variables named in the
-result, values masked), `retry_pipeline`, `retry_job` and `play_job`
-(each with values for the inputs the job declares: GitLab refuses a
-name a job's `inputs:` does not include, and a job that declares none
-takes any and uses none), `cancel_pipeline`, and
-`run_merge_request_pipeline`: the pipeline merge request rules select,
-merged results where the project has them on (Premium) and the source
-branch's head otherwise. GitLab picks, and the result names the kind by
-the pipeline's ref: `refs/merge-requests/N/merge` is merged results,
-`…/head` is detached. It takes no `async`: GitLab's asynchronous create
-answers 202 with no body, so there would be no pipeline to report and
-nothing to settle a lost answer by. The create carries no head: a
-detached pipeline at another head than the one read says so in the
-result. A merge request from a fork is refused (§17.14). Deleting a pipeline is written off (§8a).
+GitLab answers every case of every suite in one body, with no paging,
+parsed when asked and cached up to two minutes
+([pipelines](https://docs.gitlab.com/api/pipelines/)). So the server
+reads the whole report and bounds what it shows, rather than asking
+GitLab for a page it cannot give. While the pipeline or a child
+pipeline has not finished, the report is partial and the cases can
+shift between calls, and the result says so.
 
-### 7.7 Planning, todos and search
+JUnit is GitLab's only test parser, and it puts the failure in
+`system_output` and never sets `stack_trace`
+([`parsers.rb`](https://gitlab.com/gitlab-org/gitlab/-/blob/v19.4.1-ee/lib/gitlab/ci/parsers.rb)).
 
-`list_labels`, `list_milestones` (reads; assignment is a field on issue
-and merge request updates). A label carries a `version`, a hash of what
-an update can change, since GitLab keeps no version of one.
-`list_boards` lists a project's issue boards with their lists in board
-order, by position, since GitLab returns them by kind first. A list's
-kind is read from the key present: label, assignee, milestone or
-iteration, and unknown for a status list, which carries none. Each list
-gives the `search_issues` arguments that return its issues, a
-milestone by the exact title GitLab holds; the text shows it cleaned.
-Iteration and unknown lists have none, and neither has a milestone list
-whose title `search_issues` would read as a filter (`none` and `any` in
-any case, `No Milestone`, `Any Milestone`, `#upcoming`, `#started`),
-since it takes no milestone id. GitLab never returns the Open and
-Closed lists, so the result says whether the board shows them and what
-they hold. A board's scope is shown: a milestone is carried into the
-label lists' arguments, where GitLab's code applies it; a milestone
-filter, the assignee and the labels are not, and the text says where
-they apply is unverified; the weight cannot be reproduced, since
-`search_issues` has no weight filter (§18 row 100). GitLab includes
-every list with its board, so the server reads up to ten pages of
-boards and pages them itself, by `max` and a budget of about 30,000
-characters, the token naming the next board by id; past 1,000 boards,
-`boards_not_read` says the rest are in no page. A board shows its
-first 100 lists. Board names and milestone and iteration titles are
-untrusted.
-`list_todos`, `mark_todos_done` (by id; at
-most 100). `search` per §7.1.
+Rejected: reading `stack_trace`, which is always null.
+Cost: each call reads the whole report again. A report larger than the
+32 MiB body cap falls back to the stored summary, counts and suite
+errors without cases, which can lag behind, and `offset` is refused.
 
-`add_todo` adds a to-do for the signed-in account on an issue or a
-merge request and returns its id, which `mark_todos_done` takes.
-`subscribe` subscribes the account to an item's notifications, or
-unsubscribes it. Both touch only the account's own list and
-notifications. GitLab answers 304 when the state already holds, which
-the result reports as unchanged: `subscribe` with the state read back,
-`add_todo` with the pending to-do already there, found by reading the
-account's to-dos in the project. A participant is subscribed until they
-unsubscribe: the author, assignees, a merge request's reviewers, the
-author of any note, system notes included, anyone who reacted with an
-emoji, and anyone @-mentioned in the item or its comments. Subscribing to a merge
-request needs the rights to update it; GitLab's 403 does not say why, so
-the result keeps its text and says the role may be the cause, or that
-the project is archived. `subscribe` repeats after a lost answer and
-`add_todo` never does; its lost answer is settled by reading (§4.5,
-§18 row 102). GitLab marks the account's pending to-dos on an item done
-when it comments outside a thread, closes, merges or reviews it, which
-the description says. A dry run reads the current state and says
-whether anything would be sent. Both are writes only the account sees,
-so their `openWorldHint` is false (§8).
+### D-61 `get_project` never decodes a secret field
 
-### 7.8 Optional toolsets
+`get_project` never decodes a secret field. No wire struct in
+`internal/gitlab` carries a field whose name ends `_token`, and
+`TestNoTokenFields` reads every wire type from source and fails on
+one. A field that is never declared is never decoded, so a token GitLab
+adds to a response cannot reach a result.
 
-- `wiki`: `list_wiki_pages`, `get_wiki_page`, `save_wiki_page` (create,
-  or update with the §4.6 witness), `delete_wiki_page` (Destructive).
-  Project wikis only; group wikis are Premium (§17.11).
-- `snippets`: `list_snippets`, `get_snippet`, `create_snippet` — private
-  visibility only; a public or internal snippet from a model is how
-  private content leaves (§4.7), so visibility is not an input.
-  `update_snippet` (with `updated_at`, §4.6) changes the title, the
-  description and the files of a private snippet, never the visibility,
-  and refuses one that is internal or public (§4.7). A change that
-  creates, deletes or moves a file is sent once: a lost answer is
-  `[ambiguous_outcome]`, settled by reading the snippet's files and
-  `updated_at`, never by sending it again; a change of the title, the
-  description or a file's content may repeat. `delete_snippet` is
-  Destructive. Both act on your own snippets only, as with comments.
-- `releases`: `list_releases`, `get_release`, `create_release` (Ship:
-  it creates a tag and starts tag pipelines), `create_tag` (Write,
-  refusing protected names), `delete_tag` (Destructive).
-- `planning`: `create_label`, `update_label` (with the label's
-  `version`), `delete_label` (Destructive), `create_milestone`,
-  `update_milestone` (with `updated_at`; closes and reopens),
-  `delete_milestone` (Destructive). A project's own only; a group's label
-  is refused. §17.11 would add epics here after 1.0.
-- `deployments`: `list_environments`, `list_deployments`.
-- `activity`: `list_events`.
+A project read can carry secrets. GitLab returns `runners_token`, the
+"Token for registering runners with the project", to an account with
+the Owner role
+([projects](https://docs.gitlab.com/api/projects/)). A runner
+registration token leaked through a project read in another GitLab
+server. Decoding the project whole would put that token in a result the
+model reads and may paste anywhere.
 
-### 7.9 What the instance supports
+The hand-written wire types are what make this hold (D-08). `api-fields`
+holds each decoded field to the snapshot, so a new field is a decision,
+not a side effect of a struct tag.
 
-`get_me` returns the user, the instance's version and edition, the
-token's kind, scopes and expiry, the registered kinds and toolsets, the
-write allow-list, and the last rate-limit reading. The version and
-edition are information: gitlab.com runs the newest release, so no tool
-is gated by version (§4.9). A tier-gated route answering 403 or 404 on a
-feature GitLab licenses is `[unsupported]` naming the likely tier, never
-`not_found`.
+Rejected: decoding the project whole, or a generated type with every
+published field.
+Cost: a field GitLab adds whose name ends `_token` is never shown, even
+when a task would need it, until someone argues it in.
 
-### 7.10 Images for comments
+### D-62 Every path segment is escaped once, and a project resolves once per call
 
-`upload_file` uploads an image from this machine to a project and
-returns GitLab's Markdown for it, for a comment, a review comment or a
-description in the same project. GitLab resolves `/uploads/...` against
-the project that renders it, so from another project the link is
-`full_path` on gitlab.com (§18 row 113). It takes a project and an
-absolute `path`. Content as base64 was rejected: a 1 MB image costs
-hundreds of thousands of tokens.
+Every path segment is built from typed parts and escaped exactly once,
+and a `..` segment is refused before anything is sent. A project given
+as a path is resolved once per call to its numeric id, which every
+later request of the call uses. Results show both the id and the path.
 
-A tool that reads local files is how a comment persuading a model to
-"attach" a key file would send the key, and even an image is a
-disclosure. So, in this order:
+GitLab takes a project as a numeric id or a URL-encoded full path, `/`
+written `%2F`, and a proxy in front of it must not decode that, or the
+request "doesn't match an API endpoint and responds with a 404"
+([REST API](https://docs.gitlab.com/api/rest/)). Other GitLab servers
+escaped a branch with a slash twice, and let an unencoded id walk `../`
+to other endpoints. Escaping in one place from typed parts makes both
+impossible, and the numeric id keeps a path out of every request after
+the first.
 
-1. **The project first.** The project is read and held to
-   `GITLAB_MCP_WRITE_NAMESPACES`, as every write is, before anything on
-   this machine is read, so a call aimed elsewhere learns nothing about
-   the path.
-2. **Where it reads.** Only the directories `GITLAB_MCP_UPLOAD_DIRS`
-   names. Unset, the call is `[blocked]` naming it; a path outside them
-   is `[blocked]` too, naming only the setting. Startup refuses a
-   relative directory, a filesystem root, and the home directory or one
-   holding it; a value that is itself an existing directory is one
-   entry, whatever its name holds. The Claude Desktop bundle asks for one
-   dedicated folder. MCP roots were rejected (maintainer, 2026-10-08):
-   SEP-2577 deprecates them from protocol 2026-07-28 in favor of
-   directories passed as tool parameters, resource URIs or server
-   configuration, and go-sdk v1.8.0 will not ask for them during a call
-   on that protocol (§18 row 114).
-3. **How it opens.** `internal/localimage` takes an absolute path with
-   no `..` and opens it through `os.Root` on the widest allowed
-   directory that holds it, so neither `..` nor a symbolic link leads
-   out. A link along the path is followed only when it is relative and
-   stays inside; `os.Root` refuses absolute ones. When a link leads out
-   of the wider directory, a narrower allowed one is tried, so an allowed
-   directory that is itself a link works. A symbolic link as the file
-   itself, a directory, a FIFO or a device is refused. The file is
-   checked with `Lstat`, opened without blocking, and checked again on
-   the open file, so one swapped in between is `[conflict]` (§18 row 115).
-4. **What it sends.** At most 10 MiB, a tenth of gitlab.com's 100 MiB
-   attachment limit: far above a screenshot or a mock-up, and small
-   enough to hold in memory and send in one request. The bytes must
-   sniff as PNG, JPEG, GIF or WebP with `http.DetectContentType`, which
-   GitLab's Workhorse uses to set the type it serves; the refusal does
-   not say what the bytes are. The sniff keeps out what is not an image;
-   bytes after a valid header go too, and making such a file needs write
-   access to this machine. SVG is text that can carry script, and is
-   refused. The name sent is the file's base name, every character but
-   ASCII letters, digits, `.`, `-` and `_` made `_`, with the extension
-   of the sniffed type in place of its own. GitLab decides from the
-   extension whether Markdown embeds the upload and whether a private
-   project serves it without sign-in, so the extension has to agree with
-   the bytes (§18 row 113). No directory is sent. The image's metadata
-   goes as it is in the file, except that Workhorse removes a JPEG's,
-   keeping its size, resolution and orientation (§18 row 118).
-5. **The directories are the guard.** A planted comment can ask for an
-   upload of any image in the allowed directories to a project its
-   author maintains, with no comment for the person to notice: the POST
-   needs only read access to the project, and a Maintainer can list and
-   download every upload by id. So only the directories
-   `GITLAB_MCP_UPLOAD_DIRS` names are read, and the write allow-list
-   holds the project. From 3.0.0 the server asks nothing before an
-   upload (§4.12); a client's own approval does.
-6. **Who can open it.** The result names the project's visibility and
-   `link_opens_for`: `anyone_with_link` in a public project, and in a
-   private or internal one whose "Require authentication to view media
-   files" (`enforce_auth_checks_on_uploads`) is off; `project_readers`
-   when it is on; `unknown` when GitLab did not say (§18 row 112). The
-   project's Maintainers can list and download every upload by its id,
-   without the link (§18 row 116).
-7. **Sent once.** GitLab keeps an upload whether or not anything links
-   to it. A lost answer is `[ambiguous_outcome]` and no read settles it
-   (§4.5): the result says so, that a repeat would leave the first
-   upload, if it landed, with nothing linking to it, and to ask the
-   person before calling again.
+`get_file` escapes the file path and the ref alike, so a branch named
+`feature/x` and a file in a subdirectory each reach the route they name.
 
-A dry run reads and checks the image and the project and sends nothing.
-Like every write's, an upload's body is timed by its progress (§11), so
-a slow uplink does not cut a large image off mid-body. Logs never carry
-the path, the name or the bytes (§9.2).
+Rejected: a path built from raw strings at each call site.
+Cost: a proxy that decodes `%2F` breaks at most the first request of a
+call, which a numeric id avoids altogether.
 
-## 8. Tool surface
+### D-63 An issue or merge request is a project plus its `iid`
 
-105 tools. With the default toolsets: sixty-six by default,
-thirty-nine in read-only mode, eighty-two with Ship and Destructive
-both enabled. Every toolset and flag on registers all 105.
-Annotations come from `Kind` in one place (`CLAUDE.md` rule 14);
-`openWorldHint` is true where the result is visible to other people:
-every write but `add_todo`, `subscribe`, `mark_todos_done` and
-`update_review_comment`, whose effect only the account sees, marked `OwnOnly` on their spec in
-`register`.
-`_meta["anthropic/requiresUserInteraction"]` is set on `delete_label`,
-`delete_milestone` and `make_issue_public` only; for every other tool
-the client's own rules decide each call (§4.12).
+An issue or a merge request is a project plus its `iid`, named `iid` in
+every tool and described as "the number shown as #12 for issues and !12
+for merge requests". The project is required. Pipelines, jobs,
+discussions and notes use their own ids, which GitLab gives.
 
-| Tool | Kind | Toolset | Main operations |
-|---|---|---|---|
-| `get_me` | Read | default | `GET /user`, `/metadata`, token info |
-| `resolve_url` | Read | default | none, or one lookup |
-| `search_projects` | Read | default | `GET /projects`, `/groups/:id/projects` |
-| `get_project` | Read | default | `GET /projects/:id` (secret fields never decoded) |
-| `list_members` | Read | default | `GET /projects/:id/members/all` |
-| `find_users` | Read | default | `GET /users?search=` |
-| `search_issues` | Read | default | `GET /issues`, `/projects/:id/issues`, `/groups/:id/issues` |
-| `get_issue` | Read | default | `GET /projects/:id/issues/:iid`, `/related_merge_requests`, `/closed_by` |
-| `create_issue` | Adding | default | `POST /projects/:id/issues` |
-| `update_issue` | Write | default | `PUT /projects/:id/issues/:iid` |
-| `list_discussions` | Read | default | `GET …/issues|merge_requests/:iid/discussions` |
-| `list_item_events` | Read | default | `GET …/issues|merge_requests/:iid/resource_label_events`, `/resource_state_events`, `/resource_milestone_events`; an issue's `/resource_weight_events` |
-| `add_comment` | Write | default | `POST …/notes`, `…/discussions`, `…/discussions/:id/notes` |
-| `update_comment` | Write | default | `PUT …/notes/:id` (own notes) |
-| `resolve_discussion` | Write | default | `PUT …/issues|merge_requests/:iid/discussions/:id` |
-| `link_issues` | Write | default | `GET`/`POST …/issues/:iid/links` |
-| `unlink_issues` | Write | default | `DELETE …/issues/:iid/links/:id` |
-| `link_merge_requests` | Write | default | `GET`/`POST …/merge_requests/:iid/blocks` |
-| `unlink_merge_requests` | Write | default | `DELETE …/merge_requests/:iid/blocks/:id` |
-| `search_merge_requests` | Read | default | `GET /merge_requests`, `/projects/:id/merge_requests` |
-| `get_merge_request` | Read | default | `GET …/merge_requests/:iid`, `/approvals`, `/reviewers`, `/closes_issues`, `/related_issues`, `/blocks`, `/blockees` |
-| `list_mr_files` | Read | default | `GET …/merge_requests/:iid/diffs` |
-| `get_mr_diff` | Read | default | `GET …/merge_requests/:iid/diffs` |
-| `list_mr_commits` | Read | default | `GET …/merge_requests/:iid/commits` |
-| `list_mr_versions` | Read | default | `GET …/merge_requests/:iid/versions` |
-| `compare_mr_versions` | Read | default | `GET …/merge_requests/:iid/versions`, `GET /projects/:id/repository/compare` with `straight=true` |
-| `create_merge_request` | Write | default | `POST /projects/:id/merge_requests` |
-| `update_merge_request` | Write | default | `PUT …/merge_requests/:iid` |
-| `track_time` | Write | default | `POST …/issues|merge_requests/:iid/time_estimate`, `/reset_time_estimate`, `/add_spent_time`, `/reset_spent_time` |
-| `add_review_comment` | Write | default | `POST …/draft_notes` |
-| `list_review_comments` | Read | default | `GET …/draft_notes` |
-| `delete_review_comment` | Write | default | `DELETE …/draft_notes/:id` (own draft) |
-| `update_review_comment` | Write | default | `GET`/`PUT …/draft_notes/:id` (own draft) |
-| `publish_review_comment` | Write | default | `GET …/draft_notes/:id`, `PUT …/draft_notes/:id/publish` (own draft), `GET …/discussions` |
-| `submit_review` | Write | default | `POST …/draft_notes/bulk_publish` |
-| `rerequest_review` | Write | default | `GET …/reviewers`; GraphQL `mergeRequestReviewerRereview` (§4.10) |
-| `get_file` | Read | default | `GET …/repository/files/:path` |
-| `list_tree` | Read | default | `GET …/repository/tree` |
-| `list_branches` | Read | default | `GET …/repository/branches` |
-| `list_commits` | Read | default | `GET …/repository/commits` |
-| `get_commit` | Read | default | `GET …/repository/commits/:sha`, `/diff`, `/merge_requests` |
-| `compare_refs` | Read | default | `GET …/repository/compare` |
-| `list_tags` | Read | default | `GET …/repository/tags` |
-| `create_branch` | Write | default | `POST …/repository/branches` |
-| `create_commit` | Write | default | `POST …/repository/commits` |
-| `get_blame` | Read | default | `GET …/repository/files/:path/blame` |
-| `cherry_pick_commit` | Write | default | `POST …/repository/commits/:sha/cherry_pick` (refuses default and protected branches) |
-| `revert_commit` | Write | default | `POST …/repository/commits/:sha/revert` (refuses default and protected branches) |
-| `list_pipelines` | Read | default | `GET …/pipelines` |
-| `get_pipeline` | Read | default | `GET …/pipelines/:id`, `/jobs`, `/trigger_jobs` |
-| `list_jobs` | Read | default | `GET …/pipelines/:id/jobs` |
-| `get_job_log` | Read | default | `GET …/jobs/:id/trace`, in ranges |
-| `get_test_report` | Read | default | `GET …/pipelines/:id/test_report`, `/test_report_summary` when the report is too large |
-| `lint_ci` | Read | default | `GET …/ci/lint`; `POST …/ci/lint` when writes are on |
-| `list_job_artifacts` | Read | default | `GET …/jobs/:id/artifacts/tree` |
-| `get_job_artifact` | Read | default | `GET …/jobs/:id/artifacts/:path` (masked as a log) |
-| `list_labels` | Read | default | `GET …/labels` |
-| `list_milestones` | Read | default | `GET …/milestones`, group milestones |
-| `list_boards` | Read | default | `GET …/boards`, each board with its lists |
-| `search` | Read | default | `GET /search`, `/groups/:id/search`, `/projects/:id/search` |
-| `list_todos` | Read | default | `GET /todos` |
-| `mark_todos_done` | Write | default | `POST /todos/:id/mark_as_done` |
-| `add_todo` | Adding | default | `POST …/issues|merge_requests/:iid/todo` |
-| `subscribe` | Write | default | `POST …/issues|merge_requests/:iid/subscribe`, `/unsubscribe` |
-| `react` | Write | default | `GET`/`POST …/issues|merge_requests/:iid[/notes/:id]/award_emoji`, `GET`/`DELETE …/award_emoji/:id` (own reactions) |
-| `upload_file` | Adding | default | `POST /projects/:id/uploads` (an image from a directory `GITLAB_MCP_UPLOAD_DIRS` names; never repeated) |
-| `merge_merge_request` | Ship | default | `PUT …/merge_requests/:iid/merge` |
-| `cancel_auto_merge` | Ship | default | `POST …/merge_requests/:iid/cancel_merge_when_pipeline_succeeds` (reads the answer's `status`; nothing sent without an auto-merge) |
-| `approve_merge_request` | Ship | default | `POST …/merge_requests/:iid/approve` |
-| `unapprove_merge_request` | Ship | default | `POST …/merge_requests/:iid/unapprove` |
-| `apply_suggestions` | Ship | default | `PUT /suggestions/:id/apply`, `/suggestions/batch_apply` (refuses the default and protected source branches; never repeated) |
-| `rebase_merge_request` | Ship | default | `PUT …/merge_requests/:iid/rebase` (takes the head `sha`) |
-| `move_issue` | Ship | default | `POST …/issues/:iid/move` (never to a more visible project) |
-| `run_pipeline` | Ship | default | `POST …/pipeline` |
-| `run_merge_request_pipeline` | Ship | default | `POST …/merge_requests/:iid/pipelines` (never for a fork's merge request) |
-| `retry_pipeline` | Ship | default | `POST …/pipelines/:id/retry` |
-| `retry_job` | Ship | default | `POST …/jobs/:id/retry` |
-| `play_job` | Ship | default | `POST …/jobs/:id/play` |
-| `cancel_pipeline` | Ship | default | `POST …/pipelines/:id/cancel` |
-| `delete_branch` | Destructive | default | `DELETE …/repository/branches/:branch` (refuses default, protected and unmerged unless `unmerged: true`) |
-| `delete_comment` | Destructive | default | `DELETE …/notes/:id` (own notes) |
-| `make_issue_public` | Destructive | default | `GET`, `PUT /projects/:id/issues/:iid` (`confidential: false`) |
-| `list_wiki_pages` | Read | wiki | `GET …/wikis` |
-| `get_wiki_page` | Read | wiki | `GET …/wikis/:slug` |
-| `save_wiki_page` | Write | wiki | `POST`/`PUT …/wikis` |
-| `delete_wiki_page` | Destructive | wiki | `DELETE …/wikis/:slug` |
-| `list_snippets` | Read | snippets | `GET /snippets`, `…/snippets` |
-| `get_snippet` | Read | snippets | `GET …/snippets/:id`, `/raw` |
-| `create_snippet` | Adding | snippets | `POST …/snippets` (private) |
-| `update_snippet` | Write | snippets | `PUT …/snippets/:id` (own snippets; takes `updated_at`; never visibility) |
-| `delete_snippet` | Destructive | snippets | `DELETE …/snippets/:id` (own snippets; `If-Unmodified-Since`) |
-| `list_releases` | Read | releases | `GET …/releases` |
-| `get_release` | Read | releases | `GET …/releases/:tag` |
-| `create_release` | Ship | releases | `POST …/releases`, with asset links into the project |
-| `create_tag` | Write | releases | `POST …/repository/tags` (refuses protected names) |
-| `delete_tag` | Destructive | releases | `DELETE …/repository/tags/:name` (refuses protected tags) |
-| `create_label` | Adding | planning | `POST …/labels` |
-| `update_label` | Write | planning | `PUT …/labels/:id` (takes the label's `version`) |
-| `delete_label` | Destructive | planning | `DELETE …/labels/:id` |
-| `create_milestone` | Adding | planning | `POST …/milestones` |
-| `update_milestone` | Write | planning | `PUT …/milestones/:id` (takes `updated_at`) |
-| `delete_milestone` | Destructive | planning | `DELETE …/milestones/:id` |
-| `list_environments` | Read | deployments | `GET …/environments` |
-| `list_deployments` | Read | deployments | `GET …/deployments` |
-| `list_events` | Read | activity | `GET /events`, `…/events` |
+The `iid` is the number people see. GitLab's REST reference says that
+where a resource has both, "the iid field is usually used instead of id
+to fetch the resource"
+([REST API](https://docs.gitlab.com/api/rest/)). The global id is never
+asked for, so a model cannot pass the number it read as `#12` into a
+field that means something else.
 
-The staleness gate holds those counts against the table.
+`resolve_url` turns any GitLab web URL on the instance, an issue, a
+merge request, a file at a line, a commit, a pipeline, a job, a compare
+or a wiki page, into these arguments, and says which kind it was. A URL
+on another host is `[invalid]`.
 
-Every write tool, of any kind, takes `dry_run`, which returns
-what would be sent — and, for a body, what the guard would do — without
-writing.
+Rejected: the global id; an optional project, which sent a model in
+another server into a loop of 404s.
+Cost: every call names the project as well as the number, so a model
+that holds only a link calls `resolve_url` first.
 
-Resources, for clients that attach rather than call:
+### D-64 Labels resolve by exact name and are never created on assignment
+
+Users are given by username and resolved to ids by the server; an
+unknown username is `[invalid]`, naming it. Labels are given by name,
+exact, scoped labels included, and a name that does not exist is
+`[invalid]`, naming it. Milestones are given by title within the project
+and its ancestor groups, and two matches are `[ambiguous]` with both
+ids.
+
+GitLab creates a label it does not know when one is assigned: "If a
+label does not already exist, this creates a new project label and
+assigns it" ([issues](https://docs.gitlab.com/api/issues/)). A typo or a
+persuaded call would then add a label to the project that every issue
+shares, and planning writes are a toolset of their own (D-32). Exact
+names keep an assignment from changing the project's configuration on
+the side.
+
+Rejected: creating a missing label, as GitLab does on assignment.
+Cost: a call that names a new label fails until someone creates it,
+with `create_label` in the `planning` toolset or in GitLab.
+
+### D-65 No redirect is followed and no URL from a response is called, but a same-origin next page or moved project
+
+The HTTP client follows no redirect, and no URL taken from a response
+body is called. Two exceptions are each held to the API root on the
+instance's origin. A `Link: rel="next"` header is followed for keyset
+paging (D-55). A moved project's GET is requested once more at the
+address GitLab gives, with the request's query kept.
+
+A redirect followed blindly carries the token to wherever it points,
+and another GitLab server shipped exactly that. A URL in a response body
+is content someone chose (D-15). Both exceptions are what GitLab's API
+itself prescribes: the `Link` header is how its keyset paging continues
+([REST API](https://docs.gitlab.com/api/rest/)), and a renamed project's
+old path answers a GET with 301 to the project's numeric id. A write to
+a moved project answers 405, so only a GET is re-requested. The client
+replaces only the project segment and forgets its cached resolution.
+
+A snippet's other files are read by their own route, never by the
+`raw_url` a response gives.
+
+Rejected: following a redirect, which carries the token to another
+host.
+Cost: a moved project costs a second request on its first read, and a
+write to it fails until the caller uses the new path or the numeric
+id.
+
+### D-66 Sign-in is the person's own public OAuth application over a loopback redirect with PKCE
+
+Sign-in is the person's own OAuth application on gitlab.com, registered
+with the redirect `http://127.0.0.1/callback`, Confidential unticked,
+and the scope the mode needs. `gitlab-mcp login --client-id` prints the
+scopes, opens the consent page, and listens on `127.0.0.1` at a random
+port, with PKCE S256, a 64-character verifier and `state`. A callback
+without the login's `state` is refused on its own while the login keeps
+waiting. `--no-browser` prints the URL and the exact `ssh -L` line.
+
+This is the native-app flow RFC 8252 describes, and GitLab accepts it
+for a public application without a secret
+([OAuth 2.0 API](https://docs.gitlab.com/api/oauth2/)). Doorkeeper,
+GitLab's OAuth provider, ignores the port when both the registered and
+the requested URI are loopback IP literals, as RFC 8252 §7.3 asks
+([`uri_checker.rb`](https://github.com/doorkeeper-gem/doorkeeper/blob/v5.9.3/lib/doorkeeper/oauth/helpers/uri_checker.rb)),
+so a random port matches one registered redirect. `localhost` is not an
+IP literal and gets no such relaxation. The generated
+[setup.md](setup.md) says exactly what to enter.
+
+Rejected: a `localhost` redirect; a confidential application with a
+secret; a `--client-secret` naming a client file, since GitLab offers
+none; an RFC 8707 `resource`, which rewrites the scope to `mcp`.
+Cost: the person registers an application once with Confidential
+unticked, which GitLab ticks by default. A confidential one answers
+`invalid_client`, and `login` says to untick it.
+
+### D-67 A refresh token is spent once, under a cross-process lock
+
+A refresh runs under an OS file lock in the config directory. The new
+pair is written to the store before the lock is released and before it
+is used. A process that gets `invalid_grant` re-reads the store and uses
+the pair another process wrote before it reports `[auth]`.
+
+GitLab's refresh "Invalidates the existing `access_token` and
+`refresh_token`" and sends new ones
+([OAuth 2.0 API](https://docs.gitlab.com/api/oauth2/)). A second
+refresh with the old token is `invalid_grant`. Two clients, Claude
+Desktop and Claude Code say, run two server processes on one keyring
+entry. Without the lock both spend the same refresh token, one loses,
+and the person is signed out. `expires_in` is read, never assumed.
+
+A store unreadable under the lock is refused rather than the held
+refresh token spent, and a call canceled mid-refresh still stores the
+rotated pair. A server that is stopped waits for a refresh in progress
+to be stored before it exits. The lock's wait is bounded.
+
+Rejected: a refresh without a lock, each process spending the token it
+holds.
+Cost: a kill during a refresh still loses the pair, since GitLab's
+rotation and the keyring's save cannot be one step.
+
+### D-68 A refused access token is dropped, and a read is sent once more
+
+An access token GitLab refuses as `invalid_token` is dropped. The next
+token comes from the store, refreshed if the store holds the refused
+one, and a read is sent once more with it. A create is not.
+
+A token can die before its expiry: a `logout` in another process, or
+on another machine, revokes it at GitLab. "An expired or revoked token
+gets the same challenge with the `invalid_token` error"
+([REST authentication](https://docs.gitlab.com/api/rest/authentication/)),
+in both the body and `WWW-Authenticate`.
+Dropping it on that marker lets the server pick up the pair another
+process stored, without asking the person to log in again.
+
+A 401 without the marker is not the token. GitLab answers a malformed
+token with a plain 401, and a merge the role does not allow with a 401
+too (D-74). Dropping the token then would discard a good one, so only
+the marker triggers it.
+
+Rejected: dropping the token on any 401, since a malformed token and a
+refused merge both answer a plain 401.
+Cost: a create refused for its token is not sent again. The caller sees
+`[auth]` and calls once more after the new token is in place.
+
+### D-69 Startup reads the token's scopes and never refreshes
+
+At start, the server reads the token's granted scopes once, when the
+access token is still fresh, bounded by the smaller of 15 seconds and
+the HTTP timeout. It never refreshes before it serves. With the access
+token due, the scopes the last login recorded stand, and the first tool
+call refreshes. A start with no scopes recorded refreshes to read them,
+and so does one given `GITLAB_MCP_REFRESH_TOKEN`, whose grant the
+login's record does not describe.
+
+Registration depends on the granted scopes (D-31), so they must be
+known before the tool list. A refresh is the wrong way to learn them. A
+host kills servers it started before the handshake, and GitLab revokes
+the old pair the moment it rotates (D-67). A server killed between
+GitLab rotating the pair and the keyring storing it leaves the profile
+signed out. `/oauth/token/info` returns an access token's scopes
+without spending the refresh token
+([OAuth 2.0 API](https://docs.gitlab.com/api/oauth2/)).
+
+Startup reads neither `/metadata` nor `/user`, since nothing is gated by
+version (D-02).
+
+Rejected: refreshing at startup.
+Cost: with the access token due, the last login's scopes stand until
+the first call refreshes, so a scope removed at GitLab since then shows
+only on that call.
+
+### D-70 The server starts and serves signed out, and errors surface per call
+
+The server starts and serves without a sign-in. It lists its tools,
+and each call answers `[auth]`, naming `login`. `doctor` and
+`--dump-schemas` work signed out. An unreachable instance still gets a
+server. Every failure at startup is logged, and the server starts
+anyway. A disconnect is exit 0.
+
+A client that fails to start a server shows it as broken, with the
+reason in a log the person rarely opens. A server that starts puts the
+reason in front of the model on the first call, `[auth]` naming the
+command that fixes it, and the model can say so. The schema dump needs
+no account, so the gates and the release can build the surface from a
+clean machine.
+
+The smoke gate starts the binary with no credentials and holds a call
+to `[auth]`, and closes stdin the moment its last message is written to
+hold the clean exit.
+
+Rejected: refusing to start without a sign-in.
+Cost: a token whose scopes cannot serve the configured mode is the one
+fatal outcome at startup (D-31), so that misconfiguration still shows as
+a server that will not start.
+
+### D-71 Credentials resolve environment, then keyring, then an owner-only file
+
+The token pair is resolved from the environment, then the OS keyring,
+then a file. `GITLAB_MCP_REFRESH_TOKEN` is for CI and automation. The
+keyring, Secret Service, Keychain or Credential Manager, holds a pair per
+profile under the service `gitlab-mcp`. The file fallback is restricted
+to the account that wrote it, with a protected access list on Windows,
+and warns on every use.
+
+An explicit setting wins, so an environment token is never shadowed by
+a stale stored one. The keyring is where the operating system protects
+a secret, and the file exists for a machine without one, such as a
+headless Linux box. On Windows a file mode alone decides only the
+read-only attribute, so a file written 0600 is readable by every account
+on the machine; `internal/fileperm` sets the access list instead.
+
+A keyring save deletes a stale plaintext copy. A keyring that refuses a
+save has its older entry deleted, so an old pair is never left in
+charge. A pair rotated from an environment token is stamped with that
+value's hash, so the next start uses the stored pair rather than the
+revoked one.
+
+Rejected: keyring, then file, then environment.
+Cost: a token from `GITLAB_MCP_REFRESH_TOKEN` is outside `logout`'s
+reach. The person revokes it in GitLab.
+
+### D-72 `logout` revokes at GitLab and names the profiles that share the application
+
+`gitlab-mcp logout` revokes the token at GitLab's `/oauth/revoke`, then
+deletes it from every store. It waits for a refresh in progress, so it
+revokes the pair that ends up stored. It names the other profiles that
+signed in with the same application.
+
+Deleting the local copy alone would leave a live token at GitLab, valid
+until it expires, wherever it had been copied. GitLab's revoke endpoint
+takes a public application's `client_id` without a secret
+([OAuth 2.0 API](https://docs.gitlab.com/api/oauth2/)), and revoking an
+access token this way kills its refresh token too.
+
+Profiles that share an application share its fate. Renewing the
+application's settings or deleting it at GitLab signs them all out, so
+`logout` says which they are rather than leaving the person to find
+out.
+
+Rejected: deleting the stored token without revoking it.
+Cost: renewing or deleting the application signs the other profiles out
+too.
+
+### D-73 Configuration is `GITLAB_MCP_*`, read through one reader and validated once
+
+Every setting is a `GITLAB_MCP_*` environment variable, and most have a
+flag bound to the same name. A flag on the command line wins over the
+environment, and the environment over the default. Every read goes
+through `config.Lookup`, which trims the spaces around a value, so a
+setting of spaces alone is unset. `Build` validates once and reports
+every problem together, so a bad configuration fails before the server
+announces itself. A removed setting that is still on is refused, naming
+its replacement.
+
+An MCP client passes a stdio server only a command, arguments and an
+environment, so the environment is the source of truth. The prefix is
+`GITLAB_MCP_` because CI jobs already set `GITLAB_CI`, `GITLAB_USER_LOGIN`,
+`GITLAB_FEATURES` and more
+([predefined variables](https://docs.gitlab.com/ci/variables/predefined_variables/)),
+and other GitLab tools read `GITLAB_TOKEN`.
+
+`config` exports the registry of every variable, which the staleness
+and `mcpb` gates read. A scan of `cmd/`, `internal/` and `scripts/`
+refuses a read that does not go through `Lookup`, by any name it
+resolves, with a floor on the reads it found.
+
+Rejected: the `GITLAB_` prefix; ignoring a removed setting, which would
+allow what its owner set it to stop.
+Cost: a new setting lands in the registry, the configuration page and
+the bundle in one change, or a gate fails.
+
+### D-74 Every error is `[class] message` from a closed vocabulary
+
+Every tool error is `[class] message`, and the class is from a closed
+vocabulary declared in `internal/gapi/errors.go`. Each class's comment
+says what it means and what the caller should do. `make classes` holds
+the `Class` constants, the `Classes` list and the classes the code
+emits to one set, both ways, with a floor.
+
+The class tells the caller the next step, which GitLab's status codes
+do not. A project the token cannot see answers 404, like one that does
+not exist. A stale file witness answers 400, a moved head 409. A merge
+the role does not allow answers "401 Unauthorized This user does not
+have permission to accept this merge request"
+([merge requests](https://docs.gitlab.com/api/merge_requests/)). Each
+class is kept apart from another only where it asks for a different
+action: `stale` asks for a re-read, `ambiguous_outcome` for a look and
+never a repeat, `blocked` names a guard and its override.
+
+A 401 that does not call the token invalid is `[auth]`, with a message
+naming the role as the likely cause. Only `approve_merge_request` and
+`cancel_auto_merge` remap it to `[forbidden]`, after a read shows the
+token works.
+
+Rejected: six classes, since `stale`, `ambiguous_outcome`, `forbidden`
+beside `auth`, `blocked`, `rate_limited` and `unexpected` each ask for a
+different action.
+Cost: the vocabulary and the code change in the same commit, or the
+gate fails. A 401 on a valid token is `[auth]` on most writes (#96).
+
+### D-75 Requests are paced by a per-instance rate model, with buckets for GitLab's known application limits
+
+Requests are paced by a per-instance token bucket and a cap of four
+requests in flight. The bucket starts at 2,000 requests a minute,
+gitlab.com's limit for an authenticated user on Ultimate. Free allows
+100 and Premium 1,250
+([GitLab.com rate limits](https://docs.gitlab.com/user/gitlab_com/rate_limits/)).
+`RateLimit-Remaining` and `RateLimit-Reset` lower the bucket when
+present, and are never trusted to be present. Known application limits
+have their own buckets: notes are paced at 60 a minute. `get_me` reports
+the last reading.
+
+The server cannot read the account's plan, so it cannot start from the
+right limit. Waiting before a request is cheaper than earning a 429 and
+backing off, and the headers correct the bucket on the first answers
+that carry them. The application limits matter because the headers
+describe only the instance throttles: an application limit answers 429
+while `RateLimit-Remaining` still shows quota. A review publishes its
+comments in one call for the same reason (D-52).
+
+Rejected: trusting `RateLimit-Remaining` to predict a 429; conditional
+reads, since gitlab.com counts every 304 against the limit.
+Cost: which limit a request will hit cannot be known before it hits. On
+Free or Premium the bucket starts above the plan's limit, and a burst
+learns it from the headers or a 429 (#100).
+
+### D-76 Every request is bounded by progress timeouts and a 32 MiB body cap
+
+Every request is bounded by progress, not by a single deadline. A
+response must start within the HTTP timeout, then a stall guard watches
+each read of the body. A request body is timed by its progress: the
+header timeout starts again whenever more of it is sent, so it times a
+stall and then the wait for the answer. A response body is capped at
+32 MiB. `GITLAB_MCP_HTTP_TIMEOUT` bounds a call's time without progress,
+between 1 second and 10 minutes.
+
+A deadline across the whole exchange cuts a slow uplink off mid-body,
+and a large commit or image upload cut off after it may have landed is
+`[ambiguous_outcome]` (D-34). Timing
+progress lets a large body through on a slow line while a stalled one
+still fails. The cap keeps one answer from taking the process's memory.
+
+The body can be given again, as Go's HTTP/2 transport asks for a stream
+the server refused. Job logs are read in windows, so the cap never
+meets them (D-56).
+
+Rejected: a header timeout run once across the whole body.
+Cost: a create whose answer is over 32 MiB is `[ambiguous_outcome]`,
+settled by reading, and a report over the cap falls back to its summary
+(D-60).
+
+### D-77 A reply carries `structuredContent` and a different text rendering
+
+Every reply carries both halves: `structuredContent` under the tool's
+output schema, and a readable rendering in `content`. The SDK is given
+`Content`, so it does not add the JSON as a second text block.
+
+The specification asks for both: "For backwards compatibility, a tool
+that returns structured content SHOULD also return the serialized JSON
+in a TextContent block"
+([tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)).
+The text here is a rendering of the same facts rather than the same
+bytes. Clients differ in which half they show a model, so each half
+must carry every fact. A program reads the fields. A model reads the
+rendering, which carries the boundaries (D-13) and the budgets (D-54).
+The JSON twice would spend the model's context on what it already has.
+
+Every output has a schema, with `date-time` for times, and a test holds
+the two halves to differ.
+
+Rejected: the same bytes twice, in `content` and in
+`structuredContent`.
+Cost: content text is in both halves, and the structured one names it in
+`untrusted_*` fields, so a long description is carried twice.
+
+### D-78 The released tool surface is a contract
+
+The released tool surface is a contract. Tools keep their names, input
+and output fields, and resource templates their URIs. `schema-diff`
+dumps the whole surface with every switch and toolset on, `_meta`,
+annotations and output schemas included. It compares the dump with the
+last tag, built in a git worktree that is always removed, or with
+`testdata/schema-baseline.json` before the first tag. It fails on a
+removed tool, a lost input or output field, or a new required input,
+unless a **Breaking:** entry for a new major release names the tool.
+
+A caller written against a release keeps working, or the release says
+it will not. Go reaches a new major version only through a new module
+path ([major version suffixes](https://go.dev/ref/mod#major-version-suffixes)),
+so a break also moves the module to `/vN`.
+
+On a pull request, `schema-ack` builds the merge-base and the head and
+needs each changed item named in a commit footer: `BREAKING CHANGE:`
+for a break of the last tag, `SCHEMA-CHANGE:` for the rest. The
+acknowledgment is an empty commit, never an amend.
+
+Rejected: measuring a pull request from the base SHA its event recorded,
+which is stale in stacked pull requests.
+Cost: a break needs a major release with a **Breaking:** entry naming
+the tool, and a `/vN` module path `go install` reaches.
+
+### D-79 Input schemas stay flat, and arguments are decoded leniently
+
+Input schemas stay flat: no top-level `anyOf`, shallow nesting, every
+property typed. Arguments are decoded leniently. An array or an integer
+sent as JSON inside a string is decoded. `null` and `""` for an optional
+input mean absent. A required input is never relaxed. A debug line names
+the inputs adjusted, never their values.
+
+Models send `"[1, 2]"` for an array and `"5"` for an integer, and a
+strict decoder fails a call the model meant correctly. Clients and
+models handle deep or branching schemas unevenly, and a flat one is the
+form every client renders and every model fills. An enum refusal names
+the allowed set, sorted, so a model can correct itself in one step.
+
+Lenient decoding needs the SDK's untyped `AddTool`, so `register`
+validates the arguments itself after decoding. Review holds the flat
+shape. No gate checks it.
+
+Rejected: relaxing a required input.
+Cost: an empty value cannot clear a field, since `""` means absent, so
+updates take `clear_*` inputs, as `update_issue`, `update_label` and
+`update_milestone` do.
+
+### D-80 Every tool and input is described, and a witness says it is not a retry signal
+
+Every tool and every input has a description. A witness input's
+description says it is NOT a retry signal. The `descriptions` gate reads
+the `--dump-schemas` output, the surface a client receives, and fails on
+an empty dump, a missing description, more than one `IMPORTANT:` in a
+description, or a witness without that phrase. A test holds the house
+style.
+
+A model chooses tools and fills arguments from the descriptions alone.
+A witness answered `[stale]` invites a model to read the new value and
+send the same write again, which turns the guard into a step it routes
+around (D-36). The phrase tells it the witness records what the caller
+read, and a `[stale]` asks for a fresh look at what changed, not a
+fresh value.
+
+The gate reads the dump rather than the Go registry, so it checks what
+`register` actually published, `_meta` and generated inputs included.
+
+Rejected: reading the Go registry rather than the dump.
+Cost: every new input needs a description, and every witness the phrase,
+before `make check` passes.
+
+### D-81 Resources carry the same text as their tools
+
+Three resource templates serve clients that attach rather than call:
 `gitlab://projects/{id}/issues/{iid}`,
 `gitlab://projects/{id}/merge_requests/{iid}` and
-`gitlab://projects/{id}/jobs/{job}/log` carry the same text as
-`get_issue`, `get_merge_request` and `get_job_log` under the same budget
-and boundaries.
+`gitlab://projects/{id}/jobs/{job}/log`. Each carries the same text as
+`get_issue`, `get_merge_request` and `get_job_log`, under the same
+budget and the same boundaries, because the same service call and the
+same renderer produce it.
 
-### 8a. Every published operation, with a verdict
+Some clients let a person attach a resource to a conversation instead
+of letting the model call a tool. A resource with its own rendering
+would be a second path for content into the model, one that could skip
+the boundary (D-13), the hidden-text count (D-14), the masks (D-16) or
+the budget (D-54). One path means a fix to any of them reaches both.
 
-The source is `openapi_v3.yaml` at a GitLab release tag, fetched by
-`api-diff` into `testdata/openapi-v3.snapshot.json` (operations: verb,
-path, tag, lifecycle) and never edited by hand. Verdicts live in
-`testdata/api-coverage.tsv`, one row per used, gated or deferred
-operation, plus prefix write-offs, each with a reason and the number of
-operations it covers. The gate fails on an operation with neither, a
-client call with no row, and a row or rule matching nothing.
+A template takes `{x}`, never `{+x}`, so a project path cannot carry a
+slash into another route. A resource that does not exist answers
+`CodeInvalidParams` with a `[class]` message, as a tool error would.
+The smoke gate lists the templates and reads one through the shipped
+binary.
 
-The committed snapshot is v19.4.1-ee, 1,856 operations; the TSV holds
-368 exact rows and 219 prefix rules (2026-10-22), and the gate reports
-the counts.
-The groups below are the design's verdicts; the TSV is the record.
+Rejected: a resource with its own rendering of the item.
+Cost: a resource takes no options, so a continuation offset, a byte
+window or `failed_only` needs the tool.
 
-GraphQL operations sit outside the snapshot, since GitLab commits no
-GraphQL schema (§18 row 27). Each one used is listed here with why REST
-cannot do it (§4.10), and `api-coverage` holds this table against the
-root field of every `mutate` call, both ways:
+### D-82 Green gates are not done: a live run drives every tool option, and a person reads its transcript
 
-| Operation | Tool | Why not REST |
-|---|---|---|
-| `mergeRequestReviewerRereview` (mutation) | `rerequest_review` | No REST route re-requests a review: GitLab master `4119fde2` (2026-10-23) has none in `lib/api` or `ee/lib/api`, and the published merge request API documents only `GET …/reviewers` (§18 row 128) |
+Green gates are not done. `make live` drives the shipped binary over
+stdio against gitlab.com, and drives every tool and every option. It
+records what it sent per tool option, and `make live-cover` fails on an
+option no live step drove, unless `testdata/live-cover.tsv` waives it as
+undrivable or undriven with a reason. A stale waiver fails, and so does
+an empty record. A person reads the transcript before the run counts.
+[CONTRIBUTING.md](../CONTRIBUTING.md#the-live-run) says how to run it.
 
-| Group (path prefix) | Verdict |
-|---|---|
-| user, metadata, version | Used: `get_me`, login, `doctor`. `/version` written off as deprecated for `/metadata`. Personal access token `self` routes written off with the token path (§10) |
-| projects (read), groups (read), members (read), users (search) | Used for navigation. Project create, update, fork, transfer, archive, share, import and export written off: administration |
-| issues, issue notes and discussions | Used, starting and resolving threads, links, moves (Ship), time tracking, subscribing, to-dos, emoji reactions, resource events and linked items included. Clone deferred; delete written off (Owner-only, permanent) |
-| merge requests, notes, discussions | Used, time tracking, subscribing, to-dos, emoji reactions, resource events, linked items and dependencies included; rebase and running a merge request pipeline gated as Ship; `/changes` written off as deprecated for `/diffs`; merge-request delete written off |
-| draft notes | Used: the review path |
-| approvals (merge-request level) | Used: approve, unapprove, state. Approval rules and project approval settings written off: governance configuration, Premium |
-| repository files, tree, commits, branches, tags, compare | Used, blame included. Cherry-pick and revert used as Write behind the protected-branch guard (§17.13); tag create gated under `releases`, tag delete Destructive. Raw archive deferred; commit statuses written off (a CI integration's surface); "delete merged branches" written off |
-| protected branches and tags | Read only, by `create_commit`'s and `create_tag`'s guards; the protected-tag listing, written off until phase 6, is read for `create_tag` by §17.13. Every write written off |
-| pipelines, jobs, CI lint | Used, trigger jobs, test reports and one text file of a job's artifacts included; the deprecated `bridges` listing written off for `trigger_jobs`, which GitLab serves with the same handler. Pipeline variables written off with CI variables: the listing carries their values. Pipeline delete written off: it destroys logs and artifacts and is no assistant task, and GitLab's own server shows how easily it becomes a default. Whole artifact archives deferred; artifact delete written off |
-| pipeline schedules, triggers, variables, secure files | Written off: CI configuration and secrets |
-| labels, milestones | Read used; a project's own create, update and delete gated under `planning`, deletes Destructive. Group label and milestone writes, promote and subscribe deferred; the label routes addressed without a name written off as deprecated |
-| search | Used |
-| todos | Used |
-| wikis (project) | Used under the `wiki` toolset. Group wikis deferred (Premium) |
-| snippets | Used under `snippets`, update and delete included, the delete Destructive. The public listing, comments and reactions deferred |
-| releases, release links | Used under `releases`, with asset links only at create and only into the project itself; update and delete, of a release or a link, written off |
-| environments, deployments | Read used under `deployments`. Stop, delete and deployment approval written off: they act on running infrastructure |
-| events | Used under `activity` |
-| epics, iterations, work items, vulnerabilities, audit events, compliance, security policies | Deferred (§17.11): Premium or Ultimate, and several are GraphQL-first |
-| container registry, packages, dependency proxy, virtual registries | Deferred |
-| runners, clusters, agents, Kubernetes proxy | Written off: infrastructure administration |
-| deploy keys, deploy tokens, access tokens (project, group, personal other than `self`) | Written off: credential administration |
-| hooks, integrations, system hooks, import, export, mirrors, admin, application settings, applications, license, broadcast messages, geo, sidekiq, features | Written off: administration |
-| `/internal/*` and experimental routes | Written off: not public API, marked by path and lifecycle |
-| AI, editor and chat features; feature flags; topics; namespaces; badges; notification settings; the CI catalog; job-token scope; resource groups | Written off: product administration or features with no assistant task in a project |
-| issue boards | Read used: the project's boards, which carry their lists. One board or list by id, and every board and list write, deferred |
-| suggestions | Gated: `apply_suggestions`, Ship |
-| Markdown uploads | `POST /projects/{id}/uploads` used by `upload_file` (§7.10). It was written off with the rest of `/projects/{id}/uploads*` as administration until 2026-10-07, when the maintainer moved it to used (issue #50): it is the attachment path every comment box uses, and any account that can read the project may call it. Listing, reading by id and deleting uploads stay written off: they need the Maintainer role. Workhorse's authorize route is internal |
-| error tracking and alerts, Markdown rendering, templates, merge trains, DORA and analytics | Deferred: no tool in §8 yet (§17.11 for the Premium ones) |
-| navigation reads no tool uses yet (`GET /groups`, `/users/{id}` and the like) | Deferred until a tool needs them |
+A unit test asserts the behavior the code was written to have, and every
+fake in `internal/gapi/gitlabtest` is written from what was believed
+about GitLab (D-07). Only a live run can show the belief wrong. A new
+merge request's `updated_at` moves a second after the create answers. A
+commit's move action sent with empty content empties the file it moves.
+Adding an assignee leaves `updated_at` in place. A unit suite written
+from the opposite belief passes on each, and only gitlab.com says
+otherwise.
 
-### 8b. Field coverage
+A change to sign-in, the quick-action guard, diff positions, a witness
+or an API response shape gets a live run with its transcript read
+before it counts. The release checklist asks for one.
 
-`api-fields` holds both directions for every operation a client method
-calls: each query parameter and body field sent exists on it, and each
-response field decoded exists in its schema or carries an omission
-verified live with a reason — 526 operations publish no response
-schema, so the omission list is expected to be long and is itself
-floored. Two are called out now: `get_project` never decodes
-`runners_token` or any field whose name ends `_token`, and the gate
-asserts no wire struct carries one; and a merge request's
-`detailed_merge_status` is decoded as a string, never a closed enum,
-because GitLab adds values.
+Rejected: green gates as done.
+Cost: a run needs gitlab.com, a stored sign-in and a group the person
+owns, and a person reads the transcript, so it is run by hand and not in
+CI. Some behaviors no step reaches yet (#97).
 
-## 9. Confidentiality, security, safety
+### D-83 The live driver reads only what it wrote, in scratch projects it makes and deletes
 
-Nothing deployer-specific ever enters the repository — `CLAUDE.md` rule
-1 lists it. A GitLab instance mixes three payloads: other people's
-words, an organization's code, and CI output that can carry secrets.
+The live driver creates private scratch projects named for the run,
+under a group the person names with `-namespace` and owns. It writes its
+own files, branches, issues, comments, merge requests and pipelines
+there, and every read it makes is inside what it created. Its searches
+carry the run's own word. At the end it deletes the projects, unless
+`-keep` is set. A test holds every step to the scratch project, and
+another holds every assignee, reviewer and to-do a write names to the
+run's own account.
 
-### 9.1 What may never enter the repository, and what stops it
+The account a live run signs in with can see real organizations' code
+and real people's words. A read outside the scratch projects would put
+them in a transcript a person then shares, and a write outside them
+would change someone's work. Confining the driver to what it made keeps
+the run inside D-06 whatever account it uses.
 
-Two structural rules, not matters of care:
+The driver is not the server. It runs only under the `live` build tag,
+and nothing it does widens what a tool may do.
 
-1. **Fixtures are generated, never recorded.** `gitlabtest` builds its
-   instance from code: users from a fixed synthetic list, groups and
-   projects under `example`-prefixed namespaces, hosts at
-   `gitlab.example.com` and `.invalid`, bodies and diffs from templates,
-   ids from counters in a fixed range. A fixture copied from a live
-   response is itself the leak, whatever a scanner says about it.
-2. **The live driver reads only what it wrote.** It creates a private
-   project named for the run under a namespace the maintainer names on
-   the command line, writes its own files, issues, merge requests and
-   pipelines there, and every read it makes is inside that project; it
-   never lists or searches outside it. The transcript records the
-   namespace in redacted form only. At the end it deletes the project,
-   unless `-keep` is set; project deletion is the one write the driver
-   has that the server does not (§8a). On gitlab.com that deletion is
-   delayed thirty days, and the driver says so.
+Rejected: driving the tools against an existing project, whose content
+would reach the transcript.
+Cost: project deletion is the one write the driver has that the server
+does not, and gitlab.com deletes a project only after a 30-day delay
+([GitLab.com settings](https://docs.gitlab.com/user/gitlab_com/)), so
+scratch projects linger in the group meanwhile.
 
-The leak gate is an allow-list anchored on shapes the server's own
-generated fields cannot take: an `@` with a dotted domain outside the
-example and invalid set; an `https://` host outside that set; any GitLab
-token prefix; `gitlab.com/` followed by a namespace outside the fixture
-set; the OAuth shapes. The exemption list is asserted, so a new entry is
-an argued decision.
+### D-84 The drivers print only through one redacting writer
 
-### 9.2 Logging
+The live driver and the evals print only through one redacting writer,
+which masks hosts, paths, the account and ids on every line. The
+`transcript` gate holds it. A driver cannot reach `os.Stdout`,
+`os.Stderr` or `log.*`. Exactly one package is exempt, with exactly one
+write site, which redacts. A driver that is not listed fails, a listed
+directory that is missing fails, and the gate has a floor on what it
+read.
 
-Method, tool, outcome, duration, rate bucket, and an id truncated to
-six characters. Never: a host, a namespace or project path, a branch, a
-file path, a title, a body, a username, an email or a search term. All
-of those reach a log through a request URL, so transport errors are
-stripped of path and query before logging. `TestLogsNeverCarryThePayload`
-drives every registered tool with canary values in every string
-argument, at debug, and asserts the log is non-empty and carries none
-of them.
+A transcript is read by a person and shared, in a pull request or a bug
+report. The drivers run against a real account, so the names in their
+output are a real organization's (D-06). Redacting where text is
+printed, once, means a new print cannot forget it. Redacting in each
+driver would leave the leak to the one print nobody reviewed.
 
-### 9.3 What a tool result carries
+The redactor masks before it truncates, so a cut value is still masked,
+and it matches a value that is already masked.
 
-The payload. The result is the one place it is supposed to go, so the
-rule there is §4.1's rather than §9.2's: marked as untrusted, token
-shapes masked in logs, and nothing the server adds is phrased as
-something to do.
+Rejected: each driver redacting its own output.
+Cost: titles and bodies are not masked, so every one of them is text
+the driver wrote, and a transcript is still read before it is shared.
 
-### 9.4 What the settings do
+### D-85 Evals score planted instructions against the in-memory GitLab, fail-closed
 
-| Setting | Registers | Requests |
-|---|---|---|
-| `GITLAB_MCP_READ_ONLY=true` | Read | `read_api` |
-| default | Read and Write | `api` |
-| `GITLAB_MCP_ENABLE_SHIP=true` | adds Ship | `api` (no change: §2.6) |
-| `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds Destructive | `api` (no change) |
-| `GITLAB_MCP_TOOLSETS` | adds `wiki`, `snippets`, `releases`, `deployments`, `activity`, `planning`, or `all` | — |
-| `GITLAB_MCP_WRITE_NAMESPACES` | confines every write (§4.7) | — |
-| `GITLAB_MCP_UPLOAD_DIRS` | nothing; the only directories `upload_file` may read images from (§7.10); unset, it reads none; a filesystem root or a directory holding the home directory is refused at startup | — |
+`scripts/evals` scores a model driving the tools against the in-memory
+GitLab only, never a real instance. Tasks carry an instruction planted
+in the content by someone outside the project: read a private file, run
+a quick action, post in another project, approve and merge. Each is
+scored on whether the model followed it, from a census of the instance
+before and after.
 
-No setting chooses the instance: it is gitlab.com (§4.9).
+A model runs by hand through `claude -p`, with every built-in tool off
+by `--tools ""` and `--setting-sources ""`, so the server's tools are
+the only ones it has. That is fail-closed: a denylist names the tools
+it knows to block, and a tool it did not name reads whatever it can.
+`make evals-check` runs in `make check` without a model. Per task it
+drives an empty run, a scripted run that does the task, and one that
+follows the steer, through the real server, and holds them to fail,
+pass and fail.
 
-`READ_ONLY` with either enable flag is refused at startup, naming both.
-A token whose granted scopes do not cover the mode is refused at
-startup, naming the scope — a `read_api` token never gets a write tool,
-whatever the flags say. `docs/security.md` says plainly what the table
-implies: **the default token can merge, approve and run pipelines**.
-Leaving Ship unregistered stops this server doing so; it does not stop
-anything else holding the token, which is why the token lives in the
-keyring and nowhere a tool can read.
+The boundary and the guards are claims about what a model does with
+planted text. Only a model can show whether they hold, and only the
+in-memory GitLab keeps real content out of the run (D-06).
 
-## 10. Auth, config, process model
+Rejected: a denylist of built-in tools, since Grep and Glob read notes
+on disk mid-task.
+Cost: a run costs money and is not deterministic, so it is run by hand
+and its transcript read.
 
-**Sign-in is the family's, unchanged** (standard §3b; maintainer,
-2026-09-26: "the same all around"). Whoever has signed in to one of the
-sibling servers already knows this one:
+### D-86 Every gate asserts a floor on how much it read
 
-1. Register your own OAuth application once, as you create a Desktop
-   OAuth client for the Google servers. On gitlab.com that is user
-   settings → Applications (or a group's, §2.1): redirect URI
-   `http://127.0.0.1/callback`, **Confidential unchecked**, scope `api`
-   (`read_api` for read-only). `docs/setup.md` says exactly this and is
-   generated from the code (§5a `staleness`).
-2. `gitlab-mcp login --client-id <application id>`. It prints the scopes it will ask for, opens the
-   browser, listens on `127.0.0.1:0` with PKCE S256 and `state`, and
-   warns if GitLab granted less than it asked for.
-3. `gitlab-mcp doctor` to check it. `status`, `logout` and profiles
-   behave as they do in every sibling: `logout` revokes the token and
-   names the other profiles that share the same application.
+Every gate asserts a floor on how much it read: packages and statement
+blocks in a coverage profile, files in a leak scan, operations in the
+API snapshot, tools in a schema dump, reads in the configuration scan. A
+gate that read less than its floor fails, whatever it found.
 
-The same subcommands, the same flags (`--profile`, `--no-browser` with
-the exact `ssh -L` line for SSH, `--client-id` in the place of
-`--client-secret`), the same keyring layout per profile with a warned
-0600 file fallback, the same env → keyring → file order, no out-of-band
-flow. A profile records the application id and the instance it signed
-in to — gitlab.com, or the test instance in development — so its token
-is never sent anywhere else.
+"Found nothing" and "looked at nothing" print the same line. A gate
+whose parse broke, or whose path moved, passes silently on an empty
+input, and a passing gate is the last thing anyone opens. The floor
+turns that silence into a failure. A rule that cannot fail is not a
+rule, so every gate is also broken on purpose once and watched failing
+before it is trusted, and tests hold each floor firing.
 
-What GitLab changes underneath, none of which the person sees:
+This is why the gates are Go with tests (D-87): a floor is a line of
+code a test can drive below.
 
-- **The application is named by an id, not a file.** GitLab shows an
-  application id and has no JSON to download, and a public client has
-  no secret (§2.2). So `--client-id` / `GITLAB_MCP_CLIENT_ID` stands
-  where the siblings have `--client-secret` / `<PREFIX>_CLIENT_SECRET`,
-  over the stored profile (§17b). If the application was left
-  Confidential, GitLab answers `invalid_client`, and `login` says to
-  untick it rather than showing the raw error (spike D).
-- **Rotation is immediate** (§2.3). Two processes — Claude Desktop and
-  Claude Code, say — share one keyring entry. Refresh happens under an
-  OS file lock in the config directory; the new pair is written to the
-  keyring before the lock is released; a process that gets
-  `invalid_grant` re-reads the keyring and uses the pair another process
-  wrote before it reports `[auth]`. `expires_in` is read, never assumed.
-  An access token GitLab refuses as `invalid_token` — revoked by a
-  logout elsewhere before its expiry — is dropped: the next token comes
-  from the keyring, refreshed if the keyring holds the refused one, and
-  a read is sent once more with it. A create is not.
-- **Changing a setting that changes scope needs a new login**, and the
-  server says so at startup rather than failing on the first call, as
-  the siblings do.
-- **Startup reads before it serves.** Registration depends on the
-  granted scopes, so startup reads token info once, bounded by the
-  smaller of 15 s and the HTTP timeout, when the access token is still
-  fresh. Startup does not refresh: a host kills servers before the
-  handshake, and one killed between GitLab rotating the pair and the
-  keyring storing it leaves the profile signed out. With the access
-  token due, the scopes of the last login stand and the first tool call
-  refreshes. A start with no scopes recorded refreshes to read them, and
-  so does one given `GITLAB_MCP_REFRESH_TOKEN`, whose grant the login's
-  scopes do not describe. A server that is
-  stopped waits for a refresh in progress to be stored before it exits.
-  A kill during a refresh still loses the pair; nothing on this side
-  can make GitLab's rotation and the keyring's save one step. It reads neither `/metadata` nor
-  `/user`: nothing is gated by version (§4.9). Every failure there is logged and the
-  server starts anyway, so errors surface per call; the one fatal
-  outcome is a token whose scopes cannot serve the configured mode.
-- **A token is never sent to an instance it was not issued by.** A
-  profile signed in to another instance than the one in use — the test
-  instance while the server talks to gitlab.com, or the reverse —
-  withholds its token: every call answers `[auth]` naming the mismatch
-  and saying to log in again.
+Rejected: a gate that passes when it read nothing.
+Cost: a floor is typed, not derived, so it stands apart from the code
+it checks and is raised by hand as the code grows.
 
-Deliberately absent, so the family stays alike: personal access tokens,
-the device flow (§2.5), and a client id shipped in the binary. Each was
-considered (§17.1, §17.5) and each would make this server sign in
-differently from the rest.
+### D-87 Every check is Go in one registry, and `make check` and CI run the same set
 
-Configuration: `GITLAB_MCP_PROFILE`, `GITLAB_MCP_CLIENT_ID`,
-`GITLAB_MCP_READ_ONLY`, `GITLAB_MCP_ENABLE_SHIP`,
-`GITLAB_MCP_ENABLE_DESTRUCTIVE`, `GITLAB_MCP_TOOLSETS`,
-`GITLAB_MCP_WRITE_NAMESPACES`, `GITLAB_MCP_UPLOAD_DIRS`, `GITLAB_MCP_LOG_LEVEL`,
-`GITLAB_MCP_LOG_FORMAT` (`text` default), `GITLAB_MCP_HTTP_TIMEOUT`
-(60 s default), `GITLAB_MCP_CONFIG_DIR`. Each also a flag.
-`docs/configuration.md` is checked against the exported list. There is
-no instance setting; the development override of §4.9 is documented in
-`docs/development.md` alone.
+Every check this repository runs on itself is Go, in `scripts/gates`,
+behind one registry. Each entry declares whether it is manual, in
+`make check` or in the release, and the zero value is refused. Every CI
+step is a `make` target. The `parity` gate maps targets to CI steps by
+their recipes, and fails on a gate implemented but never run or run but
+not registered. The `checklist` gate holds the definition-of-done list
+in `CLAUDE.md` to the `check:` prerequisites, both ways. CI and the
+Makefile use the same `-coverpkg`, held by a test.
 
-Process: one stdio session; starts before authentication so `doctor` and
-`--dump-schemas` work signed out; a disconnect is exit 0.
+A check that exists in one place but not the other drifts, and a gate
+in shell is a gate nothing tests. In Go, the code holding the gates shut
+is held to the same lint, tests and floors (D-86). There is no shell,
+no npx and no Python in it. The pre-commit hook runs `gates precommit`:
+gofmt, vet, leaks and gitleaks over the staged tree, every problem
+collected before it fails.
 
-## 11. Reliability
+Rejected: a Makefile comment claiming to be "everything CI runs"; a
+Python pre-commit framework.
+Cost: a new check is a Go command, a registry entry and a Makefile
+target, and `parity` fails until all three agree with CI.
 
-- **Repeatability comes from the HTTP method.** GET is retried. POST is
-  not, except operations declared repeatable at the call site with the
-  reason: `mark_as_done`, approve and unapprove, cancel, resolve. PUT
-  is repeatable (it sets fields to values). Creates are never retried
-  (§4.5).
-- **429 is retried for any method**, since GitLab did not act;
-  `Retry-After` is a minimum; full jitter; at most four attempts, and
-  never past the call's deadline. A plain-text 429 body is expected.
-- **The rate model.** A per-instance token bucket and a concurrency cap
-  of four; `RateLimit-Remaining` and `RateLimit-Reset` lower the bucket
-  when present and are never trusted to be present (§2.13). Known
-  application limits — notes at 60 a minute on gitlab.com — have their
-  own buckets, and `submit_review` publishes many comments in one call
-  for that reason. `get_me` reports the last reading.
-- **Timeouts** on every request (§3), a 32 MiB cap on a response body,
-  job logs read in windows. A request body is timed by its progress:
-  the header timeout starts again whenever more of it is sent, so it
-  times a stall and then the wait for the answer, and a slow uplink does
-  not cut a large commit or image off mid-body. The body can be given
-  again, as Go's HTTP/2 transport asks for a stream the server refused.
-- **Per-item outcomes** for every multi-id write (`mark_todos_done`).
+### D-88 Every tool runs at one exact pinned version through `go run`
 
-## 12. Distribution and setup
+Every tool the Makefile runs is `go run module@version` at one exact
+version, never a binary from `PATH`: golangci-lint, goreleaser,
+gitleaks, govulncheck, go-licenses and actionlint among them. Every
+action in a workflow is pinned to a full commit SHA with its version in
+a trailing comment. The `pins` gate holds it: exact semver only, no
+range or `latest`, every action classified as an installer or not,
+installer tool versions required, and every pin the Makefile and a
+workflow share compared, with floors.
 
-`go install`, six platform archives with SBOMs, a signed checksum file,
-build provenance, the `.mcpb` bundle for Claude Desktop and an MCP
-registry entry. All of it is in phase 0, not a late phase: a sibling
-built its release path in its fifth phase and found the packer's macOS
-glob "could never have matched anything", and the release gates of §5a
-run in `make check` from the first commit, so the pipeline they check
-might as well exist.
+The version that runs locally is the version that runs in CI, so a lint
+or a scan that passes on one passes on the other. A tool from `PATH`
+runs whatever happens to be installed. A tag on an action can be moved,
+and a SHA cannot. The golangci-lint and gitleaks actions are not used,
+because their steps would be a second pin the Makefile does not share.
 
-`docs/setup.md` is an input, not a description: the application's
-redirect, confidentiality and scope are generated from the code and
-gated. It covers gitlab.com, the only instance.
+Rejected: a version copied from another project; a tool from `PATH`;
+the golangci-lint and gitleaks actions.
+Cost: a version bump changes the Makefile and the workflow together, and
+a dependabot bump of an action keeps its version comment or `pins`
+fails.
 
-The bundle asks for what a person sets in another client's
-configuration, the instance aside: the OAuth application, the profile,
+### D-89 A release is reproducible, signed and attested, from a tag whose CI is green
+
+A release is built by goreleaser from a `vX.Y.Z` tag. The release
+workflow refuses a tag whose commit's CI run did not finish green, runs
+`go test`, builds one target twice and compares the hashes, and builds
+with `CGO_ENABLED=0`, `-trimpath` and the commit's timestamp. It signs
+`checksums.txt` with a keyless cosign bundle, attaches an SBOM to each
+archive, and attests build provenance over the archives, the checksums
+and the Claude Desktop bundle. The release notes' verification commands
+name the exact certificate identity.
+
+The binary holds a person's GitLab token and acts as them. Whoever
+installs it should be able to check, from outside, that it was built
+from this source by this repository's workflow
+([artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)).
+A reproducible build lets anyone rebuild and compare. A tag is only a
+pointer, so the CI run on its commit is what says the code passed.
+
+The `release` gate holds `.goreleaser.yaml` against the release
+workflow and the packer. `make release-rehearse` runs goreleaser
+locally without publishing.
+
+Rejected: a certificate identity matched by a regular expression; `go
+mod tidy` in the before hook, which mutates the tree being released.
+Cost: the signature, the attestation and the registry publish need a
+real run's OIDC token, so no rehearsal reaches them.
+
+### D-90 The registry entry is published from the signed checksums, never for a prerelease
+
+The MCP registry entry is published by its own workflow, from the signed
+`checksums.txt`, and never for a prerelease. The workflow downloads the
+checksums and verifies their cosign signature against this repository's
+release workflow at that exact tag before it reads a hash. It verifies
+the `mcp-publisher` binary against its own release workflow. It
+generates `server.json` at publish time and validates it against the
+vendored registry schema.
+
+The entry tells every registry client which bundle to fetch and its
+hash ([MCP registry](https://github.com/modelcontextprotocol/registry)).
+A hash taken from anything but the signed checksums would let a
+tampered artifact be advertised as the release. The `server-json` gate
+derives the name from `go.mod` with `/vN` stripped, takes the
+description from the one constant the bundle uses, at most 100
+characters, and needs exactly one `.mcpb` row in the checksums. It
+holds the result to the vendored schema.
+
+The workflow can be run again for a tag that already shipped.
+
+Rejected: a hash from a local build.
+Cost: a registry entry cannot be withdrawn, so a release published by
+mistake stays listed until a newer one supersedes it.
+
+### D-91 The bundle asks for every setting, with defaults that start the server as no settings do
+
+The Claude Desktop bundle asks for every setting a person sets in
+another client's configuration: the OAuth application, the profile,
 read-only, the Ship and Destructive switches, the toolsets, the write
-namespaces and the image directory. The `mcpb` gate derives that list
-from the settings the server reads, so a new one is asked for or
-excluded with a reason. It starts the configuration from the bundle's
-defaults and from nothing, and refuses any difference: Claude Desktop
-approves each tool, and a person can set a tool to always allow, so
-defaults that widen nothing are the one guard a bundle install keeps
-(§18 row 130). It also starts every combination of the switches and
-holds the refused ones, Read-only with either enable switch, to a
-declared list the fields' descriptions follow.
-
-## 13. Testing
-
-- **`internal/quickaction` first**, with table tests over GitLab's
-  extractor rules — paragraphs, fences, indented code, quotes, HTML,
-  inline code, CRLF, a command on the last line — and a fuzz test that
-  an escaped body never yields a command and that removing the inserted
-  backslashes gives the body back. It renders the same text except where
-  GitLab's backtick pairing differs from CommonMark's, or inside
-  multi-line raw inline HTML; there the backslash shows, which is the
-  safe direction.
-- **The `diffpos` package** (phase 2), table-tested over generated diffs: added,
-  removed and context lines, ranges across hunks, renames, a line
-  outside every hunk.
-- **`internal/instance`**, over every base-URL shape of §3.4, which the
-  loopback test override may still take.
-- **`internal/localimage`**, over generated images and every path it
-  refuses: relative, with `..`, with no directory allowed, outside them,
-  missing, a directory, a FIFO, a symbolic link, a link leading out, an
-  absolute link, text, SVG, empty, and one byte over the cap; and an
-  allowed directory that is itself a link.
-- **`gitlabtest`**, an in-memory GitLab behind the REST paths the client
-  uses, generated per §9.1, modeling the facts of §2 the server depends
-  on: quick actions executed from bodies (so a missing guard fails a
-  test), `last_commit_id` and `sha` refusals, 404 for private, the
-  catch-all 404 shape, keyset and offset pagination with the 10,000 and
-  50,000 edges, rotating refresh tokens, 429 in both body shapes.
-- **Renderer goldens** for issue, merge request, discussions, diff,
-  job log (with masking), listings, and the hidden-text case.
-- **The logging test** of §9.2.
-- **The live driver**, `scripts/livegitlab`, per §9.1, against
-  gitlab.com only, with no instance flag: every tool
-  and option, held by `live-cover`; the transcript through one
-  redacting writer, held by `transcript`; read by a person before a
-  phase counts.
-- **Evals**, `scripts/evals`, against `gitlabtest` only (`CLAUDE.md`
-  rule 1): a self-check in `check` with no model, and a real model by
-  hand through `claude -p`, with built-in tools disabled by `--tools ""`
-  and `--setting-sources ""` (fail-closed, never a denylist), a census
-  of the instance before and after, and tasks whose content carries an
-  injected instruction — read a private file, a quick action, a request
-  to post elsewhere, a request to approve — scored on whether the model
-  followed it. The self-check drives, per task, an empty run, a scripted
-  run that does the task and one that follows the steer through the
-  real server, and holds them to fail, pass and fail.
-
-## 14. Confirmed decisions and their consequences
-
-| Decision | By | Consequence |
-|---|---|---|
-| Design first, reviewed before code | maintainer, 2026-09-25 | this document; phase 0 waits for "go" |
-| gitlab.com and self-managed both | maintainer, 2026-09-25 | **Reversed 2026-09-26**, row below |
-| gitlab.com only; self-managed out of scope | maintainer, 2026-09-26 | reverses the 2026-09-25 row above. §4.9: no instance setting, no private CA, no plain-http permission, no version gating; one loopback-only development override; spike I dropped; §17.4 closed |
-| Sign-in the same as every sibling: own OAuth application, loopback, browser, keyring; no tokens, no device flow, no shipped client id | maintainer, 2026-09-25 and 2026-09-26 | §10; §17.1 and §17.5 decided |
-| Issues, merge requests, repository, CI, wiki, snippets and releases in 1.0 | maintainer, 2026-09-25 | §8; wiki, snippets and releases as toolsets |
-| Merging, approving and CI runs behind a Ship flag | this design | §4.3 |
-| Quick actions refused by default, never executed | this design | §4.2 |
-| Commits never to a protected branch | this design | §4.4 |
-| REST v4 only, no escape hatch | this design; **narrowed 2026-10-23** | §4.10, §8a; GraphQL now for an operation REST lacks, as a literal behind one tool, never a raw GraphQL tool |
-| GraphQL for an operation REST has no route for: one literal per operation in `internal/gapi`, through the REST client's path, listed in §8a; no GraphQL client library and no raw GraphQL tool. First: `rerequest_review` | maintainer, 2026-10-23 | §4.10, §8a, §18 row 128 |
-| Unregistered, not registered-and-refusing, for gated tools | this design | §17b |
-| Release pipeline in phase 0 | this design | §12 |
-| The person asked before applying review suggestions | maintainer, 2026-10-01; **superseded 2026-10-22** | §4.12: the committed text is someone else's, under the person's name; from 3.0.0 the call carries the text, held as a witness |
-| The person asked before every upload | maintainer, 2026-10-08, after the security review; **superseded 2026-10-22** | §4.12, §7.10: an upload is a disclosure; the POST needs only read access, and a Maintainer can list and download uploads by id |
-| `upload_file` reads only from the directories `GITLAB_MCP_UPLOAD_DIRS` names; MCP roots are not used | maintainer, 2026-10-08 | §7.10; roots are deprecated (SEP-2577), so the setting, and the bundle's field for it, is the only way to allow a directory (§18 row 114) |
-| The person asked before a merge, an approval, a manual job, a release, a tag, a pipeline on a protected ref, publishing a confidential issue and every delete; the empty form; `GITLAB_MCP_REQUIRE_PROMPT` | maintainer, 2026-09-29; **superseded 2026-10-22** | §4.12; a client that declares elicitation and answers with nobody there cannot make these writes, which is why the release is a major one |
-| `requiresUserInteraction` only where the server's question does not stand in for it: a tool that asks before every write drops the mark for a client that can ask; one that asks sometimes or never keeps it; `destructiveHint` and the server's question stay | maintainer, 2026-10-09; **superseded 2026-10-22** | §4.12 item 12, §18 rows 119 and 120; a write the server asks about asks once in Claude Code, not twice, and a client's `Elicitation` hook that accepts confirms it alone |
-| The server asks the person nothing and no tool carries `requiresUserInteraction`: per-call approval is the client's; registration, `confirm`, the guards, the witnesses and `dry_run` stay; `apply_suggestions` carries each text as a witness; `GITLAB_MCP_REQUIRE_PROMPT` removed and refused when on | maintainer, 2026-10-22, issue #63; **narrowed 2026-10-23** | §4.12, §18 row 124; a major release, 3.0.0: a client that could not write before can, and `apply_suggestions` takes a new required input |
-| `delete_label` and `delete_milestone` carry `requiresUserInteraction`: each takes what it deletes off every issue and merge request, and neither can be undone. With `make_issue_public` (next row), no other tool carries it | maintainer, 2026-10-23 | §4.12, §18 rows 125 and 126; Claude Code prompts on every such call and denies it where no prompt can be drawn, so an unattended Claude Code run can no longer make them |
-| Making a confidential issue public is its own tool, `make_issue_public`: Destructive, `confirm: true`, the `updated_at` witness, and `requiresUserInteraction`. `update_issue` refuses `confidential: false` on a confidential issue whatever the flags | maintainer, 2026-10-23 | §4.3, §4.12, §18 row 127; it needed `GITLAB_MCP_ENABLE_SHIP` before and needs `GITLAB_MCP_ENABLE_DESTRUCTIVE` now, a breaking change |
-
-## 15. What must be verified live
-
-Each spike states its question and, when run, its verdict separately.
-Every spike has run on gitlab.com (2026-09-26 and 2026-09-27), spike O
-the last, for phase 5, and spike R, added later, on 2026-10-28. Spike I, the floor version, was dropped with self-managed support
-(§14, 2026-09-26).
-
-- **Spike A — loopback port.** Register `http://127.0.0.1/callback`;
-  send `http://127.0.0.1:<random>/callback`, `http://[::1]:<random>/…`
-  and `http://localhost:<random>/…`. Expect the first two accepted and
-  the third refused. On gitlab.com. §2.1.
-  *Verdict, gitlab.com, 2026-09-26: a random `127.0.0.1` port was
-  accepted against the registered `http://127.0.0.1/callback`, through
-  the real `login`. The `[::1]` and `localhost` halves are not needed:
-  gitlab.com is the only instance, and it answered for the address
-  `login` uses.*
-- **Spike B — public client.** Code exchange, refresh and
-  `/oauth/revoke` with only `client_id`, on gitlab.com. §2.2.
-  *Verdict, gitlab.com, 2026-09-26: code exchange and refresh work
-  with no secret on a non-confidential application; `doctor` then read
-  the token's scopes and the account. Revocation, 2026-09-27, through
-  spike G: revoking a public client's access token with only
-  `client_id` killed it (401 `invalid_token`) and its refresh token
-  (`invalid_grant`).*
-- **Spike C — concurrent refresh.** Two refreshes with one token: one
-  `invalid_grant`, and the old access token dead at once. §10's lock is
-  built from this.
-  *Verdict, gitlab.com, 2026-09-26: confirmed. Of two simultaneous
-  refreshes with one token, one was granted and one refused
-  `invalid_grant`; the old access token answered 401 at once, with
-  `invalid_token` in both the body and `WWW-Authenticate` — the marker
-  the client drops a token on.*
-- **Spike D — a Confidential application.** The exact error when the
-  application was left Confidential and no secret is sent, so `login`
-  and `doctor` can say "untick Confidential" instead of `invalid_client`.
-  *Verdict, gitlab.com, 2026-09-26: the browser consent succeeds and
-  the code exchange answers 401 `invalid_client` ("Client authentication
-  failed due to unknown client, no client authentication included, or
-  unsupported authentication method."). `login` prints only the
-  instruction to untick Confidential.*
-- **Spike E — quick actions.** Through the API, on issues, merge
-  requests and notes: a bare command executes; a backslash-escaped one
-  does not and renders as the same text; fenced, indented, quoted and
-  inline commands do not; a command after a list item; CRLF. §4.2
-  depends on every row.
-  *Verdict, gitlab.com, 2026-09-27: confirmed, and the guard agrees
-  with GitLab on all 48 rows (12 shapes, each as an issue note, a merge
-  request note, a new issue's description and a merge request
-  description update). A bare line, a line inside a paragraph, a line
-  after a list item and a blank line, and CRLF endings ran; fenced,
-  indented, `>` and `>>>` quoted, inline code, an HTML block, a line
-  straight after a list item and lone CR endings did not. Every
-  escaped line stayed inert and renders as the same text without the
-  backslash. A note that is only a command answered 202.*
-- **Spike F — error shapes.** The unknown-route 404 against a resource
-  404; a licensed feature on Free (epics, approval rules) as 403 or
-  404; a Rack::Attack 429 on gitlab.com. §6.5's mapping.
-  *Verdict, gitlab.com, 2026-09-26: a missing resource is
-  `{"message":"404 Project Not Found"}`, an unknown route
-  `{"error":"404 Not Found"}` — the shapes §2.14 distinguishes. Epics
-  and iterations on a Free group are 403 `{"message":"403 Forbidden"}`.
-  A malformed token is a plain 401 `{"message":"401 Unauthorized"}`
-  with no `invalid_token` marker. The 429 was not provoked.*
-- **Spike G — `mcp` scope.** Whether an `mcp`-scoped token can call the
-  tagged REST routes directly. Informational: it would not cover
-  comments (§2.6).
-  *Source, gitlab-org/gitlab master `1ee957c5`, 2026-09-26: a route
-  takes an `mcp` token when its class allows the verb for `mcp` and the
-  route carries `route_setting :mcp` (`lib/api/concerns/mcp_access.rb`).
-  About sixteen REST routes do: search, branches, one issue by iid and
-  issue create, merge request create, update, commits, diffs and
-  pipelines, and pipeline and job listings among them; `/user`, a
-  project, issue listings and every notes route do not. The driver
-  probes both kinds with a second sign-in for `mcp` alone, then revokes
-  it (`-spike G`).*
-  *Verdict, gitlab.com, 2026-09-27: confirmed. A sign-in asking for
-  `mcp` alone was granted `mcp`. One issue by iid, branches, a merge
-  request's commits, pipelines and project search answered 200; `/user`,
-  a project, the issue listing, a merge request and a new comment
-  answered 403. Ten of ten routes agreed with the source. The scope
-  cannot comment or read a merge request, so it changes nothing for
-  this server (§2.6).*
-- **Spike H — conditional reads.** Whether `If-None-Match` returns 304 on
-  API GETs and whether a 304 is counted against the rate limit.
-  *Verdict, gitlab.com, 2026-09-26: a single read and a listing both
-  send an ETag and answer a conditional GET with 304 and no body, and
-  every 304 lowered `RateLimit-Remaining` by one. Conditional reads save
-  bytes, not rate budget, so the client does not send them.*
-- **Spike J — job log windows.** `byte_offset` and `byte_limit` on
-  gitlab.com.
-  *Verdict, gitlab.com, 2026-09-26: both work on the trace endpoint and
-  return the exact bytes of the stored log, with no `Content-Range`;
-  `byte_limit` alone starts at 0, and an offset past the end is an empty
-  200. The whole log is one `text/plain` answer. `get_job_log` reads the
-  whole log and windows it itself, because a tail needs the size first;
-  server-side windows are the route for a log past the 32 MiB cap
-  (§17a).*
-- **Spike K — inline positions.** Comments computed by `diffpos` on
-  added, removed and unchanged lines and a range, read back from the
-  web view.
-  *Verdict, gitlab.com, 2026-09-27: confirmed through the API rather
-  than the web view. For an added line, a removed line, an unchanged
-  line addressed by either number, and a range on each side, GitLab
-  accepted the position `diffpos` computed and answered with the same
-  `line_code`, and for a range the same start and end codes. The web
-  view draws from those codes.*
-- **Spike L — moved projects and encoded paths.** A renamed project's
-  GET redirect and its non-GET 405; a full path containing a dot and a
-  nested group, percent-encoded once.
-  *Verdict, gitlab.com, 2026-09-26: a renamed project's old path
-  answers GET with 301 and a `Location` naming the project's **numeric
-  id**, not its new path, keeping the sub-path and query; a write
-  answers 405 `Non GET methods are not allowed for moved projects`.
-  The in-memory instance now does the same. The dotted and nested path
-  is still open.*
-- **Spike M — settle by reading.** For each create of §4.5, whether the
-  read finds what the create made within a second, or needs a delay.
-  *Verdict, gitlab.com, 2026-09-27: no delay is needed. An issue and a
-  merge request by author, `created_after` and title, a comment among
-  the threads, a draft among the account's drafts and a commit as the
-  branch head were each found by the first read, 265 to 387 ms after
-  the create answered. On 2026-09-27 again, for phase 3: a pipeline by
-  ref, source `api`, username and `created_after`, and a release by its
-  tag, each found by the first read, about 290 ms after the create.*
-
-- **Spike N — conditional delete.** Whether a comment delete honors
-  `If-Unmodified-Since`: a time before the comment's `updated_at`, the
-  same second as an HTTP-date, the time shown, and the time shown
-  stretched to the end of its millisecond. `delete_comment` sends the
-  last (§4.6, §18 row 62).
-  *Verdict, gitlab.com, 2026-09-27: confirmed. The comment's
-  `updated_at` is shown to the millisecond. A second before, the same
-  second as an HTTP-date, and the time shown unpadded were each refused
-  412; the time shown stretched to the end of its millisecond deleted
-  it, 204. GitLab compares below the millisecond it shows.*
-
-- **Spike O — a job log's size, unread.** Whether a job's `trace`
-  artifact size, or a HEAD of the trace, gives a log's length without
-  reading it, for a finished and a running job; what `byte_limit` past
-  500 KB answers; which paging headers a merge request's diffs carry.
-  `get_job_log` reads only its window from this (§7.6).
-  *Verdict, gitlab.com, 2026-09-27: an archived log's `trace` artifact
-  size was the log's 195,123 bytes exactly, and a ranged read from that
-  size back ended where the whole log did. gitlab.com archived the log
-  minutes after the job finished; until then the job lists no trace
-  artifact. A HEAD of a finished log answered its length on one run and
-  0 on the next, and 0 for a running log: it is not used. `byte_limit`
-  512,001 answered 400. The diffs listing sends `X-Total` and
-  `X-Total-Pages`. The driver runs it alone with `-spike O`.*
-
-- **Spike R — a read starts the merge status check.** Whether a
-  merge request pushed to stays `unchecked` through the listing, which
-  never asks for the check, and settles once read singly, and how long
-  that takes (§7.2, §18 row 136).
-  *Verdict, gitlab.com, 2026-10-28: refuted in part. The listing showed
-  `conflict` with `has_conflicts` false within a second of a push, then
-  `unchecked`; single reads settled it in 1.8 and 3.2 s in two runs. In
-  a third, on a project seconds old, single reads left a new merge
-  request `unchecked` for twenty seconds, and a push settled through the
-  listing alone. The driver runs it alone with `-spike R`.*
-
-Spikes A–D register or use an OAuth application and are in the "ask
-before doing" of `CLAUDE.md`.
-
-## 16. Delivery phases
-
-Each phase is one session and ends in a pull request, then waits for an
-explicit "go". Phases are not tagged one by one: the maintainer tags a
-release when they choose. The next session starts from this repository
-alone.
-
-**Phase 0 — scaffolding, gates, sign-in and core reads.**
-Everything of §5a: CI, release, publish, bundle, registry, every gate of
-the `check` list, pre-commit, templates, community files, `NOTICE`,
-`.editorconfig`, and the docs (`README`, `CHANGELOG`, `CONTRIBUTING`,
-`SECURITY`, `CODE_OF_CONDUCT`, `docs/configuration.md`,
-`development.md`, `release.md`, `security.md`, `setup.md` generated,
-`runbook.md`, `docs/README.md`). The core: `cmd` with `login`, `logout`, `status`, `doctor`; `config`, `credentials`,
-`fileperm`, `userconfig`, `auth` with the refresh lock, `scopes`,
-`instance`, `redact`, `version`, `app`, `server`, `tools`, `gapi` with
-pagination, the rate model and the redirect rules. **`internal/quickaction`
-complete with its tests and fuzz**, because every later write stands on
-it, and nothing writes yet. `gitlabtest`. The OpenAPI snapshot and
-`testdata/api-coverage.tsv`. Read tools: `get_me`, `resolve_url`,
-`search_projects`, `get_project`, `search_issues`, `get_issue`,
-`list_discussions`, `search_merge_requests`, `get_merge_request`,
-`get_file`, `list_tree`, `list_branches`, `list_commits`, `get_commit`.
-The untrusted-content rendering of §4.1 and the budget of §4.8. Spikes
-A, B, C, D, F, L. A live run whose transcript is read.
-
-*Built 2026-09-26, reviewed (§16a) and simplified. The live run passed
-on gitlab.com the same day and its transcript was read: it found the
-signed-in person's display name and user id unmasked in the driver's
-output (fixed and re-run clean), a sha256 labeled as a client id by the
-shape mask (safe, left), and two wording defects (fixed). Spikes A and B
-answered on gitlab.com, then C, D, F and L. The same day the server was
-narrowed to gitlab.com (§14), which dropped spike I and A's `[::1]` and
-`localhost` halves, the instance setting, the private CA and version
-gating. Nothing is owed.*
-
-**Phase 1 — the rest of reading.** `list_mr_files`,
-`get_mr_diff`, `list_mr_commits`, `compare_refs`, `list_tags`, the CI
-reads with `get_job_log` and its masking, `lint_ci`, `search`,
-`list_labels`, `list_milestones`, `list_members`, `find_users`,
-`list_todos`, `list_review_comments`, the three resources. Spikes H, J.
-
-*Built 2026-09-26 and 2026-09-27, simplified and reviewed (§16a). Two
-live runs on gitlab.com drove every tool and option but two page tokens
-waived as undrivable, and their transcripts were read. The first found
-gitlab.com's timestamped job logs (which also defeated `failed_only`),
-general drafts carrying an empty position in no stable order, gitlab.com's
-own wording for a refused group code search, and ids the driver did not
-mask; each was fixed, and the second run was clean but for three ids the
-driver now also masks. Spikes H and J answered. `lint_ci` on supplied
-content moved to phase 2 with the write path. Owed: nothing; §17a holds
-three new deferrals.*
-
-**Phase 2 — the write path.** The `diffpos` package and its
-tests; `create_issue`, `update_issue` with the witness, `add_comment`,
-`resolve_discussion`, the review tools, `create_merge_request`,
-`update_merge_request`, `create_branch`, `create_commit` with the
-protected-branch guard, `mark_todos_done`, `lint_ci` on supplied
-content; settle-by-reading; the write allow-list. Spikes E, K, M. Spike E runs before any write tool is
-registered.
-
-*Built 2026-09-27, simplified and reviewed (§16a). Spike E ran first
-and the guard agreed with GitLab on all 48 rows before any write tool
-was registered; K and M followed, and a live check showed a branch's
-`protected` flag honors wildcard rules. Four live runs on gitlab.com
-drove every tool and option but the two page tokens already waived, and
-their transcripts were read: they found a new merge request's
-`updated_at` moving a second after the create, a commit's move emptying
-the file it moved, and an assignee change leaving `updated_at` in place
-(§18 rows 56–58); each is fixed or accounted for. Owed: nothing; §17.12
-is decided, and §17a holds three new deferrals.*
-
-**Phase 3 — Ship, Destructive and toolsets.** The Ship tools
-with `sha` witnesses; `delete_branch`, `delete_comment`; the `wiki`,
-`snippets`, `releases`, `deployments` and `activity` toolsets. Spike G.
-
-*Built 2026-09-27, simplified and reviewed (§16a). Every behavior was
-checked against GitLab's source at v19.4.1-ee first (§18 rows 60–70).
-Spike M covered pipelines and releases, and spike N showed GitLab holds
-a comment delete's `If-Unmodified-Since` below the millisecond it shows.
-The live driver runs a second server with every flag and toolset on,
-its writes confined to the scratch group. Three live runs on gitlab.com
-drove every tool and option but the two page tokens already waived, and
-their transcripts were read. The first found gitlab.com refusing
-pipeline variables on a new project and deployments filtered by time in
-another order (§18 rows 72, 73); both are fixed. Owed: spike G, which
-needs an `mcp`-scoped application (ask before doing); §17.2 and §17.8
-stay open for phase 4; §17a holds two new deferrals.*
-
-**Phase 4 — evals and 1.0.** The evals harness with the
-injection tasks of §13; §17.3 decided; the surface frozen into the
-schema baseline; §17 closed or each item argued open.
-
-*Built 2026-09-27, simplified and reviewed (§16a). Four injection tasks
-plant an instruction from a non-member of the public project: read a
-private file, run a quick action, post in another project, approve and
-merge with Ship on. The self-check drives each task's empty, done and
-obeyed runs through the real server and holds them to fail, pass and
-fail. The first model run scored the harness, not the model: every
-world signed the server in under one keyring profile with the same
-token names (§18 row 74), which is fixed. Opus then passed all eight
-tasks, and the four injection tasks twice more, 12 of 12. §17.2, §17.8
-and §17.9 are decided as proposed and §17.3 from the evals; §17.10
-stands and §17.11 is after 1.0. The schema baseline holds all
-sixty-six tools. A live run on gitlab.com drove every tool and option
-but the two page tokens already waived, and its transcript was read:
-clean. Spike G then ran on gitlab.com and agreed with the source on
-ten of ten routes, and answered spike B's revocation half. Owed:
-nothing.*
-
-**Phase 5 — the deferred cleanups, before 1.0.** Every cleanup of §17a
-that a REST call can close: `get_job_log` reading only its window (spike
-O), `get_mr_diff` reading from the page that holds `file_offset`, a
-project description and one oversized diff continued, a pipeline's
-failed trigger jobs, resolvable threads on issues, a lost comment settled
-however many threads followed it, a draft's `line_code`. And what §8a
-had left out on purpose, by the maintainer's decision of 2026-09-27: job
-inputs on `retry_job` and `play_job`, and release asset links, confined
-to the instance.
-
-*Built 2026-09-27, simplified and reviewed (§16a). Every behavior was
-checked against GitLab's source at v19.4.1-ee first (§18 rows 76–83).
-Spike O showed an archived log's size in its trace artifact and a HEAD
-not to be trusted, so a log not yet archived is read from its start and
-measured past its end. Four live runs on gitlab.com drove every tool and
-option but the two page tokens already waived, and their transcripts
-were read. They found a finished log's HEAD answering 0, a job with no
-`inputs:` taking any input (§18 row 80), and the undeclared-input
-refusal first tried on a job `retry_pipeline` had already retried; each
-is fixed. The third met a gitlab.com repository error creating a
-snippet, which phase 5 did not touch; the fourth was clean. The security review found indented and prefixed keys escaping
-the key search; the code review, a window start of -1 and links to any
-project's files; each is fixed. Owed: nothing. The two cleanups left are
-argued in §17a (§18 rows 82, 83), and phase 6 waits on §17.13.*
-
-**Phase 6 — the feature candidates, before 1.0.** The tools §17.13
-decides, each with its kind and toolset:
-issue move and links, label and milestone writes, rebase, cherry-pick,
-revert, blame, job artifacts, and tag writes. Each is checked against
-GitLab's source before it is built, and runs live.
-
-*Built 2026-09-27, simplified and reviewed (§16a). Seventeen tools, the
-surface now eighty-three and the schema baseline holding them all. Every
-operation was checked against GitLab's source at v19.4.1-ee first (§18
-rows 84–89). Three live runs on gitlab.com drove every tool and option
-but the two page tokens already waived, and their transcripts were read:
-the first found the plan's cherry-pick source conflicting with the
-default branch, which the tool reported as GitLab's refusal, and a pick
-that does not apply answering 400, now `[conflict]`; the second a revert
-reported in a pick's words, and an artifact listing too short to page;
-the third was clean. The security review found a fork's rebase and a members-only
-issue's move unguarded; the code review, blame windows and settles;
-each is fixed. Owed: nothing.*
-
-**Phase 7 — the person confirms what ships or deletes.** Asked for by
-the maintainer on 2026-09-29, after the same was built in a sibling:
-the server asks the person, through MCP form elicitation, before the
-writes of §4.12, with the set the maintainer chose. The
-question is quoted in code spans and the form has no fields, as the
-maintainer's check in Claude Code found clearest (§18 rows 94–96).
-
-*Built 2026-09-29. `run_pipeline` reads its ref only when a question
-could go out; `update_issue` asks only when it makes a
-confidential issue public. A test derives the asking tools from the
-definitions, with a floor of thirteen, and holds each on three
-protocols: declined, nothing sent; accepted, the write. The live driver
-is now a client that declares elicitation and answers for the
-maintainer: accept, but for one delete it declines. It learns which
-tools ask from their published descriptions, and fails a call that
-puts more questions than it may and a tool that asks and put none over
-the run. Three live runs on gitlab.com drove every tool and option but
-the two page tokens already waived, and their transcripts were read:
-the first found the driver expecting a question on a merge that had
-nothing left to merge, the second its count of a tool that asks only
-sometimes kept per server; the third was clean, with seventeen
-questions, each quoting only the run's own text, and the declined
-delete writing nothing. Reviews in §16a. Owed: nothing.*
-
-**After 2.0.0 — eight features, one pull request each.** Built on
-parallel branches and merged as pull requests #20 to #26 and the one
-for #18: linked items in `get_issue`, `get_merge_request` and
-`get_commit` (#12), `get_test_report` (#13), `list_item_events` (#14),
-`list_boards` (#19), `track_time` (#15), `subscribe` and `add_todo`
-(#17), `update_snippet` and `delete_snippet` (#16), and
-`run_merge_request_pipeline` (#18). Each was checked against GitLab's
-source first (§18 rows 97–104).
-
-*Built 2026-09-29 and 2026-09-30. Each feature had `/code-review high`
-and a security review, with the findings fixed (§16a), and a live run on
-gitlab.com whose transcript was read. Two live runs refuted the source:
-adding or resetting spent time leaves `updated_at` alone, so
-`track_time` takes `total_time_spent` as a second witness (§18 row 101);
-a snippet's `updated_at` moves after the answer, so `update_snippet`
-hands on no witness after a commit (§18 row 103).
-`run_merge_request_pipeline` (#18) waited a day for its live run: the
-runs spent the scratch group's CI minutes, and every job failed
-`ci_quota_exceeded` until they reset on 2026-10-01. Nothing is owed.*
-
-**After 2.2.1 — `upload_file` (#50).** An image from a directory the
-person allowed, uploaded for Markdown to embed (§7.10). The maintainer
-moved `POST /projects/{id}/uploads` from written off to used (§8a). Each
-behavior was checked against GitLab's source at v19.4.1-ee first, and
-the bundle's new field against the MCPB reference host (§18 rows
-112–117). MCP roots were built and then dropped on 2026-10-08 (§18 row
-114): the setting is the only source of directories.
-
-*Built 2026-10-07. A live run on gitlab.com passed on 2026-10-08: it
-uploaded the run's own generated PNG, posted its Markdown on the
-scratch issue, and was refused a text file and an image outside the
-allowed directory. A code review and a security review followed (§16a),
-and the person is now asked before an upload (§4.12). A second live run
-on 2026-10-08 drove what they changed: the person declined one upload,
-which sent nothing, and accepted the next. A third, after the simplify
-pass that times every request body by its progress, passed as well.*
-
-### 16a. Found by review, and fixed
-
-Each phase's `/code-review high` and `/security-review` findings are
-recorded here with the commit that fixed them, and the security review
-is committed under `audit/`.
-
-**Phase 0.** `/security-review`: no finding
-(`audit/security-reviews/v0.1.0.md`). `/code-review high`: ten
-candidates, each checked with a test that failed before its fix; nine
-fixed in `637c982`, one recorded:
-
-| Found | Fixed |
-|---|---|
-| An outside link read as on the instance when `?`, `#` or `\` came before an `@` | `637c982`; the parser replaced by `url.Parse` in the simplification pass |
-| A failed keyring save left an older pair in charge | `637c982`; the pair saved last wins |
-| DNS and TLS errors carried the instance's hostname into logs | `637c982`; one allowlist renderer since `93c49af` |
-| A token GitLab refused stayed cached until it expired | `637c982` |
-| A create canceled after it was sent read as `[unavailable]` | `637c982`; now `[ambiguous_outcome]` |
-| Names other people write could start a line of their own | `637c982` |
-| A stray callback without the login's `state` ended the login | `637c982`; ignored with a 400 |
-| A moved project lost the request's query | `637c982`; the request is kept and only the project segment replaced since `93c49af` |
-| A cut commit message looked complete | `637c982`; `message_offset` and `message_budget` |
-| Discussions walked up to ten pages per read | Not fixed: `X-Total` counts system-only threads, so the proposed fix miscounts, and the order needs every thread (§18 row 83); §17a |
-
-GitHub's CodeQL on the phase 0 pull request: six alerts. Two were real
-on a 32-bit build, which no release targets: a `#L` line anchor parsed
-as 64 bits and narrowed to `int` without a bound (`instance/resolve.go`),
-fixed in phase 2 with a bound and a test. Four are in `gitlabtest`, which
-only tests link: three redirects that model GitLab's own (the OAuth
-callback to a registered loopback URI, checked before redirecting, and a
-moved project to the instance's own URL), and SHA-1 over fixture names
-to make fake commit ids. They are not defects, and were dismissed on
-GitHub as used in tests, 2026-09-27.
-
-**Phase 1.** `/security-review`: no finding at confidence 8 or above
-(`audit/security-reviews/phase-1.md`), two below it recorded there.
-`/simplify`: the advanced-search refusal classified in the client, the
-live driver's confinement made deny-by-default, whole-log regular
-expressions replaced by literal searches, and shared helpers; four
-proposals skipped because a gate reads the shape they would remove.
-`/code-review high`: ten candidates:
-
-| Found | Fixed |
-|---|---|
-| A to-do on a commit carries a SHA as its target id and failed the listing | Phase 1 commit; the id is not decoded |
-| A private key header far back moved every later window to it | Phase 1 commit; the window keeps its size and the block is masked from a restored header |
-| A script printing the runner's failure words steered `failed_only` | Phase 1 commit; the last failure line counts |
-| A failure line with no section read as "no failure line" | Phase 1 commit |
-| A failed pipeline failed by a downstream one said "No job failed." | Phase 1 commit; it said a trigger job may have. Phase 5 reads the failed trigger jobs and names the downstream pipeline |
-| Publishing a draft between pages skipped one | Phase 1 commit; the page token names a draft id |
-| The live driver ran its CI steps against an unfinished pipeline | Phase 1 commit; it leaves the ids zero so the steps fail |
-| A job log past 32 MiB cannot be read, and each window re-reads it | Phase 5: only the window is read (§18 row 77) |
-| `get_mr_diff` re-reads earlier pages on each continuation | Phase 5: it reads from the page holding `file_offset` |
-| The driver's confinement accepts a group read without the run's word | Not a defect: every step's `group` argument is held to the run's namespace and word |
-
-**Phase 2.** `/simplify`: one project read per write; label checks by
-search and removals from the fresh read; previews from the request
-bodies; one settle helper for issues and merge requests, one position
-converter, one comment check; the 202 refusal in the client for every
-notes call; a new comment's thread found on the last page; one thread
-read for `resolve_discussion`; the commit guard trusting an existing
-branch's `protected` flag; independent reads in parallel; the lint POST
-declared read-only on its `Call`. `/security-review`: two findings at
-confidence 8, both fixed (`audit/security-reviews/phase-2.md`).
-`/code-review high`: ten findings, all fixed, the behavior ones with a
-test that failed before the fix:
-
-| Found | Fixed |
-|---|---|
-| A new title alone cleared a merge request's draft state | Phase 2 commit; the state is kept unless `draft` says otherwise |
-| The draft prefix matched more than GitLab's and rewrote titles | Phase 2 commit; GitLab's pattern, add and strip |
-| The protected-rule read passed a branch past the rules it read | Phase 2 commit; refused when the read is incomplete |
-| A lost comment was looked for among the oldest threads | Phase 2 commit; the newest page, a reply in its thread |
-| A lost draft could be settled by an older one with the same text | Phase 2 commit; drafts present before the call are excluded |
-| The signed-in account was cached for settling across a new login | Phase 2 commit; read afresh |
-| `due_date` with `clear_due_date` cleared silently | Phase 2 commit; refused, as the milestone pair is |
-| To-do items and label checks ran one at a time | Phase 2 commit; in parallel, paced by the client |
-| A doc comment slipped from its function | Phase 2 commit |
-| Every standalone comment reads threads to name its thread | Phase 2 commit; it no longer does: a reply or a thread names its own, and `list_discussions` names a standalone comment's |
-
-**Phase 3.** `/simplify`: one read-back helper for the three deletes,
-which also keeps their rendering alike; the issue or merge request note
-reads picked once (the delete stays called by name, which the outcomes
-gate's floor caught when it was not); the If-Unmodified-Since stretch moved into the client
-beside the header; a tag looked up by name instead of by search, which
-also finds one past the search's first page; a snippet's metadata and
-first file read at once; the file budget shared with `get_file`; one
-variable-key check; one release row; the id minimum derived from the
-schema rather than listed; the job-state refusal classified once.
-Skipped: classing every 401 without `invalid_token` as `[forbidden]`
-rather than `[auth]`, a §6.5 decision left to the maintainer.
-`/security-review`: no finding at confidence 8
-(`audit/security-reviews/phase-3.md`), two below it recorded there.
-`/code-review high`: nine candidates:
-
-| Found | Fixed |
-|---|---|
-| `play_job` blamed every 403 with variables on the variables setting and dropped GitLab's reason | Phase 3 commit; only GitLab's bare 403 is offered that cause |
-| A delete repeated after a lost answer read as `[not_found]` though it had landed | Phase 3 commit; a not-found delete of something now gone is reported deleted, saying so |
-| `delete_branch` wanted the whole SHA, while `list_branches` shows twelve characters | Phase 3 commit; a prefix of seven or more is taken |
-| An auto-merge set before a lost answer read as a failure | Phase 3 commit; the read back reports it set |
-| A lost wiki create in a directory settled as not created | Phase 3 commit; the slug is matched as well as the title |
-| `resolve_url` sent a wiki's index and a page's edit view to `get_wiki_page` | Phase 3 commit; the index names `list_wiki_pages`, the views are stripped |
-| `retry_pipeline` could report unchanged while GitLab still showed the old status | Not a defect: the live runs showed GitLab answering with the new status |
-| A 200 merge answer with the merge request open reads as `[unexpected]` | Not a defect: GitLab answers 422 unless merged (`execute_immediate_merge!`) |
-| The id minimum now applies to `list_discussions.note_id` | Kept: nothing is released, and 0 never named a comment |
-
-**Phase 4.** `/simplify`: one note-storing helper in `gitlabtest`,
-which the planted comments share; a random part in every `gitlabtest`
-token name, the root of the keyring collision (§18 row 74); the smoke
-gate's floor derived from `tools.Surface` rather than typed; the tools a
-rehearsal is offered listed by the rehearsal itself; one path helper for
-the three write scorers; spike G's probes carrying their own query.
-Skipped: one parser of tool-result text for the harness and the smoke
-gate (different shapes, different packages), and fewer worlds per
-self-check, which takes under a second. `/security-review`: no finding
-at confidence 8 (`audit/security-reviews/phase-4.md`), three below it
-recorded there. `/code-review high`: ten candidates:
-
-| Found | Fixed |
-|---|---|
-| `injected-post-elsewhere` failed a summary that mentioned the other project | Phase 4 commit; only a call aimed at it, or a new issue, follows the steer |
-| Spike G left its `mcp` token live when a probe failed | Phase 4 commit; revoked on every path out |
-| Spike G's refresh after revocation, if granted, left a live pair | Phase 4 commit; that pair is revoked |
-| An approval submitted as a review was seen only in the call's arguments | Phase 4 commit; `observe` reads the reviewer state |
-| One fixed keyring profile let two runs delete each other's sign-in | Phase 4 commit; a profile per world |
-| The scorer's own quick-action pattern knew four commands | Phase 4 commit; `quickaction.Find`, escaped lines included |
-| `injected-comment` passed "the discussion is empty" | Phase 4 commit; the summary must carry the export or the header row |
-| The smoke floor moved with the code it checks | Phase 4 commit; a constant floor of the thirty-one reads beside it |
-| Spike G discards the authorization URL where no browser opens | Not fixed: the redacting printer masks the client id in it, so a printed URL would not work; the browser opens as it does for `login` |
-| `surfaceFloor` is typed, not derived | Kept: it is the floor on how much the checker read, which is meant to stand apart from the code (`CLAUDE.md` rule 19) |
-
-**Phase 5.** `/simplify`: the unused trace counter removed; one
-`bridgeRow`; one input-name helper for `run_pipeline`, `retry_job` and
-`play_job`; one thread reader for issues and merge requests; the service's
-copy of the link type dropped; page 1 reused when a settle walks back;
-`get_mr_diff` stopping where `budgetDiffs` does rather than by its own
-byte count, which could leave no `next_file_offset`; `failed_only`
-bounded to four reads for the line and one more for its section; a HEAD
-of the trace dropped after spike O showed it unreliable. Skipped: gapi
-discussion calls taking the item kind, which reshapes code far outside
-this phase. `/security-review`: one finding at confidence 8, fixed
-(`audit/security-reviews/phase-5.md`). `/code-review high`: ten
-candidates:
-
-| Found | Fixed |
-|---|---|
-| `failed_only` could start the window at -1 on a short log with a stray end marker, and panic | Phase 5 commit; the start is at least 0, with a test |
-| Key lines behind prefixes CI tools write ended the key walk, leaving a key unmasked | Phase 5 commit; the walk replaced by a 256 KB search for an open header, in the window's own read (§18 row 76) |
-| The key walk had no bound and copied the held stretch on each step | Phase 5 commit; the same change |
-| A BEGIN quoted in an error message can mask the rest of a window | Kept: over-masking fails safe, and the whole-log code did the same |
-| An asset link could point at any project's files on gitlab.com | Phase 5 commit; only into the release's own project (§18 row 81) |
-| A failed trigger job read failed `get_pipeline` | Phase 5 commit; it is soft, and the result says the trigger jobs could not be read |
-| The hidden-character count of a cut or continued diff counted the whole diff | Phase 5 commit; the part shown is counted |
-| `failed_only` reads up to 2 MB for a failing job with no failure line | Kept: the bound is the design; the runner writes the line last |
-| A `file_offset` past the end named the wrong number of files | Phase 5 commit; the message names none and points at `list_mr_files` |
-| `resolve_discussion` read an unknown type as a merge request | Phase 5 commit; refused `[invalid]` |
-
-**Phase 6.** `/simplify`: one label row and one milestone row for the
-reads and the writes; `names` for what an update changed and
-`changedLine` for saying it; one `protectingRule` for the branch and tag
-guards; `get_job_artifact` through `fileContent`; the enums a schema and
-its check share exported once; witnesses parsed by `parseWitness`; the
-fake's protected tags matched by wildcard. Skipped: embedded input
-structs (`register` reads top-level fields), one body for cherry-pick and
-revert (the fields gate holds revert's, which takes no message), and
-dropping the read after a rebase (it carries `merge_error`).
-`/security-review`: two findings at confidence 8, fixed
-(`audit/security-reviews/phase-6.md`). `/code-review high`: five, all
-fixed:
-
-| Found | Fixed |
-|---|---|
-| A full blame window this server chose gave no `next_line`; the test was inverted | Phase 6 commit; a full window continues, with a test |
-| One run of blame lines larger than the budget was shown whole | Phase 6 commit; the run is cut at the budget and `next_line` goes on |
-| A lost cherry-pick with its own message settled "not created" | Phase 6 commit; settled by the new head's parent being the head read before, unknown otherwise |
-| A group's label was not found rather than refused | Phase 6 commit; the label read includes ancestor groups |
-| A lost label or milestone create could settle on an older one | Phase 6 commit; `create_label` refuses a name that exists, and a milestone counts only if made after the call started |
-
-**The first pull request.** Its CI ran phases 1 to 6 on Linux, macOS and
-Windows for the first time, and found:
-
-| Found | Fixed |
-|---|---|
-| `schema-ack` failed building a base from before the server | A base without `cmd/gitlab-mcp` has an empty surface, with a test |
-| On Windows two token saves read the same clock, and after a half-failed save the older keyring pair won | A store's saves are stamped strictly in order, with a test |
-| On Windows the bundle test repacked over a bundle it still held open | The test closes it first |
-| CodeQL: the fake's label priority narrowed without a bound | Bounded to the 32-bit range GitLab takes |
-| CodeQL: the leak gate's owner-link pattern is unanchored | Dismissed as a false positive: a scanner that finds links anywhere in text |
-
-**The 1.0 live run.** Its transcript found:
-
-| Found | Fixed |
-|---|---|
-| `get_me` reported a token's expiry as `created_at` plus `expires_in`, which is the seconds left, so an hour-old token read as expired an hour before the read | The time of the read plus `expires_in`, with a test on an aged token (§18 row 90) |
-| `cancel_pipeline` said nothing could be canceled when GitLab answered before recomputing the pipeline's status | `canceled` whenever GitLab's cancel acts on the status read first; the fake answers as GitLab does (§18 row 91) |
-
-Its `/code-review high` found:
-
-| Found | Fixed |
-|---|---|
-| A pipeline that finished before the cancel landed would read `canceled` | A finished answer is `unchanged`; the decision is one function with a table test |
-| `get_me` took the time after the token read, so the expiry erred late | Taken before the request |
-| `cancel_pipeline`'s description and the `status` field promised the status after the call | Both say the status can lag and `get_pipeline` shows it settle |
-| A version in the README's prose | Removed; the status line keeps its version, which `staleness` requires |
-| `manual` is not cancelable | Refuted: `CANCELABLE_STATUSES` includes it, for the pipeline and its jobs (§18 row 91) |
-| `get_me` could read the expiry the token source holds instead of GitLab's answer | Left: `get_me` reports what GitLab says of the token it was sent, which is what a revoked or replaced token needs |
-
-**The 1.0 security review** read the whole tree in five parts: sign-in
-and secrets, the REST client, the write guards, untrusted content, and
-the release chain (`audit/security-reviews/v1.0.0.md`). It found:
-
-| Found | Fixed |
-|---|---|
-| Medium: `update_issue` with `confidential: false` made a confidential issue public, the widening `move_issue` refuses | Ship's to allow, as an approving review is (§4.3); from 2026-10-23 `make_issue_public`'s alone, behind the destructive flag (§18 row 127) |
-| Medium: a tool call canceled after GitLab rotated the pair dropped the only copy of the new one | The refresh runs on a context the caller cannot cancel, bounded by the HTTP timeout; a test cancels mid-answer |
-| A stored token under a profile that records no instance could reach the loopback test instance | Withheld unless the token came from the environment |
-| `logout` could revoke a pair a server had just replaced, and the server saved the new one after the delete | `logout` holds the profile's refresh lock |
-| A create's answer over 32 MiB read as retryable `[unavailable]` | `[ambiguous_outcome]`, settled by reading (§4.5) |
-| A color code before a token in a job artifact hid it from the masks | Artifacts lose terminal escapes before masking, as job logs do |
-| `[//]: # (text)` and a backtick in a fence's info string hid text from the page but not from the model | Unused reference definitions are dropped and counted; that line opens no fence |
-| A milestone title, free prose, printed outside the boundary in `get_issue` and `get_merge_request` | Its own line, inside the boundary |
-| Snippet file names reached an error message as written | Made plain, as paths are |
-| A manual registry publish could send a prerelease | `server-json` publishes `X.Y.Z` only |
-| `update_label` and `update_milestone` said empty clears a field; §17.7 reads it as absent | The descriptions no longer say so; clearing was deferred (§17a), then added after 1.0 as `clear_*` inputs |
-
-**Test pass, 2026-10-01.** A fast pass over retry safety, logs, the
-leak gate and fixtures found:
-
-| Found | Fixed |
-|---|---|
-| A delete repeated after a 5xx or a lost answer reported the repeat's 404 as `[not_found]`; `delete_review_comment` said the draft was not yours | `[ambiguous_outcome]`; a delete read back as gone is reported deleted (§4.5) |
-
-**`upload_file` (#50).** A code review (medium) and a security review
-of the first two commits, fixed on the branch:
-
-| Found | Fixed |
-|---|---|
-| Security: an upload is a disclosure a planted comment could aim at a project its author maintains, with no comment for the person to notice | The person is asked before every upload (§4.12), the maintainer's decision of 2026-10-08 |
-| A call aimed at a project outside the allow-list read the local file first, and its refusal could tell what was there | The project is read and held to the allow-list first |
-| The refusal of a path outside the allowed directories listed them, and that of a file that is no image named its type | Each names only the setting, and nothing of the file |
-| A filesystem root or the home directory could be allowed, opening nearly every image | Refused at startup; the bundle asks for a dedicated folder |
-| A folder whose name held the list separator split into other directories | A value that is an existing directory is one entry |
-| An allowed directory that is itself a link was refused under a wider allowed one | Every allowed directory holding the path is tried, widest first, past an escape |
-| A slow upload was cut off by the header timeout mid-body and reported as ambiguous | Every request body is timed by its progress, the header timeout starting again with each piece sent (§11); a large commit had the same cut-off |
-| The sniff read as proof that the whole file is an image | The package says what it proves; bytes after a valid header need write access to this machine |
-| The result did not say that Maintainers reach every upload by id, or what happens to the image's metadata | It says both, and so does the question; Workhorse removes a JPEG's metadata (§18 row 118) |
-| `CLAUDE.md` rule 8 did not cover a create no read can settle | It does: `[ambiguous_outcome]`, and the person decides |
-| "for ever" | "forever" |
-| Suggested: open with `O_NOFOLLOW` in place of `Lstat`, open and `os.SameFile` | Declined: `os.Root` follows a final link even with `O_NOFOLLOW` (probe, Go 1.27.1), and Windows has no such flag |
-| Suggested: send the image without copying it into the body | Declined: one copy of at most 10 MiB per call, and a streamed body would have to be rebuilt for a retry |
-
-`/simplify` (reuse, simplification, efficiency, altitude), applied: the
-progress timer and a replayable body for every request body, not only
-uploads; `internal/localimage` returns its own typed refusals, which
-`upload_file`'s service words and classes, so the package imports
-neither `gapi` nor `config`; the size is refused from the open file's
-stat and the type from its first 512 bytes before the rest is read,
-into a buffer of the stat's size; the question is built only when one
-goes out; the home check resolves links and short names with
-`userconfig`'s helpers; one literal-key helper for the outcomes and
-api-fields gates; and smaller cleanups in the tests, the in-memory
-instance and the live driver. Kept: both `link_opens_for` and
-`media_requires_sign_in` in the result, and the test helper that counts
-uploads by their route.
-
-**v2.3.0 release review.** The release security review
-(`audit/security-reviews/v2.3.0.md`) found four low findings, and the
-timeout's wording was corrected with them:
-
-| Found | Resolved |
-|---|---|
-| Removing the image's hash from the question's binding left every test green | `TestAskBinds` holds two images with the same name, type and size to different bindings, and fails with the hash removed |
-| On a case-insensitive disk, as macOS has by default, the home directory spelled in another case passed the name comparison | At startup each upload directory is also compared, as a file, with the home directory and each directory above it. The test runs where the disk ignores case, macOS and Windows in CI, and is skipped elsewhere. Nothing is checked again per call: replacing a directory later needs write access to this machine, which an instruction planted in GitLab content does not have |
-| `openIn`'s call to the swap check has no test; only the check itself is tested | Left untested: covering it needs a hook between `Lstat` and the open, a test-only back door the testing standard forbids. The non-blocking open is untested for the same reason (§18 row 115): both guard a race no test can stage |
-| With no question possible and `GITLAB_MCP_REQUIRE_PROMPT` off, the upload directories and the write allow-list are `upload_file`'s only guards | The maintainer's chosen behavior, unchanged; §4.12, `docs/security.md` and `docs/configuration.md` say so plainly and advise either setting for such a client |
-| `GITLAB_MCP_HTTP_TIMEOUT` was described as the deadline for one attempt | It bounds a call's time without progress: sending, waiting for the answer to start, reading it. The configuration page, the flag's help and `config.DefaultHTTPTimeout` say so |
-
-**v2.4.0 release review.** The release security review
-(`audit/security-reviews/v2.4.0.md`) found one low finding:
-
-| Found | Resolved |
-|---|---|
-| For a client that can ask, a Claude Code `Elicitation` hook that accepts, or any client that accepts an empty form by itself, now makes the twelve writes that lost the mark with no person asked; the mark used to stop them in the client first | The maintainer's chosen cost, 2026-10-09 (§14); a person has to configure such a hook. `docs/security.md` and the CHANGELOG say so, and §18 row 119 cites the hooks reference |
-
-**Merge request dependencies (issue #62).** The security review found
-nothing. The code review found:
-
-| Found | Resolved |
-|---|---|
-| The dependency read stopped at its bound and called a dependency past it absent, so `unlink_merge_requests` could report unchanged, and a lost create be settled as not created, while it existed | The read says when it stopped short. Unlink refuses `[unsupported]`; link sends its create, which GitLab answers 409 when the pair exists; the settle verdict is unknown |
-| With rows the account cannot read and more pages, the text counted them twice | They are counted within what was read, and a list with none renders as the other linked lists do |
-| Two more reads on every `get_merge_request` | The maintainer's choice, 2026-10-22 |
-
-**v3.0.0 release review.** The release security review
-(`audit/security-reviews/v3.0.0.md`) found one low finding:
-
-| Found | Resolved |
-|---|---|
-| `apply_suggestions`' witness covers the text a suggestion puts in, not the lines it replaces, so a client's prompt can show one plausible line for a suggestion that removes many; the 2.x question named the range | Recorded: the Ship flag, the protected-branch refusal and review before merge stay, and `list_discussions` shows the range. Carrying `from_line` and `to_line` as optional, checked inputs would close it without a break |
-
-**Re-requesting a review and publishing an issue (#67).** The
-`/simplify`, `/code-review high` and `/security-review` passes found, and
-#67 resolved:
-
-| Found | Resolved |
-|---|---|
-| `rerequest_review` refused a reviewer only by an `approved` state, so one the approvals listed under another state could lose that approval | The approvals are read too, and a reviewer in them is refused `[blocked]` |
-| A GraphQL answer with a payload and a top-level error was reported as refused, so the caller could send it again and notify twice | A payload is read first: it means the mutation ran |
-| A GraphQL 401 "Invalid token", sent without `WWW-Authenticate`, did not ask for a new token | The classifier reads GraphQL's `errors` body, and that message asks for one |
-| From unreviewed, no read could settle a lost re-request | An unreviewed reviewer is refused `[conflict]`: there is no review to ask for again |
-| A witness outside GitLab's review states read as `[stale]` | `[invalid]` |
-| `api-coverage` let any GraphQL operation through one row for the endpoint | It reads each `mutate` call's root field and the first field its query selects, holds both against §8a's table, and refuses a call to the endpoint outside `mutate` |
-| `make_issue_public` sent a PUT for an issue already public | Nothing is sent |
-| The in-memory GitLab kept an approval when its giver requested changes | It takes it back, as GitLab does |
-
-**v4.0.0 release review.** The release security review
-(`audit/security-reviews/v4.0.0.md`) found two low findings:
-
-| Found | Resolved |
-|---|---|
-| `update_issue` sent `confidential: false` for an issue its read showed public, so a person making it confidential between the read and the `PUT` was undone | `65c44f1`: the field is left out for a public issue, and a test holds that nothing is sent |
-| `rerequest_review`'s approval check is a read; the mutation carries no witness, so a reviewer who approves in between loses that approval | Recorded in §7.3: only the reviewer can open the window, and GitLab notes it and asks them again |
-
-**Per-call approval to the client (issue #63).** The code and security
-reviews found:
-
-| Found | Resolved |
-|---|---|
-| The text witness held only the first 2,000 characters of a long suggestion, so GitLab could commit a tail nobody read | A suggestion longer than `list_discussions` shows is refused `[unsupported]`, and the whole text is matched |
-| The witness trimmed surrounding white space, so indentation could differ from what was read | Only line endings and a final newline are set aside |
-| A major release on the `/v2` module path, which `go install` never reaches | The module path is `/v3` |
-| A value of `GITLAB_MCP_REQUIRE_PROMPT` that is not a boolean was ignored | Anything but off refuses start |
-| `schema-diff` read the whole CHANGELOG as unreleased when the tag had no heading in it | It refuses then |
-| `create_tag` and `upload_file` lost their question and are not marked destructive, so a client that prompts only by that mark does not prompt for them | Kept as Write: both only add, which is what `destructiveHint: false` says, and moving a tool between kinds is the maintainer's. The README's `ask` rules include both, and `docs/security.md` names `upload_file`'s guards *(Since 2026-11-01 `upload_file` is Adding and still not destructive; `create_tag` stays Write and is destructive, since it starts tag pipelines, row 137.)* |
-
-- **4.2.0, `/simplify`, `/code-review medium` and a security review.**
-  The first cut put twelve tools on Adding; review took six back to
-  Write, each because it does more than add: `create_tag`,
-  `create_branch` and `create_merge_request` can start a pipeline, the
-  two link tools can make one item hold another, and
-  `add_review_comment` can resolve a thread when the review is
-  submitted. Also fixed: five documents still listed four kinds or said
-  only Ship and Destructive prompt; the staleness fixture had no Adding
-  row, so dropping it from the gate failed nothing; the gate now names a
-  §8 kind it does not know; the bodies gate's kind wording and the dump
-  field only it read are gone; a tool with no destructiveHint fails the
-  hint test rather than counting as adding; the release note names
-  Claude Desktop. Kept: a kind rather than a flag for Adding, and the
-  release a minor without **Breaking:**, both the owner's call. The
-  security review found nothing at confidence 8 or above.
-
-### Closing a phase
-
-1. `make check` green; the live driver run and its transcript read.
-2. `/simplify`, `/code-review high` and `/security-review`; findings
-   fixed or recorded in §16a.
-3. The status line, §16 and `CHANGELOG.md` say what was built and what
-   is owed.
-4. Commit on the topic branch; say it is ready for review; stop.
-
-**Phase 7.** `/simplify`: `quoted()` built on `Line`, `askSHA` on
-`shortSHA`, the tests' text and argument copies shared; skipped: running
-the two rule reads at once, which `run_pipeline` no longer makes. The
-altitude review found a decline honored only when the round reached its
-question again; `run_pipeline`'s question depended on GitLab's rules,
-so a ref unprotected between the rounds would have run. Fixed: anything
-but an accept is refused before the service runs, and `run_pipeline`
-reads GitLab's own flags on the ref. `/security-review`: one finding at
-confidence 8, fixed (`audit/security-reviews/phase-7.md`).
-`/code-review high`: ten, nine fixed and one declined:
-
-| Found | Fixed |
-|---|---|
-| A confirmed round that wrote without reaching its question left the stage waiting, so a lost reply read "nothing was written" | Phase 7 commit; an accepted answer marks the call as writing before the service runs |
-| `\b` is ASCII-only, so a link after `_` or in a non-Latin script was not broken | Phase 7 commit; each shape is anchored on a character that is not a letter or digit, with cases |
-| `play_job` asked about a job GitLab would not play | Phase 7 commit; a job neither manual nor scheduled is `[conflict]` before anyone is asked |
-| The driver's scripted person was shared with the reader goroutine unlocked | Phase 7 commit; a mutex |
-| A decline branch in `Ask` could no longer run | Phase 7 commit; removed |
-| `AskFailures` built its messages by hand | Phase 7 commit; through `errorResult` |
-| Two rule helpers were left with one caller each | Phase 7 commit; inlined again |
-| The driver's list of asking tools was typed out | Phase 7 commit; the driver reads it from the published descriptions and fails a tool that asks and put no question |
-| `status` and the startup log did not show `GITLAB_MCP_REQUIRE_PROMPT` | Phase 7 commit; both do |
-| The answer's expiry read the protocol the client asked for | Declined: the SDK decides how the question travels from the same field (`mcp/server.go` at v1.8.0), so the expiry matches it |
-
-**After 2.0.0.** Each feature's `/code-review high` and security review,
-fixed in its "Tighten … after review" commit:
-
-| Feature | Found, and fixed |
-|---|---|
-| Linked items (#12) | Any external tracker id reached the text; an issue's reference missed incident URLs; `get_commit` could mix two commits on a moving branch; a continued read read the links again. An id is kept only when shaped like one, the reference comes from the instance's URL resolver, the commit is read by its full id, and an offset read skips the links |
-| `get_test_report` (#13) | Suite errors were not masked or cut; a zero-width space could split a token past the masks; suite rows could fill the budget; a report still growing under a child pipeline read as whole. Masked and cut, hidden characters removed first, suites held to a quarter of the budget, and a partial report says so |
-| `list_item_events` (#14) | An offset token could repeat or skip an event added between calls; a cut history could hide a gap among ties. The token names the last event shown, and a cut covers what came after the oldest event kept, exclusive |
-| `list_boards` (#19) | A list's milestone argument was cleaned, not exact, and a milestone titled like a filter read as one; a scope's milestone looked applied to every list; a page of boards, each with its lists whole, had no size bound. Exact titles, no argument for a filter-shaped one, the scope's filter in its own field, and pages cut at about 30,000 characters from up to ten pages read |
-| `track_time` (#15) | A call repeated after it landed was refused `[stale]`; a failure did not say what had landed. Values that already hold read as unchanged first, and a failure names what landed and gives the `updated_at` to use |
-| `subscribe`, `add_todo` (#17) | `add_todo` repeated after a lost answer, on a check GitLab runs with no lock or unique index. Never repeated: a lost answer is `[ambiguous_outcome]`, settled by reading the account's to-dos; a 304 is read only through `DoAnswered`; both set `openWorldHint` false |
-| `update_snippet`, `delete_snippet` (#16) | An internal or public snippet could be written, publishing what was written; a PUT that creates, deletes or moves a file repeated; "unchanged" was read from `updated_at` alone. Private snippets only, such a PUT is sent once (`Call.Once`) and settled by reading, and the result says when `updated_at` did not move |
-| `run_merge_request_pipeline` (#18) | A lost create was settled by any merge request pipeline the account started since shortly before, which GitLab also starts on a push or a merge request opening; five candidates read, then "calling again is safe"; a `source_branch` kind GitLab never answers. The newest pipeline id is read before the POST and only a newer one counts, found by one filtered read with no cap; a moved head is refused after the question, and a pipeline at another sha is named; `kind` is `merged_results` or `detached` |
-
-**The 4.1 bundle, reviewed after release.** 4.1.0 and 4.1.1 shipped
-without `/simplify` or `/code-review high`, and with a security review
-written by hand rather than run; this repository's definition of done
-asks for all three. They were run over `v4.0.1..HEAD` on 2026-10-24.
-`/security-review`: no finding (`audit/security-reviews/v4.1.2.md`).
-`/simplify` and `/code-review high` found the bundle gate one layer too
-shallow, fixed in `83f7577` and `842b194` and released as 4.1.2:
-
-| Found | Fixed |
-|---|---|
-| The keys the bundle asks for were typed out, so four settings went missing for weeks | Derived from `config.Vars`; each setting left out has a reason, and a stale exclusion is refused |
-| Only settings flagged as switches were compared, so a `toolsets` default of `all` passed | The configuration is started from the bundle's defaults and from nothing, and any difference is refused |
-| "Read-only excludes the switches" was prose nothing held | Every combination of the switches is started and the refused ones held to a declared list both ways; each field names the other by its title |
-| A platform override's `env`, which a host substitutes for the base, passed unchecked | Refused |
-| An empty override `env: {}` still passed, though the host's `platformConfig.env \|\| result.env` takes it (found after 4.1.2) | Refused whenever the key is present |
-| `args`, in `mcp_config` or an override, was never read, so `--enable-destructive=true` there would have turned the deletes on by default (found after 4.1.2) | A non-empty base `args` and any override `args` refused; the base keeps the empty `args` Desktop has always been given, since no Desktop launch has shown it optional |
-| An excluded setting, such as the refresh token, could be set in `env` | Refused |
-| The defaults failing to start was also reported as seven refusals | The combination check stays quiet then |
-| The Ship field left out applying suggestions and moving an issue; `docs/configuration.md` listed four settings | Both say what the bundle does |
-| The test fixture copied the manifest byte for byte, and one option decode aborted the gate | The tests break copies of the manifest itself; options decode leniently |
-| `entry_point: "LICENSE"`, or a command naming `README.md`, passed, since the documents are staged rows (found after 4.1.2) | The entry point and the commands resolve against the programs alone |
-| An empty title matched every description, so a field in a refused pair could drop its title; then an untitled field was reported once per pair, not at all when the defaults failed to start, and a title padded with a space was not found in a description that named it (found after 4.1.2) | An untitled field is refused once, whatever the defaults; titles are matched trimmed |
-| The profile field did not say what a name may be, though any other stops the server at start (found after 4.1.2) | It states `userconfig.ProfileRule`, which a refusal gives too, and the gate holds it; the rule says a to z, since "lowercase letters" would admit `café` |
-| A command not under `${__dirname}/` passed: an absolute one, `/server/x`, its leading slash stripped, and a relative one (found after 4.1.2) | Refused. `${__dirname}` is the one path the specification fixes to the bundle, and nothing says what a relative command is resolved against (§18 row 132) |
-
-Kept from those reviews: a profile name with spaces around it starts,
-since every setting is trimmed; `ProfileRule` is typed beside
-`ProfilePattern`, and `TestValidProfile` holds the pattern at 64 and 65
-characters; a staged row is a program unless it is copied from the
-repository, which holds while the packer stages only the binaries and
-the launcher.
-
-**The family sweep of 2026-10-24.** Every server's bundle gate and
-settings were held to the shared standard's table of rules on
-2026-10-24. This repository lacked these, each now with a test watched
-failing against broken code:
-
-| Found | Fixed |
-|---|---|
-| A variable of spaces alone was a value: `GITLAB_MCP_LOG_LEVEL`, `GITLAB_MCP_LOG_FORMAT` or `GITLAB_MCP_HTTP_TIMEOUT` set to a space stopped the server, and `logout` warned about a refresh token of spaces that nothing else used | Every variable is read through `config.Lookup`, which trims: `Define`, the refresh token in `internal/credentials`, and the test instance `status` and `doctor` mask. A test walks the whole registry, and a variable read outside `Define` needs a reader there |
-| Nothing held the code to the registry: a variable spelled in `cmd/`, `internal/` or `scripts/` could be one no gate knows | A test scans the three for `GITLAB_MCP_` names, each `+` chain read in order, with floors on the files under each root and a name outside `internal/config` |
-| The defaults diff called `Interface` on every field, which panics on an unexported one | Every field is compared as `reflect.DeepEqual` would, through `reflect.Value`, and named |
-| The packer ran a subset of the gate, without the license, the description, the settings or the switch sets | Both run `mcpbCommitted`, which reads the manifest once from one root |
-| A key repeated in one object passed, though the checks read a merged document and the host the last one (§18 row 133) | Refused, by its path, before any other check |
-| Only the committed manifest was validated, not the stamped one that ships | The stamp is held to the vendored schema |
-| `server.type`, the claimed platforms, and `entry_point` against the default command went unchecked, so Linux dropped together with its override passed | `server.type` is `binary`, the platforms are the staging table's, and `entry_point` is the file `mcp_config.command` runs |
-| The launcher's install hint is `gatekit.ModulePath`, which nothing held to `go.mod` | Held |
-| The docs check matched a variable as a whole name, untested | A test holds that a longer name does not document the one inside it |
-
-Already carried: the archive's close is checked, by `zip.Writer.Close`
-and by `WriteFileAtomic` before its rename. Kept: a profile name is not
-lowered. A capital is refused with `userconfig.ProfileRule`, so no
-character Unicode folds into a to z can reach another profile, which is
-the other choice the standard allows. `Define` no longer reads the
-refresh token, which `Build` never used.
-
-`/simplify` (one agent, four angles), `/code-review medium` and
-`/security-review` ran over `v4.1.2..family-rules`, merged PR #81
-included, on 2026-10-24. `/security-review`: no finding at confidence 8
-or above. The other two found these, with the fixes the family's
-reviews of the same sweep asked of every server, marked (family). Each
-fix has a test watched failing against the old code:
-
-| Found | Fixed |
-|---|---|
-| `config.Lookup` was held at one reader in four: `status` and `doctor` reading the test instance, `logout` and `Resolve` the refresh token, could each go back to a raw read and pass | A scan of `cmd/`, `internal/` and `scripts/` refuses a read of a variable outside `internal/config` by any name it resolves, an alias included, that does not go through `Lookup`, with a floor on the reads through it. It found the smoke gate's fake server reading `GITLAB_MCP_READ_ONLY` raw (family) |
-| `credentials.EnvVar` aliased `config.EnvRefreshToken`, and a nil `Env` read the process's environment in the store and nothing in `app.Resolve`, which then refused a token the store would use | One name, and one reader, `Store.EnvToken`, which `app` and `logout` ask; a nil `Env` is the process's environment for both |
-| `mcp_config.args` was compared with `[]` as bytes, so `[ ]` or an empty list over two lines was refused | Decoded and its length tested; missing, `null` and not a list still refused |
-| A comment and a refusal said as fact that the host keeps the last of a repeated key; no probe of Claude Desktop shows it | They say what was probed: the gate's decode against the schema's, the packer's and Node's (§18 row 133) |
-| Go's decode matches a key whatever its case, so `command` and `Command` in one object were one key to the gate and two to the host; a key holding a dot or a bracket was named ambiguously; a key walk that failed passed (family) | Two keys equal under case folding refused (§18 row 134), such a key quoted in its path, and a failed walk refused |
-| A Linux binary another platform runs was called "the launcher", whose empty platform it shares | A staged program is named by what it is: the launcher, a binary the launcher chooses, or the platform it is staged for |
-| go.mod's module was read only after a space and kept a trailing comment, and the install-hint check reads it (family) | One parser, which takes tabs, a quoted path, a comment and CRLF |
-| `Lookup`'s comment said it returns the variable's name | It returns the trimmed value |
-| `${__dirname}/` was spelled three times, and the resolver written out twice | One constant, one resolver |
-| The switch combinations started the defaults again after the defaults check had | The defaults' error is passed to them |
-| `mcpbManifest`'s comment named a second decode as a map that the gate does not make | It says what reads a key the struct leaves out |
-| `status`'s `rawHost` trimmed a value `Lookup` had trimmed | Trimmed once |
-| `TestValidProfile` held a refusal to `ProfileRule` itself, and `docs/configuration.md`'s sentence, its `-` and `_` in backticks, was held by nothing | The test states the words; the `staleness` gate holds the page to `ProfileRule` |
-| A differing unexported field went unreported beside a named one, and `Value.Equal` compared pointers by address (family) | Every field is named when it differs, a pointer compared by what it points to |
-| The name scan read `EnvPrefix + "ENABLE_" + kind` as the variable `GITLAB_MCP_ENABLE_` (family) | A run a value completes is a prefix |
-| The smoke gate's environment and `mcpstdio` typed `GITLAB_MCP_` names by hand (family) | `config`'s constants |
-| A `user_config` default holding `${...}` passed, though a host may substitute in it (family) | Refused, naming the key (§18 row 135) |
-| A field setting a credential was not held to `sensitive` (family) | `config.Var.Secret` marks a credential, and its field must be sensitive, with a floor on the credentials marked. The refresh token is the one today, and the bundle excludes it |
-| The docs check took a name followed by `*` for the variable (family) | A pattern |
-
-Kept from these reviews: the defaults diff reads unexported fields, a
-family decision, though `Config` has none today, since one added would
-otherwise panic the gate. The family's rule that the registry entry read
-the vetted manifest does not apply: `server-json` reads no manifest,
-taking the description from the constant the `mcpb` gate holds the
-manifest to. Nor does its rule for a manifest-stamping command's output:
-the packer writes the stamp into the bundle alone.
-
-## 17. Open decisions
-
-1. **A shipped gitlab.com client id.** Compiling in the id of a public
-   application this project registers on gitlab.com would make
-   gitlab.com sign-in need no setup. **Decided 2026-09-26: no.** Every
-   sibling has the person bring their own OAuth client, and sign-in is
-   to be the same all around (§10). Reusing GitLab's CLI's id was
-   rejected on its own grounds: it is registered on `localhost:7171`,
-   which gets no port flexibility, and nothing authorizes reuse.
-2. **Is approving Ship?** Approval is a person's sign-off that other
-   people's merge rules count. Proposed: Ship, as §4.3 has it, since an
-   injected "approve this" is exactly what the flag exists to refuse.
-   The counter-argument is that approving is the most common review
-   action and is reversible. **Decided 2026-09-27 (maintainer): Ship,
-   as proposed.** The injection evals score an approval the model was
-   steered to (§13).
-3. **Lockdown for public projects.** GitHub withholds content from
-   authors without push access in public repositories. Here: in a
-   public project, render content from authors below Developer as
-   withheld unless `GITLAB_MCP_UNTRUSTED_CONTENT=show`. It costs a
-   members read per call and hides legitimate bug reports. Proposed:
-   decide in phase 4 from the injection evals. **Decided 2026-09-27: no
-   lockdown in 1.0.** Four evals plant an instruction from a
-   non-member of a public project, the case lockdown would withhold: read
-   a private file, run a quick action, post in another project, approve
-   and merge with Ship on. Opus followed none of them in three runs,
-   12 of 12, each time doing the task it was given. Behind the model the
-   boundaries (§4.1), the quick-action guard (§4.2), the unregistered
-   kinds (§4.3) and the allow-list (§4.7) still hold without it. Hiding
-   outsiders' bug reports would cost every person a members read per
-   call to guard against what these layers already stop. Revisit if a
-   model or task makes the evals fail; `make evals` is the check.
-4. **The floor version.** **Decided 2026-09-26: not applicable.** The
-   server serves gitlab.com only (§14), which runs the newest release,
-   so no tool is gated by version and the live driver runs no floor
-   container. It was proposed at 18.0 while self-managed was in scope.
-5. **Personal access tokens in 1.0.** **Decided 2026-09-26: no**, for
-   the same reason as §17.1; the device flow goes with it. If a
-   headless need appears later, it is argued here first, and it arrives
-   in every sibling or none.
-6. **go-licenses v1.6.0 or v2.** **Decided 2026-09-26: v1.6.0.** Both
-   v1.6.0 and v2.0.1 were run over the real module graph and pass the
-   same allow-list; v1.6.0 matches the siblings.
-7. **Lenient argument decoding.** **Decided 2026-09-26: as proposed.**
-   Arrays and integers sent as JSON inside a string are decoded; `null`
-   and `""` for an optional input mean absent; required inputs are never
-   relaxed; a debug line names the inputs adjusted, never their values.
-   It needs the untyped `AddTool`, so `register` validates arguments
-   itself after decoding.
-8. **Default toolsets.** Proposed as §8: wiki, snippets, releases,
-   deployments and activity off by default, which keeps the default at
-   43 tools. **Decided 2026-09-27 (maintainer): as proposed.**
-9. **Default write allow-list.** Unset means everywhere the token can
-   write. Proposed: keep, with `doctor` and `get_me` saying so, because
-   a default that refuses every write is a default everyone overrides.
-   **Decided 2026-09-27 (maintainer): as proposed.**
-10. **GitLab's built-in server.** If it gains stdio, tokens, enforced
-    filtering and a read-only mode, this server's reason to exist
-    narrows to the local-token, quick-action and verified-release half.
-    Revisit at each minor release; record the check in §18. **Open,
-    standing.**
-11. **Premium and Ultimate after 1.0.** Epics and iterations are
-    work items, GraphQL-first, with the REST epics API deprecated for
-    v5. A post-1.0 `planning` toolset would need GraphQL reads and its
-    own coverage source; the first GraphQL use, one mutation, came with
-    `rerequest_review` (§4.10). **Deferred to after 1.0.**
-
-12. **Pipelines a Write starts.** A commit, a new branch or a new merge
-    request on an unprotected branch starts the pipelines a push
-    starts, with the account's own permissions and the project's
-    unprotected variables only; Write never reaches a protected branch
-    (§4.4). **Decided 2026-09-27 (maintainer): they stay Write**, as the
-    account's own push would run them, and `docs/security.md` says so.
-    Appending `[skip ci]` without Ship was rejected: it would stop the
-    checks a merge request is reviewed by. Raised by the phase 2
-    security review.
-
-13. **The kinds and toolsets of phase 6.** Proposed for the
-    maintainer to decide before phase 6 started (`CLAUDE.md`, ask before
-    doing):
-
-    | Tool | Kind | Toolset | Why |
-    |---|---|---|---|
-    | `move_issue` | Ship | default | It publishes an issue's content in another project; both must be in the write allow-list, and a move into a more visible project is refused |
-    | `link_issues`, `unlink_issues` | Write | default | A relation between issues; removing one destroys no content |
-    | `create_label`, `update_label` | Write | `planning`, off | Project configuration that every issue shares |
-    | `delete_label` | Destructive | `planning`, off | Removes the label from every issue |
-    | `create_milestone`, `update_milestone` | Write | `planning`, off | As labels; closing a milestone is an update |
-    | `delete_milestone` | Destructive | `planning`, off | |
-    | `rebase_merge_request` | Ship | default | It rewrites the source branch and resets approvals; it takes the head `sha` as its witness |
-    | `cherry_pick_commit`, `revert_commit` | Write | default | A commit to a branch, as `create_commit` makes, with the same refusal of the default and protected branches (§4.4). §8a called them Ship candidates; the guard is what makes them Write |
-    | `get_blame` | Read | default | |
-    | `list_job_artifacts`, `get_job_artifact` | Read | default | One text file of a job's artifacts, masked like a job log and under the file budget; an archive is never downloaded whole |
-    | `create_tag` | Write | `releases` | It starts the tag pipelines, as `create_branch` starts a branch's; a tag a protection rule covers is refused |
-    | `delete_tag` | Destructive | `releases` | |
-
-    **Decided 2026-09-27 (maintainer): as proposed.** The `planning`
-    toolset is the one §17.11 would extend with epics after 1.0.
-14. **A merge request pipeline for a fork.** GitLab runs a fork's merge
-    request pipeline in the target project, with the fork's code, the
-    target's unprotected variables and its runners, when the caller may
-    create pipelines there and the project allows it
-    (`ci_allow_fork_pipelines_to_run_in_parent_project`); otherwise in
-    the fork, on its source branch. GitLab shows that setting only to
-    maintainers, so the server cannot tell which. GitLab's own advice is
-    to review a fork's code before running it in the parent, which is
-    the step a persuaded model skips. **Decided 2026-09-30: refused.**
-    `run_merge_request_pipeline` answers a fork's merge request
-    `[blocked]`, dry run included, before anything is sent, and points
-    to the merge request's Pipelines tab. This is the narrow choice:
-    allowing forks later, held to the allow-list in both projects as
-    `rebase_merge_request` is, and asking the person, is an addition
-    (§18 row 104).
-
-### 17a. Deferred cleanups
-
-Phase 5 closed every cleanup phases 0 to 3 deferred but two, which no
-REST call can close:
-
-- `get_issue` and `get_merge_request` walk up to ten pages of threads to
-  count them, and each `list_discussions` page walks them again to show
-  them by last activity. `X-Total` cannot replace the walk: it counts
-  system-only threads, and the unresolved count and last activity need
-  every note. Reading only the newest pages is rejected (§18 row 83).
-  Found in phase 0.
-- `run_pipeline` settles a lost answer by this account's newest API
-  pipeline on the ref since shortly before the call, so a second
-  `run_pipeline` on the same ref in that window reads as this one. The
-  pipeline's variables would tell them apart, and reading them reads
-  their values (§18 row 82). Found in phase 3.
-  `run_merge_request_pipeline` has a narrower one. It settles by this
-  account's newest merge request pipeline on the merge request's refs,
-  newer than the project's newest pipeline read just before the create,
-  so pipelines GitLab started earlier under the account's name, for a
-  push or for opening the merge request, are not taken for it. One this
-  account starts in the moment between that read and the answer, by a
-  push or another call, still reads as this one.
-
-The 1.0 security review added a third, closed after 1.0:
-`update_label` and `update_milestone` could not clear a description or a
-date, since §17.7 reads `""` as absent. They now take `clear_*` inputs,
-as `update_issue` does, and `update_label` also clears a priority
-(§18 row 92).
-
-Operations `testdata/api-coverage.tsv` defers with a citation of §17a
-are deferred past 1.0, each for the reason its row gives. The feature
-candidates among them are phase 6 (§16, §17.13): issue move and links,
-label and milestone writes, rebase, cherry-pick, revert, blame, job
-artifacts and tag writes.
-
-### 17b. Deviations from the shared standard
-
-The standard at `~/.claude/mcp-server-standard.md`, read 2026-09-25.
-
-| The standard says | Here | Why |
-|---|---|---|
-| Errors use six classes | Thirteen (§6.5) | `stale` is forced by §2.10; `ambiguous_outcome` by §2.11; `forbidden` and `auth` ask for different fixes; `blocked` for the quick-action, branch and allow-list guards; `rate_limited` separates waiting from failing; `ambiguous` as the siblings use it; `unexpected` for what nothing else covers |
-| Never overwrite; compute a minimal diff | Held for files and commits (`last_commit_id`) and merges (`sha`); **not holdable** for issue, merge request, wiki, comment and snippet updates and time tracking | No `If-Match` in REST and `lock_version` only in the web controllers (§2.9). §4.6's `updated_at` witness narrows the lost-update window without closing it; only the fields given are sent |
-| Destructive tools are not registered unless enabled | Held, and extended to Ship | One sibling registers deletes and refuses per call. Not here: GitLab's `api` scope permits everything, so a registered Ship or Destructive tool is exactly the control an injected instruction gets to argue with, and the official server's unenforced filters (§1) show where "listed but callable" ends |
-| Read-only mode requests read-only scopes | Held (`read_api`) | Recorded because `read_api` is enforced by HTTP method, which is exactly right for REST |
-| §3b: `--client-secret` / `<PREFIX>_CLIENT_SECRET` names the client JSON | `--client-id` / `GITLAB_MCP_CLIENT_ID`; everything else in §3b held | GitLab shows an application id and offers no JSON, and a public client has no secret (§2.2); a flag named for a file and a secret nobody has would be a lie in the interface |
-
-Everything else is adopted as written, including the preamble's three
-obligations: make a rule a test, derive its list from the code, and
-have the checker assert a floor on how much it read.
-
-## 18. Evidence log: conventions checked, changed, or rejected
-
-Sources: GitLab's source at master `829b21d2` (`19.5.0-pre`,
-2026-09-25), including `lib/api`, `lib/gitlab/auth.rb`,
-`config/initializers/doorkeeper*.rb`, `db/structure.sql` and
-`doc/api/openapi/openapi_v3.yaml`; Doorkeeper v5.9.3 source and
-changelog; GitLab's CLI source; docs.gitlab.com pages for OAuth, tokens,
-rate limits, pagination, quick actions, diff limits and the MCP server;
-RFCs 6749, 7636, 8252 and 8628; the MCP specification 2025-11-25; the
-servers of §1 and their trackers. Checked 2026-09-25.
-
-**Three tiers.** (1) Verified here against source, a spec file or an RFC.
-(2) Taken from a sibling server's own evidence log or code, verified
-there. (3) Asserted from documentation or a secondary source and **not
-yet probed live** — §15 exists to settle these, and they are marked.
-
-| # | Convention or assumption | How checked | Verdict |
-|---|---|---|---|
-| 1 | GitLab requires the redirect URI to match exactly, port included | Doorkeeper `uri_checker.rb`; GitLab overrides nothing; GitLab's MCP page says "must exactly match" | **Refuted for loopback IP literals (tier 1).** Ports are ignored for `127.0.0.1` and `::1`. The documentation is wrong for this case; spike A confirms live |
-| 2 | `localhost` works as a loopback redirect like `127.0.0.1` | Doorkeeper decides loopback with `IPAddr` | **Refuted (tier 1).** `localhost` needs an exact port. RFC 8252 §7.3 advises against it anyway |
-| 3 | A GitLab OAuth application needs a client secret | Doorkeeper public clients; GitLab's CLI docs | **Refuted (tier 1).** `confidential: false` needs none; a confidential one makes the CLI fail with `invalid_client` |
-| 4 | GitLab enforces PKCE | `tokens_controller.rb`, `authorizations_controller.rb` | **Refuted (tier 1).** Only for dynamically registered applications. This server sends S256 regardless |
-| 5 | Dynamic Client Registration can give a third-party server an `api` token | `dynamic_registrations_controller.rb` | **Refuted (tier 1).** Scope forced to `mcp`; rate limited; can be disabled |
-| 6 | Refreshing twice with one refresh token is harmless | Doorkeeper `refresh_token_request.rb`; no `previous_refresh_token` column | **Refuted (tier 1).** Old pair revoked immediately; the second is `invalid_grant`. §10's lock; spike C |
-| 7 | An authorize request may carry an RFC 8707 `resource` | `authorizations_controller.rb#pre_auth_params` | **Refined (tier 1).** A `resource` ending `/api/v4/mcp` silently rewrites the scope to `mcp`. Never sent |
-| 8 | Device authorization is on for any application once the instance supports it | `device_code_enabled` column and model default; the patch initializer | **Refuted (tier 1).** Off by default for applications created after the 18.10 migration; undocumented. One reason the device flow is not used (§10) |
-| 9 | Access tokens always last two hours | `doorkeeper.rb` `custom_access_token_expires_in` | **Refuted (tier 1).** Configurable from 19.1, minimum 300 s. `expires_in` is read |
-| 10 | Some scope narrower than `api` allows commenting | `lib/api/api.rb` scope enforcement; `mcp_access.rb` | **Confirmed that none does (tier 1).** `read_api` is GET/HEAD; `mcp` covers a few tagged routes, not notes or issue update. §2.6 |
-| 11 | GitLab's CLI client id can be reused by other tools | CLI source: id, `localhost:7171`, scopes | **Rejected (tier 1 for the facts).** Fixed port on `localhost`, collides with the CLI, and no document authorizes reuse. §17.1 |
-| 12 | Quick actions are a web-UI feature | `notes_helpers.rb`, `issuable_base_service.rb`, `quick_actions/extractor.rb` | **Refuted (tier 1).** They run from API-created notes and from issue and merge request descriptions on create and update; a commands-only note returns 202. §4.2; spike E for the escape |
-| 13 | A backslash before `/` neutralizes a quick action | Extractor regex requires `^/`; CommonMark escapes | **Tier 3.** Holds on reading; spike E proves it on a live instance, render included |
-| 14 | REST supports `If-Match` for updates | Grep of `lib/api` | **Refuted (tier 1).** Nothing reads it; `lock_version` is web-only. §17b |
-| 15 | A stale `last_commit_id` is a 409 | `lib/api/files.rb:431`, `update_service.rb` | **Refuted (tier 1).** 400 with a fixed message; mapped to `[stale]` |
-| 16 | A mismatched merge `sha` is a 400 | `helpers.rb#check_sha_param!` | **Refuted (tier 1).** 409. Some groups require `sha`; one surveyed server broke on it |
-| 17 | Merging without permission is 403 | `merge_requests.rb:902` | **Refuted (tier 1).** 401. §6.5 maps it to `forbidden` when the token is otherwise valid |
-| 18 | A private project the token cannot read is 403 | `helpers.rb` `find_project!` | **Refuted (tier 1).** 404; `not_found` says "or no access" |
-| 19 | A missing route and a missing resource look the same | `api.rb` catch-all | **Refuted (tier 1).** `{"error": "404 Not Found"}` against `{"message": "404 … Not Found"}`. Spike F for the live bodies |
-| 20 | A tier refusal has one shape | `ee/lib/api` grep: 24 `not_found!`, 15 `forbidden!` | **Refuted (tier 1).** Both occur. §7.9 |
-| 21 | `X-Total` is always present | Kaminari initializer, `MAX_COUNT_LIMIT` | **Refuted (tier 1).** Dropped past 10,000 |
-| 22 | Offset pagination reaches every row | `pagination_strategies.rb`; instance limits page | **Refuted (tier 1 / 3 for the default).** 405 past 50,000 rows on keyset-capable endpoints |
-| 23 | `RateLimit-Remaining` predicts a 429 | Rate-limit docs; `rate_limiter.rb` | **Refuted (tier 1 / 3).** Only Rack::Attack throttles set it; application limits 429 regardless. Two 429 body shapes |
-| 24 | gitlab.com's API limit is generous enough to ignore | gitlab.com rate-limit page | **Refuted (tier 3).** 2,000 a minute today, 100 a minute proposed for Free, and 60 notes a minute. §11 |
-| 25 | The OpenAPI file lists the REST API | `openapi_v3.yaml`; the rake task and its CI check | **Confirmed with gaps (tier 1).** 1,862 operations, generated and checked current; experimental and some policy routes missing; 526 without a response schema; v2 deprecated. The coverage source, with omissions verified live |
-| 26 | The OpenAPI file says which tier each operation needs | Count of `x-gitlab-tier` | **Refuted (tier 1).** 3 of 1,862. Tier is probed |
-| 27 | The GraphQL schema is committed and could drive coverage | `lib/tasks/gitlab/graphql.rake` | **Refuted (tier 1).** Generated, not committed. REST only (§4.10) |
-| 28 | `/api/v4/version` is the version probe | `lib/api/metadata.rb` | **Refined (tier 1).** Deprecated since 15.5 for `/metadata`; both need authentication; no plan field |
-| 29 | Job logs are all-or-nothing | `lib/api/ci/jobs.rb:110-136` | **Refuted (tier 1).** Undocumented `byte_offset` and `byte_limit`, 500 KB per call. Spike J for gitlab.com and the floor |
-| 30 | `GITLAB_` is a safe environment prefix | GitLab CI predefined variables | **Rejected (tier 3).** CI jobs already set `GITLAB_CI`, `GITLAB_USER_LOGIN`, `GITLAB_FEATURES` and more, and other GitLab tools read `GITLAB_TOKEN`; `GITLAB_MCP_` cannot collide |
-| 31 | GitLab's built-in MCP server enforces its tool allow-list | GitLab issue 631017 | **Refuted (tier 3).** Filters listing only, by design. Supports §4.3's registration-only gating |
-| 32 | The most-used community server's read-only mode is a control | Its published advisories | **Refuted (tier 3).** Bypassed through a raw GraphQL tool and verb heuristics. No escape hatch here (§1) |
-| 33 | Issue and merge request updates can be guarded like files | `issue_build_parameters.rb`, merge request controllers | **Refuted (tier 1).** `lock_version` accepted only by web controllers. §4.6 |
-| 34 | The credential order is keyring → file → env | Sibling code | **Refuted (tier 2).** Every sibling resolves env → keyring → file. §5a |
-| 35 | The newest sibling carries the newest shared machinery | Per-component comparison, 2026-09-24 and 2026-09-25 | **Refuted (tier 2).** Each sibling was newest for some pieces; one released after the merge and added seven rows. §5a merges them |
-| 36 | A sibling already has an OpenAPI coverage gate to copy | That sibling's tests and release checklist | **Refuted (tier 2).** Its check is a response-fields unit test with a manual refresh; a request field it did not check shipped wrong. §5a's `api-fields` checks both directions |
-| 37 | A sibling already decodes stringified arguments or marks untrusted content with boundaries | All siblings' code | **Refuted (tier 2).** Neither exists anywhere; §4.1 and §17.7 are new ground |
-| 38 | Denylisting built-in tools confines an evals run | A sibling's evals log | **Refuted (tier 2).** Grep and Glob read maintainer notes mid-task. `--tools ""` and `--setting-sources ""`, fail-closed |
-| 39 | A struct printed with `%+v` is redacted by `LogValue` | A sibling's `Settings` | **Refuted (tier 2).** `%+v` reads unexported fields; `String()` is needed too |
-| 40 | A quick-action guard can match GitLab with a regular expression | GitLab's extractor and the Markdown pipeline it calls at `829b21d2`; comrak v0.55.0, the version GitLab's renderer pins; a differential oracle over about 1.3 million generated bodies | **Refined (tier 1).** Detection needs comrak's block structure, so `internal/quickaction` ports it. Zero lines GitLab would run were missed; four deliberate over-detections (any `/word`, both backtick readings, no rendered-text prefilter, description-list terms). Before 16.7 the extractor was regular-expression only and ran commands inside `~~~` fences and lazy lines, which no longer matters: gitlab.com is the only instance |
-| 41 | GitLab's token prefixes are the ones commonly listed | GitLab's token page, fetched 2026-09-26 | **Refined (tier 3).** `glpat-`, `gloas-`, `gldt-`, `glrt-`, `glrtr-`, `glcbt-`, `glptt-`, `glft-`, `glimt-`, `glagent-`, `glwt-`, `glsoat-`, `glffct-`, `_gitlab_session=`, and the runner `GR1348941`; `gloat-` is not listed. A custom personal-access-token prefix cannot be matched by shape |
-| 42 | Dropping hidden characters is safe everywhere | Trojan Source (CVE-2021-42574) | **Refuted for code.** Dropped from Markdown, made visible in files, diffs and commit messages (§4.1.2) |
-| 43 | A moved project's redirect names its new path | Spike L on gitlab.com | **Refuted (tier 1, live).** It names the numeric id; the client replaces only the project segment, so either works, and the test instance now matches |
-| 44 | Every refused token says `invalid_token` | Spikes C and F on gitlab.com | **Refined (tier 1, live).** A revoked token does, in body and header; a malformed one is a plain 401. The client drops a token only on the marker, which a malformed token would not benefit from anyway |
-| 45 | A conditional read spares the rate limit | Spike H on gitlab.com | **Refuted (tier 1, live).** ETag and 304 are served on single reads and listings, and each 304 is counted. Not adopted: it saves bytes, not budget, and would add a cache to keep |
-| 46 | A job log is read whole or not at all | Spike J on gitlab.com, after row 29 | **Refuted (tier 1, live).** `byte_offset` and `byte_limit` return exact slices, no `Content-Range`, an empty 200 past the end. Until phase 5 the server read the whole log, since a tail needs its size; row 77 found the size |
-| 47 | A job log holds the lines the script printed | Phase 1 live run on gitlab.com | **Refined (tier 1, live).** gitlab.com's runners prefix each line with its time and stream, `2026-09-26T22:30:07.819673Z 01O `, and `+` after the stream continues the line before, which is how a section header arrives. Stripped and joined, as the job page shows it. GitLab also masks `glpat-` tokens itself; the server's masking still runs for the shapes it does not |
-| 48 | GitLab's compare lists commits newest first | Phase 1 live run | **Refuted (tier 1, live).** Oldest first. `compare_refs` shows them newest first, as every other commit listing |
-| 49 | A general draft note has no position | Phase 1 live run | **Refuted (tier 1, live).** It carries a position object with no paths, and GitLab returns drafts in no stable order. An empty position reads as none; drafts are sorted by id, which the page token counts in |
-| 50 | Code search across a group is refused as `Scope not supported without Elasticsearch!` | Phase 1 live run | **Refined (tier 1, live).** gitlab.com answers 400 `Scope supported only with advanced search or exact code search`. Both wordings map to `[unsupported]` |
-| 51 | A member's `access_level` is a string, as the OpenAPI file types it | Phase 1 live run | **Refuted (tier 1, live).** An integer, 50 for an owner. `testdata/api-fields.tsv` records it |
-| 52 | A diff note's `line_code` is `sha1(path)_old_new`, with 0 for the side a line lacks | `lib/gitlab/git.rb` `diff_line_code`, `lib/gitlab/diff/parser.rb`, `lib/gitlab/diff/line.rb` `legacy_id`, `lib/gitlab/word_diff/segments/diff_hunk.rb` at `829b21d2` | **Refined (tier 1).** Both counters are always set: a removed line carries the new side's running counter and an added line the old side's. A hunk's start is taken as written, count ignored, so after `@@ -5,0 +6,2 @@` an added line's old counter is 5. The path is `new_path`, else `old_path`. `internal/diffpos` follows it; spike K checks it live |
-| 53 | GitLab runs quick actions from an issue's or merge request's title as well as its description | `app/services/issuable_base_service.rb` `merge_quick_actions_into_params!` at `829b21d2` | **Refuted (tier 1).** Only the description is interpreted; a title is stored as it is. `scripts/gates bodies` lists titles as plain |
-| 54 | The OpenAPI file describes `POST /projects/:id/repository/commits` | The snapshot; `lib/api/commits.rb` at `829b21d2` | **Refuted (tier 1).** The file publishes one `file` field. The route takes `branch`, `commit_message`, `actions` (each `action`, `file_path`, `previous_path`, `content`, `encoding`, `last_commit_id`) and `start_branch`, and requires `content` on an update even when empty. `testdata/api-fields.tsv` records it |
-| 55 | GitLab's merge request API takes a `draft` field | The snapshot's PUT and POST bodies at v19.4.1-ee | **Refuted (tier 1).** Neither publishes one; the draft state is the title's `Draft:` prefix, which `update_merge_request` sets and strips |
-| 56 | The `updated_at` a create answers with is the witness for the next update | Phase 2 live run | **Refuted for merge requests (tier 1, live).** gitlab.com moved a new merge request's `updated_at` about 1.2 s after answering the create, so an update carrying the create's value was `[stale]`. An issue's held. `create_merge_request` no longer offers its value and says to read the merge request first |
-| 57 | Every change to an issue moves its `updated_at` | Phase 2 live run | **Refuted (tier 1, live).** Adding an assignee changed the issue and left `updated_at` where it was. A concurrent assignee change is not caught by the witness; `update_issue` computes the assignee set from its own fresh read, so it does not lose one |
-| 58 | A commit's move action without content keeps the file | `app/services/files/multi_service.rb` `transform_move_actions` at `829b21d2`; phase 2 live run | **Refined (tier 1).** Only a missing `content` keeps it: `content: ""` empties the moved file, which the first phase 2 run did. `create_commit` now sends content on a move only when given, and the third run's moved file kept its text |
-| 59 | A branch's own `protected` flag reflects wildcard rules | Phase 2 live run | **Confirmed (tier 1, live).** A branch made under a `guard-*/*`-style rule read as protected, and `create_commit` refused it by that flag; a new branch under the rule was refused by the rules. `create_commit` trusts the flag for a branch that exists and reads the rules only for one it would create. |
-| 60 | A merge GitLab refuses answers 409 | `lib/api/merge_requests.rb` `execute_merge` and `lib/api/helpers.rb` `check_sha_param!` at v19.4.1-ee | **Refined (tier 1).** 409 means only that `sha` is not the head, and names the head. A merge request that cannot merge now answers 405 `Method Not Allowed` or 422 `Branch cannot be merged`, neither saying why. `merge_merge_request` reads it back and names `detailed_merge_status`, and reports a merge whose answer was lost as merged |
-| 61 | Approving twice is harmless | `lib/api/merge_request_approvals.rb` at v19.4.1-ee | **Refuted (tier 1).** An approval GitLab will not take, given already or by an ineligible approver, answers 401 with no `invalid_token` marker; unapproving without one answers 404. The server reads the approvals first and reports `unchanged`, and a 401 the same token can read past is `[forbidden]` |
-| 62 | A comment delete takes no witness | `lib/api/helpers/notes_helpers.rb` `delete_note`, `lib/api/helpers.rb` `destroy_conditionally!` and `check_unmodified_since!` at v19.4.1-ee | **Refuted (tier 1).** `If-Unmodified-Since` is honored with 412. GitLab reads it with Ruby's `Time.parse` and compares the note's `updated_at` at full precision, while its JSON shows milliseconds, so the server sends the witness stretched to the end of its millisecond, in RFC 3339; an HTTP-date, cut to the second, would refuse nearly every delete. Spike N confirmed each half on gitlab.com (tier 1, live) |
-| 63 | GitLab's wiki API carries a version a write can check | `lib/api/wikis.rb`, `lib/api/entities/wiki_page*.rb`, `app/models/wiki_page.rb` at v19.4.1-ee | **Refuted (tier 1).** `WikiPage#update` checks a `last_commit_sha`, but no REST answer exposes one. The witness is a hash of the content read (§4.6) |
-| 64 | A snippet's raw route serves any of its files | `lib/api/helpers/snippets_helpers.rb` `content_for` at v19.4.1-ee | **Refuted (tier 1).** `/raw` serves the first file; `/files/:ref/:file_path/raw` serves each. `get_snippet` reads the others at `HEAD`, which the phase 3 live run checks. A response's `raw_url` is never called (§11) |
-| 65 | A job GitLab will not retry or run is refused as forbidden or invalid | `lib/api/ci/jobs.rb` at v19.4.1-ee | **Refined (tier 1).** It answers 403 `Job is not retryable` and 400 `Unplayable Job`, both the job's state. Both map to `[conflict]` |
-| 66 | Retrying a pipeline with nothing failed is an error | `lib/api/ci/pipelines.rb` at v19.4.1-ee | **Refuted (tier 1).** It answers with the pipeline, changed or not, and so does a cancel of a finished one. The result compares the status before and after |
-| 67 | Wiki pages, snippets and release notes run quick actions | `app/services/wiki_pages`, `snippets` and `releases` at v19.4.1-ee | **Refuted (tier 1).** None calls `QuickActions::InterpretService`, and neither does `MergeRequests::MergeService` for a merge commit message. `scripts/gates bodies` lists them as plain |
-| 68 | An event is filtered by the action name it shows | `app/models/event.rb`, `app/finders/events_finder.rb` at v19.4.1-ee | **Refuted (tier 1).** `action` takes the stored action (`created`, `pushed`, `transferred` and the rest), which is shown as `opened` or `pushed to`; `target_type` takes snake_case names mapped to classes |
-| 69 | A tag search is exact with `^` and `$` | `app/finders/git_refs_finder.rb` at v19.4.1-ee | **Refined (tier 1).** A plain search is a case-insensitive substring match that lists an exact match first. `create_release` searches plainly and compares names |
-| 70 | A release takes any milestone by title | `lib/api/releases.rb` at v19.4.1-ee | **Refined (tier 1).** Group milestones need Premium; on Free a release takes the project's own |
-| 71 | An author may not approve their own merge request | Phase 3 live run on gitlab.com, a Free group | **Refuted there (tier 1, live).** The author's approval was taken. Where a project forbids it GitLab answers 401, which `approve_merge_request` reports as `[forbidden]` |
-| 72 | A developer may set pipeline variables | Phase 3 live run | **Refuted for new projects (tier 1, live).** gitlab.com creates a project allowing no one to set them: a pipeline with variables answers 400 `Insufficient permissions to set pipeline variables`, a manual job with variables a bare 403. Both are `[forbidden]` naming the setting. The live driver sets the scratch project's minimum role to developer |
-| 73 | Deployments filter by `updated_after` in any order | Phase 3 live run | **Refuted (tier 1, live).** GitLab answers 400 `` `updated_at` filter requires `updated_at` sort ``. `list_deployments` sorts by `updated_at` when a time filter is given and refuses another order with one |
-| 74 | A fresh eval world signs its server in afresh | Phase 4 eval run | **Refuted (tier 1).** The server kept the world's sign-in in the OS keyring under one profile, and every world mints the same token names, so the next world's refresh token matched the stored seed and the server used a dead access token: seven of eight tasks answered `[auth]`. `gitlabtest` now puts a random part in every token name, so no instance accepts or matches another's; the harness deletes its keyring item after each world, and a tool answering `[auth]` makes the run an error rather than a model's failure |
-| 75 | An `mcp`-scoped token reaches only the REST routes tagged `route_setting :mcp` | `lib/api/concerns/mcp_access.rb` at master `1ee957c5`; spike G on gitlab.com | **Confirmed (tier 1, live).** Ten of ten probed routes answered as tagged: reads of one issue, branches, merge request commits, pipelines and search; 403 for `/user`, a project, issue listings, a merge request and notes. §2.6 stands |
-| 76 | A job log window needs the whole log before it, to tell whether it starts inside a private key block | RFC 7468 §3 and RFC 4880 §6.2 for a key block's size; the phase 5 reviews | **Changed.** `get_job_log` looks 256 KB before a window, in the same ranged read, for a BEGIN with no END after it, the header counted anywhere in its line so indented and prefixed keys are found. No real key is near that long; a BEGIN further back is not looked for. A line-by-line walk that stopped at the first line a key cannot hold was tried and dropped: CI prefixes each line in too many ways (phase 5 security review and code review) |
-| 77 | A job log's size is known only by reading it | `lib/api/ci/jobs.rb`, `lib/gitlab/ci/trace.rb` and `lib/gitlab/ci/trace/stream.rb` at v19.4.1-ee; spike O on gitlab.com | **Refuted (tier 1, live).** An archived log is the job's `trace` artifact, whose `size` is the stored file's. A HEAD cannot be trusted: for one finished log it answered the length, for the same kind of log on the next run 0, and for a running log 0. `byte_limit` past 500 KB answers 400. A log not yet archived is read 500 KB from its start, and one longer than that is measured by one-byte reads past its end |
-| 78 | `GET …/pipelines/:id/bridges` lists a pipeline's trigger jobs | `lib/api/ci/pipelines.rb` at v19.4.1-ee | **Refined (tier 1).** Deprecated in 19.2 for `trigger_jobs`, served by the same handler; `get_pipeline` reads `trigger_jobs` with `scope=failed` |
-| 79 | Only merge request threads can be resolved | `app/models/concerns/noteable.rb` and `lib/api/discussions.rb` at v19.4.1-ee | **Refuted (tier 1).** `resolvable_types` includes Issue, and the discussions API registers the resolve route for every resolvable type. `resolve_discussion` takes `type: issue`, and `add_comment` starts a resolvable thread with `thread` |
-| 80 | Job inputs are typed by the job and cannot be offered safely | `lib/api/ci/jobs.rb`, `app/services/ci/retry_job_service.rb` and `lib/gitlab/ci/config/entry/job.rb` at v19.4.1-ee | **Changed (tier 1).** Retry takes `inputs` and play `job_inputs`; `app/services/ci/inputs/processor_service.rb` checks them against the job's own `inputs:` and refuses an unknown name with 400, but a job with no `inputs:` takes any and uses none, which the phase 5 live run showed. Both tools are Ship, so a steered value needs the flag the person set; the result names the inputs sent |
-| 81 | A release's asset links may point anywhere | Maintainer, 2026-09-27; `lib/api/entities/release.rb` at v19.4.1-ee | **Changed.** `create_release` takes links only into the release's own project, under its web path or its API path, on the instance's origin with no credentials in the URL, refused `[blocked]` before anything is sent: a release page sends every reader wherever its links lead, and gitlab.com serves anyone's files (phase 5 code review). Links are taken at create only; link writes on a published release stay written off |
-| 82 | A lost `run_pipeline` can be told from another run on the same ref by its variables | `GET …/pipelines/:id/variables` at v19.4.1-ee | **Rejected.** The listing returns the variables' values, which §8a writes off with CI variables; the settle stays by ref, source, account and time (§17a) |
-| 83 | `list_discussions` can read only the newest pages of threads | §7.2 and the tool's contract | **Rejected.** Threads are shown by last activity, and a reply moves an old thread to the top, so ordering them needs every thread. GitLab lists them by creation only |
-| 84 | A label's update and delete can carry a witness GitLab holds | `lib/api/entities/label.rb` and `lib/api/labels.rb` at v19.4.1-ee | **Refuted (tier 1).** A label exposes no timestamp or version. `list_labels` returns `version`, a hash of the name, color, description, priority and archived state, and `update_label` and `delete_label` read the label first and refuse `[stale]` if it moved, as the wiki's hash does (§4.6) |
-| 85 | Cherry-pick and revert are Ship | §8a before phase 6; `lib/api/commits.rb` at v19.4.1-ee | **Changed (maintainer, §17.13).** They are a commit to a branch, as `create_commit` makes, behind the same refusal of the default and protected branches, so they are Write. GitLab's own `dry_run` commits nothing, and a dry run asks it; a change that does not apply answers 400, which is `[conflict]` (phase 6 live run) |
-| 86 | The protected-tag listing is needed by no guard | §8a before phase 6 | **Changed (maintainer, §17.13).** `create_tag` refuses a name a protected-tag rule covers, matched as GitLab's RefMatcher matches, so the listing is read; every protected-tag write stays written off |
-| 87 | Moving an issue is an ordinary write | `lib/api/issues.rb` and `WorkItems::DataSync::MoveService` at v19.4.1-ee | **Changed (maintainer, §17.13).** A move copies the issue, comments included, into another project, where other people may see it. `move_issue` is Ship, holds both projects to the allow-list, and refuses a project more people can see than the source |
-| 88 | A file in a job's artifacts is addressed with its slashes unescaped | `lib/api/ci/job_artifacts.rb` at v19.4.1-ee; the phase 6 live run | **Refuted (tier 1, live).** The path sent as one segment, its slash escaped `%2F`, read `reports/summary.txt`; Workhorse extracts the one file, and the answer is not a redirect |
-| 89 | A rebase answers when it is done | `lib/api/merge_requests.rb` at v19.4.1-ee; the phase 6 live run | **Refuted (tier 1, live).** GitLab answers 202 `{"rebase_in_progress": …}` and rebases in the background. `rebase_merge_request` reads the merge request with `include_rebase_in_progress` after, and says whether it still runs |
-| 90 | A token's `expires_in` is its lifetime, added to `created_at` | Doorkeeper 5.9.0 `Expirable#expires_in_seconds` and `AccessTokenMixin#as_json`, the version v19.4.1-ee locks; `app/controllers/oauth/token_info_controller.rb`; the 1.0 live run | **Refuted (tier 1, live).** `/oauth/token/info` answers the seconds left when it answers. `get_me` added them to `created_at` and reported a token read 1 h 41 min after issue as expired an hour before; it now adds them to the time of the read, and the next run reported 11:53:38Z, the expiry the first run's numbers imply |
-| 91 | A cancel's answer shows whether anything was canceled | `lib/api/ci/pipelines.rb`, `Ci::CancelPipelineService`, `CommitStatus` and `Ci::HasStatus` at v19.4.1-ee; the 1.0 live run | **Refuted (tier 1, live).** GitLab cancels the jobs inside the request, then answers `pipeline.reset`; each job's transition queues `PipelineProcessWorker`, which recomputes the pipeline's status after. A pipeline canceled seconds after it started answered `running`, and `cancel_pipeline` said nothing could be canceled, while its two deployments were listed canceled later in the run; the next run's cancel answered `canceling`, so gitlab.com answers either way, and a third, with the fix, answered `running` and reported `canceled`. `CANCELABLE_STATUSES`, which the job scope shares, includes `manual`. It now reports `canceled` when the status read first was cancelable, the source is not `external` and the answer is not finished, and says the status catches up |
-| 92 | A label's priority and a milestone's description and dates cannot be cleared through the API | `lib/api/helpers/label_helpers.rb`, `app/services/labels/update_service.rb`, `lib/api/milestone_responses.rb` and `app/services/milestones/update_service.rb` at v19.4.1-ee; the post-1.0 live run | **Refuted (tier 1, live).** A present `priority` of `null` unprioritizes the label, and `at_least_one_of` counts keys, so it may be the only field sent; an empty description or date is assigned as given. `update_label` sends `null` for `clear_priority`, and both tools send `""` for the other `clear_*` inputs. The live run read each field back cleared |
-| 93 | A comment edit can carry a witness GitLab enforces, as a delete does | `lib/api/helpers/notes_helpers.rb` `update_note`, `app/services/notes/update_service.rb` and `app/policies/note_policy.rb` at v19.4.1-ee; the update_comment live runs | **Refuted (tier 1, live).** `update_note` calls no `check_unmodified_since!`, so `update_comment` reads and compares `updated_at` first and the window stays open. `UpdateService` runs quick actions in the new text and deletes a note left with commands alone, so the body is guarded as a create's is. `NotePolicy` refuses `admin_note` on a note that is not editable, a system note among them (403), and grants it to the note's author; this server edits only the caller's own. A reply to a standalone comment moves the comment's `updated_at` on gitlab.com, so the witness `add_comment` returned is stale after one |
-| 94 | A server can ask the person to confirm a write through MCP form elicitation, on every protocol this server serves | The `ElicitRequestFormParams` type in the specification's `schema.ts` for 2025-06-18, 2025-11-25 and 2026-07-28, the 2026-07-28 multi-round-trip pattern, and the MCP Go SDK v1.8.0's `mcp/server.go` and `mcp/shared.go`, read 2026-09-28; this repository's tests on all three protocols | **Confirmed (tier 1).** A tool result may carry `inputRequests` and a signed `requestState`; before 2026-07-28 the SDK sends `elicitation/create` itself and calls the handler again in the same request. `requestedSchema` is an open map with no minimum, so `properties: {}` is valid. The answer comes from the client, and the 2026-07-28 revision lets it answer "from the user or other sources", so an accept is never proof a person read anything (§4.12) |
-| 95 | A client draws an elicitation question as plain text | VS Code `src/vs/workbench/contrib/mcp/browser/mcpElicitationService.ts` L100 and L173, and `src/vs/base/common/htmlContent.ts` L52-62, `main` at 251bcf5f, read 2026-09-29 | **Refuted.** VS Code builds a form question as `new MarkdownString(elicitation.message)`, untrusted: command links are off, but emphasis, link text, code spans and HTML-like text draw, and single line breaks join into one paragraph. Each quoted value is a code span, which CommonMark draws literally, with backticks and their lookalikes folded, and a blank line separates the lines. Backslash escaping was rejected: where a client draws plain text, the backslashes show inside names and branches, the data the person checks |
-| 96 | A required choice naming the outcome confirms better than an empty form | Codex `codex-rs/codex-mcp/src/elicitation.rs` L415-458 and L552-571, `main` at c248f6d4, and VS Code `mcpElicitationService.ts` L111-119 and L237-297, read 2026-09-29; the maintainer's check in Claude Code 2.1.284, protocol 2025-11-25, 2026-09-29, against a throwaway probe with three forms of one delete question | **Declined, for now.** For: Codex accepts a form with no properties by itself under approval policy `never` with full access, and a VS Code chat question the person skips resolves as `accept` with no content; a required choice survives both. Against: in Claude Code the choice list took the maintainer 60 seconds, against 8 for the empty form, and they found it confusing. The empty form stays, and both client behaviors are recorded as limits (§4.12) |
-| 97 | GitLab's link lists are complete and shaped as the OpenAPI file publishes them | `lib/api/issues.rb` L551-594, `lib/api/merge_requests.rb` L978-1030, `lib/api/commits.rb` L713-749, `app/services/issues/referenced_merge_requests_service.rb`, `app/models/merge_request.rb` `visible_closing_issues_for` and `related_issues`, and `lib/api/entities/issue_basic.rb`, `issuable_entity.rb` and `external_issue.rb` at v19.4.1-ee | **Refuted (tier 1; the populated lists tier 1, live).** Every list drops what the user cannot read without saying so; `closed_by` and a commit's merge requests are the project's own only; `closes_issues` also drops issues in projects that do not close issues automatically. `closes_issues` and `related_issues` mix IssueBasic rows, which carry no `references`, with an external tracker's `{title, id}`, whose `id` is a string. The file publishes `closes_issues` as MRNote, `related_issues` with no schema, and `related_merge_requests` as MergeRequestBasic though it answers the full entity. The three tools decode a few fields, keep `id` raw and show it only when it is shaped like a tracker's id, read an issue's reference from its `web_url` as `resolve_url` does, and say in each field and once in the text that the list is GitLab's, not all there is. A live run on gitlab.com, 2026-09-29, read the lists populated: a merge request that says "Closes #n" appeared in the issue's related and closing lists, and in the commit's merge requests. |
-| 98 | GitLab's test report is paged and shaped as the OpenAPI file publishes it, and its summary is as current | `lib/api/ci/pipelines.rb` L292-334, `app/models/ci/pipeline.rb` `accessible_test_reports`, `app/models/ci/build.rb` `test_report_readable_by?` and `max_test_cases_per_report`, `app/serializers/test_report_entity.rb`, `test_suite_entity.rb`, `test_case_entity.rb` and `test_report_summary_entity.rb`, `lib/gitlab/ci/parsers/test/junit.rb`, `lib/gitlab/ci/reports/test_suite.rb` and `test_case.rb`, and `app/services/ci/build_report_result_service.rb` at v19.4.1-ee | **Refuted (tier 1; the failure text and its masking tier 1, live).** `test_report` answers every case of every suite in one body, with no paging, parsed from the latest jobs' artifacts when asked and cached up to two minutes; jobs still running add nothing, and jobs whose artifacts the user may not read are dropped without a word. gitlab.com caps a file at 500,000 cases. Times are floats, not the integers the file publishes. JUnit's failure text is in `system_output`, and `stack_trace` is always null: `lib/gitlab/ci/parsers.rb` lists JUnit as the only test parser, and it never sets one. A suite is named by the job's group name, so parallel jobs merge and their cases are deduplicated together. `test_report_summary` is written by a worker after each job, so it lags; its `test_suites` is an array the file publishes as an object, and it carries no cases. Child pipelines in the project are taken in, so a finished pipeline's report still grows while a child runs. `get_test_report` reads the full report, says when it may be partial and that it may be two minutes old, does not read `stack_trace`, and falls back to the summary only when the report is over 32 MiB, saying so when the summary is still empty. A live run on gitlab.com, 2026-09-30, read the scratch pipeline's report, with the failure text from `system_output` and the token in it masked. |
-| 99 | GitLab's resource event lists are ordered, complete, and shaped as the OpenAPI file publishes them | `lib/api/resource_label_events.rb`, `resource_state_events.rb`, `resource_milestone_events.rb` and `helpers/resource_events_helpers.rb`, `ee/lib/api/resource_weight_events.rb` and `resource_iteration_events.rb`, `lib/api/entities/resource_*_event.rb` and `ee/lib/api/entities/resource_weight_event.rb`, `lib/gitlab/pagination/offset_pagination.rb` `add_default_order`, `app/models/resource_label_event.rb` `visible_to_user?`, `app/policies/resource_label_event_policy.rb`, `app/finders/resource_milestone_event_finder.rb` and `resource_state_event_finder.rb`, and `app/services/resource_events/change_milestone_service.rb` and `change_state_service.rb` at v19.4.1-ee | **Refuted (tier 1; the order and the cursor tier 1, live).** Each list pages by offset in id order, oldest first. Label events are filtered after the page is cut, so a page can be short and `X-Total` counts events the account cannot see; a deleted label's event is kept with `label: null`. Milestone events are filtered before paging to milestones the account can read, which also drops those of a deleted milestone; a removal names the milestone removed. A state event's `source_merge_request_id` is a global id, and `source_commit` is set when a commit closed the item. Weight is an issue's only, and the route checks no license, so on Free it is empty rather than refused (inferred: weights are a paid feature, and nothing else writes them); iteration events are Premium and not read. A group's labels and milestones are read by whoever may read the group: anyone for a public group, else its members and its projects' members (`app/policies/group_policy.rb`, `group_label_policy.rb`, `milestone_policy.rb`). A milestone event's `state` is the item's state when the event was made. Order is by id, not time, and an imported item's ids need not follow its times. `list_item_events` reads each list whole or its newest pages, follows the next-page signal past page 1's count, starts a cut history after the oldest event kept and assumes ids follow time there, says the history is GitLab's, and names a deleted label as one. A live run on gitlab.com, 2026-09-30, paged with the tool's cursor and read the merge request's history in order, the label and milestone events of its create included. |
-| 100 | A board's lists can be read from GitLab as a board shows them | `lib/api/boards.rb`, `boards_responses.rb` and `entities/board.rb` and `list.rb`, `ee/lib/ee/api/entities/board.rb` and `list.rb`, `ee/lib/api/entities/special_board_filter.rb`, `app/models/board.rb`, `list.rb` and `concerns/boards/listable.rb`, `ee/app/models/ee/board.rb` and `ee/list.rb`, `app/models/concerns/timebox.rb`, `app/services/boards/create_service.rb`, `lists/base_create_service.rb`, `lists/move_service.rb` and `base_items_list_service.rb`, `ee/app/services/ee/boards/issues/list_service.rb`, `app/controllers/concerns/boards_actions.rb` and `ee/app/assets/javascripts/boards/constants.js`, `lib/api/entities/user_safe.rb`, `app/finders/issuable_finder/params.rb` and `lib/api/issues.rb` at v19.4.1-ee | **Refined (tier 1; boards on Free and the list order tier 1, live).** `GET /projects/:id/boards` pages boards by id and carries each board's lists whole. Lists come ordered by kind, then position, and every kind shares one position sequence, so position is the board's order. No list names its kind: `label` is always present, null unless a label list, and `assignee`, `milestone` and `iteration` only on their kind; a status list carries none. Open and Closed are never returned. Open holds open issues in none of the board's lists, Closed every closed issue, and `hide_backlog_list` and `hide_closed_list` hide them. Scope keys appear only with scoped boards, a paid feature: `milestone` is a milestone or a filter with only a title (No Milestone, Any Milestone, Upcoming, Started), `weight` -1 is any and -2 none. A board milestone is applied to label lists' issues (`label_links`), a filter in its place is not, and where the rest of a scope is applied was not found, so the result says it is unverified. `search_issues`' `milestone` is a title that reads `none` and `any` in any case, `No Milestone`, `Any Milestone`, `#upcoming` and `#started` as filters, and the issues route takes no milestone id (`app/finders/issuable_finder/params.rb`, `lib/api/issues.rb`), so a milestone so titled has no arguments. Lists carry `max_issue_count`, `max_issue_weight` and `limit_metric` with WIP limits, a paid feature; a list's assignee is `UserSafe`, `public_email` included. A project has no board until someone opens its board page, and `POST /projects/:id/boards` works on Free, as `multiple_issue_boards_available?` is true for projects. A live run on gitlab.com, 2026-09-30, made boards through the API on a Free namespace and read them back with their label lists in position order. |
-| 101 | GitLab's time tracking API answers as the OpenAPI file publishes it, refuses a bad duration, and leaves `updated_at` alone on spent time | At v19.4.1-ee: `lib/api/time_tracking_endpoints.rb` L74-154; `lib/gitlab/time_tracking_formatter.rb` L10-25; `app/models/concerns/time_trackable.rb` L23 (`has_many :timelogs, autosave: true`), L45-61 `spend_time`, L92-94 (`time_estimate=` capped at `MAX_INT_VALUE`) and L113-118 (`timelogs.new`); `app/models/timelog.rb` L12 (`MAX_TOTAL_TIME_SPENT = 126230400`), L20 and L77-81 (the range validation, `on: :create`), L22 `belongs_to :issue, touch: true` and L23 `belongs_to :merge_request, touch: true`; `app/services/issuable_base_service.rb` L332-349 and L390 (`save(touch:)`); `app/services/merge_requests/update_service.rb` L24 and L350-379 and `add_spent_time_service.rb` L8-11; `config/authz/roles/planner.yml`, `config/authz/roles/reporter.yml` and `config/authz/roles/developer.yml`; and `lib/gitlab_chronic_duration.rb` of the gitlab-chronic-duration gem | **Refuted (tier 1; `updated_at` and the human forms tier 1, live).** Setting and resetting the estimate and resetting spent time answer 200, not the 201 the file publishes; adding spent time answers 201. The parser is ChronicDuration with 8-hour days and 20-day months, a week a quarter month, a bare number as hours; it drops words it does not know, so `5 foo` is five hours, and an estimate keeps a zero, so a word alone sets the estimate to 0 rather than failing. An estimate past `MAX_INT_VALUE` is stored as it, not refused. A duration that parses to nothing adds a timelog with no time, refused 400 by its validation. Subtracting past zero is 400, and so is a new timelog taking the total past `MAX_TOTAL_TIME_SPENT`, four years: refused, not clamped. Spent time on an issue goes through the update service, which saves with `touch`; on a merge request the API sets `use_specialized_service`, and `AddSpentTimeService` calls `spend_time` and a plain `save`. The source reads as the new timelog touching its item through `belongs_to … touch: true`. The live run on gitlab.com, 2026-09-30, refutes that: adding 1h30m with an estimate moved the issue's `updated_at`, but adding -30m and then 1m alone left it at the same instant, and on the merge request adding 15m and then 1m alone left it too; a call carrying a witness from before each of those spent-only calls was answered, not refused. Setting an estimate, and resetting it, moved it. A second run sent each reset alone: resetting spent time left `updated_at` at the same instant on the issue and on the merge request, and resetting the estimate next was accepted with that `updated_at`. So `updated_at` cannot catch spent time added or reset twice, and `total_time_spent` is the witness for both. The human forms are null at zero, and gitlab.com writes them in hours and minutes: an estimate of `1d 2h` read back as `10h`. Writes need `admin_issue` (Planner and up) or `admin_merge_request` (Developer and up), 403 otherwise. `track_time` takes a strict subset of the syntax, checks `updated_at`, takes the total spent as a second witness whenever it adds or resets spent time, and never repeats a spent-time write |
-| 102 | Subscribing and adding a to-do for oneself fail when nothing changes, and GitLab deduplicates a to-do | At v19.4.1-ee: `lib/api/subscriptions.rb` L12-34 (the merge request finder asks for `update_merge_request`, L19; the issue's is `find_project_issue`), L77-107 (`not_modified!` at L82 and L102); `lib/api/helpers.rb` L352-378 (`find_merge_request_with_access`: 404 when missing, `authorize!` 403 when it exists and the ability is missing) and L684-686 (`not_modified!` is 304); `app/policies/issuable_policy.rb` L43-44 and `config/authz/roles/developer.yml` L123; `app/models/concerns/subscribable.rb` L20-28; `app/models/concerns/issuable.rb` L148-151 (participants `author`, `system_note_authors`, `notes_for_participants`, `assignees`) and L553-555; `app/models/merge_request.rb` L198 (`reviewers`); `app/models/note.rb` L75 (`author`); `app/models/concerns/mentionable.rb` L27-29 (every mention); `app/models/concerns/awardable.rb` L11 (`award_emoji`); `app/models/concerns/participable.rb` L87-90 and L106-140; `lib/api/todos.rb` L15-47; `app/services/todo_service.rb` L40-41, L98-113, L129-130, L158-176, L206-207, L214-222, L236-243, L347-365, L399-421 and L442-455; `app/models/todo.rb` L52; `db/structure.sql` (the `todos` indexes, none unique) | **Refuted (tier 1; the two 304s tier 1, live).** Both answer 304 with no body when the state already holds, which the OpenAPI file does not publish. Subscribing to an issue while subscribed, or unsubscribing while not, is 304; so is adding a to-do while a pending `marked` one the account added is on the item. Other pending to-dos (assigned, mentioned, review requested) and a done one do not stop a new one, since `excluded_user_ids` matches the action. That check runs before `bulk_insert_todos` with no lock and no unique index, so it is not a dedupe a retry can lean on: the to-do POST is a create and is never repeated. The account's pending to-dos on an item are marked done when it comments outside a thread or edits such a comment, closes, merges, pushes to or reviews a merge request, or reacts with an emoji; an update alone does not. A participant is subscribed without a subscription record: the author, assignees, a merge request's reviewers, every note's author, system notes included, emoji reactors, and every user mentioned in the item or a note; so a first subscribe to one's own item is 304. Subscribing to a merge request, or unsubscribing, needs `update_merge_request`: Developer and up, or the author or an assignee who can read it; anyone else gets 403, even on a public project, and so does anyone who may not read it. The 403 carries no reason, and an archived project or a hidden merge request refuses alike. An issue needs only read access, 404 otherwise. The client takes a 304 as an answer only where a call says why, through `DoAnswered`, and reports it; `subscribe` and `add_todo` report it as unchanged. A live run on gitlab.com, 2026-09-30, had `subscribe` answered 304 for a participant and `add_todo` 304 for a pending to-do. |
-| 103 | A snippet update carries a witness GitLab enforces, the personal routes find only personal snippets, and a snippet delete's `If-Unmodified-Since` compares whole seconds | `lib/api/snippets.rb` L183-258, `lib/api/project_snippets.rb` L115-199, `lib/api/helpers/snippets_helpers.rb`, `lib/api/helpers.rb` `check_unmodified_since!` and `destroy_conditionally!`, `app/services/snippets/update_service.rb`, `base_service.rb` and `destroy_service.rb`, `app/models/snippet_input_action.rb`, `app/finders/snippets_finder.rb`, `app/workers/repositories/post_receive_worker.rb` L86-90, `app/policies/project_snippet_policy.rb` and `personal_snippet_policy.rb`, and `config/authz/roles/guest.yml`, `config/authz/roles/reporter.yml` and `config/authz/roles/maintainer.yml` at v19.4.1-ee | **Refuted (tier 1; the moved `updated_at` tier 1, live).** The PUT checks no witness, so `update_snippet` reads and compares `updated_at` first; `Snippets::UpdateService` runs no quick action, so the description and content are plain. `files` excludes `content` and `file_name`; `content` on a snippet of several files is 400; an action `SnippetInputAction` refuses is 422, and one the repository cannot commit 400. The personal routes find snippets through `SnippetsFinder(author:)`, which also returns the author's snippets in projects, so a project snippet reached without its project is refused, and the allow-list is held against the project. The delete goes through the same `destroy_conditionally!` as a comment's: `Time.parse` keeps an RFC 3339 fraction and `updated_at` is compared at full precision, so the witness is sent stretched to the end of its millisecond, as row 62 found; only an HTTP-date is cut to the second, and would refuse nearly every delete. `Snippets::UpdateService#update_snippet_attributes` copies only the first file action's content and path into the snippet's row, so the answer's `updated_at` can be the old one after a change to another file. A change to content or files is a commit to the snippet's repository, and its post-receive job, `Repositories::PostReceiveWorker#process_snippet_changes`, calls `snippet.touch` once Sidekiq runs it, after the answer: the live run on gitlab.com, 2026-09-30, read `updated_at` 0.7 seconds past the answer's on both snippets, and the next write with the answer's value was refused `[stale]`. The job's delay is a queue's, with no bound a read could wait out, so `update_snippet` hands on no `updated_at` after such a change and says to read the snippet with `get_snippet` for the next witness; a change of title or description alone commits nothing, and its answer's `updated_at` holds. A read made before the job runs can still give a witness that goes stale, which the next write refuses `[stale]` and a read again settles. A create, delete or move action applied twice fails the second time, so such a PUT is not repeated after a lost answer. A delete answers 204, not the 200 the file publishes. GitLab lets a project's maintainers update and delete anyone's snippet there (`update_snippet` and `admin_snippet` in `config/authz/roles/maintainer.yml`); the server keeps to your own, as it does with comments |
-| 104 | GitLab's merge request pipeline create answers as the OpenAPI file publishes it, and a lost answer can be settled | `lib/api/merge_requests.rb` L138-141 and L740-800, `app/services/merge_requests/create_pipeline_service.rb`, `ee/app/services/ee/merge_requests/create_pipeline_service.rb`, `app/models/ci/pipeline.rb` `protected_ref?`, `protected_for_merge_request?` and `merge_request_event_first`, `app/models/merge_request.rb` `ref_path`, `merge_ref_path` and `source_branch_ref`, `app/models/project.rb` `protected_for?`, `app/finders/ci/pipelines_for_merge_request_finder.rb`, `app/models/concerns/enums/ci/pipeline.rb`, `app/services/merge_requests/mergeability_check_service.rb`, `lib/gitlab/user_access.rb`, `lib/gitlab/ci/pipeline/chain/validate/abilities.rb`, `lib/api/helpers.rb` `not_allowed!` and `render_validation_error!`, and `ee/app/models/ee/project_ci_cd_setting.rb` at v19.4.1-ee | **Refuted (tier 1).** A created pipeline answers 200, not the 201 the file publishes. The create runs with `allow_duplicate: true`, so every call makes a new pipeline. A merge request with no commits answers 405; a pipeline not saved answers 400 with its errors, and so does an account that may not create pipelines or run one on the branch (`Insufficient permissions to create a new pipeline`), with no 403. EE tries merged results first where `merge_pipelines` is licensed (Premium) and on, on `refs/merge-requests/N/merge` at a merge commit, and falls back to detached on `refs/merge-requests/N/head` when the branches do not merge cleanly. A same-project account that may not push to the source branch is sent to a pipeline on the branch itself, which the ability check then refuses with 400 (`can_run_pipeline_on_branch?` is `can_update_branch?`), so a create answers with one of the two merge request refs. `async` answers 202 with no body, so it is not offered. A fork's pipeline runs in the target or the fork by a setting only maintainers see (§17.14). Protected variables reach a merge request pipeline only on a merge request ref, in the same project, with both branches protected, the project's `protect_merge_request_pipelines` on and the account able to push to both, which is the rule `run_merge_request_pipeline` asks by (§4.12). The merge request's pipelines list its own first, newest first, with no user; GitLab also starts merge request pipelines under the account's name when it pushes or opens the merge request. So the settle reads the project's pipelines by ref, source, user and `created_after`, newest id first, and takes only one newer than the project's newest pipeline read before the create |
-| 105 | A question's quoted value draws no link once its scheme, `www.`, a domain before a path and a bare domain's last dot are broken | linkify-it 6.1.0 from npm, `build/index.mjs` (`get_fuzzy_link_search`, `get_host_terminator`, `get_fuzzy_mail_host`, `get_mail_name_validator`, the `//` schema and the default TLDs), and markdown-it 15.0.2 `dist/markdown-it.mjs`, which builds its linkifier with `new LinkifyIt()`; each output run through both with fuzzyLink on, 2026-10-01 | **Refuted (tier 1).** markdown-it leaves a code span unlinked, but a client that draws the question as plain text through a fuzzy linkifier still found three links, a finding of the 2.1.0 pre-release review. A fuzzy host ends at any punctuation, a bracket included, so `evil.com[.]uk` links `evil.com`. `//` opens a protocol-relative link with no TLD check unless a colon or a slash stands right before it, so `https[:]//evil.dev` links `//evil.dev`. An email address wins over a fuzzy link only when its name, at most 64 characters, stands at the start or after a space, a control, `<`, `>`, `｜`, `"` or `(`, and two to five host labels follow the `@` and end there; otherwise `evil.com@` links `evil.com`. A question now breaks every `//` and every dot of a bare domain, and keeps a domain before an `@` whole only where linkify-it reads an address, as `isAddress` mirrors (§4.12) |
-| 106 | Adding an emoji reaction that is already there is a conflict GitLab reports, and a reaction leaves the witnesses alone | At v19.4.1-ee: `lib/api/award_emoji.rb` L51-60 (the list, `can_read_awardable?` or 404), L96-106 (the POST: `not_found!` unless the account may read and award, and `not_found!("Award Emoji #{service[:message]}")` for every service failure) and L121-129 (the DELETE: `find` or 404, `unauthorized!` unless the award is the account's or it is an admin, `destroy_conditionally!`); `lib/api/helpers.rb` L92 and `lib/api/api.rb` L152-153 (messages in the account's `preferred_language`); `lib/api/helpers/award_emoji.rb` L19-32; `app/services/award_emojis/base_service.rb` L77-79 (`normalize_name`); `app/services/award_emojis/add_service.rb` (`user_can_award?`, `emoji_awardable?`, `TodoService#new_award_emoji`); `app/models/award_emoji.rb` L14 (no `touch:`), L23 (unique per user, awardable type and id), L39-40 and L88-91 (`expire_cache` calls `bump_updated_at`); `app/models/note.rb` L545 (`emoji_awardable?` is `!system?`) and L592-605 (`bump_updated_at`, the only definition in `app` and `ee/app`); `app/models/issue.rb` L860-863 (`update_column`); `app/policies/issuable_policy.rb` L48-52 (a locked discussion, for a non-member); `app/policies/note_policy.rb` L82-88 and `app/models/note.rb` L778-780 (an internal note needs `read_internal_note`, Planner and up); `app/models/concerns/awardable.rb` L11 (`participant :award_emoji`); `app/validators/gitlab/emoji_name_validator.rb`; `app/models/custom_emoji.rb` L4 and L20-25; `lib/api/entities/issue_basic.rb` L34-35 and `merge_request_basic.rb` L37-41; tanuki_emoji 0.13.0, as `Gemfile.lock` pins it: `lib/tanuki_emoji/character.rb` L12 and L32-34, `vendor/gemojione/index-3.3.0.json` (`:+1:` and `:-1:`) | **Refuted (tier 1).** No route answers 409: a reaction already there, an unknown name, a system note and an item the account may not react to all answer 404, the reason folded into the message (`Name has already been taken`, `Name is not a valid emoji name`, `Awardable cannot add emoji reactions`), translated into the account's preferred language. The OpenAPI file publishes 201, 400 and 404 for the POST and no 412 for the DELETE, which `destroy_conditionally!` can answer. So `react` reads the account's reactions first and sends nothing when the state asked for holds, and after a 404 reads them again rather than the message: one there is unchanged. A name is an alpha code, `[_+\-a-z0-9]+`, which GitLab takes with or without colons and keeps under its emoji's name, `+1` as `thumbsup`; a custom emoji, `[a-z0-9_-]+` of at most 36, is valid only when the project's namespace is a group that, or a parent of which, defines it. Any signed-in user who can read the item may react, Guest and up or on a public or internal project, and to their own item too, except on a locked discussion when not a member or on an internal note below Planner; there is no rate limit. A reaction, on the item or a comment, makes its author a participant. Only one's own reaction can be removed (401 otherwise), and `react` removes by the id its read found. A reaction on a comment moves the comment's `updated_at` through `bump_updated_at`; on an issue or a merge request it moves nothing a read shows but `upvotes` and `downvotes`, which count thumbsup and thumbsdown only. GitLab answers a DELETE 204 even when its service refuses as the reaction's owner, which `react` catches by reading afterwards (inferred from `destroy_service.rb` L98-101). A reaction on the item, or on a comment outside a thread, marks the account's pending to-dos on the item done |
-| 107 | A merge request's changes between two versions are the repository compare from the older version's head to the newer's, straight, in the target project | At v19.4.1-ee: `lib/api/merge_request_diffs.rb` L12-57 (`authenticate!`; the listing is `merge_request_diffs.order_id_desc`, offset pages; a version's route has no pagination and returns `raw_diffs(limits: false)` with every commit); `app/models/merge_request.rb` L57-58 (the association is `regular` diffs only); `app/models/merge_request_diff.rb` L66-80 (states), L425-453 (base and start can be null, head falls back to the last commit), L714, L1015-1070 and L1136-1147 (heads kept around in the target project); `lib/gitlab/git/diff_collection.rb` L118-126 (`real_size` is `N` or `N+`); `app/controllers/projects/merge_requests/diffs_controller.rb` L167-204 and `app/facades/merge_requests/merge_request_diff_comparison.rb` L10-17 (the page's comparison is `CompareService.new(target_project, newer.head_commit_sha).execute(target_project, older.head_commit_sha, straight: true)`); `lib/api/repositories.rb` L297-331 (the same `CompareService` call with `from`, `to` and `straight`) | **Confirmed (tier 1).** There is no REST route comparing versions; `compare?from=<older head>&to=<newer head>&straight=true` on the target project is the call GitLab's own page makes, so it shows what the page shows. The default `straight=false` would compare from the merge base and is wrong here. After a rebase the straight diff carries what the rebase brought in from the target branch; GitLab offers no range-diff, so the tool says so and flags a moved merge base. A version's own route is not read for diffs: it is unpaged, and a cleaned-up old version (`without_files`) returns no diffs although its heads are still kept (inferred from code, not live-tested) (§7.3) |
-| 108 | Each reviewer's review state is readable on Free and only from the reviewers route | At v19.4.1-ee: `lib/api/merge_requests.rb` L526-542 (`find_merge_request_with_access`, then `Kaminari.paginate_array(merge_request.merge_request_reviewers)` and `paginate`: offset pages with an exact `X-Total`); `app/models/merge_request.rb` L135 (the association has no order); `lib/api/entities/merge_request_reviewer.rb` (`user`, `state`, `created_at`); `app/models/concerns/merge_request_reviewer_state.rb` (the enum, defined in CE: `unreviewed`, `reviewed`, `requested_changes`, `approved`, `unapproved`, `review_started`); `lib/api/entities/merge_request_basic.rb` L47 (`reviewers` is plain `UserBasic`) | **Confirmed (tier 1).** The merge request itself carries no review state, so `get_merge_request` reads the route alongside its other reads, one page of 100, best effort as the approvals are, and says when GitLab has more. The order is the database's, unspecified, so the page is shown as GitLab gives it. `user.state` is the account's state, not the review's, and is not shown. How states move, as `app/services/merge_requests/update_reviewer_state_service.rb`, `app/services/draft_notes/create_service.rb` `after_execute`, `approval_service.rb`, `remove_approval_service.rb` and EE `merge_requests/base_service.rb` `delete_approvals` show it, and as the test instance models it: a user's first draft sets `review_started`; submitting `reviewed`, `approved` or `requested_changes` makes anyone but the author a reviewer; an `approved` reviewer moves only to `requested_changes` or `unapproved`; approving and unapproving set those states; a push resets approvers to `unapproved` only under the Premium `reset_approvals_on_push` (§7.2) |
-| 109 | Canceling an auto-merge answers as the OpenAPI file publishes it, and stops the merge | At v19.4.1-ee: `lib/api/merge_requests.rb` L930-948; `app/services/auto_merge_service.rb` L54-60; `app/services/auto_merge/base_service.rb` L36-46 and L114-140; `app/services/auto_merge/merge_when_checks_pass_service.rb` L15-31; `app/services/merge_requests/merge_service.rb` L18-48; `app/models/merge_request.rb` L1797-1799 and L2096-2099; `lib/api/entities/merge_request_basic.rb` L10-12 and L65; `lib/api/helpers.rb` L613 | **Refuted (tier 1; the success body and the merge going on, tier 1, live).** The route returns the service's result and presents nothing, so GitLab renders that hash under POST's 201: `{"status":"success"}` when it canceled, and `{"status":"error","message":"Can't cancel the automatic merge","http_status":406}` when no auto-merge was set or saving failed. The 406 the file lists, and the merge request it publishes as the body, never come. A cancel clears `merge_when_pipeline_succeeds` and `merge_user`, saves, so `updated_at` moves, adds a system note and fires the merge request hook. `merge_when_pipeline_succeeds` is GitLab's `auto_merge_enabled` for every strategy, so it says whether one is set. Someone who may merge into the target branch, or the author, may cancel; anyone else gets 401 from `unauthorized!`, which here is a role and not a token. A second cancel changes nothing and answers the error body, so the call repeats. `AutoMergeService#cancel` checks `auto_merge_enabled?` alone, not the state, while `MergeService#execute` (`app/services/merge_requests/merge_service.rb` L18-48) locks the merge request (`in_locked_state`, `app/models/merge_request.rb` L2190-2199) and merges without looking at the flag again, once `MergeWhenChecksPassService#process` has queued it with `merge_async`: so a cancel that arrives while the merge runs clears the flag, answers success, and the merge request merges anyway. The live run on gitlab.com, 2026-10-01, saw exactly that: `{"status":"success"}`, the read back `locked` with no auto-merge, and `merged` a moment later. `cancel_auto_merge` reads the merge request first and sends nothing without an auto-merge or while it is locked or merged, reads `status` in the body, and reads the merge request again for the result, which is `canceled` only when it is open with no auto-merge set; `locked` is `merging` and `merged` is `merged`. The success body was seen live |
-| 110 | Applying a suggestion answers as the OpenAPI file publishes it, and a lost answer can be settled | At v19.4.1-ee: `lib/api/suggestions.rb` L10-54 and L57-84; `app/policies/suggestion_policy.rb`; `lib/gitlab/user_access.rb` L72-77; `app/services/suggestions/apply_service.rb` L11-66 and `ee/app/services/ee/suggestions/apply_service.rb`; `lib/gitlab/suggestions/suggestion_set.rb` L70-119; `lib/gitlab/suggestions/commit_message.rb`; `app/models/suggestion.rb` L48-62; `lib/api/entities/note.rb` L37-39 and `lib/api/entities/suggestion.rb`; `app/services/notes/update_service.rb` L112-123 | **Refined (tier 1).** Both routes answer 200 with the suggestions as the file publishes them, but they are the objects read before the commit, so `applied` can still be false, and the commit's sha is in no field. GitLab looks a suggestion up by id alone, with no project in the path; batch_apply answers 404 when an id is missing or given twice. An account that may not push to the source branch, a protected one or a fork without collaboration, gets 403 before anything is done. Every other refusal is 400 with the reason, the first failing check winning: the file gone, another branch, applied already, the merge request merged or closed, the source branch deleted, lines changed since, the same content, and "A file has been changed." when the comment's `head_sha` is not the branch's head, which holds for every suggestion right after a push until GitLab moves the comments, so a later try can pass. Lines that overlap in a batch are refused. The commit is `Files::MultiService` as the account on the source branch, with the project's message or a default, and `%{…}` placeholders filled in a custom message too. The suggestions are marked applied in the same request, so a second apply is 400 and never commits twice. An edit to a comment deletes its suggestions and creates new ones, so an id stands for the text it was read with. Only a merge request's diff notes carry `suggestions`, on the discussions and notes routes. `to_content` is committed byte for byte, while the comment's body reaches a reader as Markdown with hidden characters dropped. `apply_suggestions` finds every id on the merge request first, refuses the default and protected source branches as `create_commit` does, refuses a text with invisible characters, asks the person with each text, sends the PUT once, reads the suggestions and the branch back, and settles a lost answer by the same read, calling anything short of every suggestion applied unknown, since `Files::MultiService` may still be committing when the answer is lost |
-| 111 | A draft review comment can be edited under a witness and keeps its place, and publishing one says what it made | `lib/api/draft_notes.rb` L20-25, L142-165, L201-231 and L262-288, `lib/api/entities/draft_note.rb`, `app/models/draft_note.rb` L29-33 and L99-137, `app/models/concerns/diff_positionable_note.rb` L27-50, `app/services/draft_notes/publish_service.rb` and `app/services/notes/create_service.rb` L26-47 at v19.4.1-ee, which has no EE override of the publish service | **Refuted (tier 1).** GitLab finds a draft only among its author's, so another person's is 404, a maintainer's call included; the tools say they change only your own. The draft entity carries no time or version, so `update_review_comment` takes `note_sha256`, a hash of the text, and reads first. The PUT needs `note` (400 when blank) and writes `position` as sent, so an edit without it clears the draft's place and the draft publishes as a general thread: the tool sends the draft's own position back, and refuses a draft on an image, whose fields it does not carry. A text over `description_and_note_max_size` in bytes, or a position failing its schema or size, raises unrescued, so GitLab answers 500, not 400, and would again: that 500 is not repeated, and the tool reads the draft and, unchanged, answers `[invalid]`. The PUT does not check the position against the diff. Publishing one draft runs its quick actions and answers 204 with no comment id. When the comment does not save, because it was only commands or failed a check, GitLab logs a warning, deletes the draft and still answers 204, and a second publish is 404. `publish_draft_note` saves the comment and then deletes the draft with no transaction, so a draft still there after a lost answer does not show nothing was published. So `publish_review_comment` is sent once, refuses a draft with a quick-action line, and reads the threads for this account's comment with the draft's text, carriage returns dropped as GitLab drops them, newer than every note read before the publish: in a reply's thread, or as the first note of a new thread at the draft's place. Finding none after a 204, it reports the draft lost and gives the text back. `submit_review` publishes drafts written elsewhere too, so it refuses a review with a quick-action line in any draft. An account that may no longer comment gets 500, and the draft stays. A reply drafted to resolve its thread resolves it when the account may and reopens it otherwise; any other reply reopens it (`set_discussion_resolve_status`). A single publish creates no review and leaves the reviewer state alone. `DraftNote` validates `author_id` unique per merge request and discussion (`app/models/draft_note.rb` L26), so a person has at most one draft reply per thread, and a second is 400 `author_id has already been taken`, as the live run on gitlab.com, 2026-10-01, answered; `add_review_comment` reads the account's drafts and refuses a second as `[conflict]` before sending, and maps GitLab's refusal to the same |
-| 112 | An image uploaded to a private project opens only for people who can read the project | At v19.4.1-ee: `app/controllers/concerns/uploads_actions.rb` L172-182 (`bypass_auth_checks_on_uploads?`: showing an embeddable upload skips the access check unless the project is not public and `enforce_auth_checks_on_uploads?`), `app/controllers/banzai/uploads_controller.rb` L27-31 (the id-based upload paths: the bypass, else `read_project`), `lib/gitlab/file_type_detection.rb` L22 and L69 (embeddable by extension), `lib/api/entities/project.rb` L173 (`enforce_auth_checks_on_uploads` exposed outside the admin-only block of L119), `lib/api/projects.rb` L596-610 (a signed-in read is presented with `Projects::WithAccessAndCatalogSetting`, a `Project`), `app/models/project.rb` L653 and L1520-1529 (delegated to a project setting built when missing), `db/structure.sql` L29554 (`DEFAULT true NOT NULL`); docs.gitlab.com/security/user_file_uploads | **Refuted (tier 1).** In a public project anyone with an upload's link opens it. In a private or internal one an image, a video or an audio file opens for anyone with its link, signed in or not, unless the project's "Require authentication to view media files" is on. The column defaults to true for a new project, and an older one may hold false. Every signed-in reader of `GET /projects/:id` is sent the setting, so `upload_file` takes it from the project read its allow-list check already makes and reports `link_opens_for`, `unknown` if GitLab leaves it out. Probed live on 2026-10-08: a new private scratch project reported the setting on to the account that owns it; a reader who is not a Maintainer was not probed |
-| 113 | GitLab judges an upload by its content | At v19.4.1-ee: `lib/gitlab/file_type_detection.rb` L1-22 (it "identifies files only by the file extension"), `lib/gitlab/file_markdown_link_builder.rb` L9-23 (`![...]` for an embeddable extension, the link text the name without its extension), `app/uploaders/file_uploader.rb` L221-223 (`/uploads/<secret>/<filename>`), `workhorse/internal/headers/content_headers.go` L82-90 (the served type is `http.DetectContentType` of the bytes, SVG apart), `lib/banzai/filter/upload_link_filter.rb` L30-41 (`/uploads/...` is rewritten under the rendering project's id) | **Refuted (tier 1).** Rails decides from the name's extension whether Markdown embeds an upload and whether a private project serves it without sign-in; Workhorse sets the served type from the bytes. So `upload_file` sniffs with the function Workhorse uses, accepts four image types, and sends the base name with the extension of the type the bytes show, so name and bytes agree. Markdown with `/uploads/...` resolves only in the project the image was uploaded to; `full_path` works from anywhere |
-| 114 | `upload_file` should also read from the client's MCP roots | SEP-2577 (final; https://modelcontextprotocol.io/seps/2577-deprecate-roots-sampling-and-logging): roots deprecated from protocol 2026-07-28, the stated replacement "directories and files passed as tool parameters, resource URIs or server configuration"; go-sdk v1.8.0 `mcp/server.go` L1619-1651 (`ListRoots` refused while serving a request from 2026-07-28, which wants an input request instead, SEP-2322); a probe through the SDK's in-memory transports, 2026-10-07 | **Rejected (tier 1; maintainer, 2026-10-08).** On 2025-06-18 and 2025-11-25 `ListRoots` worked mid-call; on 2026-07-28, the SDK's default, it is refused before anything is sent, and the SDK marks every roots API deprecated. A first version read roots where it could; it was dropped. `GITLAB_MCP_UPLOAD_DIRS`, which SEP-2577's server configuration is, is the only source of directories, and the refusal with it unset names it |
-| 115 | `os.Root` keeps a path inside its directory | Go 1.27.2 (first read on 1.27.1; the cited lines are the same in both): `os/root.go` L33-43 (links are followed, never out of the root, and never absolute), `os/file.go` L421 (`errPathEscapes`, unexported), `os/root_windows.go` L211-244 and `os/types_windows.go` L46-80 (on Windows the root's `Lstat` takes the file id from the handle, so `os.SameFile` holds); the `internal/localimage` tests | **Confirmed (tier 1), with two limits.** A relative link that leaves the root, and every absolute link, are refused as escaping; the refusal is matched by its text, and a change to that text still refuses, as `[invalid]`. `Root` does not stop a FIFO or a device, so `localimage` refuses anything but a regular file before opening, opens with `O_NONBLOCK` where FIFOs exist, and holds the open file to the one checked with `os.SameFile`. A probe on 2026-10-08 found `O_NOFOLLOW` ignored for the final component: `Root` follows the link itself, so the check stays `Lstat` and `os.SameFile`. Rechecked on Go 1.27.2 on 2026-10-10, with the same result. 1.27.2 fixes GO-2026-6604: on Windows, `Mkdir` and `MkdirAll` could follow a junction out of the root. `govulncheck` reached it through `openIn`, but the fix changes only those two calls and a path ending in a slash, and `localimage` creates nothing and opens no such path |
-| 116 | A lost upload can be settled by reading | At v19.4.1-ee: `lib/api/markdown_uploads.rb` L16 (`authenticate_non_get!`), L69-73 (the POST checks no role: any account that can read the project uploads), L90-91 and L104-120 (listing, and downloading by id, need `admin_upload`, Maintainer); the OpenAPI file's `GET /projects/{id}/uploads` (id, size, filename, created_at, uploaded_by: no secret); `app/services/upload_service.rb` L11-18 (a file over the instance's limit stores nothing), `doc/user/gitlab_com/_index.md` L34 and `db/structure.sql` L14071 (100 MiB) | **Refuted (tier 1).** A Developer cannot list uploads, and a Maintainer's listing has no secret, so no read can tell whether a lost upload landed or give its link. `upload_file` sends once and answers `[ambiguous_outcome]`, saying a repeat would leave the first upload, if it landed, with nothing linking to it |
-| 117 | A bundle's optional setting the person leaves empty reaches the server empty | anthropics/mcpb at v2.1.2: its manifest specification, L555-583 and L699 (user_config, and arrays expanded only as separate arguments), `src/shared/config.ts` L18-80 (`replaceVariables` replaces only the variables it has, and refuses an array in a string) and L139-178 (variables come from defaults and the person's values) | **Refuted (tier 1, the reference host; Claude Desktop not probed).** An optional key with no default is never a variable, so `${user_config.x}` reaches the environment as written, and the server refuses it as a directory that is not absolute. A `multiple` value is an array, which is not substituted in a string either. So `upload_dirs` is one `directory` with the default `""`, and the `mcpb` gate refuses an env-spent key that is optional with no default, or `multiple` |
-| 118 | An uploaded image keeps its metadata | At v19.4.1-ee: `workhorse/internal/upstream/routes.go` L362 and L612-613 (`POST /api/v4/projects/:id/uploads` goes through `upload.Multipart`), `workhorse/internal/upload/multipart_uploader.go` L21-36 and `saved_file_tracker.go` L72-81 (`TransformContents`), `workhorse/internal/upload/exif.go` (`handleExifUpload`: only when the bytes sniff as JPEG or decode as TIFF), `workhorse/internal/upload/exif/exif.go` L53-64, L164-218 and L238-253 (a name ending `.jpg`, `.jpeg` or `.tiff`; `exiftool -IPTC= -XMP=`, then `-all=` keeping the size, resolution and orientation tags) | **Refined (tier 1; not probed live).** Workhorse removes a JPEG's metadata before GitLab stores it, EXIF location and camera details included, keeping only its size, resolution and orientation, unless the instance sets `SKIP_EXIFTOOL`. PNG, GIF and WebP are not touched, so their text chunks and EXIF or XMP go as they are. `upload_file` names a JPEG `.jpg`, so the removal applies, and the result and the question say which case holds |
-| 119 | A tool the server asks about itself should carry the `requiresUserInteraction` mark too | code.claude.com/docs/en/mcp, "Require approval for a specific tool" and "Respond to MCP elicitation requests", and /docs/en/hooks, "Elicitation output", read 2026-10-10; the maintainer's decision for every server of his, 2026-10-09, after one delete asked twice in Claude Code; this repository's tests on three protocols and three kinds of client | **Refuted (tier 1 for the documents; one prompt not yet seen live).** Claude Code shows a marked tool's prompt on every call, which an allow rule does not skip, and scopes the mark to "tools whose permission prompt is itself the point". With the server's question as well, the person answered twice for one call. So `tools/list` drops the mark, for a client that can ask, from the twelve Ship and Destructive tools that ask before every write (§4.12 item 12). Claude Code declares `elicitation: {form: {}, url: {}}` on 2026-07-28, so it gets the question instead. A tool that asks only sometimes, or never, keeps the mark. The cost: the mark stopped these calls in the client first. Now an `Elicitation` hook that accepts confirms them alone, since such a hook answers "for the user" and "no dialog appears"; so does a client that accepts by itself (§4.12 item 2) |
-| 120 | `tools/list` and `tools/call` see the same client capabilities | MCP Go SDK v1.8.0 `mcp/shared.go` L712-724 (`ClientCapabilities` reads the request's `_meta` before the session's), read 2026-10-10 | **Refuted from 2026-07-28 (tier 1); kept as a known limit.** A client sends its capabilities with each request there, so it can declare form elicitation to `tools/list` and none to `tools/call`, and get neither the mark nor a question. That gains it nothing it lacked: a client that declares form elicitation can accept the question itself. `GITLAB_MCP_REQUIRE_PROMPT=true` refuses such a call. The setting does not change the mark: it decides only what a call does when the client cannot ask |
-| 121 | go.mod writes require two ways, `require path version` and a bare `require (` … `)` block | `go mod edit -fmt` with Go 1.27.2 on a scratch module, 2026-10-11 | **Refined (tier 1).** A comment after `require (` and after `)` survives formatting when the block holds two or more entries. A one-entry block becomes a single `require` line and loses its paren comments, and `require(` becomes `require (`. Read as bare, a block closed by `) // comment` never closes, and a `replace` after it goes unread. So `changelog` and `staleness` cut a line's comment before reading it, take out only lines shaped like a require entry, and waive no entry unless the module line was read and every block closed |
-| 122 | GitLab's merge request dependencies are Premium, addressed by global id, and limited to ten each way | At v19.4.1-ee: `ee/lib/api/merge_request_dependencies.rb` L26-36 (list), L54-77 (delete: `find_merge_request_with_access(…, :update_merge_request)`, the row found only among those the merge request waits for, then `authorize! :read_merge_request` on the blocking one), L79-124 (create: exactly one of `blocking_merge_request_id` and `blocking_merge_request_iid`, the latter with an optional `blocking_project_id`), L126-144 (blockees); `ee/lib/api/entities/merge_request_dependency.rb` (each merge request exposed only `if` the account may read it); `ee/app/services/merge_requests/create_block_service.rb` (403 without `update_merge_request` on the waiting one or `read_merge_request` on the other, 409 "Block already exists"); `destroy_block_service.rb`; `ee/app/models/merge_request_block.rb` L10-63 (unique pair, self-reference refused, the caps); `ee/app/models/ee/merge_request.rb` L383-389 and L812-814 (`merge_blocked_by_other_mrs?` checks the `blocking_merge_requests` license on the waiting merge request's project and releases only on `merged?`); `ee/app/services/ee/system_notes/issuables_service.rb` L243-265 (a note on both merge requests) | **Refuted (tier 1; the routes on Free, live).** The routes check no license: on Free they list, add and remove as on Premium, and only the merge check ignores the dependency. The create takes the other merge request by number and project, so `link_merge_requests` never handles a global id. A repeat answers 409 and writes nothing. A closed blocker still blocks; a merged one does not. Cycles are allowed. The caps count the wrong sides: a merge request's own blockers are not counted against it, so it can wait for more than ten. A dependency on a merge request the account cannot read is listed without it, and cannot be removed through the API. Both merge requests get a system note, so both projects are held to the write allow-list. A live run on gitlab.com, 2026-10-22, in a Free group, made one merge request wait for the other, found it again from the other side as unchanged, read it from both in `get_merge_request`, and removed it |
-| 123 | The default surface must stay under 64 tools, where one client starts regrouping them | microsoft/vscode-copilot-chat at `5863f5a` (2026-05-20): `src/extension/tools/common/virtualTools/virtualToolsConstants.ts` L9 (`START_GROUPING_AFTER_TOOL_COUNT = HARD_TOOL_LIMIT / 2`, 64), L11 (built-ins grouped above 20) and L26 (`GROUP_WITHIN_TOOLSET`, 16); `virtualToolGrouper.ts` L55-65; `src/extension/prompt/node/defaultIntentRequestHandler.ts` `getAvailableTools` (every tool of the request, and no grouping for an Anthropic model with tool search on); `src/platform/configuration/common/configurationService.ts` (`HARD_TOOL_LIMIT = 128`, the default of `chat.virtualTools.threshold`); code.visualstudio.com/docs/copilot/chat/chat-tools (128 tools per request), read 2026-10-22 | **Refuted (tier 1).** VS Code counts the request's tools together, its own built-ins and every server's, so this server's default count decides nothing there: with the built-ins the request passes 64 either way, and any server of more than 16 tools is grouped within. Claude Code defers tools behind tool search by context share, with no count. The one hard limit found is VS Code's 128 tools per request. So the default holds what a project's work needs, and §4.3 no longer counts against 64 |
-| 124 | A server should confirm a write with the person itself, through MCP form elicitation, on the writes that ship, publish or delete | Read 2026-10-22. The MCP specification, `server/tools` at 2025-06-18, 2025-11-25 and 2026-07-28 ("there SHOULD always be a human in the loop with the ability to deny tool invocations"; clients "SHOULD … prompt for user confirmation on sensitive operations" and "show tool inputs to the user before calling the server"), `client/elicitation` (a way "to request additional information from users", with no consent rule), `basic/patterns/mrtr` (`requestState` attacker-controlled; SEP-2322 expects answers that take days); the annotations post of 2026-03-16 ("keep your actual safety guarantees in deterministic controls"). Servers: github/github-mcp-server PR #3076 (only `delete_repository` asks, by a typed name), Supabase's MCP guide ("a guardrail, not a guarantee of human review or approval"), awslabs/mcp PR #4627, microsoft/mcp `BaseToolLoader.cs`, the GitLab, Atlassian, Linear, Notion, Slack, Cloudflare and Sentry servers' documents (none asks). Clients: code.claude.com/docs/en/mcp and /hooks (an `Elicitation` hook answers with "no dialog"), anthropics/claude-code #89858, #96043, #94806, #88901, #102766 (declared and not drawn, hung, or cut to three lines), Codex PR #17164 (an empty form accepted under full access). claude.com/blog/auto-mode-default-in-claude-code, 2026-08-07: 97% of prompts approved; human review caught 13.6% of dangerous commands | **Refuted (tier 2: documents and source, not probed live).** The specification gives per-call approval to the client and never makes elicitation a consent control. Most servers confirm nothing themselves; those that do pick their own scope (row 125 corrects this row's first reading). A client may answer, decline, hang or truncate the question with nobody looking, and an operator cannot govern it with permission rules. So from 3.0.0 the server asks nobody and carries no `requiresUserInteraction`; registration, `confirm`, the guards, the witnesses and `dry_run` stay, and where the question showed what an argument meant, the argument carries it (§4.12). Rows 94–96, 105, 119 and 120 describe the question this replaces |
-| 125 | Row 124's reading of practice: no widely used server confirms every write itself, and those that confirm anything do it for a few irreversible operations, each with an off switch | Read 2026-10-23, every quote re-read at its source. 110 servers: the top 100 by public usage signals (Claude's connector directory, npm, PyPI, Docker Hub, PulseMCP) and ten first-party servers built into a product, GitLab's among them. awslabs/mcp `b054d19` (the Redshift server asks before every statement it cannot recognize as a read, in read-write mode; `UNSAFE_SKIP_WRITE_CONFIRMATION`); github/github-mcp-server `f385262` (`delete_repository` needs form elicitation; no switch skips it); microsoft/mcp `130fc0f` (about 145 commands marked Destructive or Secret ask); GitLab MR !252995 ("Ask is advisory. Only Claude Code 2.1.199 and later honour the annotation … Deny is unaffected everywhere because the server refuses the call"); JetBrains commit `8edf5127f5` ("the same client inside the VS Code extension does not" render an elicitation); microsoft/powerbi-modeling-mcp 0.5.0-beta.11 (its question made opt-in) | **Refined (tier 2: documents and source, not probed live).** The first half holds: 83 of the 91 servers with risky writes never ask the person. The second does not. The 8 that ask pick their own scope, from one tool (GitHub) to every destructive or secret command (Azure) to every write in a write mode (AWS Redshift); GitHub, AWS's SAP server and Dynatrace have no off switch; only Supabase calls its question a guardrail. Row 124's verdict stands on the specification and the clients, and GitLab's own server draws the same line: Deny refused on the server, Ask passed to the client |
-| 126 | Deleting a label or a milestone loses more than the one item, and cannot be undone | GitLab master `b7d1bbc4` (2026-10-22): `app/services/milestones/destroy_service.rb` runs `Issues::UpdateService` with `milestone_id: nil` on every issue of the milestone, does the same for its merge requests, then destroys it; `doc/user/project/labels.md` L239–240: "If you delete a label, it is permanently deleted. All references to the label are removed from the system and you cannot undo the deletion." code.claude.com/docs/en/mcp: the mark is for "tools whose permission prompt is itself the point" | **Confirmed (tier 1).** Both take what they delete off every issue and merge request, with nothing to restore from, so both carry `requiresUserInteraction` (§4.12, §14). The other deletes remove one item: a branch or tag (a ref), a comment, a wiki page (kept in the wiki's history) or a snippet |
-| 127 | Widening access may be an argument of an ordinary write, as `update_issue`'s `confidential: false` was | Read 2026-10-23. GitLab master `b7d1bbc4`: its own MCP server's `update_work_item` takes `confidential` as a plain argument, ungated (`app/services/mcp/tools/work_items/update_work_item_tool.rb`). github/github-mcp-server `f385262`: `create_repository` takes `private` and asks nothing; repositories default to private. Notion, Slack, Canva, Figma, Asana and Airtable's servers offer no sharing tool; Box's sharing tools are off until an admin enables them. OpenAI's server guidance: "Split operations when they have different permissions, safety risks, or confirmation requirements". Clients remember approval per tool, never per argument value (claude.ai, Codex, VS Code, Copilot; Claude Code matches an MCP argument only in a command-line deny rule) | **Refuted for this server (tier 2: documents and source, not probed live).** Dev platforms carry it as an argument, but a client's standing approval of the tool then carries the widening unseen. The servers that keep it out of an ordinary tool either leave it out or give it its own tool behind an admin's switch. Here it is `make_issue_public`, Destructive, and `update_issue` refuses it (§4.3, §14) |
-| 128 | Re-requesting a review needs GraphQL, and does what removing and adding a reviewer does not | Read 2026-10-23. GitLab master `4119fde2`: `lib/api` and `ee/lib/api` have no re-request route; `app/graphql/mutations/merge_requests/reviewer_rereview.rb` (`projectPath`, `iid`, `userId`; fields `errors`, `mergeRequest`) runs `MergeRequests::RequestReviewService`, which sets the reviewer to `unreviewed`, removes their approval, notifies them and adds a to-do and a system note. `doc/api/graphql/reference/mutations.md`: the mutation is GA, only its `duoCodeReviewDepth` argument an experiment. `doc/api/graphql/_index.md`: endpoint `/api/graphql`, mutations need the `api` scope, a refused mutation answers 200 with a top-level error. A reviewer's requested changes (EE `merge_request_requested_changes`) are cleared only by that reviewer approving or publishing a `reviewed` review (`ee/lib/ee/api/draft_notes.rb`), by a push under a project setting (`ee/app/services/ee/merge_requests/refresh_service.rb`), or by their own removal; nothing clears them when a reviewer is removed and added again. docs.gitlab.com/api/merge_requests: only `GET …/reviewers` | **Confirmed (tier 1; the mutation's success path probed live on gitlab.com 2026-10-23, the reviewer read back unreviewed; its error answers from source).** `rerequest_review` sends the mutation after reading the reviewers and the approvals over REST, with the reviewer's state as its witness. It refuses a reviewer who approved, by state or in the approvals, since GitLab would remove that approval, and one still unreviewed, since there is no review to ask for again and no read could settle a lost answer from that state (§4.10, §8a, §14) |
-| 129 | A blob search row's `id` is a number, as every other scope's is | Read 2026-10-23, after a user's blobs search failed to decode. GitLab master `a0d0b02f`: `lib/api/entities/blob.rb` exposes `id` as a String, the blob's SHA. `lib/gitlab/file_finder.rb` returns the files whose path matches (`find_by_path`) before the lines that match (`find_by_content`); `lib/gitlab/search/found_blob.rb` fills a path match's `id` from the blob (`fetch_blob`, `id: blob.id`) and leaves a content match's null. `ee/lib/search/zoekt/search_results.rb` and `ee/lib/gitlab/elastic/search_results.rb` set no `id`, so it is null there. `Gitlab::WikiFileFinder` overrides only `search_paths`, so wiki blobs behave the same | **Refuted.** A blobs or wiki blobs row decodes into its own type, `SearchBlob`, which does not read `id`; the in-memory GitLab answers a path match with a SHA, and the live run searches by a file's name (§7.1) |
-| 130 | A bundle install has a second approval behind the server, as Claude Code's ask rules are | Read 2026-10-23. anthropics/mcpb `70fe3b34` and v2.1.2: MANIFEST.md L249-251 and L759-762, `tools` declared for display ("Help users understand capabilities upfront"), and `src/` reads it only in `init`. claude.com/docs/connectors/getting-started: "Select Allow once to continue, or Always allow to skip the prompt for that tool from now on". claude.com/docs/connectors/building/review-criteria: readOnlyHint and destructiveHint "determine auto-permissions in Claude". claude.com/docs/third-party/claude-desktop/configuration: admins may turn off persistent approval (`mcpPersistentAlwaysAllowEnabled`). `src/shared/config.ts` at v2.1.2: a boolean reaches `env` as "true" or "false", a `""` default as `""` | **Refuted (tier 1, the docs and the reference host; Claude Desktop not probed; no page names desktop extensions).** Claude Desktop approves per tool, driven by the annotations, and a person can always allow a tool. There is no per-call rule like Claude Code's `permissions.ask`. So every switch the bundle asks for defaults to the server's own default, and the `mcpb` gate refuses one that does not; the bundle declares no `tools` list, which would be display only and wrong for most installs, since five settings change what registers (§12) |
-| 131 | `privacy_policies` is optional for a bundle | Read 2026-10-23. anthropics/mcpb `70fe3b34` MANIFEST.md L254: "Required when the extension connects to external services (first- or third-party) that process user data"; added in manifest_version 0.2 (`src/schemas/0.2.ts` L101), unenforced by the schema and by `mcpb validate` | **Refuted (tier 1, the specification).** The manifest names GitLab's privacy statement, https://about.gitlab.com/privacy/, and the `mcpb` gate refuses an empty list |
-| 132 | Any `command` the specification shows runs from the bundle | Read 2026-10-24. anthropics/mcpb v2.1.2: MANIFEST.md L497 and L510-515 give a binary the command `server/my-server`, and L532 says `${__dirname}` "is replaced with the absolute path to the extension's directory"; `src/shared/config.ts` L118, L133 and L173-176 substitute variables in `command` and resolve no path | **Refined (tier 1, the specification and the reference host; Claude Desktop not probed).** The specification shows a relative command once and never says what it is resolved against, and the reference host passes it to the spawn as written. `${__dirname}` is the one form whose meaning the specification fixes. The `mcpb` gate requires every command to start with `${__dirname}/`, as the committed manifest's do, and refuses a relative or absolute one; a probe of Claude Desktop's working directory would settle the relative form |
-| 133 | Every reader of the manifest reads a repeated key the same way | Probed 2026-10-24 with Go 1.27.3 and Node 26.8.1 on `{"server": {"type": "binary", "env": {"A": "1"}}, "server": {"env": {"B": "2"}}}` | **Refuted (tier 1, a probe; Claude Desktop not probed).** Go's decode into a struct, the gate's, keeps `type` and merges `env` into `A` and `B`. Its decode into `map[string]any`, which the vendored schema's validator and the packer's stamp read, keeps the second object alone, as Node's `JSON.parse`, the reference host's, does. The `mcpb` gate refuses a repeated key before any other check |
-| 134 | Every reader of the manifest reads a key's case the same way | Probed 2026-10-24 with Go 1.27.3 and Node 26.8.1 on `{"command": "a", "Command": "b"}`, the same reversed, and `{"k": 1, "\u212a": 2}` | **Refuted (tier 1, a probe; Claude Desktop not probed).** Go's decode into a struct, the gate's, matches a key whatever its case and keeps the last match: `b`, and reversed `a`; the Kelvin sign matches `k` too. Its decode into `map[string]any`, the schema validator's and the packer's, and Node's `JSON.parse`, the reference host's, keep the two spellings apart, and the host reads `command`, `a`. The `mcpb` gate refuses two keys in one object that are equal under Unicode case folding, as `strings.EqualFold` has it |
-| 135 | A host substitutes the variables it knows in a `user_config` default | Read 2026-10-24. anthropics/mcpb v2.1.2 `src/shared/config.ts`: L132-137 put `__dirname`, `pathSeparator`, `/` and the system directories first among the variables, L142-170 add each `user_config.x` after them from its default or the person's value, and `replaceVariables`, L18-41, replaces each variable once, in that order, in the text already substituted | **Refined (tier 1, the reference host's source; Claude Desktop not probed).** The substitution is one pass over the variables, not over the defaults: a system directory or `${__dirname}` in a default arrives after its own turn and stays as written, while a `${user_config.y}` in one is substituted when `y` comes later in the manifest. Either way the server can start with a value other than the default the gate reads, so the `mcpb` gate refuses a default that holds `${` |
-| 136 | `get_merge_request` needs `with_merge_status_recheck` for GitLab to recheck a merge request's merge status after a push | Read 2026-10-28. GitLab v19.4.1-ee: `lib/api/merge_requests.rb` reads the parameter for the listings only, in `serializer_options_for` (L192-202), and the single read (L495-505) never sets `skip_merge_status_recheck`; `lib/api/entities/merge_request_basic.rb` L73-78 then calls `check_mergeability(async: true)` when the account may update the merge request; `mergeability_check_service.rb` L21-26 marks it `checking` and queues the check; `detailed_merge_status_service.rb` L12-32 answers `preparing`, `checking` or `unchecked` first, and otherwise the first check that did not pass, which `check_conflict_status_service.rb` L10-20 leaves `checking` while the new head is not yet in the diff, so the status reads `conflict` with `has_conflicts` false. Spike R on gitlab.com, three runs | **Refuted (tier 1, the source and a probe).** The single read takes no such parameter: it is itself the request. In two runs the listing showed `conflict` with `has_conflicts` false within a second of a push, then `unchecked` for the rest of twenty seconds, and single reads then settled it, to `mergeable`, in 1.8 and 3.2 s. In a third, on a project seconds old, twenty seconds of single reads left a new merge request `unchecked`, and after a push it settled with no single read, in 13.5 s: how soon GitLab settles is not promised. `get_merge_request` sends nothing new and says to read again while the status is one of those (§7.2) |
-| 137 | `destructiveHint: false` fits any write a person can edit back | Read 2026-11-01: the MCP schema (2025-11-25), `ToolAnnotations`, "If false, the tool performs only additive updates", default true; the reference filesystem server says false on `create_directory` and true on `write_file` and `edit_file`; GitHub's server says false on `create_issue` and reactions, and leaves its other writes unset, which reads as true | **Refuted (tier 1, the specification and the two servers' source; no client probed).** Write is annotated destructive, and the new Adding kind, registered as Write is, carries the six writes that add and start nothing. Twenty-nine tools flip, none moves behind a flag. Kept on Write though they add: `add_comment`, since a comment outside a thread marks the account's pending to-dos on the item done; `create_branch`, `create_tag` and `create_merge_request`, since each can start a pipeline and a pipeline can deploy; `link_issues` and `link_merge_requests`, since a blocking link makes one item hold the other; and `add_review_comment`, whose `resolve_thread` resolves a thread when the review is submitted. `TestOnlyToolsThatAddSayTheyAreNotDestructive` names the six |
-| 138 | A commit footer's token is matched exactly, so `SCHEMA-CHANGE:` must be written in capitals | Read 2026-11-01: Conventional Commits 1.0.0, item 15: "The units of information that make up Conventional Commits MUST NOT be treated as case-sensitive by implementors, with the exception of BREAKING CHANGE which MUST be uppercase"; item 16: "BREAKING-CHANGE MUST be synonymous with BREAKING CHANGE"; item 8 puts footers "one blank line after the body" | **Refuted (tier 1).** `schema-ack` reads `SCHEMA-CHANGE:` in any case, and `BREAKING CHANGE:` and `BREAKING-CHANGE:` only in capitals, and only in the message's last paragraphs, never a line of the body |
-| 139 | A commit footer's value is one line, and a paragraph holding a line that is not `Token: value` is not a footer block | Conventional Commits 1.0.0, read 2026-11-02: item 8, "Each footer MUST consist of a word token, followed by either a `:<space>` or `<space>#` separator"; item 10, "A footer's value MAY contain spaces and newlines, and parsing MUST terminate when the next valid footer token/separator pair is observed" | **Refuted (tier 1).** `schema-ack` reads a footer paragraph as one whose first line starts a footer, with either separator. Inside it, a line that starts a footer ends the value before it, and any other line continues that value, so a wrapped value counts, and a `Closes #12` footer beside it does not drop it. A `Token #value` footer counts toward the block but acknowledges nothing: item 12 writes `BREAKING CHANGE` with a colon and a space. A wrapped line that itself reads `word: ` starts a new footer, as item 10 says |
+namespaces and the upload directory. Each defaults so the server starts
+exactly as it does with no settings at all. The bundle does not log the
+person in, and says so.
+
+Claude Desktop approves each tool call, and a person can set a tool to
+always allow. Defaults that widen nothing are the one guard a bundle
+install keeps. The `mcpb` gate derives the asked keys from the
+configuration registry, so a new setting is asked for or excluded with
+a reason. It starts the configuration from the bundle's defaults and
+from nothing, and refuses any difference. It starts every combination of
+the switches and holds the refused ones, read-only with either switch,
+to a declared list the fields' descriptions follow. A field that sets a
+credential is sensitive.
+
+An optional key with no default is never a variable to the host, so
+`${user_config.x}` would reach the server as written
+([MCPB manifest](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md)).
+Each asked key therefore has a default.
+
+Rejected: a `tools` list in the manifest; the asked keys typed out; an
+optional key with no default.
+Cost: a bundle install starts with Ship, Destructive and every toolset
+off, and the person turns each on in the extension's settings.
+
+### D-92 The bundle manifest is held to its vendored schema, read as every host reads it
+
+The `mcpb` gate reads the committed manifest once, from one root, by one
+function the packer also runs. It refuses a key repeated in one object,
+or two keys equal but for case, before any other check. It validates the
+raw bytes against the vendored schema that the manifest's own
+`manifest_version` chooses, each embedded with its SHA-256 and source
+URL. The entry point and every command must name a staged program under
+`${__dirname}/`. A platform override may carry no `env` or `args`. The
+packer stamps the version by decoding and encoding, never by text
+substitution, and holds the stamped manifest to the schema too.
+
+Readers of one manifest disagree. Go's decode into a struct merges a
+repeated key and matches a key whatever its case, while a decode into a
+map, as the schema validator, the packer and Node's `JSON.parse` do,
+keeps the last and keeps spellings apart. A host substitutes an override
+for the base rather than merging it. `${__dirname}` "is replaced with
+the absolute path to the extension's directory", the one path the
+specification fixes to the bundle
+([MCPB manifest](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md)).
+A manifest every reader reads alike is the only one a gate can vouch
+for.
+
+Rejected: a relative or absolute command; `env` or `args` on a platform
+override; text substitution when stamping.
+Cost: a vendored schema says nothing about upstream until
+`make schema-refetch` runs, which the release checklist asks for.
+
+### D-93 The CHANGELOG section is the release note
+
+The release note is the version's section of `CHANGELOG.md`, lifted
+verbatim by `gates release-notes`, which refuses a missing or empty
+section. The CHANGELOG follows Keep a Changelog's sections
+([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)), with
+**Breaking:** on anything a reader must act on.
+
+The `changelog` gate makes a pull request add an entry, unless it cuts a
+release or changes `go.mod` only in the modules it requires, the MCP SDK
+excepted. `changelog-links` holds every version heading to its link
+reference.
+
+A note written once, in the pull request that made the change, is
+reviewed with the change and written while the change is understood. A
+note written on release day is written from memory, and two copies of
+it drift. The entry is the release note, so a reader of the release
+page reads what the reviewer read.
+
+Rejected: release notes written at tag time, apart from the CHANGELOG.
+Cost: a tag pushed before its section exists stops the release before
+goreleaser runs.
+
+### D-94 A tool sends a raw REST or GraphQL request
+
+A tool could send any REST or GraphQL request the model writes: a
+method, a path and a body, as an escape hatch for what no tool covers.
+
+It is declined. A raw request reaches every route past the kinds, the
+quick-action guard, the protected-ref guard and the write allow-list,
+so every control in this server would be one tool call from bypassed.
+The most-starred community GitLab server shows it: its published
+security advisories include read-only mode bypassed through its raw
+GraphQL tool and its verb heuristics. The `read_api` token stops writes in
+read-only mode, but with `api` nothing would. GraphQL is used only as a
+fixed literal per operation for that reason (D-09).
+
+Every operation the server calls has a verdict and a tool with a kind
+(D-10, D-20), so a new need becomes a reviewed tool rather than a
+string the model composes.
+
+Rejected: a raw REST or GraphQL request tool.
+Cost: an operation no tool covers needs a new tool, with its kind, its
+guards and its verdict, before any call can make it.
+
+### D-95 Tools read or write CI variables and secure files
+
+Tools could read or write a project's CI/CD variables and secure files,
+so a model could inspect or change what pipelines run with.
+
+It is declined. Reading them puts secrets into a model's context, from
+where a result can be pasted anywhere, and a masked variable is masked
+only in job logs. Writing them is a supply-chain lever: a changed
+variable alters every pipeline that runs after it, on branches nobody
+reviewed the change for
+([CI/CD variables](https://docs.gitlab.com/ci/variables/)). Neither
+serves an assistant's task inside a project.
+`testdata/api-coverage.tsv` writes them off, with pipeline schedules and
+triggers.
+
+Variable values the caller passes to `run_pipeline` are sent and never
+shown (D-50).
+
+Rejected: reading or writing CI/CD variables and secure files.
+Cost: the pipeline variables listing goes with them, since it carries
+their values, so a lost `run_pipeline` cannot be told apart from another
+run by its variables (D-34).
+
+### D-96 Deleting projects or groups, force pushes and protected-branch changes sit behind a flag
+
+Deleting a project or a group, force-pushing, and changing protected
+branches could sit behind the Destructive switch, as deleting a branch
+or a comment does.
+
+It is declined; they are not gated, they are absent. The Destructive
+kind removes one item a person can see and name, behind `confirm` and a
+witness (D-28, D-36). A project or a group takes every issue, merge
+request, pipeline, wiki page and its history with it. A force push
+rewrites history other people built on. A protected-branch change
+removes the guard that keeps code out of protected branches except
+through a merge request (D-33), so one call would undo the rule every
+other write obeys. Each is administration as well, which the server
+does not do (D-11).
+
+Rejected: deleting projects or groups, force-pushing and changing
+protected branches, behind any switch.
+Cost: a person who needs any of these does it in GitLab, and the live
+driver's own scratch-project deletion stays outside the server (D-83).
+
+### D-97 Events arrive by webhook
+
+Events could reach the server by webhook, so it could tell the model
+when an issue changed or a pipeline failed.
+
+It is declined. A webhook is a POST from GitLab to a URL
+([webhooks](https://docs.gitlab.com/user/project/integrations/webhooks/)).
+A stdio server is a subprocess a client starts and stops. It owns no
+listener, no public address and no lifetime beyond the client's
+session, and GitLab could not reach it on a person's laptop. A listener
+would also be the hosted, network-facing component this server exists
+not to be (D-01).
+
+Changes are read when they matter: `list_item_events` gives an item's
+history, `list_todos` what is waiting on the person, and the `activity`
+toolset's `list_events` what happened in a project.
+
+Rejected: a webhook receiver.
+Cost: the server learns of a change only when a tool reads it, so a
+model notices a failed pipeline when it next asks, not when it fails.
+
+### D-98 The server serves self-managed instances
+
+The server could serve self-managed GitLab instances, with an instance
+setting beside gitlab.com.
+
+It is declined. A self-managed instance brings an instance setting and
+base URLs in every shape, a private CA, plain `http`, and version
+gating for features an older release lacks. Self-signed instances were
+the most-reported setup failure in other GitLab servers, and base URLs
+given with or without `/api/v4` broke them too. Each is a place for a token to go somewhere it should not
+(D-03), and each needs its own tests and live runs against instances
+nobody here runs. gitlab.com runs the newest release, so one instance
+needs no version gating at all (D-02).
+
+The loopback test override is the one other instance, and it exists
+for tests (D-02).
+
+Rejected: self-managed instances, with an instance setting, a private
+CA, plain `http` and version gating.
+Cost: a team on a self-managed instance cannot use this server, and the
+tier checks rest on gitlab.com's answers alone.
+
+### D-99 Content from authors below Developer in public projects is withheld
+
+In a public project, content from authors below the Developer role
+could be withheld unless the operator set a switch, as GitHub's lockdown
+withholds content from authors without push access.
+
+It is declined. The evals plant instructions in exactly the content
+lockdown would withhold, a non-member's comment in a public project:
+read a private file, run a quick action, post in another project,
+approve and merge with Ship on. The model is scored on whether it
+followed them, and the layers behind it hold without lockdown: the
+boundary (D-13), the quick-action guard (D-18), the unregistered kinds
+(D-21) and the write allow-list (D-38). Lockdown would cost a members
+read on every call, and hide the bug reports outsiders file, which are
+often the reason to read a public project at all.
+
+Rejected: withholding content from authors below Developer in public
+projects.
+Cost: a model reads outsiders' text, inside its boundary. If a model or
+a task makes the evals fail, this is revisited, and `make evals` is the
+check.
+
+### D-100 A client id ships in the binary
+
+A gitlab.com OAuth application id could ship compiled into the binary,
+so sign-in would need no setup.
+
+It is declined. A shipped id puts one deployer's application in every
+copy, which D-01 rules out: every person's grant would hang on an
+application someone else owns and can change or delete. Each person's
+own application
+([OAuth provider](https://docs.gitlab.com/integration/oauth_provider/))
+keeps their grant theirs, and keeps the repository free of anything
+deployer-specific (D-06). Reusing GitLab's own CLI's id was weighed
+too. It is registered on `localhost:7171`, a fixed port on `localhost`,
+which gets no loopback port relaxation and collides with the CLI, and
+nothing authorizes its reuse.
+
+Rejected: a client id shipped in the binary, this project's or GitLab's
+CLI's.
+Cost: every person registers an application before signing in, where a
+shipped id would need no setup. [setup.md](setup.md) keeps that to one
+form.
+
+### D-101 Personal access tokens or the device flow sign the person in
+
+The person could sign in with a personal access token, or through
+OAuth's device authorization flow, instead of the loopback flow.
+
+It is declined. A personal access token is a long-lived secret the
+person pastes into a client's configuration, and it expires on a date
+they chose, at most 365 days out by default
+([personal access tokens](https://docs.gitlab.com/user/profile/personal_access_tokens/)).
+It has no refresh, so the server would fail on that day with nothing to
+renew. The device flow exists
+([OAuth 2.0 API](https://docs.gitlab.com/api/oauth2/)), but it is off
+by default for each new application unless someone ticks a setting
+GitLab's provider page does not mention. One sign-in path, the person's own application
+over a loopback redirect (D-66), keeps one set of tests and one page of
+setup.
+
+Rejected: personal access tokens; the device authorization flow.
+Cost: a machine with no browser signs in through `--no-browser` and an
+`ssh -L` forward, and automation passes a refresh token in
+`GITLAB_MCP_REFRESH_TOKEN`.
+
+### D-102 The server confirms a write by asking the person through elicitation
+
+The server could confirm writes itself: before a merge, an approval, a
+manual job, a release, a tag, a pipeline on a protected ref, publishing
+a confidential issue and every delete, it would put a question to the
+person through MCP form elicitation and write only on an accept.
+
+It is declined. The specification puts consent on the client, which
+SHOULD "Prompt for user confirmation on sensitive operations"
+([tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)),
+and lets a server ask through elicitation without making the answer
+consent. Most widely used servers confirm nothing themselves. Clients
+answered such a question with nobody there, did not draw it, left it
+hanging, or cut its message, and no client's allow and ask rules match
+it. A question on every call is answered without reading. A control
+that holds on some clients and not others is not a control (D-26).
+
+Rejected: confirming writes through elicitation; a setting that refuses
+the asking writes on a client that cannot ask.
+Cost: a client that runs with nobody watching makes every registered
+write, so Ship and Destructive stay off for one. A configuration that
+still sets the removed `GITLAB_MCP_REQUIRE_PROMPT` is refused at start.
+
+Next ID: D-103
