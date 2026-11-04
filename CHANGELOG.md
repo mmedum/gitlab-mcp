@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-11-04
+
 ### Changed
 
 - `gitlab-mcp --dump-schemas` also prints the instructions the server gives a client, for the full surface and for the default, read-only and `read_api` configurations.
@@ -265,7 +267,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.2.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.2.1...HEAD
+[4.2.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.2.0...v4.2.1
 [4.2.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.4...v4.2.0
 [4.1.4]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.3...v4.1.4
 [4.1.3]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.2...v4.1.3
