@@ -291,7 +291,8 @@ GET /projects/{id}/merge_requests/{merge_request_iid}/approval_state	written-off
 POST /projects/{id}/merge_requests/{merge_request_iid}/approvals	written-off	1	deprecated, and it changes approval configuration
 PUT /projects/{id}/merge_requests/{merge_request_iid}/reset_approvals	written-off	1	resetting approvals: governance, and GitLab allows it only to bots
 * /projects/{id}/merge_requests/{merge_request_iid}/approval_rules*	written-off	5	merge request approval rules: governance configuration, Premium, administration (D-11)
-POST /projects/{id}/merge_requests/{merge_request_iid}/cancel_merge_when_pipeline_succeeds	gated	1	Client.CancelAutoMerge: cancel_auto_merge, Ship; GitLab answers 201 either way and the body says whether it canceled
+POST /projects/{id}/merge_requests/{merge_request_iid}/cancel_auto_merge	gated	1	Client.CancelAutoMerge: cancel_auto_merge, Ship; GitLab answers 201 with the merge request, and 409 when no auto-merge is set
+POST /projects/{id}/merge_requests/{merge_request_iid}/cancel_merge_when_pipeline_succeeds	written-off	1	deprecated in GitLab 19.5 for cancel_auto_merge, which answers with the merge request rather than a status
 GET /projects/{id}/merge_requests/{merge_request_iid}/closes_issues	used	1	Client.ListMergeRequestClosesIssues: get_merge_request shows the issues a merge closes
 GET /projects/{id}/merge_requests/{merge_request_iid}/related_issues	used	1	Client.ListMergeRequestRelatedIssues: get_merge_request shows the issues related to it
 GET /projects/{id}/merge_requests/{merge_request_iid}/participants	deferred	1	a merge request's participants; get_merge_request may add them
@@ -407,7 +408,6 @@ GET /projects/{id}/pipelines/{pipeline_id}/test_report_summary	used	1	Client.Get
 GET /projects/{id}/pipelines/{pipeline_id}/variables	written-off	1	pipeline variables: the listing carries their values (D-95)
 GET /pipelines	deferred	1	pipelines the account triggered; list_pipelines per project covers the task
 GET /projects/{id}/jobs	deferred	1	every job in a project; list_jobs per pipeline covers the task
-GET /projects/{id}/jobs/{job_id}/runtime_environment_key	written-off	1	a runner-side key: infrastructure administration (D-11)
 POST /projects/{id}/jobs/{job_id}/cancel	deferred	1	cancelling one job: a Ship candidate; cancel_pipeline covers the task
 POST /projects/{id}/jobs/{job_id}/erase	written-off	1	erasing a job destroys its log and artifacts
 DELETE /projects/{id}/jobs/{job_id}/artifacts	written-off	1	deleting a job's artifacts, which nothing restores
@@ -429,7 +429,7 @@ GET /projects/{id}/jobs/artifacts/{ref_name}/raw/{artifact_path}	deferred	1	one 
 * /projects/{id}/resource_groups*	written-off	5	resource groups: CI configuration, administration (D-11)
 * /projects/{id}/create_ci_config*	deferred	1	generating a CI configuration; no tool needs it yet
 * /projects/{id}/merge_trains*	deferred	4	merge trains, Premium; no tool reads or joins one yet
-* /job*	written-off	12	the runner's job API, authenticated by a job token: infrastructure administration (D-11)
+* /job*	written-off	13	the runner's job API, authenticated by a job token: infrastructure administration (D-11)
 * /projects/{id}/catalog*	written-off	1	publishing to the CI/CD catalog: a release of CI components, administration (D-11)
 
 # Labels and milestones: read used; a project's own writes gated under planning;
@@ -536,7 +536,7 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	approving
 * /projects/{id}/managed_licenses*	deferred	5	Premium/Ultimate license policy, not covered yet
 
 # Registries and packages: deferred
-* /projects/{id}/packages*	deferred	137	package registry contents; no tool reads them yet
+* /projects/{id}/packages*	deferred	138	package registry contents; no tool reads them yet
 * /projects/{project_id}/packages*	deferred	3	package registry contents; no tool reads them yet
 * /groups/{id}/packages*	deferred	1	package registry contents; no tool reads them yet
 * /groups/{id}/-/packages*	deferred	27	package registry contents; no tool reads them yet
@@ -581,7 +581,7 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	approving
 * /hooks*	written-off	10	system hooks: instance administration (D-11)
 * /projects/{id}/hooks*	written-off	12	a project's webhooks: a stdio server has no listener for them (D-97)
 * /groups/{id}/hooks*	written-off	12	a group's webhooks: a stdio server has no listener for them (D-97)
-* /integrations*	written-off	9	instance integrations: administration (D-11)
+* /integrations*	written-off	11	instance integrations: administration (D-11)
 * /projects/{id}/integrations*	written-off	55	a project's integrations: administration (D-11)
 * /groups/{id}/integrations*	written-off	54	a group's integrations: administration (D-11)
 * /projects/{id}/services*	written-off	55	a project's integrations under their old name: administration (D-11)
@@ -595,6 +595,7 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	approving
 * /features*	written-off	4	instance feature flags: administration (D-11)
 * /bulk_imports*	written-off	8	migrating groups and projects between instances: administration (D-11)
 * /import/*	written-off	5	importing from GitHub, Bitbucket and other hosts: administration (D-11)
+POST /projects/{id}/github/webhooks	written-off	1	GitHub delivers it, signed, for a repository synced from GitHub; no person calls it
 * /offline_exports*	written-off	3	offline migration exports: administration (D-11)
 * /offline_imports*	written-off	1	offline migration imports: administration (D-11)
 * /projects/{id}/mirror*	written-off	3	pull mirroring: administration (D-11)
@@ -632,11 +633,12 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	approving
 * /internal/*	written-off	11	GitLab's internal API, not public: administration (D-11)
 
 # GitLab's own AI and editor features: written off
-* /ai/*	written-off	30	GitLab Duo's AI features: another product's surface, not project work
+* /ai/*	written-off	27	GitLab Duo's AI features: another product's surface, not project work
 * /code_suggestions/*	written-off	4	GitLab Duo code suggestions: another product's surface, not project work
 * /chat/*	written-off	1	GitLab Duo Chat: another product's surface, not project work
 * /duo_code_review/*	written-off	1	GitLab Duo code review: another product's surface, not project work
 * /vscode/*	written-off	10	the VS Code extension's settings sync: another product's surface, not project work
+* /orbit*	written-off	9	GitLab Orbit, the knowledge graph Premium serves to agents through its own MCP endpoint: another product's surface
 * /projects/{id}/ai_agent*	written-off	5	GitLab Duo agent sessions: another product's surface, not project work
 * /mcp*	written-off	2	GitLab's own MCP server: another product's surface, not project work
 * /glql*	written-off	2	GitLab Query Language: another product's surface, not project work

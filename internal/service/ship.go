@@ -749,9 +749,8 @@ func autoMergeSet(mr *gitlab.MergeRequest) bool {
 }
 
 // CancelAutoMerge stops a merge request from merging when its pipeline
-// succeeds. GitLab answers 201 whether or not it canceled, with the
-// outcome in the body's status, so the body and a read afterwards say
-// what happened. Nothing is sent when no auto-merge is set.
+// succeeds, and takes it off a merge train. A read afterwards settles
+// GitLab's answer. Nothing is sent when no auto-merge is set.
 //
 // A cancel that arrives while the merge runs clears the flag and answers
 // success, and the merge request merges anyway: the merge does not look
@@ -784,42 +783,27 @@ func (s *Service) CancelAutoMerge(ctx context.Context, raw string, iid int64) (m
 		out.DryRun, out.WouldSend = true, preview("POST", "cancel the merge request's auto-merge", nil)
 		return out, nil
 	}
-	res, err := s.client.CancelAutoMerge(ctx, t.p, iid)
-	// The read settles every answer: GitLab's 201 says nothing by its
-	// status, and a failed answer may follow a cancel that landed.
+	answer, err := s.client.CancelAutoMerge(ctx, t.p, iid)
+	// The read settles every answer: a failed answer may follow a cancel
+	// that landed, and a merge may have begun as the cancel arrived.
 	after, readErr := s.client.GetMergeRequest(ctx, t.p, iid)
-	if readErr != nil {
-		return cancelUnread(t, mr, setBy, res, err)
-	}
-	return cancelRead(t, after, setBy, res, err)
-}
-
-// cancelUnread says what a cancel did when the merge request could not
-// be read afterwards: only GitLab's answer tells.
-func cancelUnread(t target, before *gitlab.MergeRequest, setBy string, res *gitlab.ServiceResult, err error) (model.AutoMergeCancel, error) {
 	switch {
+	case readErr == nil:
+		return cancelRead(t, after, setBy, err)
 	case err != nil:
 		return model.AutoMergeCancel{}, err
-	case res.Status == "success":
-		out := autoMergeCancel(t, before, setBy, "canceled")
-		out.AutoMerge = false
-		out.Notes = []string{"GitLab canceled the auto-merge; reading the merge request afterwards failed, so its state is as read before."}
-		return out, nil
-	case res.Status == "error":
-		return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassConflict, "GitLab did not cancel the auto-merge: %q", res.Message)
 	}
-	return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the cancel with status %q, neither success nor "+
-		"error, and reading the merge request afterwards failed, so whether it canceled is unknown: read it with get_merge_request",
-		res.Status)
+	// GitLab's answer is the merge request as the cancel left it.
+	return cancelRead(t, answer, setBy, nil)
 }
 
 // cancelRead says what a cancel did from GitLab's answer and the merge
 // request read afterwards.
-func cancelRead(t target, after *gitlab.MergeRequest, setBy string, res *gitlab.ServiceResult, err error) (model.AutoMergeCancel, error) {
+func cancelRead(t target, after *gitlab.MergeRequest, setBy string, err error) (model.AutoMergeCancel, error) {
 	gone := !autoMergeSet(after)
 	var e *gapi.Error
 	failed := errors.As(err, &e)
-	if !failed || e.Status != 401 {
+	if !failed || e.Status != 403 {
 		// GitLab cancels an auto-merge whose merge has already begun, and
 		// answers success, but the merge goes on.
 		if out, done := mergingOrMerged(t, after, setBy, true); done {
@@ -835,33 +819,24 @@ func cancelRead(t target, after *gitlab.MergeRequest, setBy string, res *gitlab.
 		out.Notes = []string{fmt.Sprintf("GitLab answered with an error, but a read afterwards shows no auto-merge set and the merge "+
 			"request %s: this call or another canceled it, or it merged.", after.State)}
 		return out, nil
-	case failed && e.Status == 401:
-		// GitLab answers 401 to an account that may neither merge it nor
-		// wrote it; the read just made shows the token is fine.
+	case failed && e.Status == 403:
 		return model.AutoMergeCancel{}, gapi.Wrap(gapi.ClassForbidden, err, "GitLab refused to cancel the auto-merge, and it is "+
 			"still set: only someone who may merge the merge request, or its author, can cancel it")
 	case failed && (e.Class == gapi.ClassAmbiguousOutcome || e.Class == gapi.ClassUnavailable):
 		return model.AutoMergeCancel{}, gapi.Wrap(e.Class, err, "%s. A read afterwards shows the auto-merge still set; "+
 			"canceling again is safe", e.Message)
+	case failed && e.Status == 409:
+		// GitLab found none set, and the read finds one: it was set as
+		// the cancel arrived.
+		return model.AutoMergeCancel{}, gapi.Wrap(gapi.ClassConflict, err, "%s, but a read afterwards shows an auto-merge set: "+
+			"someone set it as the cancel arrived. Canceling again is safe", e.Message)
 	case err != nil:
 		return model.AutoMergeCancel{}, err
-	case res.Status == "success":
-		out := autoMergeCancel(t, after, setBy, "canceled")
-		if !gone {
-			out.Notes = []string{"GitLab canceled the auto-merge, but a read afterwards shows one set again: someone set it since."}
-		}
-		return out, nil
-	case res.Status != "error":
-		return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassUnexpected, "GitLab answered the cancel with status %q, neither success "+
-			"nor error, so what it did is unknown; a read afterwards shows auto-merge set: %t", res.Status, !gone)
-	case gone:
-		out := autoMergeCancel(t, after, setBy, "unchanged")
-		out.Notes = []string{fmt.Sprintf("GitLab answered %q, and a read shows no auto-merge set now: it merged or was "+
-			"canceled in the meantime.", res.Message)}
-		return out, nil
+	case !gone:
+		return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassConflict, "GitLab answered that it canceled the auto-merge, but a read "+
+			"afterwards shows one set: someone set it again as the cancel landed. Canceling again is safe")
 	}
-	return model.AutoMergeCancel{}, gapi.Errf(gapi.ClassConflict, "GitLab did not cancel the auto-merge, and it is still set: %q",
-		res.Message)
+	return autoMergeCancel(t, after, setBy, "canceled"), nil
 }
 
 // mergingOrMerged is the result for a merge request GitLab is merging or

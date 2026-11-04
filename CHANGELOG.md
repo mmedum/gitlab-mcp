@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Changed
+
+- `cancel_auto_merge` uses the route GitLab 19.5 added, since 19.5 deprecates the old one.
+
 ## [4.2.1] - 2026-11-04
 
 ### Changed

@@ -141,8 +141,8 @@ evals-check mcpb release server-json actionlint goreleaser-check parity
   A body input that skips the guard is a hole, not a style issue.
 - **A merge's 401 is `[auth]`, not `[forbidden]`.** GitLab answers 401
   for a merge the role does not allow, without calling the token
-  invalid. Only `approve_merge_request` and `cancel_auto_merge` remap
-  it, after a read shows the token works.
+  invalid. Only `approve_merge_request` remaps it, after a read shows
+  the token works.
 - **`[not_found]` also means the token cannot see it.** GitLab answers
   404 for both.
 - **A forbidigo settings block that fails to load leaves forbidigo on

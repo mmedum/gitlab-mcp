@@ -95,7 +95,7 @@ func cancelAutoMerge() definition {
 	return tool[cancelAutoMergeIn, model.AutoMergeCancel]{
 		sp: spec{Name: "cancel_auto_merge", Kind: Ship, Idempotent: true,
 			Description: "Stop a merge request from merging when its pipeline succeeds, as merge_merge_request with auto_merge " +
-				"set it to. Without an auto-merge it is reported unchanged and nothing is sent. A cancel does not stop a merge " +
+				"set it to, and take it off a merge train it joined. Without an auto-merge it is reported unchanged and nothing is sent. A cancel does not stop a merge " +
 				"GitLab has begun: the outcome is canceled only when a read afterwards shows it open with no auto-merge, " +
 				"merging while GitLab merges it, merged when it merged. Someone who may merge it, or " +
 				"its author, can cancel. The result is read back and gives the new updated_at." + shipNote + visibleNote},

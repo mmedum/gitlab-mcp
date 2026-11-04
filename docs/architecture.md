@@ -1573,9 +1573,8 @@ rather than reporting success. A write over many items, such as
 
 GitLab's answers do not say whether a write took effect. Retrying a
 pipeline with nothing failed answers with the pipeline, changed or not,
-and so does cancelling a finished one. Cancelling an auto-merge answers
-201 whether it canceled or not, with the result in the body
-([merge requests](https://docs.gitlab.com/api/merge_requests/)). A
+and so does cancelling a finished one. Cancelling an auto-merge as
+GitLab begins the merge answers success, and the merge goes on. A
 result built from the request would claim effects GitLab never made.
 
 The `outcomes` gate holds that every write result states its outcome on
@@ -2387,9 +2386,8 @@ action: `stale` asks for a re-read, `ambiguous_outcome` for a look and
 never a repeat, `blocked` names a guard and its override.
 
 A 401 that does not call the token invalid is `[auth]`, with a message
-naming the role as the likely cause. Only `approve_merge_request` and
-`cancel_auto_merge` remap it to `[forbidden]`, after a read shows the
-token works.
+naming the role as the likely cause. Only `approve_merge_request`
+remaps it to `[forbidden]`, after a read shows the token works.
 
 Rejected: six classes, since `stale`, `ambiguous_outcome`, `forbidden`
 beside `auth`, `blocked`, `rate_limited` and `unexpected` each ask for a

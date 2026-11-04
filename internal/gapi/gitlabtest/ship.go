@@ -29,7 +29,7 @@ func (s *Server) serveMRShip(w http.ResponseWriter, r *http.Request, p *project,
 		s.unapprove(w, p, mr, user)
 	case post && match(rest, "pipelines"):
 		s.createMRPipeline(w, p, mr, user)
-	case post && match(rest, "cancel_merge_when_pipeline_succeeds"):
+	case post && match(rest, "cancel_auto_merge"):
 		s.cancelAutoMerge(w, p, mr, user)
 	default:
 		return false

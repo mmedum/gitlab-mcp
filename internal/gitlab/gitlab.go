@@ -395,18 +395,6 @@ type Suggestion struct {
 	ToContent   string `json:"to_content"`
 }
 
-// ServiceResult is the body of POST
-// …/merge_requests/:iid/cancel_merge_when_pipeline_succeeds: the
-// service's result rendered as it is, under 201 whether it succeeded or
-// not (lib/api/merge_requests.rb, app/services/auto_merge_service.rb).
-type ServiceResult struct {
-	Status  string `json:"status"` // success or error
-	Message string `json:"message"`
-	// HTTPStatus is the status the service meant, which GitLab does not
-	// send as the response's: 406 when no auto-merge was set.
-	HTTPStatus int `json:"http_status"`
-}
-
 // Position is where a diff note sits.
 type Position struct {
 	BaseSHA      string `json:"base_sha"`
