@@ -38,13 +38,16 @@ func (c *Client) MergeMergeRequest(ctx context.Context, p Project, iid int64, in
 	return &out, err
 }
 
-// CancelAutoMerge cancels a merge request's auto-merge. GitLab answers
-// 201 with its service's result as the body, an error included, so the
-// caller reads Status (lib/api/merge_requests.rb). A second cancel
-// changes nothing.
-func (c *Client) CancelAutoMerge(ctx context.Context, p Project, iid int64) (*gitlab.ServiceResult, error) {
-	var out gitlab.ServiceResult
-	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/cancel_merge_when_pipeline_succeeds",
+// CancelAutoMerge cancels a merge request's auto-merge, and takes it off
+// a merge train. GitLab answers 201 with the merge request, 409 when no
+// auto-merge is set and 403 to an account that may not cancel it. The
+// route arrived in GitLab 19.5, which deprecates the one before it. The
+// live step "an auto-merge is canceled" reaches the 201 when the pipeline
+// still runs; no live step reaches the 409 or the 403.
+// https://docs.gitlab.com/api/merge_requests/#cancel-auto-merge
+func (c *Client) CancelAutoMerge(ctx context.Context, p Project, iid int64) (*gitlab.MergeRequest, error) {
+	var out gitlab.MergeRequest
+	err := c.Do(ctx, Call{Method: "POST", Path: "projects/{}/merge_requests/{}/cancel_auto_merge",
 		Args: []string{p.segment(), idArg(iid)}, Repeatable: "canceling an auto-merge twice leaves it canceled",
 		Name: "cancel_auto_merge"}, &out)
 	return &out, err

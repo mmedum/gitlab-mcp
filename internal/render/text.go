@@ -271,6 +271,12 @@ func Project(p model.Project, bd Boundary) string {
 		fmt.Fprintf(&b, ", open issues %d", *p.OpenIssues)
 	}
 	fmt.Fprintf(&b, "; topics %s.\n", idents(p.Topics))
+	switch on := p.MergeTrainsEnabled; {
+	case on != nil && *on:
+		b.WriteString("Merge requests merge through a merge train: merge_merge_request needs auto_merge: true.\n")
+	case on != nil:
+		b.WriteString("No merge train.\n")
+	}
 	b.WriteString(bd.Notice() + "\n")
 	fmt.Fprintf(&b, "Name: %s\n", bd.Inline(p.UntrustedName))
 	o := Origin{Kind: "project_description", Project: p.Project.Path}

@@ -15,6 +15,16 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `get_project` reports `merge_pipelines_enabled`, `merge_trains_enabled` and `merge_trains_skip_train_allowed`, null on plans without them.
+- `merge_merge_request` results carry `merge_train`: `joined`, or `skipped` when GitLab merged at once outside the train.
+
+### Changed
+
+- `merge_merge_request` refuses `[blocked]` on a project with a merge train unless `auto_merge` is set, which adds the merge request to the train.
+- `cancel_auto_merge` uses the route GitLab 19.5 added, since 19.5 deprecates the old one.
+
 ## [4.2.1] - 2026-11-04
 
 ### Changed

@@ -15,10 +15,15 @@ import (
 func MergeWrite(w model.MergeWrite, _ Boundary) string {
 	var b strings.Builder
 	head := fmt.Sprintf("Merge request !%d was not changed.", w.IID)
-	switch w.Outcome {
-	case "merged":
+	switch {
+	case w.MergeTrain == "joined":
+		head = fmt.Sprintf("Added merge request !%d to the merge train, or set it to join when its checks pass; it is not merged yet.", w.IID)
+	case w.MergeTrain == "skipped":
+		head = fmt.Sprintf("Merged merge request !%d. GitLab merged it at once, outside the merge train, which restarts the "+
+			"pipelines on the train.", w.IID)
+	case w.Outcome == "merged":
 		head = fmt.Sprintf("Merged merge request !%d.", w.IID)
-	case "auto_merge_set":
+	case w.Outcome == "auto_merge_set":
 		head = fmt.Sprintf("Set merge request !%d to merge when its pipeline succeeds; it is not merged yet.", w.IID)
 	}
 	writeHead(&b, head, w.Write)

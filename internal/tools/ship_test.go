@@ -148,8 +148,75 @@ func TestAutoMerge(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: ship})
 	h.gl.SetHeadPipelineStatus(alpha, 2, "running")
 	text, out := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": mrSHA(h, 2), "auto_merge": true})
-	if get(out, "outcome") != "auto_merge_set" || get(out, "state") != "opened" || !strings.Contains(text, "not merged yet") {
+	if get(out, "outcome") != "auto_merge_set" || get(out, "state") != "opened" || get(out, "merge_train") != "" ||
+		!strings.Contains(text, "not merged yet") {
 		t.Errorf("auto merge = %v\n%s", out, text)
+	}
+}
+
+// On a train project a merge without auto_merge is refused before
+// anything is sent, since GitLab would merge it outside the train. With
+// auto_merge it joins the train, and a merge GitLab makes at once
+// anyway is reported as skipping it.
+func TestMergeOnATrainProject(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.gl.SetMergeTrains(alpha, true)
+	before := writesSent(h)
+	for _, dry := range []bool{false, true} {
+		text := h.fails("merge_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": mrSHA(h, 2), "dry_run": dry}, "blocked")
+		if !strings.Contains(text, "merge train") || !strings.Contains(text, "auto_merge: true") {
+			t.Errorf("refusal, dry run %v: %s", dry, text)
+		}
+	}
+	if writesSent(h) != before {
+		t.Fatal("a refused merge wrote")
+	}
+
+	_, dry := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": mrSHA(h, 2), "auto_merge": true, "dry_run": true})
+	if get(dry, "merge_train") != "" || !strings.Contains(fmt.Sprint(get(dry, "would_send")), "add the merge request to the merge train") {
+		t.Errorf("dry run = %v", dry)
+	}
+	// A pipeline that passed still goes through the train.
+	h.gl.SetHeadPipelineStatus(alpha, 2, "success")
+	text, out := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 2, "sha": mrSHA(h, 2), "auto_merge": true})
+	if get(out, "outcome") != "auto_merge_set" || get(out, "merge_train") != "joined" || get(out, "state") != "opened" ||
+		!strings.Contains(text, "Added merge request !2 to the merge train") {
+		t.Errorf("joined = %v\n%s", out, text)
+	}
+
+	// Without a pipeline GitLab merges at once.
+	h.gl.SetHeadPipelineStatus(alpha, 1, "")
+	text, out = h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": mrSHA(h, 1), "auto_merge": true})
+	if get(out, "outcome") != "merged" || get(out, "merge_train") != "skipped" || !strings.Contains(text, "outside the merge train") {
+		t.Errorf("skipped = %v\n%s", out, text)
+	}
+}
+
+// A project that enforces its train refuses a merge at once, which is
+// what GitLab falls to under auto_merge with no pipeline to run the
+// train on; the refusal says to start one, not to pass auto_merge.
+func TestMergeOnAnEnforcedTrain(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.gl.SetMergeTrains(alpha, true)
+	h.gl.SetMergeTrainEnforced(alpha, true)
+	h.gl.SetHeadPipelineStatus(alpha, 1, "")
+	text := h.fails("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": mrSHA(h, 1), "auto_merge": true}, "conflict")
+	if !strings.Contains(text, "neither added it to the merge train nor merged it") || !strings.Contains(text, "run_merge_request_pipeline") {
+		t.Errorf("refusal: %s", text)
+	}
+	if mr, _ := h.gl.MergeRequest(alpha, 1); mr.State != "opened" {
+		t.Errorf("state = %s", mr.State)
+	}
+}
+
+// A project with merge trains turned off merges at once, as one on a
+// plan without them does.
+func TestMergeWithTrainsOff(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.gl.SetMergeTrains(alpha, false)
+	_, out := h.ok("merge_merge_request", map[string]any{"project": alpha, "iid": 1, "sha": mrSHA(h, 1)})
+	if get(out, "outcome") != "merged" || get(out, "merge_train") != "" {
+		t.Errorf("trains off = %v", out)
 	}
 }
 
@@ -540,7 +607,7 @@ func TestRetryJobWhoseAnswerWasLostIsSettled(t *testing.T) {
 func cancelPosts(h *harness) int {
 	n := 0
 	for _, r := range h.gl.Requests() {
-		if r.Method == "POST" && strings.HasSuffix(r.EscapedPath, "/cancel_merge_when_pipeline_succeeds") {
+		if r.Method == "POST" && strings.HasSuffix(r.EscapedPath, "/cancel_auto_merge") {
 			n++
 		}
 	}
@@ -583,33 +650,34 @@ func TestCancelAutoMerge(t *testing.T) {
 	}
 }
 
-// GitLab answers 201 when it does not cancel, with the reason in the
-// body; the result reads it rather than the status.
-func TestCancelAutoMergeReadsTheBody(t *testing.T) {
+// GitLab answers 409 when it finds no auto-merge to cancel. The read
+// afterwards decides: one set means it was set as the cancel arrived,
+// none means this call or another canceled it.
+func TestCancelAutoMergeFindsNoneToCancel(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: ship})
 	h.gl.SetAutoMerge(alpha, 2, "alice")
-	path := fmt.Sprintf("/projects/%d/merge_requests/2/cancel_merge_when_pipeline_succeeds", h.gl.ProjectID(alpha))
-	refused := `{"status":"error","message":"Can't cancel the automatic merge","http_status":406}`
-	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: path, Status: 201, Body: refused})
+	path := fmt.Sprintf("/projects/%d/merge_requests/2/cancel_auto_merge", h.gl.ProjectID(alpha))
+	refused := `{"message":"Can't cancel the automatic merge"}`
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: path, Status: 409, Body: refused})
 	text := h.fails("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2}, "conflict")
-	if !strings.Contains(text, "still set") || !strings.Contains(text, "Can't cancel the automatic merge") {
+	if !strings.Contains(text, "someone set it as the cancel arrived") || !strings.Contains(text, "Can't cancel the automatic merge") {
 		t.Errorf("refusal: %s", text)
 	}
-	// The same answer to a cancel that landed, as when one raced with
-	// another: the read afterwards shows none set.
-	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: path, Status: 201, Body: refused, AfterApply: true})
+	// The same answer to a cancel that landed, as when a resend follows
+	// a lost answer: the read afterwards shows none set.
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: path, Status: 409, Body: refused, AfterApply: true})
 	text, out := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2})
-	if get(out, "outcome") != "unchanged" || get(out, "auto_merge") != false || !strings.Contains(text, "in the meantime") {
+	if get(out, "outcome") != "canceled" || get(out, "auto_merge") != false || !strings.Contains(text, "this call or another canceled it") {
 		t.Errorf("raced = %v\n%s", out, text)
 	}
 }
 
-// Every failed answer is settled by the read afterwards, and a status
-// that is neither success nor error is never taken for unchanged.
+// Every failed answer is settled by the read afterwards, and so is a
+// success the read contradicts.
 func TestCancelAutoMergeSettlesByReading(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: ship})
 	path := func(iid int) string {
-		return fmt.Sprintf("/projects/%d/merge_requests/%d/cancel_merge_when_pipeline_succeeds", h.gl.ProjectID(alpha), iid)
+		return fmt.Sprintf("/projects/%d/merge_requests/%d/cancel_auto_merge", h.gl.ProjectID(alpha), iid)
 	}
 	unavailable := `{"message":"503 Service Unavailable"}`
 	for _, iid := range []int64{1, 2, 3} {
@@ -628,10 +696,25 @@ func TestCancelAutoMergeSettlesByReading(t *testing.T) {
 		t.Errorf("canceled behind an error = %v\n%s", out, text)
 	}
 
-	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: path(3), Status: 201, Body: `{"status":"pending"}`, AfterApply: true})
-	text = h.fails("cancel_auto_merge", map[string]any{"project": alpha, "iid": 3}, "unexpected")
-	if !strings.Contains(text, `status "pending"`) || !strings.Contains(text, "auto-merge set: false") {
-		t.Errorf("unknown status: %s", text)
+	// A success the read contradicts, as when the auto-merge was set
+	// again at once, is never reported canceled.
+	h.gl.Inject(gitlabtest.Fault{Method: "POST", Path: path(3), Status: 201, Body: `{}`})
+	text = h.fails("cancel_auto_merge", map[string]any{"project": alpha, "iid": 3}, "conflict")
+	if !strings.Contains(text, "someone set it again as the cancel landed") {
+		t.Errorf("set again: %s", text)
+	}
+}
+
+// When the read afterwards fails, GitLab's answer to the cancel is the
+// merge request as the cancel left it.
+func TestCancelAutoMergeWhoseReadFailsUsesTheAnswer(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	h.gl.SetAutoMerge(alpha, 2, "alice")
+	h.gl.Inject(gitlabtest.Fault{Method: "GET", Path: fmt.Sprintf("/projects/%d/merge_requests/2", h.gl.ProjectID(alpha)), Skip: 1,
+		Status: 503, Times: 20, Body: `{"message":"503 Service Unavailable"}`})
+	_, out := h.ok("cancel_auto_merge", map[string]any{"project": alpha, "iid": 2})
+	if get(out, "outcome") != "canceled" || get(out, "auto_merge") != false || get(out, "state") != "opened" || cancelPosts(h) != 1 {
+		t.Errorf("read failed = %v, %d sent", out, cancelPosts(h))
 	}
 }
 
@@ -685,12 +768,15 @@ func TestCancelAutoMergeDuringAMerge(t *testing.T) {
 }
 
 // Whoever may merge it, or its author, cancels; GitLab answers anyone
-// else 401, which is the account's role, not its token.
+// else 403.
 func TestCancelAutoMergePermission(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: ship})
 	h.gl.SetAutoMerge(alpha, 1, "alice")
 	dave := newHarness(t, harnessOptions{cfg: ship, over: h.gl, token: func(gl *gitlabtest.Server) string { return gl.TokenFor("dave", "api") }})
-	dave.fails("cancel_auto_merge", map[string]any{"project": alpha, "iid": 1}, "forbidden")
+	text := dave.fails("cancel_auto_merge", map[string]any{"project": alpha, "iid": 1}, "forbidden")
+	if !strings.Contains(text, "only someone who may merge the merge request, or its author, can cancel it") {
+		t.Errorf("refusal: %s", text)
+	}
 	if mr, _ := h.gl.MergeRequest(alpha, 1); !mr.MergeWhenPipelineSucceeds {
 		t.Fatal("a refused cancel canceled")
 	}

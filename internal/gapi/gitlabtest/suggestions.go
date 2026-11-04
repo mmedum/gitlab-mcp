@@ -339,30 +339,29 @@ func (s *Server) ApplySuggestionAs(user string, id int64) bool {
 
 // ------------------------------------------------------------ auto-merge
 
-// cancelAutoMerge is POST …/cancel_merge_when_pipeline_succeeds: 401
-// for a user who may not merge the merge request and did not write it,
-// and otherwise 201 with the service's result as the body, an error
-// included (lib/api/merge_requests.rb, app/services/auto_merge_service.rb).
+// cancelAutoMerge is POST …/cancel_auto_merge: 403 for a user who may
+// not merge the merge request and did not write it, 409 when no
+// auto-merge is set, and otherwise 201 with the merge request
+// (lib/api/merge_requests.rb, app/services/auto_merge_service.rb, v19.5.3-ee).
 func (s *Server) cancelAutoMerge(w http.ResponseWriter, p *project, mr *gitlab.MergeRequest, user string) {
 	need := developerAccess
 	if protectedName(p, mr.TargetBranch) {
 		need = maintainerAccess
 	}
 	if mr.Author.Username != user && s.accessLevel(p, user) < need {
-		message(w, http.StatusUnauthorized, "401 Unauthorized")
+		message(w, http.StatusForbidden, "403 Forbidden")
 		return
 	}
 	// AutoMergeService#cancel checks the flag alone, so a merge already
 	// under way, locked, is canceled and answers success; MergeService
 	// goes on and merges it all the same.
 	if !mr.MergeWhenPipelineSucceeds {
-		writeJSON(w, http.StatusCreated, map[string]any{"status": "error", "message": "Can't cancel the automatic merge",
-			"http_status": 406})
+		message(w, http.StatusConflict, "Can't cancel the automatic merge")
 		return
 	}
 	mr.MergeWhenPipelineSucceeds, mr.MergeUser = false, nil
 	bump(&mr.UpdatedAt, s.opts.Now().UTC())
-	writeJSON(w, http.StatusCreated, map[string]any{"status": "success"})
+	writeJSON(w, http.StatusCreated, mr)
 }
 
 // SetMRState puts a merge request in a state: locked, as while GitLab

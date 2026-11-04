@@ -213,6 +213,8 @@ func (s *Service) GetProject(ctx context.Context, raw string, offset int) (model
 		Stars: proj.StarCount, Forks: proj.ForksCount, OpenIssues: proj.OpenIssuesCount, CreatedAt: proj.CreatedAt,
 		LastActivityAt: proj.LastActivityAt, Namespace: proj.Namespace.FullPath, NamespaceKind: proj.Namespace.Kind,
 		UntrustedName: name, UntrustedDescription: desc, DescriptionBudget: budget,
+		MergePipelinesEnabled: proj.MergePipelinesEnabled, MergeTrainsEnabled: proj.MergeTrainsEnabled,
+		MergeTrainsSkipTrainAllowed: proj.MergeTrainsSkipTrainAllowed,
 	}, nil
 }
 

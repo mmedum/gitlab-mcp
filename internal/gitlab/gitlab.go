@@ -143,6 +143,25 @@ type Project struct {
 	// files": when false, an image uploaded to a private or internal
 	// project opens for anyone with its link. nil when not sent.
 	EnforceAuthChecksOnUploads *bool `json:"enforce_auth_checks_on_uploads"`
+	// The merge-train settings are sent only where the plan has merged
+	// results pipelines, Premium and up, and are nil elsewhere.
+	// MergeTrainsEnabled is true only with merged results pipelines on and
+	// a plan that has merge trains (ee/lib/ee/api/entities/project.rb,
+	// ee/app/models/ee/project_ci_cd_setting.rb, v19.5.3-ee). The live
+	// step "a project is read by its path" sees them absent on the Free
+	// tier, and a read by hand of a Premium train project on gitlab.com
+	// 19.6.0-pre returned all three as booleans; no live step reaches a
+	// train (#97).
+	// https://docs.gitlab.com/api/projects/
+	MergePipelinesEnabled       *bool `json:"merge_pipelines_enabled"`
+	MergeTrainsEnabled          *bool `json:"merge_trains_enabled"`
+	MergeTrainsSkipTrainAllowed *bool `json:"merge_trains_skip_train_allowed"`
+}
+
+// MergesThroughTrain reports a project whose merge requests merge
+// through a merge train; false where GitLab does not send the setting.
+func (p *Project) MergesThroughTrain() bool {
+	return p != nil && p.MergeTrainsEnabled != nil && *p.MergeTrainsEnabled
 }
 
 // ProjectUpload is a file uploaded to a project for Markdown to link,
@@ -393,18 +412,6 @@ type Suggestion struct {
 	Applied     bool   `json:"applied"`
 	FromContent string `json:"from_content"`
 	ToContent   string `json:"to_content"`
-}
-
-// ServiceResult is the body of POST
-// …/merge_requests/:iid/cancel_merge_when_pipeline_succeeds: the
-// service's result rendered as it is, under 201 whether it succeeded or
-// not (lib/api/merge_requests.rb, app/services/auto_merge_service.rb).
-type ServiceResult struct {
-	Status  string `json:"status"` // success or error
-	Message string `json:"message"`
-	// HTTPStatus is the status the service meant, which GitLab does not
-	// send as the response's: 406 when no auto-merge was set.
-	HTTPStatus int `json:"http_status"`
 }
 
 // Position is where a diff note sits.

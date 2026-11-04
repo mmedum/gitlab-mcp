@@ -112,9 +112,14 @@ type project struct {
 	// the CI configuration per branch.
 	pipelines []*gitlab.PipelineDetail
 	// mrPipelines maps a merge request pipeline to its merge request's
-	// iid; mergePipelines is the project's merged results setting.
+	// iid; mergePipelines and mergeTrains are the project's merged
+	// results and merge train settings, which reportCI shows.
 	mrPipelines    map[int64]int64
 	mergePipelines bool
+	mergeTrains    bool
+	// trainEnforced refuses a merge at once on a train project, as the
+	// project's "Enforce for all users" setting does.
+	trainEnforced bool
 	// autoMRPipelines starts a merge request pipeline when one opens and
 	// on each push to its source branch.
 	autoMRPipelines bool

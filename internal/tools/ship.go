@@ -36,8 +36,10 @@ func mergeMergeRequest() definition {
 		sp: spec{Name: "merge_merge_request", Kind: Ship,
 			Description: "Merge a merge request into its target branch, or with auto_merge set it to merge when its pipeline " +
 				"succeeds. sha is required: the head you reviewed, so nothing pushed after your read is merged. A merge request " +
-				"GitLab will not merge now is refused [conflict] naming its detailed_merge_status. The result names the merge " +
-				"commit." + shipNote + visibleNote},
+				"GitLab will not merge now is refused [conflict] naming its detailed_merge_status. On a project with a merge " +
+				"train, a call without auto_merge is refused [blocked], since merging now would skip the train and restart it; " +
+				"auto_merge adds it to the train. The result names the merge commit, and says whether it joined or skipped a " +
+				"train." + shipNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in mergeMergeRequestIn) (model.MergeWrite, error) {
 			return svc.MergeMergeRequest(ctx, service.MergeRequestMerge{Project: string(in.Project), IID: in.IID, SHA: in.SHA,
 				Squash: in.Squash, RemoveSourceBranch: in.RemoveSourceBranch, MergeCommitMessage: in.MergeCommitMessage,
@@ -95,7 +97,7 @@ func cancelAutoMerge() definition {
 	return tool[cancelAutoMergeIn, model.AutoMergeCancel]{
 		sp: spec{Name: "cancel_auto_merge", Kind: Ship, Idempotent: true,
 			Description: "Stop a merge request from merging when its pipeline succeeds, as merge_merge_request with auto_merge " +
-				"set it to. Without an auto-merge it is reported unchanged and nothing is sent. A cancel does not stop a merge " +
+				"set it to, and take it off a merge train it joined. Without an auto-merge it is reported unchanged and nothing is sent. A cancel does not stop a merge " +
 				"GitLab has begun: the outcome is canceled only when a read afterwards shows it open with no auto-merge, " +
 				"merging while GitLab merges it, merged when it merged. Someone who may merge it, or " +
 				"its author, can cancel. The result is read back and gives the new updated_at." + shipNote + visibleNote},

@@ -262,7 +262,9 @@ server from the diff and the version's refs, never by the model
 D-22). It takes the head `sha` the caller reviewed. GitLab refuses a
 moved head with 409, which is `[stale]` (D-36). A lost answer is
 settled by reading the merge request back, and the result says what
-changed, read back rather than assumed (D-34, D-42).
+changed, read back rather than assumed (D-34, D-42). On a project
+with a merge train, a merge without `auto_merge` is refused, and the
+result says whether the merge request joined the train (D-103).
 
 ### Login and refresh
 
@@ -501,6 +503,7 @@ code.
 | D-100 | A client id ships in the binary | rejected | — |
 | D-101 | Personal access tokens or the device flow sign the person in | rejected | — |
 | D-102 | The server confirms a write by asking the person through elicitation | rejected | — |
+| D-103 | On a merge-train project, a merge goes through the train | accepted | TestMergeOnATrainProject, TestGetProjectReportsMergeTrains |
 
 ### D-01 One stdio binary per person, signed in with their own OAuth application
 
@@ -1573,9 +1576,8 @@ rather than reporting success. A write over many items, such as
 
 GitLab's answers do not say whether a write took effect. Retrying a
 pipeline with nothing failed answers with the pipeline, changed or not,
-and so does cancelling a finished one. Cancelling an auto-merge answers
-201 whether it canceled or not, with the result in the body
-([merge requests](https://docs.gitlab.com/api/merge_requests/)). A
+and so does cancelling a finished one. Cancelling an auto-merge as
+GitLab begins the merge answers success, and the merge goes on. A
 result built from the request would claim effects GitLab never made.
 
 The `outcomes` gate holds that every write result states its outcome on
@@ -2387,9 +2389,8 @@ action: `stale` asks for a re-read, `ambiguous_outcome` for a look and
 never a repeat, `blocked` names a guard and its override.
 
 A 401 that does not call the token invalid is `[auth]`, with a message
-naming the role as the likely cause. Only `approve_merge_request` and
-`cancel_auto_merge` remap it to `[forbidden]`, after a read shows the
-token works.
+naming the role as the likely cause. Only `approve_merge_request`
+remaps it to `[forbidden]`, after a read shows the token works.
 
 Rejected: six classes, since `stale`, `ambiguous_outcome`, `forbidden`
 beside `auth`, `blocked`, `rate_limited` and `unexpected` each ask for a
@@ -3072,4 +3073,32 @@ Cost: a client that runs with nobody watching makes every registered
 write, so Ship and Destructive stay off for one. A configuration that
 still sets the removed `GITLAB_MCP_REQUIRE_PROMPT` is refused at start.
 
-Next ID: D-103
+### D-103 On a merge-train project, a merge goes through the train
+
+`merge_merge_request` refuses `[blocked]` on a project whose merge
+requests merge through a merge train, unless the call sets
+`auto_merge`, which adds the merge request to the train. `get_project`
+reports the project's train settings, and the merge result says whether
+the merge request joined the train or GitLab merged it at once.
+
+Without `auto_merge`, GitLab merges at once on a train project, outside
+the train, and restarts the pipelines of every merge request on it
+([merge trains](https://docs.gitlab.com/ci/pipelines/merge_trains/#skip-the-merge-train-and-merge-immediately)).
+A team turns the train on so that nothing reaches the target branch
+untested with the changes ahead of it. A request to merge means the
+team's way of merging, and a warning in the result arrives after the
+merge. GitLab's own enforcement refuses the same call with the same
+advice ([enforce merge trains](https://docs.gitlab.com/ci/pipelines/merge_trains/#enforce-merge-trains)),
+but it is off by default.
+
+GitLab may still merge at once under `auto_merge` when no train
+strategy applies, as for a merge request with no pipeline. The result
+then says `skipped`, and a project that enforces its train refuses the
+merge instead, with the advice to start a pipeline.
+
+Rejected: merging and warning in the result; an argument that skips the
+train, with or without GitLab's `skip_merge_train`.
+Cost: an agent cannot merge immediately on a train project, even where
+the project allows skipping; a person does that in GitLab.
+
+Next ID: D-104

@@ -158,6 +158,36 @@ func TestGetProjectNeverCarriesSecretFields(t *testing.T) {
 	}
 }
 
+// GitLab sends the merge-train settings only on a plan that has merged
+// results pipelines; elsewhere they are null, not false.
+func TestGetProjectReportsMergeTrains(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	text, out := h.ok("get_project", map[string]any{"project": alphaID})
+	for _, k := range []string{"merge_pipelines_enabled", "merge_trains_enabled", "merge_trains_skip_train_allowed"} {
+		if v, ok := out[k]; !ok || v != nil {
+			t.Errorf("%s on a plan without them = %v (present %v)", k, v, ok)
+		}
+	}
+	if strings.Contains(text, "merge train") {
+		t.Errorf("text names a train the plan lacks:\n%s", text)
+	}
+
+	h.gl.SetMergeTrains(gitlabtest.ProjectAlpha, true)
+	text, out = h.ok("get_project", map[string]any{"project": alphaID})
+	if get(out, "merge_pipelines_enabled") != true || get(out, "merge_trains_enabled") != true ||
+		get(out, "merge_trains_skip_train_allowed") != false {
+		t.Errorf("trains on = %v", out)
+	}
+	if !strings.Contains(text, "Merge requests merge through a merge train: merge_merge_request needs auto_merge: true.") {
+		t.Errorf("text:\n%s", text)
+	}
+	h.gl.SetMergeTrains(gitlabtest.ProjectAlpha, false)
+	if text, out = h.ok("get_project", map[string]any{"project": alphaID}); get(out, "merge_trains_enabled") != false ||
+		!strings.Contains(text, "No merge train.") {
+		t.Errorf("trains off = %v\n%s", out, text)
+	}
+}
+
 func TestUnknownRouteIsUnsupported(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	h.gl.Inject(gitlabtest.Fault{Method: http.MethodGet, Path: fmt.Sprintf("/projects/%d/repository/tree", alphaID),
