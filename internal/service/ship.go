@@ -60,12 +60,24 @@ func (s *Service) MergeMergeRequest(ctx context.Context, in MergeRequestMerge) (
 	if err := mergeable(mr, sha); err != nil {
 		return model.MergeWrite{}, err
 	}
+	train := t.project.MergesThroughTrain()
+	if train && !in.AutoMerge {
+		// Without auto_merge GitLab merges at once, outside the train, and
+		// restarts the pipelines of every merge request on it (D-103).
+		// https://docs.gitlab.com/ci/pipelines/merge_trains/#skip-the-merge-train-and-merge-immediately
+		return model.MergeWrite{}, gapi.Errf(gapi.ClassBlocked, "this project merges through a merge train, and merging now "+
+			"would skip the train and restart the pipelines on it; nothing was sent. Pass auto_merge: true to add the merge "+
+			"request to the train")
+	}
 	body := gapi.MergeBody{SHA: sha, Squash: in.Squash, ShouldRemoveSourceBranch: in.RemoveSourceBranch,
 		MergeCommitMessage: in.MergeCommitMessage, SquashCommitMessage: in.SquashCommitMessage, AutoMerge: in.AutoMerge}
 	if gapi.IsDryRun(ctx) {
 		out := mergeWrite(t, mr, "dry_run")
 		verb := "merge the merge request"
-		if in.AutoMerge {
+		switch {
+		case train:
+			verb = "add the merge request to the merge train, or set it to join the train when its checks pass"
+		case in.AutoMerge:
 			verb = "set the merge request to merge when its pipeline succeeds"
 		}
 		out.DryRun, out.WouldSend = true, preview("PUT", verb, fieldsOf(body))
@@ -121,6 +133,15 @@ func (s *Service) mergeFailed(ctx context.Context, t target, iid int64, sha stri
 		return out, nil
 	}
 	var e *gapi.Error
+	if errors.As(err, &e) && e.Status == 405 && autoMerge && t.project.MergesThroughTrain() {
+		// With no train strategy, as for a merge request with no pipeline,
+		// GitLab merges at once under auto_merge, and a project that
+		// enforces its train refuses that with 405 (lib/api/merge_requests.rb,
+		// ee/lib/ee/api/merge_requests.rb, v19.5.3-ee).
+		return model.MergeWrite{}, gapi.Errf(gapi.ClassConflict, "GitLab neither added it to the merge train nor merged it, "+
+			"and nothing was merged: its detailed_merge_status is %q. The train needs a pipeline for the merge request: start "+
+			"one with run_merge_request_pipeline, then merge with auto_merge again", after.DetailedMergeStatus)
+	}
 	if errors.As(err, &e) && (e.Status == 405 || e.Status == 406 || e.Status == 422) {
 		// GitLab's 405 "Method Not Allowed" and 422 "Branch cannot be
 		// merged" say only no, and its 409 only that sha is not the head
@@ -146,6 +167,20 @@ func mergeWrite(t target, mr *gitlab.MergeRequest, outcome string) model.MergeWr
 	}
 	if mr.MergeUser != nil {
 		out.MergedBy = mr.MergeUser.Username
+	}
+	// On a train project GitLab prefers its train strategies for an
+	// auto-merge, so one set has joined the train or joins it when its
+	// checks pass; a merge made at once went around the train. A train
+	// project with no CI at all can fall to merge_when_checks_pass, which
+	// this label does not see (ee/app/services/ee/auto_merge_service.rb,
+	// v19.5.3-ee).
+	if t.project.MergesThroughTrain() {
+		switch outcome {
+		case "auto_merge_set":
+			out.MergeTrain = "joined"
+		case "merged":
+			out.MergeTrain = "skipped"
+		}
 	}
 	return out
 }

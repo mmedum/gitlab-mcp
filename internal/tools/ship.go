@@ -36,8 +36,10 @@ func mergeMergeRequest() definition {
 		sp: spec{Name: "merge_merge_request", Kind: Ship,
 			Description: "Merge a merge request into its target branch, or with auto_merge set it to merge when its pipeline " +
 				"succeeds. sha is required: the head you reviewed, so nothing pushed after your read is merged. A merge request " +
-				"GitLab will not merge now is refused [conflict] naming its detailed_merge_status. The result names the merge " +
-				"commit." + shipNote + visibleNote},
+				"GitLab will not merge now is refused [conflict] naming its detailed_merge_status. On a project with a merge " +
+				"train, a call without auto_merge is refused [blocked], since merging now would skip the train and restart it; " +
+				"auto_merge adds it to the train. The result names the merge commit, and says whether it joined or skipped a " +
+				"train." + shipNote + visibleNote},
 		run: func(ctx context.Context, svc *service.Service, in mergeMergeRequestIn) (model.MergeWrite, error) {
 			return svc.MergeMergeRequest(ctx, service.MergeRequestMerge{Project: string(in.Project), IID: in.IID, SHA: in.SHA,
 				Squash: in.Squash, RemoveSourceBranch: in.RemoveSourceBranch, MergeCommitMessage: in.MergeCommitMessage,

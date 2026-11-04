@@ -52,11 +52,19 @@ func (s *Server) merge(w http.ResponseWriter, r *http.Request, p *project, mr *g
 		message(w, http.StatusMethodNotAllowed, "405 Method Not Allowed")
 		return
 	}
-	if auto, _ := b.boolean("auto_merge"); auto && mr.HeadPipeline != nil && mr.HeadPipeline.Status != "success" {
+	// On a train project GitLab adds a merge request with a pipeline to
+	// the train, finished or not, and merges one with none at once
+	// (ee/app/services/auto_merge/merge_train_service.rb, v19.5.3-ee).
+	if auto, _ := b.boolean("auto_merge"); auto && mr.HeadPipeline != nil && (mr.HeadPipeline.Status != "success" || p.MergesThroughTrain()) {
 		u := s.user(user)
 		mr.MergeWhenPipelineSucceeds, mr.MergeUser = true, &u
 		bump(&mr.UpdatedAt, s.opts.Now().UTC())
 		writeJSON(w, http.StatusOK, mr)
+		return
+	}
+	if p.MergesThroughTrain() && p.trainEnforced {
+		message(w, http.StatusMethodNotAllowed, "This project requires merge requests to go through the merge train. "+
+			"Set auto_merge to true to add this merge request to the train.")
 		return
 	}
 	now := s.opts.Now().UTC()
@@ -309,7 +317,46 @@ func (s *Server) SetMergePipelines(projectPath string, on bool) bool {
 		return false
 	}
 	p.mergePipelines = on
+	p.reportCI()
 	return true
+}
+
+// SetMergeTrains turns merge trains on or off for a project, turning on
+// the merged results pipelines they need, as a Premium project's settings
+// do.
+func (s *Server) SetMergeTrains(projectPath string, on bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	p.mergeTrains = on
+	p.mergePipelines = p.mergePipelines || on
+	p.reportCI()
+	return true
+}
+
+// SetMergeTrainEnforced makes a project refuse every merge made at once
+// while its train is on, as "Enforce for all users" does.
+func (s *Server) SetMergeTrainEnforced(projectPath string, on bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projectByPath(projectPath)
+	if p == nil {
+		return false
+	}
+	p.trainEnforced = on
+	return true
+}
+
+// reportCI sets the settings a project read shows from the fake's own,
+// as GitLab reports them on a Premium plan: trains only with merged
+// results pipelines (ee/app/models/ee/project_ci_cd_setting.rb). A
+// project neither setter touched reports none, as on the Free tier.
+func (p *project) reportCI() {
+	pipelines, trains, skip := p.mergePipelines, p.mergePipelines && p.mergeTrains, false
+	p.MergePipelinesEnabled, p.MergeTrainsEnabled, p.MergeTrainsSkipTrainAllowed = &pipelines, &trains, &skip
 }
 
 // retryPipeline is POST …/retry: each failed or canceled job gets a new
@@ -640,7 +687,8 @@ func (s *Server) SetMergeStatus(projectPath string, iid int64, status string) bo
 }
 
 // SetHeadPipelineStatus sets the status of a merge request's head
-// pipeline, as CI running or failing does.
+// pipeline, as CI running or failing does; "" removes the pipeline, as
+// a project without CI has none.
 func (s *Server) SetHeadPipelineStatus(projectPath string, iid int64, status string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -651,6 +699,10 @@ func (s *Server) SetHeadPipelineStatus(projectPath string, iid int64, status str
 	mr := findMR(p, itoa(iid))
 	if mr == nil || mr.HeadPipeline == nil {
 		return false
+	}
+	if status == "" {
+		mr.HeadPipeline = nil
+		return true
 	}
 	mr.HeadPipeline.Status = status
 	return true

@@ -428,7 +428,7 @@ GET /projects/{id}/jobs/artifacts/{ref_name}/raw/{artifact_path}	deferred	1	one 
 * /projects/{id}/job_token_scope*	written-off	8	job token scope: CI configuration and credentials, administration (D-11)
 * /projects/{id}/resource_groups*	written-off	5	resource groups: CI configuration, administration (D-11)
 * /projects/{id}/create_ci_config*	deferred	1	generating a CI configuration; no tool needs it yet
-* /projects/{id}/merge_trains*	deferred	4	merge trains, Premium; no tool reads or joins one yet
+* /projects/{id}/merge_trains*	deferred	4	merge trains, Premium; no tool reads one, and merge_merge_request joins one through auto_merge
 * /job*	written-off	13	the runner's job API, authenticated by a job token: infrastructure administration (D-11)
 * /projects/{id}/catalog*	written-off	1	publishing to the CI/CD catalog: a release of CI components, administration (D-11)
 

@@ -143,6 +143,23 @@ type Project struct {
 	// files": when false, an image uploaded to a private or internal
 	// project opens for anyone with its link. nil when not sent.
 	EnforceAuthChecksOnUploads *bool `json:"enforce_auth_checks_on_uploads"`
+	// The merge-train settings are sent only where the plan has merged
+	// results pipelines, Premium and up, and are nil elsewhere.
+	// MergeTrainsEnabled is true only with merged results pipelines on and
+	// a plan that has merge trains (ee/lib/ee/api/entities/project.rb,
+	// ee/app/models/ee/project_ci_cd_setting.rb, v19.5.3-ee). The live
+	// step "a project is read by its path" sees them absent on the Free
+	// tier; no live step reaches a train (#97).
+	// https://docs.gitlab.com/api/projects/
+	MergePipelinesEnabled       *bool `json:"merge_pipelines_enabled"`
+	MergeTrainsEnabled          *bool `json:"merge_trains_enabled"`
+	MergeTrainsSkipTrainAllowed *bool `json:"merge_trains_skip_train_allowed"`
+}
+
+// MergesThroughTrain reports a project whose merge requests merge
+// through a merge train; false where GitLab does not send the setting.
+func (p *Project) MergesThroughTrain() bool {
+	return p != nil && p.MergeTrainsEnabled != nil && *p.MergeTrainsEnabled
 }
 
 // ProjectUpload is a file uploaded to a project for Markdown to link,

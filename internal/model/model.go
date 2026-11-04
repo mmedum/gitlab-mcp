@@ -207,6 +207,11 @@ type Project struct {
 	UntrustedName        string     `json:"untrusted_name"`
 	UntrustedDescription string     `json:"untrusted_description"`
 	DescriptionBudget    Budget     `json:"description_budget"`
+	// The merge-train settings are null where GitLab does not report
+	// them: a plan without merged results pipelines.
+	MergePipelinesEnabled       *bool `json:"merge_pipelines_enabled" jsonschema:"Whether merge requests run merged results pipelines; null where the plan has none"`
+	MergeTrainsEnabled          *bool `json:"merge_trains_enabled" jsonschema:"Whether merge requests merge through a merge train. When true, merge_merge_request needs auto_merge: true, which adds the merge request to the train; null where the plan has no merge trains"`
+	MergeTrainsSkipTrainAllowed *bool `json:"merge_trains_skip_train_allowed" jsonschema:"Whether a person may merge immediately without restarting the train. merge_merge_request never skips the train either way; null where the plan has no merge trains"`
 }
 
 // ---------------------------------------------------------------- issues
@@ -1509,6 +1514,7 @@ type MergeWrite struct {
 	MergedAt            *time.Time `json:"merged_at"`
 	MergedBy            string     `json:"merged_by" jsonschema:"Username"`
 	DetailedMergeStatus string     `json:"detailed_merge_status" jsonschema:"GitLab's reason a merge request can or cannot merge now, such as mergeable, ci_must_pass or not_approved"`
+	MergeTrain          string     `json:"merge_train" jsonschema:"On a project with a merge train: joined (it is on the train, or joins it when its checks pass) or skipped (GitLab merged it at once, outside the train). Empty on a project without one, and on a dry run"`
 }
 
 // ApprovalWrite is approve_merge_request's and unapprove_merge_request's
