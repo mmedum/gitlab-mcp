@@ -16,7 +16,7 @@ import (
 )
 
 // The write tools against the in-memory instance: what each sends, what
-// it refuses before sending, and what it reads back (§4.2–§4.7, §4.11).
+// it refuses before sending, and what it reads back.
 
 const alpha = gitlabtest.ProjectAlpha
 
@@ -162,7 +162,7 @@ func TestUpdateIssueNeverSendsPublicForAPublicIssue(t *testing.T) {
 }
 
 // Making a confidential issue public widens who can read it, so only
-// make_issue_public does it, behind the destructive flag (§4.12).
+// make_issue_public does it, behind the destructive flag (D-40).
 // update_issue refuses it whatever the flags, and still makes an issue
 // confidential.
 func TestOnlyMakeIssuePublicMakesAnIssuePublic(t *testing.T) {
@@ -274,7 +274,7 @@ func TestALostCreateIsSettledByReading(t *testing.T) {
 		t.Errorf("not found: %s", text)
 	}
 	// Exactly one create was sent each time: a lost create is never
-	// repeated (§4.5).
+	// repeated.
 	creates := 0
 	for _, r := range h.gl.Requests() {
 		if r.Method == http.MethodPost && r.EscapedPath == "/api/v4/projects/2001/issues" {
@@ -677,7 +677,7 @@ func TestAddTodo(t *testing.T) {
 }
 
 // A to-do is a create: a lost answer is never sent again, and a read of
-// the account's pending to-dos on the item settles it (§4.5).
+// the account's pending to-dos on the item settles it (D-34).
 func TestALostTodoIsSettledNotSent(t *testing.T) {
 	todoPosts := func(h *harness) int {
 		n := 0
@@ -747,8 +747,9 @@ func TestOwnOnlyWritesAreNotOpenWorld(t *testing.T) {
 // side is not one: add_comment marks the account's pending to-dos done,
 // create_branch, create_tag and create_merge_request can start a
 // pipeline, the two link tools can make one item hold another, and
-// add_review_comment can resolve a thread (§18 row 137). A new write is destructive unless its kind is
-// Adding, so adding one is a decision this list shows.
+// add_review_comment can resolve a thread (D-24). A new write is
+// destructive unless its kind is Adding, so adding one is a decision this
+// list shows.
 func TestOnlyToolsThatAddSayTheyAreNotDestructive(t *testing.T) {
 	h := newHarness(t, harnessOptions{cfg: FullSurface(config.Config{})})
 	var adds []string

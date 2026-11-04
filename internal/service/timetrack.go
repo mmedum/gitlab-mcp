@@ -15,11 +15,19 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// Time tracking on an issue or a merge request (§7.2, §18 row 101).
-// GitLab holds no witness for it, so the item is read first and the
-// caller's updated_at compared (§4.6). Adding spent time is a POST GitLab
-// does not deduplicate, so it is never repeated, and a lost answer is
-// settled by reading the total (§4.5).
+// Time tracking on an issue or a merge request. GitLab holds no witness
+// for it, so the item is read first and the caller's updated_at
+// compared. Adding spent time is a POST GitLab does not deduplicate, so
+// it is never repeated, and a lost answer is settled by reading the
+// total.
+//
+// Adding or resetting spent time leaves updated_at where it was, which
+// the API docs do not say and GitLab's source reads otherwise, so the
+// total spent is a second witness (v19.4.1-ee). Checked by the live
+// steps "issue time sent again with an old total is refused", "an
+// issue's spent time resets" and "MR time sent again with an old total
+// is refused".
+// https://docs.gitlab.com/api/issues/
 
 // Durations are GitLab's human form (Gitlab::TimeTrackingFormatter): 8
 // hours a day, 5 days a week, 4 weeks a month, and a bare number is
@@ -101,7 +109,7 @@ type TimeTracking struct {
 	ResetSpent    bool
 	// TotalTimeSpent is the spent-time witness, the total in seconds the
 	// caller read. GitLab does not move updated_at when spent time is
-	// added or reset (§18 row 101), so only the total catches a repeat.
+	// added or reset, so only the total catches a repeat.
 	TotalTimeSpent *int64
 }
 
@@ -270,7 +278,7 @@ func (s *Service) readTimed(ctx context.Context, p gapi.Project, mr bool, iid in
 }
 
 // checkSpentWitness refuses spent time sent against a total that moved
-// since the caller read it (§4.6). updated_at cannot: GitLab leaves it
+// since the caller read it. updated_at cannot: GitLab leaves it
 // where it was when spent time is added or reset.
 func checkSpentWitness(witness *int64, steps []timeStep, current gitlab.TimeStats, what string) error {
 	spends := slices.ContainsFunc(steps, func(st timeStep) bool { return st.op == "add_spent_time" || st.op == "reset_spent_time" })
@@ -420,7 +428,7 @@ func labels(steps []timeStep) string {
 // and which later ones were not sent, what a refusal needs, whether the
 // step itself may have landed, and, when anything may have, the
 // updated_at a read now shows, so a next call is not refused [stale]
-// for this one's own change. Nothing is sent again (§4.5).
+// for this one's own change. Nothing is sent again.
 func (s *Service) timeFailed(ctx context.Context, item timeItem, sent []string, st timeStep, rest []timeStep,
 	before gitlab.TimeStats, err error,
 ) error {
@@ -473,8 +481,8 @@ func (s *Service) timeFailed(ctx context.Context, item timeItem, sent []string, 
 	return gapi.Wrap(e.Class, err, "%s", b.String())
 }
 
-// settleTime reads a lost time tracking write from the stats it left
-// (§4.5). Spent time settles by the total: moved by exactly the amount,
+// settleTime reads a lost time tracking write from the stats it left.
+// Spent time settles by the total: moved by exactly the amount,
 // or to zero for a reset, it landed; not moved, it did not. The estimate
 // settles by its value, and setting it again is safe either way.
 func settleTime(st timeStep, before, now gitlab.TimeStats) string {

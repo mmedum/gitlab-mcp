@@ -3,7 +3,7 @@
 // With no subcommand it serves MCP over stdio. Stdout carries JSON-RPC
 // frames and nothing else: this file is the one place that names the
 // process's streams, and it passes them down as io.Writer so nothing
-// below can print to the wrong one (CLAUDE.md rule 2).
+// below can print to the wrong one (D-04).
 //
 //	gitlab-mcp [serve]                       run the MCP server over stdio
 //	gitlab-mcp login --client-id <id>        sign in with your own OAuth application

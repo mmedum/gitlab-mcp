@@ -159,8 +159,8 @@ func TestAnnotationsAndMeta(t *testing.T) {
 			a.OpenWorldHint == nil || *a.OpenWorldHint != c.world {
 			t.Errorf("%s annotations = %+v", c.name, a)
 		}
-		// Per-call approval is the client's to decide (§4.12): a tool
-		// carries the mark only when its spec asks for it.
+		// Per-call approval is the client's to decide: a tool carries the
+		// mark only when its spec asks for it.
 		if _, marked := tl.Meta[promptMeta]; marked {
 			t.Errorf("%s carries requiresUserInteraction", c.name)
 		}
@@ -286,7 +286,7 @@ func TestDescriptionsFollowTheHouseStyle(t *testing.T) {
 			t.Errorf("%s: description is empty or unfinished", sp.Name)
 		}
 	}
-	// Every input of every tool is described; iid in the words of §6.1.
+	// Every input of every tool is described, and iid in the same words.
 	h := newHarness(t, harnessOptions{})
 	for name, tl := range listed(t, h) {
 		props, _ := tl.InputSchema.(map[string]any)["properties"].(map[string]any)
@@ -403,7 +403,7 @@ func TestTheGuardedInputsAreDeclared(t *testing.T) {
 }
 
 // TestOnlyWritesThatReachBeyondTheItemPrompt holds the marked set
-// (§4.12): a label or milestone deleted comes off every issue and merge
+// (D-27): a label or milestone deleted comes off every issue and merge
 // request, and an issue made public is read by everyone; none can be
 // undone, so Claude Code prompts on every such call.
 func TestOnlyWritesThatReachBeyondTheItemPrompt(t *testing.T) {

@@ -25,11 +25,10 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// Kind is what a tool does (docs/architecture.md §4.3). It is one field
-// per tool rather than three, because it decides the annotations, whether
-// the tool is registered at all and the scope it needs, and three rules
-// kept by hand at sixty call sites is three ways to be quietly wrong at
-// one of them (CLAUDE.md rule 14).
+// Kind is what a tool does (D-20). It is one field per tool rather than
+// three, because it decides the annotations, whether the tool is
+// registered at all and the scope it needs, and three rules kept by hand
+// at sixty call sites is three ways to be quietly wrong at one of them.
 type Kind int
 
 // The kinds.
@@ -40,6 +39,7 @@ const (
 	// Registered unless read-only. Annotated destructive, the MCP
 	// schema's default, since the schema reads destructiveHint false as
 	// "the tool performs only additive updates".
+	// https://modelcontextprotocol.io/specification/2025-11-25/schema
 	Write
 	// Adding creates something new and changes nothing already there,
 	// and starts nothing: an issue, a label, a milestone, a snippet, a
@@ -71,7 +71,7 @@ func (k Kind) Scope() scopes.Kind {
 	return scopes.KindRead
 }
 
-// annotations are the hints a client shows (§8). They are hints and not
+// annotations are the hints a client shows. They are hints and not
 // controls: registration is the control. openWorldHint is true where the
 // result is visible to other people, which every GitLab write is but
 // those whose effect only the account sees (spec.OwnOnly).
@@ -96,7 +96,7 @@ type spec struct {
 	// Idempotent marks a write that lands the same way twice.
 	Idempotent bool
 	// OwnOnly marks a write whose effect only the signed-in account sees,
-	// such as its to-do list, so openWorldHint is false (§8).
+	// such as its to-do list, so openWorldHint is false.
 	OwnOnly bool
 	// Bucket is the rate bucket the tool's requests are charged to
 	// beyond the general one, for the log line.
@@ -106,14 +106,16 @@ type spec struct {
 	// Guarded are the inputs, by JSON name, that carry Markdown GitLab
 	// runs quick actions from. register routes each through
 	// internal/quickaction before the handler sees it and declares them
-	// under _meta, which `scripts/gates bodies` reads (§4.2).
+	// under _meta, which `scripts/gates bodies` reads (D-18).
 	Guarded []string
 	// PromptEveryCall marks a write that cannot be undone and reaches
 	// beyond the one item: a delete that takes what it deletes off every
-	// issue and merge request, or opening an issue to everyone. The tool
-	// carries Claude Code's requiresUserInteraction, so Claude Code
-	// prompts on every call whatever the operator's rules say (§4.12).
-	// Only a Destructive tool may set it.
+	// issue and merge request, or opening an issue to everyone (D-27).
+	// The tool carries Claude Code's requiresUserInteraction, so Claude
+	// Code prompts on every call, which no allow rule skips; its docs keep
+	// the mark for tools whose prompt is itself the point. Only a
+	// Destructive tool may set it.
+	// https://code.claude.com/docs/en/mcp
 	PromptEveryCall bool
 }
 
@@ -129,7 +131,7 @@ type Deps struct {
 	Config  config.Config
 	// Granted are the token's scopes, empty when unknown. A tool whose kind
 	// needs a scope the token lacks is not registered: a read_api token
-	// never gets a write tool, whatever the flags say (§9.4).
+	// never gets a write tool, whatever the flags say.
 	Granted []string
 	Logger  *slog.Logger
 }
@@ -174,7 +176,7 @@ type definition interface {
 
 // tool binds a spec to its handler and its text rendering. Out is the
 // structured half; text renders the readable half from the same value
-// under the call's boundary (CLAUDE.md rule 15).
+// under the call's boundary (D-77).
 type tool[In, Out any] struct {
 	sp   spec
 	run  func(ctx context.Context, svc *service.Service, in In) (Out, error)
@@ -184,7 +186,7 @@ type tool[In, Out any] struct {
 func (t tool[In, Out]) spec() spec { return t.sp }
 
 // add registers the tool with the SDK's untyped AddTool, so the
-// arguments pass through lenient decoding (§17.7) before the schema
+// arguments pass through lenient decoding before the schema
 // sees them, and so errors, logging and both halves of the reply are
 // decided here once.
 func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
@@ -212,8 +214,8 @@ func (t tool[In, Out]) add(s *mcp.Server, d Deps) {
 		panic("tools: " + t.sp.Name + " is Destructive and has no confirm input")
 	}
 	if t.sp.Kind != Read && c.dryRun < 0 {
-		// §8: every tool that changes something can show what it would
-		// send first.
+		// Every tool that changes something can show what it would send
+		// first (D-29).
 		panic("tools: " + t.sp.Name + " writes and has no dry_run input")
 	}
 	if t.sp.Kind != Read && c.write < 0 {
@@ -264,7 +266,7 @@ func (c *caller[In, Out]) handle(ctx context.Context, req *mcp.CallToolRequest) 
 	defer func() {
 		// One line per call, and nothing the caller sent or GitLab
 		// returned: the method, the tool, how it ended, how long it took
-		// and the rate bucket it was charged to (§9.2).
+		// and the rate bucket it was charged to (D-05).
 		c.d.logger().Debug("tool call", "method", "tools/call", "tool", c.t.sp.Name, "outcome", outcome,
 			"ms", time.Since(start).Milliseconds(), "bucket", c.t.sp.Bucket.String())
 	}()
@@ -402,7 +404,7 @@ func stringFields[In any](tool string, names []string) []guardedField {
 
 // guard puts every guarded input through internal/quickaction: refused
 // when it holds a line GitLab would run, unless escape_commands is set,
-// in which case each such line is escaped in place (§4.2). The handler
+// in which case each such line is escaped in place (D-19). The handler
 // only ever sees text GitLab will not run.
 func (c *caller[In, Out]) guard(v reflect.Value) ([]model.EscapedLine, error) {
 	escape := c.escape >= 0 && v.Field(c.escape).Bool()
@@ -466,7 +468,7 @@ func (c *caller[In, Out]) finishWrite(out *Out, escaped []model.EscapedLine) {
 
 // ------------------------------------------------------------ decoding
 
-// lenient applies §17.7's proposal to the raw arguments: an array or an
+// lenient loosens the raw arguments (D-79): an array or an
 // integer sent as JSON inside a string is decoded, and null or "" for an
 // optional input is taken as absent. Some clients stringify arguments;
 // refusing them costs a turn and teaches nothing. Nothing else is
@@ -640,7 +642,7 @@ func ptr[T any](v T) *T { return &v }
 
 // idOrPath is a project or group as the caller names it: a numeric id,
 // sent as a JSON number or a string, or a full path or URL. Its schema
-// says both, because "the numeric id" invites a number (§6.1).
+// says both, because "the numeric id" invites a number.
 type idOrPath string
 
 // UnmarshalJSON accepts a string, or an integer as its decimal text.

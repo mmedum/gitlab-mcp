@@ -22,8 +22,8 @@ itself, and every problem is reported together.
 | `GITLAB_MCP_PROFILE` | `--profile` | `default` | Which stored sign-in to use. Separate profiles keep separate tokens, such as one per GitLab account. A name is up to 64 characters from a to z, 0 to 9, - and _, starting with a letter or digit. |
 | `GITLAB_MCP_CLIENT_ID` | `--client-id` | the profile's | The OAuth application id. Overrides the one the profile recorded at login. |
 | `GITLAB_MCP_READ_ONLY` | `--read-only` | `false` | Register only the Read tools and request `read_api`. Needs a login made in this mode. |
-| `GITLAB_MCP_ENABLE_SHIP` | `--enable-ship` | `false` | Register merging, approving, running and canceling CI, and creating releases. |
-| `GITLAB_MCP_ENABLE_DESTRUCTIVE` | `--enable-destructive` | `false` | Register deletions. Each call also needs `confirm: true`. |
+| `GITLAB_MCP_ENABLE_SHIP` | `--enable-ship` | `false` | Register merging, approving, rebasing, applying suggestions, moving issues, running and canceling CI, and creating releases. |
+| `GITLAB_MCP_ENABLE_DESTRUCTIVE` | `--enable-destructive` | `false` | Register deletions and `make_issue_public`. Each call also needs `confirm: true`. |
 | `GITLAB_MCP_TOOLSETS` | `--toolsets` | none | Comma-separated optional toolsets: `activity`, `deployments`, `planning`, `releases`, `snippets`, `wiki`, or `all`. |
 | `GITLAB_MCP_WRITE_NAMESPACES` | `--write-namespaces` | anywhere | Comma-separated group or project paths that every write call is confined to. A call aimed elsewhere is `[blocked]`. |
 | `GITLAB_MCP_UPLOAD_DIRS` | `--upload-dirs` | none | The absolute directories `upload_file` may read images from, separated as `PATH` is: `:` on Linux and macOS, `;` on Windows; a value that is one existing directory is taken whole. Unset, it reads none. See below. |
@@ -67,7 +67,7 @@ flags decide what is registered rather than what is requested:
 | Setting | Registers | Requests |
 |---|---|---|
 | `GITLAB_MCP_READ_ONLY=true` | Read | `read_api` |
-| default | Read and Write | `api` |
+| default | Read, Write and Adding | `api` |
 | `GITLAB_MCP_ENABLE_SHIP=true` | adds Ship | `api` |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds Destructive | `api` |
 | `GITLAB_MCP_TOOLSETS` | adds the tools of each toolset named | no change |
@@ -84,21 +84,18 @@ protect.
 
 The server asks you nothing; your MCP client approves each call. Clients
 that prompt by a tool's annotations prompt for every tool marked
-destructive: every write but the six that only add. In Claude Code, an
+destructive: every write but the ones that only add. In Claude Code, an
 `ask` rule per tool does it; the README lists them. Leave
 `GITLAB_MCP_ENABLE_SHIP` and `GITLAB_MCP_ENABLE_DESTRUCTIVE` off for a
 client that runs with nobody watching.
 
 `upload_file` has no flag of its own: its guards are the upload
-directories and `GITLAB_MCP_WRITE_NAMESPACES`. A client that runs it
-without asking you lets an instruction planted in a comment upload an
-image from those directories to a public project the comment's author
-maintains. Give it an `ask` rule, or confine writes with
-`GITLAB_MCP_WRITE_NAMESPACES`.
+directories and `GITLAB_MCP_WRITE_NAMESPACES`. Give it an `ask` rule;
+[`docs/security.md`](security.md) says why.
 
-`GITLAB_MCP_REQUIRE_PROMPT` was removed with the server's question.
-Set to anything but false, it stops the server at start, so a
-configuration that relied on it is noticed rather than quietly widened.
+`GITLAB_MCP_REQUIRE_PROMPT` is refused. Set to anything but false, it
+stops the server at start, so a configuration that relied on the server
+asking is noticed rather than quietly widened.
 
 ## Where `upload_file` reads from
 

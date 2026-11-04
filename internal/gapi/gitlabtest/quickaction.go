@@ -12,7 +12,7 @@ import (
 )
 
 // Quick actions run from a note, a description or a published draft sent
-// through the API (§2.8). The model is small on purpose: /close and
+// through the API. The model is small on purpose: /close and
 // /reopen change the issue or merge request, /label and /unlabel change
 // its labels, other known commands are consumed without effect, fenced
 // code is skipped, and a note that is only commands answers 202 and saves

@@ -7,8 +7,6 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// The phase 6 renderers (§17.13).
-
 // IssueMove renders move_issue.
 func IssueMove(w model.IssueMove, _ Boundary) string {
 	var b strings.Builder

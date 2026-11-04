@@ -10,7 +10,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
-// The bodies gate holds §4.2 (CLAUDE.md rule 5): GitLab runs every
+// The bodies gate holds D-18: GitLab runs every
 // quick-action line in a description or a comment the API is sent, so
 // every string a write tool takes either passes
 // through internal/quickaction or is listed below as a plain field with
@@ -27,6 +27,12 @@ import (
 // keyed "tool.input", or "input" for every write tool that has it, each
 // with the reason GitLab does not evaluate quick actions in it. A row
 // with nothing to excuse fails, so the list cannot outlive the tools.
+//
+// Wiki pages, snippets, release notes and merge commit messages run no
+// quick action: none of their services calls QuickActions::InterpretService.
+// GitLab's quick-action page is silent on them. Checked by the live steps
+// "a wiki page is created" and "a release is created with a new tag".
+// https://docs.gitlab.com/user/project/quick_actions/
 var plainInputs = map[string]string{
 	"project":        "addresses the project in the request path; never sent as text",
 	"discussion_id":  "addresses a thread in the request path; never sent as text",
@@ -64,19 +70,25 @@ var plainInputs = map[string]string{
 	"slug":           "addresses a wiki page in the request path; never sent as text",
 	"format":         "a closed value, markdown, rdoc, asciidoc or org, which GitLab takes as the page's markup and does not interpret",
 	"apply_suggestions.commit_message": "a commit message Suggestions::ApplyService hands to Files::MultiService, which writes it " +
-		"into Git; it runs no quick action, as for create_commit (§18 row 110)",
+		"into Git; it runs no quick action, as for create_commit (app/services/suggestions/apply_service.rb at v19.4.1-ee)",
 	"merge_merge_request.merge_commit_message": "a commit message MergeRequests::MergeService writes into Git; it runs no quick " +
-		"action (§18 row 67)",
+		"action (app/services/merge_requests/merge_service.rb at v19.4.1-ee)",
 	"merge_merge_request.squash_commit_message": "a commit message MergeRequests::MergeService writes into Git; it runs no quick " +
-		"action (§18 row 67)",
-	"save_wiki_page.content":     "a wiki page: WikiPages::CreateService and UpdateService run no quick action (§18 row 67)",
-	"create_snippet.description": "a snippet's description: Snippets::CreateService runs no quick action (§18 row 67)",
-	"update_snippet.description": "a snippet's description: Snippets::UpdateService runs no quick action (§18 row 103)",
+		"action (app/services/merge_requests/merge_service.rb at v19.4.1-ee)",
+	"save_wiki_page.content": "a wiki page: WikiPages::CreateService and UpdateService run no quick action " +
+		"(app/services/wiki_pages at v19.4.1-ee)",
+	"create_snippet.description": "a snippet's description: Snippets::CreateService runs no quick action " +
+		"(app/services/snippets/create_service.rb at v19.4.1-ee)",
+	"update_snippet.description": "a snippet's description: Snippets::UpdateService runs no quick action " +
+		"(app/services/snippets/update_service.rb at v19.4.1-ee)",
 	"update_snippet.content": "a snippet file's content, committed to the snippet's repository; Snippets::UpdateService runs no " +
-		"quick action (§18 row 103)",
-	"create_release.description": "release notes: Releases::CreateService runs no quick action (§18 row 67)",
-	"create_release.name":        "a release's name: Releases::CreateService runs no quick action (§18 row 67)",
-	"create_release.tag_message": "an annotated tag's message, written into Git; Releases::CreateService runs no quick action (§18 row 67)",
+		"quick action (app/services/snippets/update_service.rb at v19.4.1-ee)",
+	"create_release.description": "release notes: Releases::CreateService runs no quick action " +
+		"(app/services/releases/create_service.rb at v19.4.1-ee)",
+	"create_release.name": "a release's name: Releases::CreateService runs no quick action " +
+		"(app/services/releases/create_service.rb at v19.4.1-ee)",
+	"create_release.tag_message": "an annotated tag's message, written into Git; Releases::CreateService runs no quick action " +
+		"(app/services/releases/create_service.rb at v19.4.1-ee)",
 	"create_release.milestones":  "milestone titles GitLab looks up by title, never as Markdown",
 	"create_release.released_at": "a time, checked as RFC 3339 and sent as one",
 	"to_project":                 "a project the server resolves to its id and sends as to_project_id; never sent as text",
@@ -108,9 +120,8 @@ var plainInputs = map[string]string{
 		"(lib/api/time_tracking_endpoints.rb at v19.4.1-ee)",
 }
 
-// minWriteTools is the floor on write tools the gate examined: the
-// twenty-six of phase 3 with every flag and toolset on. A dump with fewer
-// is a dump of the wrong build.
+// minWriteTools is the floor on write tools the gate examined, with every
+// flag and toolset on. A dump with fewer is a dump of the wrong build.
 const minWriteTools = 26
 
 func bodies(out io.Writer, args []string) error {
@@ -177,7 +188,7 @@ func checkBodies(d schemaDump, plain map[string]string, toolFloor, writeFloor in
 				usedPlain[name] = true
 			default:
 				problems = append(problems, fmt.Sprintf("%s is a string input of a write tool, neither routed through internal/quickaction "+
-					"nor listed in plainInputs; a quick-action line in it would run (§4.2)", key))
+					"nor listed in plainInputs; a quick-action line in it would run", key))
 				continue
 			}
 			plainCount++

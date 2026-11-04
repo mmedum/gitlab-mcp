@@ -11,9 +11,9 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The instance is generated from code, never recorded (docs/architecture.md
-// §9.1): users from a fixed synthetic list, projects under example-group,
-// bodies and diffs from templates, ids from counters in fixed ranges.
+// The instance is generated from code, never recorded: users from a
+// fixed synthetic list, projects under example-group, bodies and diffs
+// from templates, ids from counters in fixed ranges.
 
 // Fixture names tests address.
 const (
@@ -86,7 +86,7 @@ type project struct {
 	diffs     map[string][]gitlab.Diff   // sha → diffs
 	protected []gitlab.ProtectedBranch
 	// fileCommits is, per branch a write has moved, the last commit that
-	// touched each file; a branch absent here counts its head (§2.10).
+	// touched each file; a branch absent here counts its head.
 	fileCommits map[string]map[string]string
 
 	// Review: each merge request's diffs, and the default user's drafts.

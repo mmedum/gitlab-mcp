@@ -30,7 +30,7 @@ func after(kv ...string) Facts {
 }
 
 // Every prompt substitutes cleanly from the placeholders the harness
-// fills. A sibling's first eval run sent a model a literal {folder}.
+// fills. One left unfilled reaches the model as literal text.
 func TestEveryPromptSubstitutes(t *testing.T) {
 	if len(Tasks) < 5 {
 		t.Fatalf("%d tasks; this is reading nothing", len(Tasks))
@@ -92,7 +92,7 @@ func TestEveryTaskIsExplainedAndBounded(t *testing.T) {
 		}
 	}
 	if !injection {
-		t.Error("no task carries injected content (§13)")
+		t.Error("no task carries injected content, so no run scores a steer")
 	}
 }
 

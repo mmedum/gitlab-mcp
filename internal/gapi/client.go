@@ -1,12 +1,12 @@
 // Package gapi is the raw REST client for GitLab's API v4.
 //
-// Raw, because CLAUDE.md rule 13 forbids a client library. Every request
-// goes through Client.do, which owns the rules that must hold for every
-// call: the token goes only to the configured instance and no redirect
-// is followed (§11); a write never runs under a dry run; every call is
-// charged to the per-instance rate model; only what cannot apply twice
-// is retried, and a create never is (§4.5); and every failure comes back
-// as a classified *Error whose text carries no URL, path or query.
+// Raw, with no client library. Every request goes through Client.do,
+// which owns the rules that must hold for every call: the token goes
+// only to the configured instance and no redirect is followed; a write
+// never runs under a dry run; every call is charged to the per-instance
+// rate model; only what cannot apply twice is retried, and a create
+// never is; and every failure comes back as a classified *Error whose
+// text carries no URL, path or query.
 package gapi
 
 import (
@@ -38,7 +38,7 @@ const (
 	DefaultMaxAttempts   = 4
 )
 
-// MaxResponseBytes bounds one response body (§11).
+// MaxResponseBytes bounds one response body (D-76).
 const MaxResponseBytes = 32 << 20
 
 // maxBackoff caps one jittered wait.
@@ -176,10 +176,10 @@ func New(o Options) (*Client, error) {
 		hc.Transport = t
 	}
 	hc.Timeout = 0
-	// No redirect is followed (§11, CLAUDE.md rule 10). net/http keeps
-	// the Authorization header on a redirect to the same host and to a
-	// subdomain, so following one could carry the token somewhere this
-	// client never chose. The moved-project case is handled in do.
+	// No redirect is followed (D-65). net/http keeps the Authorization
+	// header on a redirect to the same host and to a subdomain, so
+	// following one could carry the token somewhere this client never
+	// chose. The moved-project case is handled in do.
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	c.http = hc
 	return c, nil
@@ -198,10 +198,10 @@ type dryRunKey struct{}
 // WithDryRun returns a context under which the client refuses every
 // write, before anything reaches the network.
 //
-// It is what dry_run is (CLAUDE.md rule 14). A tool still shapes its own
-// preview, but the guarantee that a preview changes nothing is kept
-// here, where every request passes, so a handler that forgets its
-// preview branch fails loudly instead of writing.
+// It is what dry_run is (D-29). A tool still shapes its own preview, but
+// the guarantee that a preview changes nothing is kept here, where every
+// request passes, so a handler that forgets its preview branch fails
+// loudly instead of writing.
 func WithDryRun(ctx context.Context) context.Context {
 	return context.WithValue(ctx, dryRunKey{}, true)
 }
@@ -511,7 +511,7 @@ func (c *Client) send(ctx context.Context, p *prepared, out any) (*response, err
 		if v.err == nil && p.call.Bucket == BucketNotes && res.status == http.StatusAccepted {
 			// GitLab ran the body as quick actions and saved nothing. The
 			// guard exists so that never happens, so reaching it is a
-			// defect (§4.2), whichever route carried the note.
+			// defect, whichever route carried the note.
 			c.log.Error("gitlab ran quick actions from a comment and saved nothing; the quick-action guard missed them", "call", p.name)
 			return nil, &Error{Class: ClassUnexpected, Status: res.status, Message: "GitLab ran the comment as quick actions and saved no " +
 				"comment, which the quick-action guard exists to prevent. This is a defect in this server; please report it"}
@@ -556,8 +556,8 @@ func mayHaveLanded(sendErr error, status int) bool {
 
 // reauthorize drops a token GitLab refused and, for a call that may
 // repeat, returns a different one to try once more. A 401 means GitLab
-// did nothing, but a create still is not sent twice (§4.5): the next
-// call gets the new token.
+// did nothing, but a create still is not sent twice: the next call gets
+// the new token.
 func (c *Client) reauthorize(ctx context.Context, p *prepared) (string, bool, error) {
 	c.tokens.Invalidate(p.token)
 	if !p.repeatable {
@@ -571,9 +571,12 @@ func (c *Client) reauthorize(ctx context.Context, p *prepared) (string, bool, er
 }
 
 // followMove handles a redirect. A moved project answers a GET with a
-// redirect to its new path; that is re-requested once, and only when the
-// new address is on this instance under the API root. Any other
-// redirect is an error and is never followed.
+// redirect naming its numeric id, not its new path, with the sub-path
+// and query kept, and every other method with 405. The GET is
+// re-requested once, and only when the new address is on this instance
+// under the API root. Any other redirect is an error and is never
+// followed.
+// https://docs.gitlab.com/api/rest/
 func (c *Client) followMove(ctx context.Context, p *prepared, res *attemptResult, redirected *bool) error {
 	next, ok := c.movedTo(p.call, p.endpoint, res.header.Get("Location"))
 	if !ok || *redirected {
@@ -948,7 +951,7 @@ func classifyTransport(ctx context.Context, name string, repeatable bool, err er
 		return verdict{err: Wrap(ClassBlocked, err, "%s was refused: its address is outside the configured instance", name)}
 	case errors.Is(err, errTooLarge) && repeatable:
 		// A create's answer too large to read may still have landed, so
-		// it falls through to ambiguous below (§4.5).
+		// it falls through to ambiguous below.
 		return verdict{err: Wrap(ClassUnavailable, err, "GitLab's answer to %s was larger than %d MiB and was not read", name, MaxResponseBytes>>20)}
 	case redact.IsCertificateError(err):
 		return verdict{err: Wrap(ClassUnavailable, err,
@@ -960,7 +963,7 @@ func classifyTransport(ctx context.Context, name string, repeatable bool, err er
 		return verdict{err: Wrap(ClassUnavailable, err, "could not reach GitLab for %s: %s", name, err), retry: true}
 	case !repeatable:
 		// Canceled or not, a create that may have been written may have
-		// landed (§4.5).
+		// landed, so it is never sent again (D-34).
 		return verdict{err: Wrap(ClassAmbiguousOutcome, err, ambiguousText+" (%s)", name, err)}
 	default:
 		return verdict{err: Wrap(ClassUnavailable, err, "GitLab did not answer %s: %s", name, err), retry: true}
@@ -1012,7 +1015,7 @@ func parseRetryAfter(v string, now time.Time) time.Duration {
 // WithoutURL strips the request URL, and the host names and addresses,
 // from a transport error. net/http wraps every transport failure in a
 // *url.Error whose text renders the whole URL, and a path or a search
-// travels in it (§9.2); net and crypto/x509 name hosts. The result keeps
+// travels in it (D-05); net and crypto/x509 name hosts. The result keeps
 // the cause for errors.As and prints it with redact.NetError. nil stays
 // nil.
 func WithoutURL(err error) error {

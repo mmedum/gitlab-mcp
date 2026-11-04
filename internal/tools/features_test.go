@@ -8,7 +8,9 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
 )
 
-// The phase 6 tools against the in-memory instance (§17.13).
+// The tools for moving and linking issues, labels, milestones, rebase,
+// cherry-pick, revert, blame, job artifacts and tags, against the
+// in-memory instance.
 
 var full = config.Config{EnableShip: true, EnableDestructive: true, Toolsets: config.Toolsets}
 

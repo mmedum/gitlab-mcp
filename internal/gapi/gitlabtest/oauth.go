@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// The OAuth side models Doorkeeper as GitLab runs it (§2.1–§2.3, §10):
+// The OAuth side models Doorkeeper as GitLab runs it:
 // loopback redirects on an IP literal match on any port, localhost only
 // exactly; PKCE S256 is verified when a challenge was sent; a refresh
 // rotates at once, revoking the old pair, so a second use of the old

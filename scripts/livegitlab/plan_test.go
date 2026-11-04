@@ -18,7 +18,7 @@ func sampleScratch() scratch {
 		Namespace: "example-group/scratch", Name: "gitlab-mcp-live-20260926-0a0b0c",
 		Path: "example-group/scratch/gitlab-mcp-live-20260926-0a0b0c", ID: 1234,
 		WebURL:  "https://gitlab.example.com/example-group/scratch/gitlab-mcp-live-20260926-0a0b0c",
-		Default: "main", Feature: "feature-0a0b0c", Feature2: "draft-0a0b0c", File: "docs/live.md",
+		Default: "main", Feature: "feature-0a0b0c", Feature2: "draft-0a0b0c", File: "notes/live.md",
 		SHA: strings.Repeat("a", 40), Issue: 1, Issue2: 2, MR: 1, MR2: 2, Note: 77, User: "alice", Label: "live-0a0b0c",
 		Label2: "live-0a0b0c-b", Milestone: "Live milestone gitlab-mcp-live-20260926-0a0b0c", Pipeline: 5001, JobFailed: 6001,
 		JobPassed: 6002, JobManual: 6003, Image: "/tmp/live-images/live-mock-up.png", NotImage: "/tmp/live-images/live-notes.txt",
@@ -71,7 +71,7 @@ func TestThePlanDrivesEveryOption(t *testing.T) {
 		t.Fatalf("the baseline has %d tools", len(d))
 	}
 	sent := map[string]bool{}
-	for _, st := range slices.Concat(plan(sampleScratch()), planShip(sampleScratch())) {
+	for _, st := range slices.Concat(plan(sampleScratch()), shipDestructiveAndToolsets(sampleScratch())) {
 		sent[st.tool+".*"] = true
 		for k := range st.args {
 			sent[st.tool+"."+k] = true
@@ -109,10 +109,26 @@ func TestEveryToolHasARule(t *testing.T) {
 
 func TestEveryStepStaysInTheScratchProject(t *testing.T) {
 	s := sampleScratch()
-	for _, st := range slices.Concat(plan(s), planShip(s)) {
+	for _, st := range slices.Concat(plan(s), shipDestructiveAndToolsets(s)) {
 		if err := confined(st, s); err != nil {
 			t.Errorf("%v", err)
 		}
+	}
+}
+
+// Every step has a name, and no two share one: a comment cites a step by
+// its name, and the transcript prints it above the call.
+func TestEveryStepHasANameOfItsOwn(t *testing.T) {
+	s := sampleScratch()
+	seen := map[string]bool{}
+	for _, st := range slices.Concat(plan(s), shipDestructiveAndToolsets(s)) {
+		switch {
+		case st.name == "":
+			t.Errorf("a %s step has no name", st.tool)
+		case seen[st.name]:
+			t.Errorf("two steps are named %q", st.name)
+		}
+		seen[st.name] = true
 	}
 }
 

@@ -7,10 +7,12 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The phase-1 reads of a merge request's review and the repository's
-// history: diffs, commits, drafts, compare and tags.
+// The reads of a merge request's review and the repository's history:
+// diffs, commits, drafts, compare and tags.
 
-// ListMergeRequestDiffs lists a merge request's per-file diffs.
+// ListMergeRequestDiffs lists a merge request's per-file diffs. The
+// listing sends X-Total and X-Total-Pages. Checked by the live step
+// "where a job log's size shows without reading it".
 func (c *Client) ListMergeRequestDiffs(ctx context.Context, p Project, iid int64, opts ListOptions) ([]gitlab.Diff, Page, error) {
 	var out []gitlab.Diff
 	page, err := c.list(ctx, Call{Method: "GET", Path: "projects/{}/merge_requests/{}/diffs",

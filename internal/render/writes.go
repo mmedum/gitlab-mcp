@@ -11,8 +11,8 @@ import (
 // The readable half of the writes. Every one opens with what happened
 // and where, from the shared model.Write: a dry run says nothing was
 // written and what would have been sent, and the project's visibility is
-// always named (§4.7, §4.11). Nothing the caller or GitLab wrote is
-// shown here beyond names, so no boundary is needed.
+// always named. Nothing the caller or GitLab wrote is shown here beyond
+// names, so no boundary is needed.
 
 // writeHead is a write result's first lines.
 func writeHead(b *strings.Builder, done string, w model.Write) {
@@ -133,7 +133,8 @@ func MergeRequestWrite(w model.MergeRequestWrite, _ Boundary) string {
 	changedLine(&b, w.Outcome, w.Changed)
 	removedLine(&b, "description", w.DescriptionRemoved)
 	if w.Outcome != "created" {
-		// A new merge request's updated_at moves within seconds (§18).
+		// A new merge request's updated_at moves within seconds of the
+		// create, so only a later read gives the witness.
 		witnessLine(&b, w.UpdatedAt, "update_merge_request")
 	}
 	return b.String()

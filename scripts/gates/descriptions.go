@@ -19,9 +19,9 @@ import (
 //   - a witness input says it is NOT a retry signal. A refusal names the
 //     witness it wants, and a model that reads the refusal and re-sends
 //     with the value it was just shown has routed around the guard; the
-//     input's own description is where that is headed off (§4.6).
+//     input's own description is where that is headed off (D-80).
 
-// witnessInputs are the inputs §4.6 makes a write carry: the file's
+// witnessInputs are the witnesses a write carries: the file's
 // last_commit_id, the head sha a merge, approval or branch delete was
 // decided on, the updated_at an issue, merge request or comment was read
 // at, the hash of a wiki page's content, and a label's version. On a read

@@ -10,7 +10,7 @@ import (
 // time_tracking_endpoints.rb). Each write answers the item's time stats.
 // Setting or resetting the estimate lands the same way twice, so it may
 // repeat. Adding spent time adds a timelog, which GitLab does not
-// deduplicate, and resetting it adds one too, so neither repeats (§4.5).
+// deduplicate, and resetting it adds one too, so neither repeats.
 
 // durationBody is a duration in GitLab's human form, "1h30m".
 type durationBody struct {

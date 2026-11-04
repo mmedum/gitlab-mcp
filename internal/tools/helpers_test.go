@@ -78,7 +78,7 @@ func newHarness(t *testing.T, o harnessOptions) *harness {
 	reg := register(s, deps, defs)
 	RegisterResources(s, deps)
 	ct := connectTo(t, s)
-	// The client can ask the person, and the server asks nobody (§4.12):
+	// The client can ask the person, and the server asks nobody (D-26):
 	// every tool is called through such a client, so a question from any
 	// of them fails the test that made the call.
 	co := &mcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {

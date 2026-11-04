@@ -139,11 +139,11 @@ func TestReadCoverageRefusesMalformedRows(t *testing.T) {
 		{"GET /projects\tused\t1\tClient.SearchProjects: search_projects", ""},
 		{"GET /projects\tmaybe\t1\ta reason long enough to count", `verdict "maybe"`},
 		{"GET /projects\tdeferred\t1\tlater", "say why in a sentence"},
-		{"GET /projects\tdeferred\tmany\tphase 1 (§16): a tool reads it", `count "many"`},
-		{"GET /projects\tdeferred\t2\tphase 1 (§16): a tool reads it", "names one operation and counts 2"},
-		{"* /projects\tdeferred\t1\tphase 1 (§16): a tool reads it", "names every verb of one path"},
+		{"GET /projects\tdeferred\tmany\ta navigation read no tool needs", `count "many"`},
+		{"GET /projects\tdeferred\t2\ta navigation read no tool needs", "names one operation and counts 2"},
+		{"* /projects\tdeferred\t1\ta navigation read no tool needs", "names every verb of one path"},
 		{"* /projects*\tused\t3\tClient.SearchProjects: search_projects", "a rule marked used"},
-		{"projects\tdeferred\t1\tphase 1 (§16): a tool reads it", `is not "VERB /path"`},
+		{"projects\tdeferred\t1\ta navigation read no tool needs", `is not "VERB /path"`},
 		{"GET /projects\tdeferred\t1", "want 4 tab-separated columns"},
 		// A trailing TAB is an empty reason, not a wrong column count.
 		{"GET /projects\tdeferred\t1\t", "say why in a sentence"},
@@ -166,7 +166,7 @@ func TestReadCoverageRefusesMalformedRows(t *testing.T) {
 
 func TestADuplicatedRowIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "coverage.tsv")
-	row := "GET /projects\tdeferred\t1\tphase 1 (§16): a tool reads it\n"
+	row := "GET /projects\tdeferred\t1\ta navigation read no tool needs\n"
 	if err := os.WriteFile(path, []byte(row+row), 0o600); err != nil {
 		t.Fatal(err)
 	}

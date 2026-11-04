@@ -10,7 +10,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The GraphQL endpoint knows the one operation the server sends (§8a):
+// The GraphQL endpoint knows the one operation the server sends:
 // mergeRequestReviewerRereview. As GitLab does, it answers 200 with a
 // top-level error for a project or merge request the user may not change,
 // whichever it is, and with the mutation's own error for a user who is

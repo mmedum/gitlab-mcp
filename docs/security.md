@@ -1,354 +1,157 @@
-# Security
+# Security model
 
-This server acts as one signed-in person, with their own OAuth
-application, from their own machine, against gitlab.com. It
-has no hosted component, no telemetry and no update check. This page
-says what it can touch, what stops it going further, and what it cannot
-stop. `SECURITY.md` says how to report a problem.
+The threat model and the invariants the code holds.
+[`SECURITY.md`](../SECURITY.md) says how to report a vulnerability.
 
-## The threat model
+It applies to one binary, running as a subprocess of your MCP client, on
+your machine, with your own OAuth application and your own token,
+against gitlab.com only (D-01, D-02). It has no listener except while
+`login` waits, no telemetry and no update check.
 
-A GitLab instance mixes three payloads: other people's words (issues,
-merge requests, comments, reviews), an organization's code, and CI
-output that can carry secrets. The model reading them through this
-server can be persuaded by any of them. The server cannot stop a model
-from being persuaded. It can make persuasion visible, keep the tools
-that do the most damage unregistered unless you ask for them, confine
-where writes land, and never add its own voice to the attacker's.
+## Trust boundaries
 
-The toxic flow that matters most is private content written somewhere
-public: the model reads a private repository, then a public issue tells
-it to post what it read. The write allow-list below is the control for
-that.
-
-## Content is data, never instructions
-
-Issue and merge request text, comments, review threads, commit
-messages, file contents, wiki pages and job logs were written by
-someone other than you, often in projects anyone can post to.
-
-- **It is marked.** Rendered content sits inside a block that names its
-  origin — kind, project, item and author — between markers carrying a
-  token drawn fresh for each call:
-
-  ```text
-  <<<UNTRUSTED 0123abcd kind=description project=example-group/app item=#12 author=@alice>>>
-  ...
-  <<<END 0123abcd>>>
-  ```
-
-  Content written before the call cannot know the token, so it cannot
-  close the block early, and any `<<<` inside it is defused so it cannot
-  even look like a marker. A line before the first block says the text
-  between those markers is data, not instructions. In
-  `structuredContent` the same text sits in fields named `untrusted_*`.
-- **Hidden text is removed and counted.** In Markdown, zero-width and
-  bidirectional-control characters and HTML comments are dropped before
-  display, and the result says how many characters went. In code —
-  files, diffs, commit messages — the same characters are written out
-  visibly as `<U+202E>` and counted instead, because dropping them would
-  silently change text you may edit, and they are how Trojan Source
-  hides code.
-- **Nothing is fetched.** No image, attachment or link in content is
-  followed; a link renders as text with its host shown. Rendered HTML is
-  never requested.
-- **Token shapes are masked.** GitLab token prefixes (`glpat-`,
-  `gloas-`, `gldt-`, `glrt-`, `glcbt-` and the rest) and common cloud
-  key shapes are replaced before job output is shown, and the result
-  counts the masks. GitLab masks only CI variables marked masked.
-- **Authorship is shown.** Every rendered comment and description names
-  its author.
-- **The server's own text never relays content.** Tool descriptions and
-  the server instructions say content is untrusted, and no result
-  phrases what content says as something to do.
-
-## Nothing this server writes runs a quick action
-
-GitLab executes `/merge`, `/close`, `/assign` and dozens of other quick
-actions from descriptions and comments sent through the API, whatever
-this server's flags say. So every Markdown body passes one guard,
-`internal/quickaction`, on its way out:
-
-- It finds every line GitLab would read as a command, known or not,
-  skipping code blocks, quotes and inline code the way GitLab does.
-- **By default the call is refused** as `[blocked]`, naming each line
-  and its number. Nothing is sent.
-- With `escape_commands: true` each such line gets a leading backslash,
-  which renders as the same visible text and which GitLab no longer
-  reads as a command. The result says which lines were escaped.
-- There is no way to ask for a quick action to run. Every effect one
-  has is a field on a tool, under that tool's kind.
-
-`make bodies` holds that every string a write tool sends goes through
-the guard or is listed as a plain field with a reason.
-
-## Kinds, flags, and what the token can do
-
-Every tool has one kind, and the kind decides whether it is registered:
-
-| Kind | What | Registered |
+| Boundary | Crosses | Assumption |
 |---|---|---|
-| Read | every GET | always |
-| Write | edits, comments, reviews, branches, commits, cherry-picks and reverts to unprotected branches, merge requests, issue and merge request links, to-dos done, wiki, snippets, unprotected tags: every write that changes something, starts a pipeline or links items; marked destructive | unless `GITLAB_MCP_READ_ONLY=true` |
-| Adding | a new issue, label, milestone, snippet, to-do or upload, changing nothing and starting nothing; the one kind of write not marked destructive | as Write |
-| Ship | merge, cancel an auto-merge, approve, unapprove, rebase, apply review suggestions, run, retry, play and cancel CI, create a release, move an issue to another project | only with `GITLAB_MCP_ENABLE_SHIP=true` |
-| Destructive | delete a branch, a comment, a wiki page, a label, a milestone, a tag, a snippet; make a confidential issue public | only with `GITLAB_MCP_ENABLE_DESTRUCTIVE=true`, and each call needs `confirm: true` |
+| MCP client ↔ this server | An OS pipe | Both run as the same OS user, unauthenticated. |
+| This server ↔ gitlab.com | TLS | A token goes only to the instance that issued it (D-03). No redirect is followed, except a same-origin next page and a moved project's GET under the API root (D-65). |
+| This server ↔ disk | The file system | The config directory, and the directories `GITLAB_MCP_UPLOAD_DIRS` names, read only by `upload_file` (D-44). |
+| Browser ↔ the login listener | The loopback interface, on a random port | Alive only while `login` waits. PKCE and `state` are checked on the callback (D-66). |
+| Content authors ↔ the model | Everything a tool returns: issues, comments, files, job logs and the rest | Written by someone else, often in public projects, sometimes to steer an assistant (D-13). |
 
-A review that would approve counts as Ship: without the flag the call
-is `[blocked]`. Making a confidential issue public is
-`make_issue_public`'s alone; `update_issue` refuses it whatever the
-flags, so a client's standing approval of `update_issue` never covers
-it.
+## What is worth stealing
 
-**Your client approves each call.** The server asks you nothing. A
-registered tool can be called by a model a comment has persuaded, and
-`confirm: true` is an argument the model writes, so registration is the
-control that holds on every client: leave `GITLAB_MCP_ENABLE_SHIP` and
-`GITLAB_MCP_ENABLE_DESTRUCTIVE` off for a client that runs with nobody
-watching or approves by itself. Per call, your client decides. Every
-write but the Adding ones is marked destructive, which claude.ai and
-Codex prompt for by default, and VS Code prompts for every tool that
-writes.
-In Claude Code, `delete_label`, `delete_milestone` and
-`make_issue_public` ask on every call whatever your rules say, since
-each reaches past one item and cannot be undone; for the rest an `ask`
-rule does it, and the README lists the rules. `apply_suggestions` takes each suggestion's
-text as an argument, held against GitLab's, so a client's prompt shows
-the code to be committed rather than only its ids.
+- **The token pair.** GitLab has nothing between `read_api` and `api`,
+  and `api` can merge, approve, run pipelines and delete in every
+  project your account reaches. It lives in the OS keyring where there
+  is one, and in an owner-only file where there is not (D-71).
+- **Private code, issues and CI output.** They pass through tool results
+  to your client and nowhere else. CI output can carry secrets.
+- **Your protected branches and their pipelines**, which see protected
+  variables and may deploy.
 
-`upload_file` has no flag of its own, so its guards are the upload
-directories and `GITLAB_MCP_WRITE_NAMESPACES`. A client that runs it
-without asking you lets an instruction planted in a comment upload an
-image from those directories to a public project the comment's author
-maintains. Give it an `ask` rule, or confine writes with
-`GITLAB_MCP_WRITE_NAMESPACES`.
+## Adversaries
 
-The server used to ask you itself, through MCP elicitation, and
-`GITLAB_MCP_REQUIRE_PROMPT=true` refused those writes on a client that
-could not ask. A configuration that still sets it is refused at
-start.
+**An author writing to steer your assistant.** The server cannot stop a
+model being persuaded, so it limits what persuasion reaches, through the
+content and write invariants below. The flow that matters most is
+private content written somewhere public: the model reads a private
+repository, then a public issue tells it to post what it read.
+`GITLAB_MCP_WRITE_NAMESPACES` is the control for that (D-38).
 
-**The default token can merge, approve and run pipelines.** GitLab's
-`api` scope covers every write, and it has no narrower scope that
-allows commenting but not merging. `read_api` is the only narrower
-scope, and it allows no writes at all. So registration is the only
-control: leaving Ship unregistered stops *this server* merging,
-approving or running, retrying, playing or cancelling pipelines. It does
-not stop anything else that holds the token, which is why the token
-lives in the OS keyring and nowhere a tool can read it.
+**A malicious MCP client, or a persuaded model driving an honest one.**
+It can call any registered tool under your credentials. A client may
+ignore annotations, so registration is the control: Ship and Destructive
+tools exist only under their flags (D-21, D-22). `confirm: true` is a
+witness the model writes, never your approval (D-28). Past that,
+GitLab's permissions and the guards below are the bound.
 
-A commit, a new branch and a new merge request start the pipelines
-GitLab starts on a push, as your own push would. On a branch that is not
-protected those run with your permissions and your project's unprotected
-CI variables only. Write tools never create or commit to a protected
-branch (below), so they cannot start a pipeline that sees protected
-variables or deploys.
+**A co-resident process.** It cannot finish a login without the PKCE
+verifier, and the token file is readable by your account alone.
 
-Tool annotations are not a control either. The MCP specification says
-a client may not trust them, and a registered tool is one a model will
-reach for eventually. A tool your settings exclude does not exist.
+## Invariants the code holds
 
-If you want a token that cannot write, use read-only mode and log in
-again in it. Switching `GITLAB_MCP_READ_ONLY` on keeps the old `api`
-token working (it covers `read_api`), so run `gitlab-mcp logout` and
-then `gitlab-mcp login --read-only --client-id <application id>` to
-replace it with a `read_api` one.
+A test or a gate holds each of these. A way to break one is a
+vulnerability.
 
-## Writes stay where they are allowed
+- **Stdout carries only JSON-RPC.** forbidigo and the smoke test hold
+  it (D-04).
+- **Logs never carry the payload**, and a transport error loses its path
+  and query. `TestLogsNeverCarryThePayload` and
+  `TestTransportErrorsCarryNoPathOrQuery` hold it (D-05).
+- **A token goes only to its instance, and no redirect carries it
+  elsewhere.** `TestRedirectsElsewhereAreNeverFollowed` holds it (D-03,
+  D-65).
+- **Content stays inside its block**, hidden text is counted, nothing
+  it references is fetched, and the server's own text never relays it.
+  `TestBoundaryCannotBeClosedByContent` holds the block (D-13 to D-15,
+  D-17).
+- **Job logs, artifacts and test output are masked** for token and key
+  shapes. `TestMaskSecrets` holds it (D-16).
+- **No body runs a quick action.** The `bodies` gate and
+  `FuzzEscapeNeverYieldsCommand` hold it (D-18, D-19).
+- **The gated tools are absent without their flags.**
+  `TestShipAndDestructiveAreRegisteredOnlyByTheirFlags` and
+  `TestDestructiveNeedsConfirm` hold it (D-21, D-28).
+- **A dry run writes nothing.** `TestDryRunRefusesEveryWrite` holds it
+  (D-29).
+- **Read-only mode asks for `read_api`**, so GitLab refuses a write too.
+  `TestAReadAPITokenCannotServeWrites` holds it (D-30).
+- **Code reaches a protected branch only through a merge request**, and
+  no write creates or moves a protected branch or tag.
+  `TestCodeReachesMainThroughAMergeRequest` holds it (D-33).
+- **Writes stay inside `GITLAB_MCP_WRITE_NAMESPACES`** when it is set.
+  `TestTheWriteAllowList` holds it (D-38).
+- **Nothing becomes more visible.** Snippets are private (D-39), only
+  `make_issue_public` opens a confidential issue (D-40), and
+  `move_issue` never moves to a wider audience (D-41).
+- **A create is never repeated; an unclear one is settled by reading.**
+  `TestALostCreateIsSettledByReading` holds it (D-34).
+- **A write that moved since its read is refused `[stale]`.**
+  `TestMergeAfterAPushIsStale` holds it (D-36).
+- **`upload_file` reads only an image, only from the directories you
+  named**, after the project is checked (D-44, D-45).
+- **What is committed for a suggestion is the text the call carried.**
+  `TestApplySuggestionsHoldsTheText` holds it (D-46).
+- **`run_merge_request_pipeline` refuses a fork's merge request**,
+  `lint_ci` refuses supplied content holding an `include:`, and release
+  links stay in their project (D-47, D-48, D-49).
+- **Variable values are sent and never shown**, and `get_project` never
+  decodes a secret field (D-50, D-61).
+- **A refresh token is spent once**, under a cross-process lock.
+  `TestTwoProcessesRefreshOnceAndShareTheResult` holds it (D-67).
+- **The token file is owner-only and warns on every use** (D-71), and
+  **`logout` revokes at GitLab** (D-72).
+- **The server asks the person nothing** (D-26).
+- **Nothing in the repository identifies a real instance, account or
+  person** (D-06). Fixtures are generated (D-07), and the live driver
+  reads only what it wrote (D-83).
 
-- **`GITLAB_MCP_WRITE_NAMESPACES`**, when set, confines every write
-  call, of any kind, to projects under the listed groups or
-  projects. Any other target is `[blocked]` naming the setting. Unset,
-  a write can go anywhere your account can write. `mark_todos_done`
-  refuses a to-do item whose project is outside it.
-- Every write result names the target project's visibility, so a write
-  to a public project shows as one.
-- **Code reaches a protected branch only through a merge request.**
-  `create_commit` refuses the project's default branch and every
-  protected branch, and `create_branch` refuses a name a protected-branch
-  rule covers, read at call time. `apply_suggestions` refuses a merge
-  request whose source branch is the default or a protected one,
-  applies only suggestions on the merge request you name, and refuses
-  one whose text holds hidden or bidirectional characters, which can
-  make code read otherwise than it runs. `list_discussions` shows each
-  suggestion's exact text with such characters written out, and the call
-  carries that text, held exactly against GitLab's, so what is committed
-  under your name is what was read and your client's prompt shows it. A
-  suggestion longer than `list_discussions` shows is refused. The prompt
-  shows the text a suggestion puts in, not the lines it replaces;
-  `list_discussions` shows those.
-- **`lint_ci` sends nothing GitLab would fetch.** Configuration you pass
-  to it may not use `include:`, since GitLab fetches what an include
-  names while linting.
-- **A create is never retried.** Notes, issues, merge requests, commits,
-  pipelines, releases, spent time and to-dos are POSTs GitLab does not
-  deduplicate, and applying suggestions commits. When the
-  outcome is unclear the result is `[ambiguous_outcome]`, and the server
-  has already read to settle it; it never creates again to find out.
-- **A write carries a witness.** An update names the version it read
-  (`last_commit_id`, `sha`, `updated_at` or `total_time_spent`) and is refused as `[stale]`
-  if that moved. Omitted fields stay unchanged, and lists change by add
-  and remove, never by replacement. Merging and approving carry the head
-  `sha` you reviewed, and GitLab refuses them itself if a push came
-  after. GitLab keeps no version of a wiki page, so a change or delete
-  carries a hash of the content you read, which the server compares
-  with a fresh read; as with issues, a change made between that read and
-  the write is not caught. A draft review comment carries no version
-  either, so its edit carries a hash of the text you read.
-- **Only your own comments are edited.** `update_comment` refuses
-  another person's comment, even where GitLab would allow the edit, and
-  a note GitLab wrote. GitLab holds no witness for an edit, so an edit
-  made between your read and the write is overwritten, as with issues.
-  `update_review_comment` and `publish_review_comment` act only on your
-  own drafts, which are the only ones GitLab shows you. Publishing a
-  draft written elsewhere that holds a quick-action line is refused,
-  since GitLab runs it on publishing; so is a `submit_review` that would
-  publish one.
-- **Deletes are narrow.** `delete_branch` refuses the default branch,
-  every protected branch, and one GitLab does not count merged unless
-  you pass `unmerged: true`, and needs the head `sha` you read.
-  `delete_comment` deletes only your own comments, even where GitLab
-  would let a maintainer delete anyone's, and GitLab refuses it if the
-  comment was edited after your read. `delete_snippet` and
-  `update_snippet` act only on your own snippets in the same way, and
-  GitLab refuses the delete if the snippet changed after your read.
-- **Snippets are private.** `create_snippet` has no visibility input:
-  every snippet it creates is private, because a public snippet is the
-  simplest way for private content to leave. `update_snippet` has none
-  either, and writes only to a private snippet: it refuses an internal
-  or public one, even your own, since writing into it publishes what is
-  written. A personal snippet
-  is in no namespace, so `GITLAB_MCP_WRITE_NAMESPACES` refuses creating,
-  changing or deleting one.
-- **Variable values are not echoed.** `run_pipeline` and `play_job` send
-  the variables you give and name only their keys in the result. Job
-  inputs on `retry_job` and `play_job` are named the same way. GitLab
-  refuses a name a job's inputs do not include; a job that declares no
-  inputs ignores them.
-- **A fork's code is not run by the server.** `run_merge_request_pipeline`
-  refuses a merge request from a fork: GitLab may run the fork's code in
-  your project, with its variables and runners, and GitLab's own advice
-  is to review that code first. Run it from GitLab once you have.
-- **A moved issue is seen by no one new.** `move_issue` needs both
-  projects in `GITLAB_MCP_WRITE_NAMESPACES` when it is set, and refuses
-  a move to a project more people can see than the one the issue is in.
-- **Protected tags stay a person's.** `create_tag` refuses a name a
-  protected-tag rule covers, since a protected tag's pipelines see
-  protected variables and may deploy; `delete_tag` refuses a protected
-  tag.
-- **Job artifacts are masked like logs.** `get_job_artifact` replaces
-  token and key shapes, and shows no binary file.
-- **An upload reads only an image, from where you allowed.**
-  `upload_file` reads a local file only inside the directories
-  `GITLAB_MCP_UPLOAD_DIRS` names, and none when it is unset, through Go's
-  `os.Root`, so neither `..` nor a symbolic link leads out. A filesystem
-  root and your home directory, or one holding it, are refused at
-  startup. The project is checked against `GITLAB_MCP_WRITE_NAMESPACES`
-  before anything on this machine is read. It refuses a symbolic link, a
-  directory, a FIFO, anything over 10 MiB, and anything whose bytes do
-  not start as a PNG, JPEG, GIF or WebP; SVG is refused because it is
-  text that can carry script. That check keeps out what is not an image;
-  it does not prove the whole file is one. Only the file's base name goes
-  to GitLab, never its directory. In a public project anyone with the link can
-  open the upload, and in a private or internal one too unless the
-  project requires sign-in to view media files; the result says which.
-  The project's Maintainers can list and download every upload by its
-  id, without the link. GitLab removes a JPEG's metadata when it stores
-  it, but a PNG's, GIF's or WebP's goes as it is in the file. GitLab
-  keeps the upload even if nothing links to it, and this server cannot
-  delete it.
-- **Release links stay in the project.** `create_release` takes asset
-  links only to the project's own pages and API paths on gitlab.com, its
-  packages included, with no credentials in the URL, and
-  refuses any other before sending anything: a release page sends
-  every reader wherever its links lead.
+## Not a vulnerability
 
-## What the server talks to
+Do not report these as vulnerabilities. Open an ordinary issue if one
+surprises you.
 
-Only gitlab.com, over `https`, trusting the system's certificate
-authorities. No setting names another instance. No redirect is
-followed, and no URL from a response is called, except a same-origin
-`Link: rel="next"` under the API root: a followed redirect would carry
-the token to another host.
+- **The client did not prompt.** Annotations and the
+  `requiresUserInteraction` mark are hints. A tool registered while its
+  flag is off is a vulnerability.
+- **What runs as you can act as you.** Any process running as you can
+  read the token and use it, with or without this server.
+- **The `api` token can merge.** Leaving Ship off stops this server
+  merging, not anything else holding the token. A model calling a
+  registered tool under your credentials is the design.
+- **A model following instructions in content.** That is the client's
+  concern. Content that makes the server itself break an invariant is a
+  vulnerability.
+- **Someone else's code.** A flaw in GitLab goes to GitLab, and one in a
+  dependency to that project. We will help route it.
 
-The one exception is a development override, documented in
-`docs/development.md`, that points the binary at an in-memory stand-in
-for the tests. Start-up refuses it unless its host is loopback, so it
-cannot send a token to another real host, and logs a warning whenever
-it is set.
+## Dependency vulnerabilities
 
-A token is only ever sent to the instance that issued it. A profile
-signed in to the test instance does not send its token to gitlab.com,
-nor the reverse: the token is withheld and every call answers `[auth]`
-naming the mismatch.
+`govulncheck` runs in `make check` and in CI on every pull request and
+push to `main`. It fails when this server's code can reach a vulnerable
+symbol.
 
-## Token storage and rotation
+A CVE in a dependency is a vulnerability here only when `govulncheck`
+reports it reachable. It is then fixed in a release whose CHANGELOG entry
+names the CVE or GHSA. Otherwise the dependency is updated in the normal
+course, and a report about it is not a vulnerability.
 
-- The OAuth application is yours. Nothing is shipped in the binary, and
-  there are no personal access tokens. Revoking your application or
-  your token affects no one else.
-- `login` listens on `127.0.0.1` on a random port, uses PKCE with S256,
-  and checks `state` on the callback.
-- The token pair goes to the OS keyring. If none is available it goes
-  to a file restricted to your account, and every use of that file
-  prints a warning.
-- GitLab rotates the refresh token on every refresh and revokes the old
-  pair at once. Refresh happens under a lock file in the profile
-  directory, the new pair is stored before it is used, and a process
-  whose refresh is refused re-reads the store for a pair another process
-  wrote before it asks you to log in again.
-- `logout` revokes the token at GitLab and deletes the local copy. It
-  names the other profiles that use the same application, because
-  deleting or renewing the application signs them out too. A token
-  supplied through `GITLAB_MCP_REFRESH_TOKEN` is outside its reach, and
-  it says so.
-- To rotate by hand: `gitlab-mcp logout`, then
-  `gitlab-mcp login --client-id <application id>` (`logout` forgets the
-  profile, the application id included). To
-  cut off every token the application ever issued, renew or delete the
-  application in GitLab.
+## What you are responsible for
 
-## What the logs carry
-
-Logs go to stderr, never stdout, because stdout carries the JSON-RPC
-frames the client parses.
-
-A log line carries the method, the tool, the outcome, the duration, the
-rate-limit bucket and ids truncated to six characters. It never carries
-a hostname, a group or project path, a branch, a file path, a title, a
-body, a username, an email address or a search term. Paths and search
-terms reach a log through a request URL, so transport errors are
-stripped of path and query before they are logged. A test drives every
-registered tool with canary values at debug level and fails if any
-canary reaches the log.
-
-`status` and `doctor` print to your terminal, where you asked for them,
-and mask any host other than gitlab.com, the application id and your
-username as
-`{host 1}`, `{client-id 1}` and `{user 1}`, with a count of what was
-masked at the end.
-
-## What never to paste
-
-Into an issue, a pull request, a chat or a model conversation you share:
-
-- a token of any kind: anything starting `glpat-`, `gloas-` or another
-  GitLab prefix, or an OAuth access or refresh token;
-- `token.json`, or the output of a keyring tool;
-- your application id, a group or project path, a username or an email
-  address;
-- a tool result, issue or merge request text, file contents or a job
-  log. A tool result is your organization's code and other people's
-  words.
-
-`doctor`, `status`, `--version` and a debug log are safe to paste; they
-are built to be.
-
-## Keeping the repository clean
-
-Nothing from a real instance enters this repository. Fixtures are
-generated by `internal/gapi/gitlabtest`, never recorded; the live
-driver reads only a scratch project it created for the run.
-`make leaks`, `make secrets` and the pre-commit hook refuse the shapes
-they can see: GitLab token prefixes, addresses and hosts outside the
-example domains, and OAuth shapes.
+- **Your own OAuth application.** Nothing is shipped in the binary, so
+  revoking yours affects no one else.
+  [`docs/troubleshooting.md`](troubleshooting.md#tasks) says how to
+  rotate the token, revoke access and handle a suspected exposure.
+- **The switches you turn on.** `GITLAB_MCP_ENABLE_SHIP` and
+  `GITLAB_MCP_ENABLE_DESTRUCTIVE` arm tools that merge, run CI or cannot
+  be taken back. Leave them off for a client that runs with nobody
+  watching, and use read-only mode, logged in again, where reading is
+  enough.
+- **`upload_file`.** It has no flag of its own. A client that runs it
+  unasked lets a planted instruction upload an image from your upload
+  directories to a public project. Give it an `ask` rule, or set
+  `GITLAB_MCP_WRITE_NAMESPACES`.
+- **Where the token lives.** Keep a keyring available, and keep
+  `GITLAB_MCP_REFRESH_TOKEN` out of shared shells and logs.
+- **What you paste.** `doctor`, `status` and a debug log are built to be
+  safe. A token, `token.json` and a tool result are not.

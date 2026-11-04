@@ -3,10 +3,13 @@
 //
 // GitLab executes /close, /merge, /assign and the rest from note bodies and
 // issue and merge request descriptions sent through the REST API, with no
-// parameter to turn it off. Every body this server sends passes Check.
+// parameter to turn it off. Its quick actions page and its API reference
+// do not say so. Every body this server sends passes Check. Checked by
+// the live step "where GitLab runs a quick action from an API body".
+// https://docs.gitlab.com/user/project/quick_actions/
 //
 // Detection follows GitLab's extractor, read at gitlab-org/gitlab
-// 829b21d284863743bde419836a053626309d02f6 (2026-09-25):
+// 829b21d284863743bde419836a053626309d02f6:
 // lib/gitlab/quick_actions/extractor.rb, and the quick_action Banzai
 // pipeline it calls (lib/banzai/pipeline/quick_action_pipeline.rb,
 // lib/banzai/filter/quick_action_filter.rb,
@@ -94,7 +97,8 @@ func Find(body string) []Line {
 // renders as code. GitLab pairs backticks one to one, so when a code span
 // opens with two backticks and holds one, a /close line inside it runs,
 // and the reader sees the backslash in the span. Escaping it is still
-// right; the command must not run.
+// right; the command must not run. Checked by the live step
+// "where GitLab runs a quick action from an API body".
 func Escape(body string) (string, []Line) {
 	var escaped []Line
 	for {
@@ -135,8 +139,7 @@ type BlockedError struct {
 	Lines []Line
 }
 
-// Error renders the message under the blocked class of
-// docs/architecture.md §6.5.
+// Error renders the message under the [blocked] error class.
 func (e *BlockedError) Error() string { return "[blocked] " + e.Message() }
 
 // Message is the text without the class, for a caller that attaches the

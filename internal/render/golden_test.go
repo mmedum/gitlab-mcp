@@ -10,8 +10,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// Goldens for the readable half, from synthetic values only (§9.1). Run
-// with -update to rewrite them, and read the diff.
+// Goldens for the readable half, from synthetic values only. Run with
+// -update to rewrite them, and read the diff.
 
 var update = flag.Bool("update", false, "rewrite the golden files")
 
@@ -192,7 +192,6 @@ func TestGoldens(t *testing.T) {
 	}
 }
 
-// The phase-1 renderers.
 func TestGoldensPhase1(t *testing.T) {
 	bob := model.User{Username: "bob", Name: "Bob Example"}
 	yes := true

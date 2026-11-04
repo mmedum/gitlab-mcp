@@ -31,16 +31,16 @@ import (
 // tooling under scripts/ matches the same ones.
 const (
 	// TokenPattern is every token shape GitLab documents, from the token
-	// prefix table at https://docs.gitlab.com/security/tokens/ (read
-	// 2026-09-26): personal, project, group and impersonation tokens
-	// (glpat-), OAuth application secrets (gloas-), deploy tokens
-	// (gldt-), runner authentication tokens (glrt-, glrtr-), CI/CD job
-	// tokens (glcbt-), trigger tokens (glptt-), feed tokens (glft-),
-	// incoming mail tokens (glimt-), agent for Kubernetes tokens
-	// (glagent-), workspace tokens (glwt-), SCIM tokens (glsoat-),
-	// feature flag client tokens (glffct-) and the session cookie
-	// (_gitlab_session=). The legacy runner registration token prefix
-	// GR1348941 is on GitLab's runner pages rather than that table.
+	// prefix table (https://docs.gitlab.com/security/tokens/): personal,
+	// project, group and impersonation tokens (glpat-), OAuth
+	// application secrets (gloas-), deploy tokens (gldt-), runner
+	// authentication tokens (glrt-, glrtr-), CI/CD job tokens (glcbt-),
+	// trigger tokens (glptt-), feed tokens (glft-), incoming mail tokens
+	// (glimt-), agent for Kubernetes tokens (glagent-), workspace tokens
+	// (glwt-), SCIM tokens (glsoat-), feature flag client tokens
+	// (glffct-) and the session cookie (_gitlab_session=). The legacy
+	// runner registration token prefix GR1348941 is on GitLab's runner
+	// pages rather than that table.
 	//
 	// The body takes dots, because a routable token carries dotted
 	// segments after the random part; a trailing sentence period is left
@@ -217,8 +217,8 @@ func Truncate(s string, n int) string {
 }
 
 // ID truncates an identifier to a correlation key that cannot be looked
-// up or pasted into a URL: its first six characters. The logging rule
-// (§9.2) allows that much and no more.
+// up or pasted into a URL: its first six characters. A log carries that
+// much of an id and no more (D-05).
 func ID(id string) string {
 	r := []rune(id)
 	if len(r) <= 6 {
@@ -229,7 +229,7 @@ func ID(id string) string {
 
 // NetError renders a transport error without the host names, addresses
 // and URLs net, net/http and crypto/x509 put in it, which logs may not
-// carry (§9.2): a lookup names the host it looked up, a dial the
+// carry (D-05): a lookup names the host it looked up, a dial the
 // address, a request the URL, and a certificate for the wrong host names
 // both hosts.
 //

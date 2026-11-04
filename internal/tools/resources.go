@@ -15,7 +15,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The resources, for clients that attach rather than call (§8). Each
+// The resources, for clients that attach rather than call. Each
 // carries the text its tool's readable half carries at the start, under
 // the same budget and boundary: an issue or merge request from the start
 // of its description, a job log's tail.

@@ -9,9 +9,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The phase 6 operations (§17.13): moving and linking issues, label and
-// milestone writes, rebase, cherry-pick, revert, blame, job artifacts and
-// tag writes.
+// Moving and linking issues, label and milestone writes, rebase,
+// cherry-pick, revert, blame, job artifacts and tag writes.
 
 // ----------------------------------------------------------- issues
 
@@ -117,7 +116,13 @@ type LabelUpdate struct {
 	Description *string `json:"description,omitempty"`
 	Priority    *int    `json:"priority,omitempty"`
 	// ClearPriority sends priority as null, which GitLab reads as
-	// removing it (lib/api/helpers/label_helpers.rb at v19.4.1-ee).
+	// removing it (lib/api/helpers/label_helpers.rb at v19.4.1-ee). It
+	// may be the only field sent, since GitLab counts the keys present.
+	// A milestone's description and dates clear with "", which GitLab's
+	// milestones page does not say. Checked by the live steps
+	// "a label's description and priority are cleared" and
+	// "a milestone's description and dates are cleared".
+	// https://docs.gitlab.com/api/labels/
 	ClearPriority bool `json:"-"`
 }
 
@@ -310,7 +315,10 @@ type rebaseBody struct {
 
 // RebaseMergeRequest asks GitLab to rebase a merge request's source
 // branch onto its target. GitLab answers 202 and rebases in the
-// background.
+// background, so the caller reads include_rebase_in_progress after to
+// say whether it still runs. Checked by the live step
+// "a draft MR rebases without CI".
+// https://docs.gitlab.com/api/merge_requests/
 func (c *Client) RebaseMergeRequest(ctx context.Context, p Project, iid int64, skipCI bool) (*gitlab.RebaseState, error) {
 	var out gitlab.RebaseState
 	err := c.Do(ctx, Call{Method: "PUT", Path: "projects/{}/merge_requests/{}/rebase", Args: []string{p.segment(), idArg(iid)},
@@ -342,7 +350,11 @@ func (c *Client) ListArtifacts(ctx context.Context, p Project, job int64, dir st
 }
 
 // GetArtifact reads one file of a job's artifacts, as GitLab extracts it
-// from the archive.
+// from the archive. The path goes as one segment with its slashes
+// escaped, where GitLab's page shows them bare, and the answer is the
+// file itself, though the page warns it may redirect through a CDN.
+// Checked by the live step "a file in a job's artifacts is read".
+// https://docs.gitlab.com/api/job_artifacts/
 func (c *Client) GetArtifact(ctx context.Context, p Project, job int64, path string) ([]byte, error) {
 	var out []byte
 	err := c.Do(ctx, Call{Method: "GET", Path: "projects/{}/jobs/{}/artifacts/{}", Args: []string{p.segment(), idArg(job), path},

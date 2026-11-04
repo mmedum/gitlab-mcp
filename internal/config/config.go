@@ -12,7 +12,7 @@
 //
 // Vars lists every variable. Define binds from it, and the staleness
 // gate holds docs/configuration.md (and, for the development override,
-// docs/development.md) against it, so a setting cannot be added without
+// CONTRIBUTING.md) against it, so a setting cannot be added without
 // being documented.
 package config
 
@@ -35,8 +35,9 @@ import (
 )
 
 // EnvPrefix is prepended to every environment variable name. Not
-// GITLAB_: CI jobs already set GITLAB_CI, GITLAB_USER_LOGIN and more
-// (§18 row 30).
+// GITLAB_: CI jobs already set GITLAB_CI, GITLAB_USER_LOGIN,
+// GITLAB_FEATURES and more, and other GitLab tools read GITLAB_TOKEN.
+// https://docs.gitlab.com/ci/variables/predefined_variables/
 const EnvPrefix = "GITLAB_MCP_"
 
 // DefaultHTTPTimeout bounds how long a call to GitLab may go without
@@ -65,7 +66,7 @@ type Var struct {
 	// Switch marks a boolean: a bare --flag means true.
 	Switch bool
 	// Dev marks a development override: documented in
-	// docs/development.md rather than docs/configuration.md, and never
+	// CONTRIBUTING.md rather than docs/configuration.md, and never
 	// offered to the people running the server.
 	Dev bool
 	// Outside marks a variable read outside Define, by the package that
@@ -83,8 +84,8 @@ const (
 	EnvReadOnly          = EnvPrefix + "READ_ONLY"
 	EnvEnableShip        = EnvPrefix + "ENABLE_SHIP"
 	EnvEnableDestructive = EnvPrefix + "ENABLE_DESTRUCTIVE"
-	// EnvRequirePrompt was removed with the server's question (§4.12);
-	// it is read only to refuse it set.
+	// EnvRequirePrompt is read only to refuse it set: the server asks
+	// the person nothing.
 	EnvRequirePrompt             = EnvPrefix + "REQUIRE_PROMPT"
 	EnvToolsets                  = EnvPrefix + "TOOLSETS"
 	EnvWriteNamespaces           = EnvPrefix + "WRITE_NAMESPACES"
@@ -161,8 +162,7 @@ func names(dev bool) []string {
 	return out
 }
 
-// Toolsets are the optional toolsets, sorted, which are off unless
-// named (§4.3).
+// Toolsets are the optional toolsets, sorted, which are off unless named.
 var Toolsets = []string{"activity", "deployments", "planning", "releases", "snippets", "wiki"}
 
 // ToolsetAll names every toolset at once.
@@ -215,7 +215,7 @@ type Config struct {
 	ClientID string
 	// ReadOnly registers the Read kind only and requests read_api.
 	ReadOnly bool
-	// EnableShip registers the Ship kind. It changes no scope (§9.4).
+	// EnableShip registers the Ship kind. It changes no scope.
 	EnableShip bool
 	// EnableDestructive registers the Destructive kind. It changes no
 	// scope either.
@@ -223,11 +223,11 @@ type Config struct {
 	// Toolsets are the optional toolsets turned on, sorted, with "all"
 	// expanded.
 	Toolsets []string
-	// WriteNamespaces confine every write, of any kind (§4.7). Empty
-	// means no confinement.
+	// WriteNamespaces confine every write, of any kind. Empty means no
+	// confinement.
 	WriteNamespaces []string
 	// UploadDirs are the only directories upload_file may read an image
-	// from (§7.10). Empty means none: the tool refuses every path.
+	// from. Empty means none: the tool refuses every path.
 	UploadDirs  []string
 	LogLevel    LogLevel
 	LogFormat   LogFormat

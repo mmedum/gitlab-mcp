@@ -31,7 +31,7 @@ import (
 // response fields per status. `gates api-diff` writes it and nobody
 // edits it. api-coverage and api-fields read it offline in `make check`,
 // so completeness is held on every commit rather than only when somebody
-// remembers to fetch (docs/architecture.md §8a, the standard's §1).
+// remembers to fetch.
 
 const (
 	snapshotFile = "testdata/openapi-v3.snapshot.json"

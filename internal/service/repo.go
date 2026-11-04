@@ -16,7 +16,7 @@ import (
 // maxDiffPages bounds the file diffs read for one commit.
 const maxDiffPages = 3
 
-// GetFile reads a file at a ref (§7.5). Text is shown inside a boundary
+// GetFile reads a file at a ref. Text is shown inside a boundary
 // under the budget; binary content is described, never shown.
 func (s *Service) GetFile(ctx context.Context, raw, path, ref string, offset int) (model.File, error) {
 	p, pref, err := s.project(ctx, raw)
@@ -183,7 +183,7 @@ func (s *Service) GetCommit(ctx context.Context, raw, sha string, fileOffset, di
 }
 
 // budgetDiffs shows the diffs from the fileOffset-th under the diff
-// budget (§4.8). A diff that does not fit is named, and file_offset
+// budget. A diff that does not fit is named, and file_offset
 // continues from it; a diff GitLab itself left out is named with GitLab's
 // reason rather than shown as empty. complete says whether diffs is every
 // changed file.

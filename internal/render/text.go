@@ -12,11 +12,10 @@ import (
 )
 
 // The readable half of each result. It carries the same facts as the
-// structured half in a different shape — never the same bytes twice
-// (CLAUDE.md rule 15) — and every piece someone else wrote goes through
-// a Boundary.
+// structured half in a different shape, never the same bytes twice, and
+// every piece someone else wrote goes through a Boundary.
 
-// when renders an instant as RFC 3339 in UTC (§6.4).
+// when renders an instant as RFC 3339 in UTC.
 func when(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 func whenPtr(t *time.Time) string {
@@ -87,7 +86,7 @@ func projectLine(p model.ProjectRef) string {
 	return s
 }
 
-// listingLine says how much of a listing this is (§4.8, §7.1).
+// listingLine says how much of a listing this is.
 func listingLine(noun string, l model.Listing) string {
 	s := fmt.Sprintf("%d %s shown", l.Returned, noun)
 	switch {
@@ -380,9 +379,14 @@ func timeLine(t model.TimeStats) string {
 }
 
 // mergeStatusPending reports whether GitLab has not finished working out
-// whether a merge request can merge (§18 row 136): a status it gives
-// while it works, or conflict while has_conflicts is false, which is the
-// conflict check still running, as it is right after a push.
+// whether a merge request can merge. A single read starts the check, and
+// while it runs GitLab answers preparing, checking or unchecked, or
+// conflict with has_conflicts false, as right after a push; how soon it
+// settles is not promised. GitLab's merge request page does not mention
+// the passing conflict. approvals_syncing counts as pending on GitLab's
+// own description of it, approvals still syncing. Checked by the live
+// step "what starts GitLab's merge status check".
+// https://docs.gitlab.com/api/merge_requests/
 func mergeStatusPending(mr model.MergeRequest) bool {
 	switch mr.DetailedMergeStatus {
 	case "preparing", "checking", "unchecked", "approvals_syncing":

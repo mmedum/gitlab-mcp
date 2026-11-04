@@ -8,51 +8,69 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/instance"
 )
 
-// Class is the closed error vocabulary of docs/architecture.md §6.5.
+// Class is the closed error vocabulary (D-74).
 //
 // Closed means both directions, and `scripts/gates classes` asserts
 // both: every class the code emits is in Classes, and every class in
-// Classes is emitted somewhere.
+// Classes is emitted somewhere or listed in the gate as planned.
 type Class string
 
-// The thirteen classes. The standard names six; the other seven are
-// forced by this API and each is argued in §6.5.
+// The classes. One is kept apart from another only where it asks the
+// caller for a different next step, and each comment says what that
+// step is.
 const (
-	// ClassInvalid: malformed or under-specified arguments, or too large.
+	// ClassInvalid: malformed or under-specified arguments, a line not in
+	// the diff, a label or user that does not exist, or too large. The
+	// caller fixes the arguments.
 	ClassInvalid Class = "invalid"
-	// ClassNotFound: no such resource, or the token cannot see it. GitLab
-	// answers 404 for a private project, so the message always says both.
+	// ClassNotFound: no such project, issue, merge request, file or job,
+	// or the token cannot see it. GitLab answers 404 for a private
+	// project, so the message always says both. The caller checks the id
+	// and its access.
 	ClassNotFound Class = "not_found"
 	// ClassAuth: not signed in, the token expired or was revoked, or a
-	// scope is missing. The caller runs login.
+	// scope is missing, which the message names. The caller runs login.
 	ClassAuth Class = "auth"
 	// ClassForbidden: signed in, but the role or a project rule refuses.
+	// The caller asks a maintainer.
 	ClassForbidden Class = "forbidden"
 	// ClassConflict: the state refuses it — a branch exists, a merge
-	// request is already open, not mergeable.
+	// request is already open, not mergeable. The caller reads the state
+	// and reconsiders.
 	ClassConflict Class = "conflict"
-	// ClassStale: the witness moved since it was read (§4.6). Kept apart
-	// from conflict because it asks for a re-read.
+	// ClassStale: the witness moved since it was read: a file, a head sha
+	// or an updated_at (D-36). Kept apart from conflict because the
+	// caller re-reads and retries.
 	ClassStale Class = "stale"
-	// ClassAmbiguous: a name matched more than one thing.
+	// ClassAmbiguous: a milestone title matched more than one milestone in
+	// the project and its groups. The caller renames one or sets the
+	// milestone in GitLab.
 	ClassAmbiguous Class = "ambiguous"
-	// ClassBlocked: a guard refused what the API would have allowed.
+	// ClassBlocked: a guard refused what the API would have allowed: a
+	// quick action, a protected branch, the write allow-list, or a review
+	// that needs Ship. The caller passes the override the message names,
+	// or stops.
 	ClassBlocked Class = "blocked"
-	// ClassRateLimited: an instance or application limit (§2.13).
+	// ClassRateLimited: an instance or application limit (D-75). The
+	// caller waits as long as the message says.
 	ClassRateLimited Class = "rate_limited"
-	// ClassUnavailable: a transient upstream failure.
+	// ClassUnavailable: a transient upstream failure. The caller retries.
 	ClassUnavailable Class = "unavailable"
 	// ClassUnsupported: the account's tier or edition lacks the route, or
-	// the API cannot do this.
+	// the API cannot do this. The message says which. The caller does not
+	// retry.
 	ClassUnsupported Class = "unsupported"
-	// ClassAmbiguousOutcome: a create may or may not have happened (§4.5).
-	// Never retried.
+	// ClassAmbiguousOutcome: a create may or may not have happened
+	// (D-34). Never retried: the caller reads the verdict and never
+	// repeats the call blind.
 	ClassAmbiguousOutcome Class = "ambiguous_outcome"
-	// ClassUnexpected: anything unclassified.
+	// ClassUnexpected: anything unclassified, a 202 from note creation
+	// included. The caller reports it.
 	ClassUnexpected Class = "unexpected"
 )
 
-// Classes is the vocabulary, in the order §6.5 tabulates it.
+// Classes is the vocabulary. `scripts/gates classes` holds it to the
+// constants: each listed once, and none left out.
 var Classes = []Class{
 	ClassInvalid, ClassNotFound, ClassAuth, ClassForbidden,
 	ClassConflict, ClassStale, ClassAmbiguous, ClassBlocked,

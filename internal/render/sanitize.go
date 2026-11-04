@@ -1,6 +1,6 @@
 // Package render turns the server's model into the readable half of a
 // tool result, and prepares text other people wrote before anything
-// shows it (docs/architecture.md §4.1, §4.8).
+// shows it.
 //
 // The preparation is the part that matters for safety: hidden text is
 // removed and counted, links show where they go, long text is cut at a
@@ -22,7 +22,7 @@ import (
 // hidden reports a rune a reader of the rendered page would not see:
 // zero-width characters, bidirectional controls (the Trojan Source
 // shapes), invisible operators, the soft hyphen and the Unicode tag
-// block, which spells ASCII no font draws (§4.1.2).
+// block, which spells ASCII no font draws.
 func hidden(r rune) bool {
 	switch r {
 	case 0x00AD, // soft hyphen
@@ -68,8 +68,9 @@ func Markdown(s string, self string) (string, int) {
 // diffs, commit messages. Nothing is dropped, because the text may be
 // edited later on the strength of what was shown; each hidden character
 // is written out as <U+202E> instead, which is also how a reviewer
-// would want to see it. It returns the text and how many were made
-// visible.
+// would want to see it, since a bidirectional control can make code read
+// otherwise than it runs (CVE-2021-42574). It returns the text and how
+// many were made visible.
 func Code(s string) (string, int) {
 	n := 0
 	out := strings.Builder{}
@@ -354,12 +355,11 @@ var inlineLink = regexp.MustCompile(`(!?)\[([^\]\n]*)\]\(\s*<?([^\s)>]+)>?(?:\s+
 // refDefinition matches a reference definition line: [id]: dest.
 var refDefinition = regexp.MustCompile(`(?m)^( {0,3}\[[^\]\n]+\]:[ \t]*)<?([^\s>]+)>?`)
 
-// Links rewrites Markdown links so the text shows where they go
-// (§4.1.3). A link whose text says one thing and whose destination is
-// another is the cheapest deception there is, and nothing is ever
-// fetched, so what the reader needs is the host. A link on the
-// configured instance, self, keeps its path, because that is how an
-// issue points at another issue.
+// Links rewrites Markdown links so the text shows where they go. A link
+// whose text says one thing and whose destination is another is the
+// cheapest deception there is, and nothing is ever fetched, so what the
+// reader needs is the host. A link on the configured instance, self,
+// keeps its path, because that is how an issue points at another issue.
 func Links(s, self string) string {
 	if !strings.Contains(s, "](") && !strings.Contains(s, "]:") {
 		return s

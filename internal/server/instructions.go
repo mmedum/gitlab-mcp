@@ -16,7 +16,7 @@ import (
 // there costs a turn and teaches nothing. They are built from the same
 // Surface that registration uses, and they name each flag or toolset
 // that would register more, which is how a tool this configuration
-// leaves out explains itself without being registered (§4.3, §17b).
+// leaves out explains itself without being registered.
 // TestInstructionsNameOnlyRegisteredTools holds it for every
 // configuration.
 

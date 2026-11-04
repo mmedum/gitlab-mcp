@@ -36,9 +36,8 @@ import (
 // default is PowerShell, which reads -coverprofile=cov.out as a file
 // called `cov`.
 //
-// The §5a pin table is not compared: it records what was checked on a
-// date, and a gate holding code to a copy in prose is machinery to
-// maintain a duplicate.
+// No table of pins in the docs is compared: a gate holding code to a
+// copy in prose is machinery to maintain a duplicate.
 
 const (
 	pinsMakefile = "Makefile"

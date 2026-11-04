@@ -21,11 +21,11 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/render"
 )
 
-// Comments, threads and reviews (§7.3, §7.4). Bodies arrive already
+// Comments, threads and reviews. Bodies arrive already
 // through the quick-action guard.
 
 // DiffLocation is a line of a merge request's diff, as the caller names
-// it (§6.2).
+// it.
 type DiffLocation struct {
 	File    string
 	Side    string // new or old
@@ -34,7 +34,7 @@ type DiffLocation struct {
 }
 
 // place computes where a comment on loc lands, from the merge request's
-// latest diff refs and that file's diff (§7.4).
+// latest diff refs and that file's diff.
 func (s *Service) place(ctx context.Context, p gapi.Project, iid int64, loc DiffLocation) (*diffpos.Position, error) {
 	var mr *gitlab.MergeRequest
 	var diffs []gitlab.Diff
@@ -384,8 +384,9 @@ func (s *Service) AddReviewComment(ctx context.Context, in ReviewComment) (model
 }
 
 // draftReplyTakenAnswer is GitLab refusing a second draft reply by one
-// person in one thread: DraftNote validates author_id unique per merge
-// request and discussion.
+// person in one thread with 400: DraftNote validates author_id unique
+// per merge request and discussion (v19.4.1-ee). Checked by the live
+// step "a second draft reply in one thread is refused".
 var draftReplyTakenAnswer = regexp.MustCompile(`author_id\W+has already been taken`)
 
 // draftReplyTaken refuses a draft reply in a thread the account already
@@ -506,6 +507,12 @@ type DraftEdit struct {
 
 // UpdateReviewComment replaces the text of one of the signed-in
 // account's drafts, keeping it where it is: in its thread, on its line.
+// GitLab finds a draft only among its author's, and its PUT writes the
+// position as sent, so an edit without one would clear the draft's place;
+// the draft's own position is sent back. The API docs say neither
+// (v19.4.1-ee). Checked by the live step "a draft edit keeps the draft
+// on its line".
+// https://docs.gitlab.com/api/draft_notes/
 func (s *Service) UpdateReviewComment(ctx context.Context, in DraftEdit) (model.DraftUpdate, error) {
 	switch {
 	case strings.TrimSpace(in.Body) == "":
@@ -531,7 +538,7 @@ func (s *Service) UpdateReviewComment(ctx context.Context, in DraftEdit) (model.
 	}
 	// GitLab exposes no time or version for a draft, so the witness is a
 	// hash of its text; the window between this read and the PUT stays
-	// open (§4.6).
+	// open.
 	if current := contentHash(before.Note); !strings.EqualFold(strings.TrimSpace(in.NoteSHA256), current) {
 		return model.DraftUpdate{}, gapi.Errf(gapi.ClassStale, "the draft changed since it was read: its note_sha256 is now %s. "+
 			"Read it again with list_review_comments, check the change still makes sense, and pass the new note_sha256", current)
@@ -614,8 +621,8 @@ func (s *Service) PublishReviewComment(ctx context.Context, raw string, iid, dra
 	}
 	// GitLab runs a draft's quick actions when it is published. A draft
 	// this server wrote passed the guard, but one written elsewhere may
-	// hold any (§4.2). A change between this read and the publish is not
-	// caught, as with every witness GitLab does not hold (§4.6).
+	// hold any (D-18). A change between this read and the publish is not
+	// caught, as with every witness GitLab does not hold.
 	if lines := quickaction.Find(d.Note); len(lines) > 0 {
 		return model.DraftPublish{}, gapi.Errf(gapi.ClassBlocked, "draft %d: %s On a draft, update_review_comment with "+
 			"escape_commands: true rewrites them; nothing was published", draftID, (&quickaction.BlockedError{Lines: lines}).Message())
@@ -657,7 +664,9 @@ func (s *Service) PublishReviewComment(ctx context.Context, raw string, iid, dra
 		return model.DraftPublish{}, s.settlePublish(ctx, t.p, iid, d, mark, err)
 	}
 	// GitLab answers 204 without the comment, and answers so too when it
-	// dropped the draft without saving one, so only a read tells.
+	// dropped the draft without saving one, so only a read tells. A
+	// second publish is 404, as the draft is gone (v19.4.1-ee). Checked
+	// by the live step "a published draft is refused a second publish".
 	note, thread, err := s.findPublished(ctx, t.p, iid, d, mark)
 	if err != nil {
 		return model.DraftPublish{}, gapi.Wrap(gapi.ClassUnexpected, err, "GitLab answered the publish, but the threads could not be "+
@@ -878,7 +887,7 @@ type Review struct {
 
 // SubmitReview publishes every draft of the signed-in account on a merge
 // request at once. An approving review is Ship: it is someone's sign-off
-// another person's merge rule counts (§4.3).
+// another person's merge rule counts (D-22).
 func (s *Service) SubmitReview(ctx context.Context, in Review) (model.ReviewSubmit, error) {
 	if in.ReviewerState == "approved" && !s.cfg.EnableShip {
 		return model.ReviewSubmit{}, gapi.Errf(gapi.ClassBlocked, "an approving review is an approval, which this server sends only when %s=true; "+
@@ -931,7 +940,7 @@ func (s *Service) SubmitReview(ctx context.Context, in Review) (model.ReviewSubm
 
 // checkDrafts refuses drafts GitLab would run quick actions from when
 // they are published. A draft this server wrote passed the guard, but
-// one written elsewhere may hold any (§4.2).
+// one written elsewhere may hold any (D-18).
 func checkDrafts(drafts []gitlab.DraftNote) error {
 	var first string
 	var others []string
@@ -1053,8 +1062,12 @@ func (s *Service) UpdateComment(ctx context.Context, in CommentEdit) (model.Comm
 		out.Notes = []string{"The comment already reads so; nothing was sent."}
 		return out, nil
 	}
-	// GitLab holds no witness for an edit (§18 row 93), so the window
-	// between this read and the PUT stays open; the check narrows it.
+	// GitLab holds no witness for an edit: unlike a delete, it checks no
+	// If-Unmodified-Since, which the API docs do not say (v19.4.1-ee).
+	// So the window between this read and the PUT stays open; the check
+	// narrows it. Checked by the live step "a comment edit with a stale
+	// witness is refused".
+	// https://docs.gitlab.com/api/notes/
 	if err := checkWitness(witness, before.UpdatedAt, "comment"); err != nil {
 		return model.CommentUpdate{}, err
 	}

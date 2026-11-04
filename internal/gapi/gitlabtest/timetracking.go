@@ -12,12 +12,8 @@ import (
 )
 
 // Time tracking on an issue or a merge request, as lib/api/
-// time_tracking_endpoints.rb serves it at v19.4.1-ee: each write needs
-// admin_issue (Planner and up) or admin_merge_request (Developer and up)
-// and answers 403 without it; setting and resetting answer 200, adding
-// spent time 201. A changed estimate moves updated_at; adding or
-// resetting spent time does not, as the live runs saw on gitlab.com (§18
-// row 101).
+// time_tracking_endpoints.rb serves it at v19.4.1-ee, with the statuses
+// and the updated_at behavior internal/service/timetrack.go describes.
 // GitLab's system notes for these changes are not modeled.
 
 const (

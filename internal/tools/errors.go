@@ -10,8 +10,7 @@ import (
 )
 
 // Every error reaches the model as a tool result reading
-// "[class] message", from the closed vocabulary of
-// docs/architecture.md §6.5 (CLAUDE.md rule 16). A JSON-RPC error is
+// "[class] message", from a closed vocabulary (D-74). A JSON-RPC error is
 // for a caller that got the protocol wrong; GitLab refusing something is
 // a result the model should read.
 

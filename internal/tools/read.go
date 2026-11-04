@@ -10,14 +10,15 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The phase-0 reads. An input that recurs is described in the same words
-// on every tool, so one name means one thing everywhere (§6.1).
+// The account, URL and project reads. An input that recurs is described
+// in the same words on every tool, so one name means one thing
+// everywhere.
 
 func listOptions(max int, token string) gapi.ListOptions {
 	return gapi.ListOptions{PerPage: max, PageToken: token}
 }
 
-// parseTime reads an optional RFC 3339 filter (§6.4).
+// parseTime reads an optional RFC 3339 filter.
 func parseTime(name, v string) (time.Time, error) {
 	if v == "" {
 		return time.Time{}, nil

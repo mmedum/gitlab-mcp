@@ -5,35 +5,35 @@ import (
 	"go/ast"
 	"go/token"
 	"regexp"
-	"slices"
-	"strings"
+
+	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 )
 
-// The GraphQL operations the client sends, held against the table in
-// docs/architecture.md §8a both ways (§4.10). GitLab commits no GraphQL
-// schema, so the snapshot cannot cover them, and the table is the record
-// of why REST cannot do each one.
-
-// graphQLHeader is §8a's GraphQL table header.
-const graphQLHeader = "| Operation | Tool | Why not REST |"
+// The GraphQL operations the client sends (D-09). GitLab commits no
+// GraphQL schema, so the snapshot cannot cover them. The function that
+// sends each one says in its doc comment why REST cannot do it, and the
+// gate holds that comment to mentioning REST.
 
 // graphQLFloor is how many operations the client is known to send: a
 // gate that reads fewer is not reading mutate calls.
 const graphQLFloor = 1
 
-// operationCell is a table row's first cell: the operation as a code
-// span, then its kind.
-var operationCell = regexp.MustCompile("^`([A-Za-z]+)` \\((mutation|query)\\)$")
-
 // rootField is the first field an operation's text selects: the
 // operation it sends.
 var rootField = regexp.MustCompile(`^\s*(?:mutation|query)\b[^{]*\{\s*([A-Za-z]+)`)
 
+// mentionsREST matches REST as a word, so "the rest" and "RESTful" do
+// not stand in for the reason.
+var mentionsREST = regexp.MustCompile(`\bREST\b`)
+
 // graphQLOperations reads the root field every mutate call in dir sends:
 // its third argument, a string literal that must name the first field of
-// the query it sends, a string constant. A Call to the GraphQL endpoint
-// anywhere but mutate is a problem, since nothing here would read it.
-func graphQLOperations(dir string) ([]string, []string, error) {
+// the query it sends, a string constant. The function making the call
+// must have a doc comment that mentions REST, where it says why REST
+// cannot do it; the gate does not judge the reason. A Call to the
+// GraphQL endpoint anywhere but mutate is a problem, since nothing here
+// would read it, and so is reading fewer operations than floor.
+func graphQLOperations(dir string, floor int) ([]string, []string, error) {
 	pkg, err := parsePackageDir(dir)
 	if err != nil {
 		return nil, nil, err
@@ -42,59 +42,76 @@ func graphQLOperations(dir string) ([]string, []string, error) {
 	var ops, problems []string
 	for _, f := range pkg.files {
 		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || funcName(fn) == "Client.mutate" {
-				continue
+			fn, _ := decl.(*ast.FuncDecl)
+			where := "a package-level declaration"
+			if fn != nil {
+				where = funcName(fn)
 			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				lit, ok := n.(*ast.CompositeLit)
-				if !ok || !isCallType(lit.Type) {
-					return true
-				}
-				if p, ok := keyValue(lit, "Path"); ok {
-					if path, _ := stringLit(p); path == "api/graphql" {
-						problems = append(problems, pkg.fset.Position(lit.Pos()).String()+": a Call to api/graphql in "+
-							funcName(fn)+"; send GraphQL through mutate, which the gate reads")
+			sends := false
+			ast.Inspect(decl, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.CompositeLit:
+					if where != "Client.mutate" && isGraphQLCall(n) {
+						problems = append(problems, pkg.fset.Position(n.Pos()).String()+": a Call to api/graphql in "+
+							where+"; send GraphQL through mutate, which the gate reads")
+					}
+				case *ast.CallExpr:
+					if sel, ok := n.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "mutate" {
+						sends = true
+						field, problem := mutateOperation(n, consts)
+						if field != "" {
+							ops = append(ops, field)
+						}
+						if problem != "" {
+							problems = append(problems, pkg.fset.Position(n.Pos()).String()+": "+problem)
+						}
 					}
 				}
 				return true
 			})
+			if sends && (fn == nil || !mentionsREST.MatchString(fn.Doc.Text())) {
+				problems = append(problems, fmt.Sprintf("%s: %s sends a GraphQL operation, and has no doc comment "+
+					"that mentions REST; say there why REST cannot do it", pkg.fset.Position(decl.Pos()), where))
+			}
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			ce, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := ce.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "mutate" {
-				return true
-			}
-			pos := pkg.fset.Position(ce.Pos()).String()
-			if len(ce.Args) < 3 {
-				problems = append(problems, pos+": a mutate call with no root field")
-				return true
-			}
-			field, ok := stringLit(ce.Args[2])
-			if !ok {
-				problems = append(problems, pos+": a mutate call whose root field is not a string literal; the gate reads it "+
-					"to hold the operation against §8a")
-				return true
-			}
-			ops = append(ops, field)
-			query, ok := "", len(ce.Args) > 4
-			if ok {
-				query, ok = constString(ce.Args[4], consts)
-			}
-			switch m := rootField.FindStringSubmatch(query); {
-			case !ok:
-				problems = append(problems, pos+": a mutate call whose query is not a string constant; the gate reads it")
-			case m == nil || m[1] != field:
-				problems = append(problems, fmt.Sprintf("%s: a mutate call names %s, and its query does not select it first", pos, field))
-			}
-			return true
-		})
 	}
-	return ops, problems, nil
+	return ops, append(problems, gatekit.Floor("GraphQL operations in "+dir, len(ops), floor)...), nil
+}
+
+// isGraphQLCall reports whether lit is a Call to the GraphQL endpoint.
+func isGraphQLCall(lit *ast.CompositeLit) bool {
+	if !isCallType(lit.Type) {
+		return false
+	}
+	p, ok := keyValue(lit, "Path")
+	if !ok {
+		return false
+	}
+	path, _ := stringLit(p)
+	return path == "api/graphql"
+}
+
+// mutateOperation reads the root field one mutate call sends, "" when it
+// cannot, and what is wrong with the call, "" when nothing is.
+func mutateOperation(ce *ast.CallExpr, consts map[string]string) (field, problem string) {
+	if len(ce.Args) < 3 {
+		return "", "a mutate call with no root field"
+	}
+	field, ok := stringLit(ce.Args[2])
+	if !ok {
+		return "", "a mutate call whose root field is not a string literal; the gate reads it"
+	}
+	query, ok := "", len(ce.Args) > 4
+	if ok {
+		query, ok = constString(ce.Args[4], consts)
+	}
+	switch m := rootField.FindStringSubmatch(query); {
+	case !ok:
+		return field, "a mutate call whose query is not a string constant; the gate reads it"
+	case m == nil || m[1] != field:
+		return field, fmt.Sprintf("a mutate call names %s, and its query does not select it first", field)
+	}
+	return field, ""
 }
 
 // stringConsts are a package's string constants by name.
@@ -132,49 +149,4 @@ func constString(e ast.Expr, consts map[string]string) (string, bool) {
 		return v, ok
 	}
 	return "", false
-}
-
-// listedGraphQL reads the operations §8a's GraphQL table lists.
-func listedGraphQL(doc string) ([]string, []string) {
-	lines := strings.Split(doc, "\n")
-	i := slices.Index(lines, graphQLHeader)
-	if i < 0 {
-		return nil, []string{"§8a has no GraphQL table; its header is " + graphQLHeader}
-	}
-	var listed, problems []string
-	for _, line := range lines[min(i+2, len(lines)):] {
-		if !strings.HasPrefix(line, "|") {
-			break
-		}
-		cell := strings.TrimSpace(strings.Split(line, "|")[1])
-		m := operationCell.FindStringSubmatch(cell)
-		if m == nil {
-			problems = append(problems, fmt.Sprintf("§8a's GraphQL table has the row %q, which does not start with an "+
-				"operation as `name` (mutation) or `name` (query)", cell))
-			continue
-		}
-		listed = append(listed, m[1])
-	}
-	return listed, problems
-}
-
-// checkGraphQL holds the operations sent against those listed.
-func checkGraphQL(sent, listed []string, floor int) []string {
-	var problems []string
-	if len(sent) < floor {
-		problems = append(problems, fmt.Sprintf("read %d GraphQL operations from the client and the floor is %d; the gate "+
-			"is not reading mutate calls", len(sent), floor))
-	}
-	for _, op := range sent {
-		if !slices.Contains(listed, op) {
-			problems = append(problems, op+" is sent by the client, and §8a's GraphQL table does not list it with why REST "+
-				"cannot do it")
-		}
-	}
-	for _, op := range listed {
-		if !slices.Contains(sent, op) {
-			problems = append(problems, "§8a lists the GraphQL operation "+op+", which the client never sends; drop the row")
-		}
-	}
-	return problems
 }

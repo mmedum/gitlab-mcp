@@ -19,6 +19,8 @@ func repoCommands() map[string]command {
 		// Documents.
 		"staleness": {run: staleness, args: "[BINARY]", maxArgs: 1, mode: modeCheck,
 			doc: "the docs held to what the code defines"},
+		"docs": {run: docs, maxArgs: 0, mode: modeCheck,
+			doc: "every decision ID, citation, link, code-span path, codemap entry and live-step name resolves"},
 		"changelog-links": {run: changelogLinks, maxArgs: 0, mode: modeCheck,
 			doc: "every CHANGELOG version heading has its link reference"},
 		"changelog": {run: changelog, args: "BASE HEAD", minArgs: 2, maxArgs: 2, mode: modePR,

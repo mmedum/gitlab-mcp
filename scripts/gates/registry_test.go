@@ -39,7 +39,7 @@ func TestEveryCommandDeclaresAMode(t *testing.T) {
 func TestRepoCommandModes(t *testing.T) {
 	want := map[string]mode{
 		"parity": modeCheck, "checklist": modeCheck, "pins": modeCheck, "coverage": modeCheck,
-		"staleness": modeCheck, "changelog-links": modeCheck, "leaks": modeCheck, "transcript": modeCheck,
+		"staleness": modeCheck, "docs": modeCheck, "changelog-links": modeCheck, "leaks": modeCheck, "transcript": modeCheck,
 		"mcpb": modeCheck, "release": modeCheck, "server-json": modeCheck,
 		"changelog": modePR, "merge-base": modePR,
 		"release-notes": modeRelease, "mcpb-pack": modeRelease,

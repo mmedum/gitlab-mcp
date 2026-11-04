@@ -11,6 +11,7 @@ linters:
   default: none
   enable:
     - bodyclose
+    - depguard
     - errcheck
     - errorlint
     - forbidigo
@@ -28,6 +29,23 @@ linters:
     - unparam
     - unused
   settings:
+    depguard:
+      rules:
+        # D-08, D-09. Check the MESSAGE TEXT: a block that fails to load leaves depguard on its default rule.
+        own-wire-types:
+          deny:
+            - pkg: "gitlab.com/gitlab-org/api/client-go"
+              desc: "GitLab's client library; hand-write the fields used in internal/gitlab and send REST through internal/gapi (D-08)"
+            - pkg: "github.com/xanzy/go-gitlab"
+              desc: "the GitLab client library's old path; hand-write the fields used in internal/gitlab and send REST through internal/gapi (D-08)"
+            - pkg: "github.com/shurcooL/graphql"
+              desc: &graphql-client "a GraphQL client; write each operation as a literal in internal/gapi, sent through mutate by a function whose doc comment says why REST cannot do it (D-09)"
+            - pkg: "github.com/hasura/go-graphql-client"
+              desc: *graphql-client
+            - pkg: "github.com/Khan/genqlient"
+              desc: *graphql-client
+            - pkg: "github.com/machinebox/graphql"
+              desc: *graphql-client
     forbidigo:
       # Stdout carries only MCP JSON-RPC frames: the stdio transport says
       # the server MUST NOT write anything else there.

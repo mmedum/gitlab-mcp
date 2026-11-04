@@ -9,7 +9,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The phase-1 reads for planning and navigation (§6.3, §7.1, §7.7).
+// The reads for planning and navigation.
 
 type listLabelsIn struct {
 	Project     idOrPath `json:"project" jsonschema:"The project: its numeric id, its full path such as group/sub/project, or its web URL"`

@@ -14,9 +14,8 @@
 // in as, the scratch project's path — are registered with Known.
 //
 // What it cannot hide: titles, bodies, comments and file contents. The
-// live driver reads only the scratch project it created
-// (docs/architecture.md §9.1), which is what keeps them harmless, and
-// Summary says so on every run.
+// live driver reads only the scratch project it created, which is what
+// keeps them harmless, and Summary says so on every run.
 package redact
 
 import (

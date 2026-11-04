@@ -15,7 +15,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/render"
 )
 
-// The releases, deployments and activity toolsets (§7.8). A release is
+// The releases, deployments and activity toolsets. A release is
 // Ship: it creates its tag when the tag does not exist, and a new tag
 // starts the project's tag pipelines. Environments, deployments and
 // events are reads.
@@ -111,7 +111,7 @@ var releaseLinkTypes = []string{"other", "runbook", "image", "package"}
 // checkLinks refuses an asset link that points outside the release's own
 // project: a link is published on the release page for everyone who
 // reads it, so one a model was steered to write must lead only to what
-// the project itself serves (§4.1). The URL must be the instance's
+// the project itself serves (D-49). The URL must be the instance's
 // origin, https on gitlab.com, with no credentials in it, under the
 // project's web path or its API path, where its packages are.
 func (s *Service) checkLinks(project *gitlab.Project, links []gapi.ReleaseLink) ([]gapi.ReleaseLink, error) {
@@ -220,7 +220,10 @@ func linkRows(links []gapi.ReleaseLink) []model.LinkRow {
 	return out
 }
 
-// tagExists looks a tag up by its name.
+// tagExists looks a tag up by its exact name, not by a tag search, which
+// is a case-insensitive substring match (v19.4.1-ee). Checked by the
+// live step "a release is created with a new tag".
+// https://docs.gitlab.com/api/tags/
 func (s *Service) tagExists(ctx context.Context, p gapi.Project, name string) (bool, error) {
 	_, err := s.client.GetTag(ctx, p, name)
 	if gapi.IsClass(err, gapi.ClassNotFound) {
@@ -262,8 +265,10 @@ func (s *Service) ListEnvironments(ctx context.Context, raw string, q gapi.Envir
 // ListDeployments lists a project's deployments.
 func (s *Service) ListDeployments(ctx context.Context, raw string, q gapi.DeploymentQuery, opts gapi.ListOptions) (model.Deployments, error) {
 	if !q.UpdatedAfter.IsZero() || !q.UpdatedBefore.IsZero() {
-		// GitLab filters by updated_at only when it sorts by it too
-		// (phase 3 live run).
+		// GitLab refuses an updated_at filter with 400 unless it sorts by
+		// updated_at too, as the API docs say. Checked by the live step
+		// "deployments are filtered by environment, status and date".
+		// https://docs.gitlab.com/api/deployments/
 		switch q.OrderBy {
 		case "":
 			q.OrderBy = "updated_at"

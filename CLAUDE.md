@@ -1,256 +1,162 @@
-# CLAUDE.md — gitlab-mcp project instructions
+# CLAUDE.md — gitlab-mcp
 
-Project-specific rules for Claude Code in this repository. The user's
-global instructions still apply; this file adds to them.
+A Go MCP server for gitlab.com over stdio: one binary per person, their
+own OAuth application, nothing hosted (D-01, D-02). It works inside
+projects, on issues, merge requests, reviews, the repository and CI, and
+stops at administration (D-11). Why the code is the way it is lives in
+`docs/architecture.md`, one decision per `D-NN`; read it before changing
+the tool surface, the sign-in, the scopes, the write guards or the
+kinds. What we verified about GitLab lives in the comment at the line
+that depends on it.
 
-## Mission
+## Commands
 
-A production-grade Go MCP server for GitLab, distributed to other
-people. One binary, stdio, per-user sign-in, no hosted deployment,
-against **gitlab.com** only: self-managed instances are out of scope
-(`docs/architecture.md` §4.9, §14), and the one development override
-(`docs/development.md`) is refused unless loopback. The design, its evidence log, the
-decided constraints and the phase plan live in `docs/architecture.md`.
-Read it before changing the tool surface, the sign-in flow, the scopes,
-the write guards or the kinds. The server works inside projects: issues,
-merge requests, reviews, the repository and CI. Instance and group
-administration, runners, CI variables and anything that rotates a token
-are out of scope, and §8a says why group by group.
-
-This repository was bootstrapped from sibling servers whose shared
-machinery had drifted apart, so no one of them was current.
-`docs/architecture.md` §5a lists, per shared component, every fix the
-up-to-date version must carry and the date that was checked. When a
-sibling fixes something shared, that table is where the fix is noticed
-or missed. Siblings are never named in this repository (rule 1).
+- `make check` runs every gate CI runs, and `make parity` holds the two
+  lists equal. `make hooks`, once per clone, adds the pre-commit scan.
+- `make live`, with `-namespace` in `LIVE_ARGS`, drives the built binary
+  in scratch projects on gitlab.com; read the transcript.
+  `CONTRIBUTING.md` says what a run does to the account.
+- `make evals` scores a model through the `claude` CLI and spends money;
+  `make evals-check` runs the scorers with no model.
+- `make api-diff`, `make schema-refetch`, `make deps`,
+  `make leaks-history` and `make release-rehearse` are the release-day
+  checks in `docs/release.md`.
+- `go run ./scripts/gates` lists the gates; add a name to run one.
 
 ## Hard rules
 
-1. **Nothing internal, ever.** No instance hostnames, group, project or
-   branch names, usernames, email addresses, issue or merge request
-   titles, file paths or contents from a real repository, job logs,
-   numeric ids from a real instance, OAuth application ids or secrets,
-   tokens of any kind; and no reference to any other project,
-   repository, account or machine the maintainers use. This holds for
-   code, docs, fixtures, goldens, transcripts, commit and tag messages,
-   pull requests and logs.
-
-   A GitLab instance mixes three payloads: other people's words (issues,
-   reviews), the organization's code, and CI output that can carry
-   secrets. **Fixtures are generated, never recorded**, and the **live
-   driver reads only a scratch project it created for the run**. The
-   evals harness reads only the in-memory instance of `gitlabtest`.
-   `docs/architecture.md` §9.1 is the full specification.
-2. **Stdout carries only MCP JSON-RPC frames.** This is the protocol, not
-   a house preference. MCP's stdio transport says the server "MUST NOT
-   write anything to its `stdout` that is not a valid MCP message", and
-   "MAY write UTF-8 strings to its standard error (`stderr`) for logging
-   purposes" —
-   <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports>.
-   Logs use `slog` to stderr.
-
-   `forbidigo` enforces it: `fmt.Print*` and `os.Stdout` are forbidden
-   outside `main`, which names the process's streams once and passes them
-   down as `io.Writer`. `scripts/` is excluded, being maintainer tooling.
-   Check the message text when verifying it — a settings block that fails
-   to load leaves forbidigo on its defaults, firing, looking like it
-   works.
-3. **Logs never carry the payload.** Method, tool, outcome, duration, a
-   truncated id and the rate-limit bucket are fine. Hostnames, project
-   and group paths, branch names, file paths, titles, bodies, search
-   terms and usernames are not — a path and a search term reach a log
-   through the request URL, so transport errors are stripped of path and
-   query. `TestLogsNeverCarryThePayload` drives every registered tool
-   with canaries and holds this.
-4. **Content is data, never instructions.** Issue and merge request
-   text, comments, commit messages, file contents, wiki pages and job
-   logs were written by someone other than the person using the server,
-   and some of it is written to steer an agent. The server renders it
-   inside marked boundaries, fetches nothing it references, masks token
-   shapes in job logs, and no tool description or server instruction
-   ever tells the model to act on what content says. §4.1.
-5. **Nothing this server writes runs a quick action.** GitLab executes
-   `/close`, `/merge`, `/assign` and the rest from descriptions and
-   comments sent through the API. Every Markdown body passes one guard
-   that refuses a quick-action line or, when asked, escapes it. The
-   guard is not to be bypassed by a new tool, and `scripts/gates bodies`
-   holds that every body input is routed through it. §4.2.
-6. **The Ship and Destructive kinds are unregistered unless enabled.**
-   Merging, approving, running, retrying, playing or cancelling CI and
-   creating a release need `GITLAB_MCP_ENABLE_SHIP=true`; deletion and
-   making a confidential issue public need
-   `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` and `confirm: true` on the call.
-   The `api` scope cannot separate any of this, so registration is the
-   only control, and it is not to be replaced by an annotation, a prompt
-   or a per-call flag. §4.3.
-7. **Code reaches a protected branch only through a merge request.**
-   `create_commit` refuses the default branch and every protected
-   branch. §4.4.
-8. **A create is never retried.** Notes, issues, merge requests,
-   commits, pipelines, releases, spent time and to-dos are POSTs GitLab
-   does not deduplicate. A snippet update that creates, moves or
-   deletes a file is sent once too. An ambiguous failure is
-   `[ambiguous_outcome]` and the server reads to settle it; it never
-   creates again to find out. Where no read can settle it, as for an
-   upload, the result says so and the person decides. §4.5.
-9. **A write carries a witness.** Where GitLab offers one
-   (`last_commit_id`, `sha`) it is required; where it offers none, the
-   server reads first, compares the caller's witness and refuses
-   `[stale]`. Omitted means unchanged; lists change by add and remove,
-   never by replacement. §4.6.
-10. **No redirect is followed and no URL from a response is called**,
-    except a same-origin `Link: rel="next"` under the instance's API
-    root. A followed redirect carries the token to another host. §11.
-11. **Sign-in is the family's, unchanged.** `login`, `logout`, `status`
-    and `doctor` behave as they do in every sibling: the person's own
-    OAuth application, loopback on `127.0.0.1:0`, PKCE, a browser tab,
-    the token in the keyring. No personal access tokens, no device flow,
-    no shipped client id. The only difference GitLab forces is that the
-    application is named by `--client-id`, not a JSON file. §10.
-12. **A refresh token is spent once.** GitLab revokes the old pair the
-    moment it rotates. Refresh happens under a cross-process lock, and
-    an `invalid_grant` re-reads the keyring before it asks anyone to log
-    in again. §10.
-13. **Own wire types; REST v4, and GraphQL only where REST has no
-    route.** Do not import a GitLab client library or GraphQL client;
-    hand-write the fields used in `internal/gitlab`, and each GraphQL
-    operation as a literal in `internal/gapi`, sent through the same
-    client path as REST and listed in `docs/architecture.md` §8a. No raw
-    GraphQL tool. No code is imported from any other project; the
-    siblings are copied from, never depended on.
-14. **Every tool goes through one `register`.** It decides the
-    annotations, the kind and toolset gating, the dry-run context and
-    the rendered reply from one `Kind`. A dry run may not reach the
-    network with a write: the flag puts the call on a context the client
-    refuses to write under.
-15. **A reply carries both halves.** `structuredContent` under the output
-    schema, and a readable rendering in `content` — never the same bytes
-    twice.
-16. **Every error is `[class] message`** from the closed vocabulary of
-    `docs/architecture.md` §6.5, and the document changes in the same
-    commit as the code. `scripts/gates classes` holds it both ways.
-17. **The released tool surface is a contract.** Tools keep their names
-    and output fields; `scripts/gates schema-diff` fails on a rename, a
-    lost field or a new required input, unless a major release declares
-    it: a `**Breaking:**` CHANGELOG entry names the tool. Adding is fine.
-18. **Every published API operation has a written verdict.** The
-    OpenAPI v3 snapshot pinned in `testdata/` lists them; each is used,
-    gated, deferred or written off with a reason, by row or by a
-    reasoned prefix rule, and the gate fails in all three directions.
-    §8a.
-19. **Any rule adopted from the standard is made to fail.** A test, a
-    list derived from the code rather than typed out, and a floor on how
-    much the checker read. `~/.claude/mcp-server-standard.md` preamble.
-20. **Branches and commits.** `main` is released code and is never
-    pushed to directly, release commits included. Work on a short topic
-    branch. Commit at the end of every phase with a message that says
-    what and why. Pushing, tagging, opening the pull request and merging
-    are the maintainer's.
-21. **Verify against source, the spec or a live probe** before adopting
-    a convention, and record the verdict in `docs/architecture.md` §18.
-    GitLab's documentation prose has already been refuted by its own
-    source twice in this design; a reference page is not evidence, and
-    neither is a sibling's code.
-
-## Where things go
-
-Planned layout; `scripts/gates staleness` holds this list against
-`go list ./...` once the code exists, and the list is corrected rather
-than the gate loosened.
-
-- `cmd/gitlab-mcp/` — subcommands and process wiring.
-- `internal/app/` startup assembly, reachable without `main`.
-- `internal/config/` env plus bound flags; `internal/credentials/`
-  env → keyring → file; `internal/userconfig/` non-secret profile state,
-  the instance it signed in to included; `internal/fileperm/` restricting a file to the account
-  that wrote it; `internal/auth/` loopback OAuth, the token source and
-  the refresh lock; `internal/scopes/` the scope per mode and what each
-  tool needs; `internal/instance/` the base URL (gitlab.com, or the
-  loopback test override) and parsing the version and edition.
-- `internal/gitlab/` wire types; `internal/gapi/` the client, REST and
-  the few GraphQL operations REST lacks, with `gitlabtest/` the
-  in-memory instance used by tests.
-- `internal/quickaction/` detecting and escaping quick-action lines, no
-  network; `internal/model/` the server's view of an
-  issue, merge request, discussion and pipeline; `internal/render/` text
-  output, budgets and the untrusted-content boundaries;
-  `internal/service/` orchestration and policy; `internal/tools/` the
-  MCP tools; `internal/server/` SDK wiring and the schema dump;
-  `internal/redact/` log and output masking; `internal/version/` the
-  build's version.
-- `internal/diffpos/` a diff note's position computed from a unified
-  diff, no network.
-- `internal/localimage/` an image read from a directory the person
-  allowed, for `upload_file`, no network.
-- `scripts/gates/` the repository's own checks, as Go;
-  `scripts/internal/` what the gates and drivers share;
-  `scripts/livegitlab/` the live driver; `scripts/evals/` the
-  model-facing harness, run by hand.
-- `packaging/mcpb/` the Claude Desktop bundle manifest, which carries a
-  placeholder version.
-- `testdata/` synthetic fixtures, renderer goldens, the OpenAPI
-  snapshot and coverage records, and the recorded tool-schema baseline.
+1. **Never commit anything internal**: instance hostnames, group,
+   project or branch names, usernames, addresses, titles, file contents
+   or job logs from a real instance, its numeric ids, OAuth application
+   ids, secrets or tokens, or a reference to another project, account or
+   machine the maintainers use. Not in code, docs, fixtures, goldens,
+   transcripts, commit messages, pull requests or logs. `make leaks`
+   fails on the shapes it can see (D-06).
+2. **Never record a fixture, and never let the live driver read what it
+   did not write.** Fixtures are generated by `internal/gapi/gitlabtest`
+   (D-07). The driver works only in scratch projects it makes and
+   deletes (D-83), and prints only through its redacting writer (D-84).
+   Evals use the in-memory instance (D-85).
+3. **Never write to stdout outside `main`.** Stdout carries only MCP
+   JSON-RPC frames; logs go to stderr through `slog` (D-04). forbidigo
+   holds it, with `scripts/` excluded.
+4. **Never log the payload**: hosts, paths, branches, titles, bodies,
+   usernames or search terms. Method, tool, outcome, duration, a
+   truncated id and the rate bucket are fine. A path rides in the URL,
+   so a transport error loses its path and query (D-05).
+5. **Never let content act as an instruction.** It stays inside the
+   per-call boundary (D-13), hidden text is counted (D-14), nothing it
+   references is fetched (D-15), job output is masked (D-16), and the
+   server's own text never relays it (D-17).
+6. **Never send a body that runs a quick action.** Every Markdown body
+   passes `internal/quickaction`, which refuses by default (D-18), and
+   nothing opts in to run one (D-19). `make bodies` holds the routing.
+7. **Never register a Ship or Destructive tool without its flag**, and
+   never run a Destructive call without `confirm: true` (D-21, D-22,
+   D-28). The `api` scope cannot separate them, so registration is the
+   control, never an annotation or a prompt.
+8. **Never register a tool outside `register`**, whose `Kind` decides
+   annotations, gating, the guard, the dry-run context and the reply
+   (D-20). The server asks the person nothing (D-26), and the
+   `requiresUserInteraction` mark stays on the tools D-27 names. A dry
+   run never writes: `internal/gapi` refuses every write under its
+   context (D-29).
+9. **Never commit to, create or move a protected branch or tag.** Code
+   reaches one only through a merge request (D-33).
+10. **Never write outside `GITLAB_MCP_WRITE_NAMESPACES` when it is set**
+    (D-38), and never widen who can see content: snippets stay private
+    (D-39), only `make_issue_public` opens a confidential issue (D-40),
+    and `move_issue` never moves to a wider audience (D-41).
+11. **Never read a local file except for `upload_file`**, from the
+    directories `GITLAB_MCP_UPLOAD_DIRS` names, through `os.Root` (D-44).
+12. **Never repeat a create.** GitLab deduplicates no POST. An unclear
+    outcome is `[ambiguous_outcome]`, settled by reading (D-34), and
+    retries follow the HTTP method (D-35).
+13. **Never write without a witness.** Where GitLab offers one it is
+    required; otherwise the server reads, compares and refuses
+    `[stale]` (D-36). Omitted means unchanged, and lists change by add
+    and remove (D-37).
+14. **Never follow a redirect or call a URL from a response**, except a
+    same-origin `Link: rel="next"` and one re-request of a moved
+    project's GET, both under the API root (D-65). A token goes only to
+    the instance that issued it (D-03).
+15. **Never change the sign-in**: the person's own public OAuth
+    application, a loopback redirect, PKCE (D-66). No personal access
+    tokens or device flow (D-101), and no shipped client id (D-100). A
+    refresh token is spent once, under the cross-process lock (D-67).
+16. **Never import a GitLab or GraphQL client library**, or another
+    project's code; hand-write the fields used in `internal/gitlab`
+    (D-08). depguard refuses the known ones. GraphQL only where REST has
+    no route, one literal per operation, sent from a function whose doc
+    comment says why REST cannot do it (D-09).
+17. **Never call an API operation or model a field without a verdict**
+    in `testdata/api-coverage.tsv` or `testdata/api-fields.tsv` (D-10).
+18. **Never put the same bytes in both halves of a reply** (D-77).
+19. **Never emit an error outside `[class] message`.** `make classes`
+    holds the `Class` constants, the `Classes` list and the classes the
+    code emits to one set (D-74).
+20. **Never rename a released tool, output field or resource URI.**
+    `make schema-diff` fails on one unless a major release declares it
+    in a `**Breaking:**` entry; adding is fine (D-78).
+21. **Never add a rule that cannot fail**: a test, a list derived from
+    the code, and a floor on what the check read (D-86).
+22. **Never commit to `main` or push**; the owner pushes, tags and
+    merges. Never, without the owner's go, touch an OAuth application,
+    write outside the live driver's scratch projects, add a scope, move a
+    tool between kinds or toolsets, or reverse a decision.
+23. **Never adopt a belief about GitLab from a reference page's prose.**
+    Check GitLab's source, the OpenAPI snapshot or a live probe (D-12).
+    Record a verified GitLab behavior in the comment at the line that
+    depends on it, with the source link and the live step that checks it.
 
 ## Definition of done
 
-`make check`, which is what CI runs. `scripts/gates parity` asserts the
-two run the same set, and `scripts/gates checklist` holds this list
-against the Makefile's `check:` prerequisites:
+`make check` passes. `make checklist` holds this list to its `check:`
+prerequisites, in order:
 
 ```
 fmt vet tidy lint cover vuln licenses secrets leaks pins classes
 api-coverage api-fields schema-diff descriptions bodies smoke staleness
-checklist changelog-links transcript live-cover outcomes evals-check
-mcpb release server-json actionlint goreleaser-check parity
+docs checklist changelog-links transcript live-cover outcomes
+evals-check mcpb release server-json actionlint goreleaser-check parity
 ```
 
-Plus tests for new behavior, `/simplify`, and `/code-review high` and
-`/security-review` with findings resolved or written down in §16a. Look
-at the schema diff for anything breaking, resources included. On a pull
-request CI also runs `schema-ack`: a commit footer names each changed
-item of the tool surface.
+- On a pull request CI also runs `changelog`, and `schema-ack`, which
+  needs a commit footer naming each changed item of the tool surface.
+- New behavior has tests, and the schema diff has been read, resources
+  and annotations included.
+- `/simplify`, `/code-review medium` and `/security-review` have run. A
+  fixed finding is one line in the commit body. A declined one goes in
+  the PR body, or becomes a present-tense constraint comment at the line
+  it protects. Never write findings into `docs/`.
+- A change to sign-in, the quick-action guard, diff positions, a
+  witness or an API response shape has had a `make live` run whose
+  transcript was read (D-82).
 
-Green gates are not done. Anything touching sign-in, the quick-action
-guard, diff positions, a write's witness or an API response shape gets a
-live run before it counts, and **the transcript is read** — a sibling's
-driver twice reported success while its results were wrong. `make evals`
-scores a model against the tool surface and is run by hand;
-`-self-check` exercises the harness without an API key and is in
-`check`.
+## Traps
 
-## Ask before doing
-
-- Registering, changing or deleting an OAuth application on any
-  instance.
-- Anything that writes to a project other than the live driver's own
-  scratch project, including a spike.
-- Adding a scope, or moving a tool between the Read, Write, Adding,
-  Ship and Destructive kinds or between toolsets.
-- Reversing a decision §14 records as confirmed, or quietly narrowing a
-  written-off verdict in §8a into a used one.
-- Pushing, tagging, or anything that publishes.
-
-## Working across sessions
-
-Each phase is one session, and the session is cleared between phases. On
-a fresh session: read this file, the status line and §15, §16, §17 and
-§17a of `docs/architecture.md`, `CHANGELOG.md` under `[Unreleased]`,
-`git log --oneline -20` and `git status`; run `make check`; then continue
-the phase §16 names, on a topic branch cut from the previous phase's
-branch until that one is merged. Commit at the end of the phase, say it
-is ready for review, and stop; wait for an explicit "go". Phases are not
-tagged one by one: the maintainer tags a release when they choose.
-
-## Docs and releases
-
-Keep a Changelog, semver, one line per change, `**Breaking:**` on
-anything needing the reader to act. `release.yml` lifts the section
-verbatim into the release notes, so the entry is the release note. No
-version in prose anywhere — the README uses a badge. The release
-procedure is `docs/release.md` and nowhere else.
+- **Green gates are not done.** Every fake in `internal/gapi/gitlabtest`
+  is written from what we believe GitLab does; only `make live` tests it.
+- **GitLab runs quick actions from API bodies**, whatever the flags say.
+  A body input that skips the guard is a hole, not a style issue.
+- **A merge's 401 is `[auth]`, not `[forbidden]`.** GitLab answers 401
+  for a merge the role does not allow, without calling the token
+  invalid. Only `approve_merge_request` and `cancel_auto_merge` remap
+  it, after a read shows the token works.
+- **`[not_found]` also means the token cannot see it.** GitLab answers
+  404 for both.
+- **A forbidigo settings block that fails to load leaves forbidigo on
+  its defaults**, still firing. Check the message text.
+- **A test can redirect the config directory but not the OS keyring.**
+  `TestMain` in `cmd/gitlab-mcp` substitutes it, because `logout`
+  revokes at GitLab.
+- **Never delete a decision or reuse an ID.** Supersede or deprecate it,
+  and take the next ID from the file's `Next ID:` line.
 
 ## Writing
 
-Plain and short, everywhere it lands — code comments, commit messages,
-CHANGELOG, docs, tool descriptions. Lead with the outcome. One idea per
-sentence. No narration of the investigation.
+Plain and short: lead with the outcome, one idea per sentence, no
+narration, no count a gate does not check, no version in prose. History
+goes in commit messages. The CHANGELOG rules in `CONTRIBUTING.md` are not
+optional: `release.yml` lifts the section verbatim into the release
+notes. The release procedure is `docs/release.md` and nowhere else.

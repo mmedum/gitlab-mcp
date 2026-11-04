@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,11 +24,10 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/redact"
 )
 
-// The spikes of docs/architecture.md §15 the phases owe, against the
-// scratch project only. They go around the client, because they ask what
-// the client does not: headers it does not send and answers it does not
-// keep. Only statuses, sizes and header names and values GitLab sets are
-// printed; never a token, and never a body.
+// The spikes run against the scratch project only. They go around the
+// client, because they ask what the client does not: headers it does not
+// send and answers it does not keep. Only statuses, sizes and header names
+// and values GitLab sets are printed; never a token, and never a body.
 
 // raw is one request's answer as the spikes read it.
 type raw struct {
@@ -89,7 +89,77 @@ func (c spikeClient) send(ctx context.Context, method, path string, query url.Va
 	return raw{status: resp.StatusCode, header: resp.Header, body: body}, err
 }
 
-func spikes(ctx context.Context, settings *app.Settings, s scratch, only string, p *redact.Printer) {
+// spike is one question GitLab's documentation does not answer, asked
+// around the server. Its name is what a comment cites as a live
+// step, and what the transcript prints above its answer.
+type spike struct {
+	name string
+	// alone is the -only-spike value that asks it by itself after
+	// seeding, driving no tool; "" when it is never asked alone.
+	alone string
+	// everyRun is whether a full run asks it. One that is not is asked
+	// only alone.
+	everyRun bool
+	// afterCI is whether it reads the default branch's finished pipeline,
+	// which asking it alone then waits for.
+	afterCI bool
+	// ask is the spikeRun method that asks it.
+	ask func(spikeRun, context.Context) error
+}
+
+// spikeRun is what a spike sees: the raw client, the application that
+// signs in, the scratch project and the printer.
+type spikeRun struct {
+	c   spikeClient
+	app *auth.Application
+	s   scratch
+	p   *redact.Printer
+}
+
+// spikes are asked in this order. A full run asks them once the default
+// branch's pipeline has finished, before the plan.
+var spikes = []spike{
+	{name: "whether a conditional read spends the rate limit", everyRun: true, ask: spikeRun.askConditionalReads},
+	{name: "what byte_offset and byte_limit cut from a job log", everyRun: true, ask: spikeRun.askJobLogWindows},
+	{name: "where a job log's size shows without reading it", alone: "job-log-size", everyRun: true, afterCI: true,
+		ask: spikeRun.askJobLogSize},
+	{name: "whether diffpos positions land on GitLab's lines", everyRun: true, ask: spikeRun.askInlinePositions},
+	{name: "whether a wildcard rule sets a branch's protected flag", everyRun: true, ask: spikeRun.askProtectedFlag},
+	{name: "how soon a read finds what a create made", everyRun: true, ask: spikeRun.askSettleByReading},
+	{name: "what starts GitLab's merge status check", alone: "merge-status", everyRun: true, ask: spikeRun.askMergeStatusCheck},
+	{name: "how a comment delete holds If-Unmodified-Since", everyRun: true, ask: spikeRun.askConditionalDelete},
+	{name: "where GitLab runs a quick action from an API body", alone: "quick-actions", ask: spikeRun.askQuickActions},
+	{name: "which REST routes an mcp-scoped token reaches", alone: "mcp-scope", ask: spikeRun.askMCPScope},
+}
+
+// spikesFor is the spikes a run asks: those of every run when only is
+// empty, else the one -only-spike names, or none for a value no spike
+// takes.
+func spikesFor(only string) []spike {
+	var out []spike
+	for _, sp := range spikes {
+		if only == "" && sp.everyRun || only != "" && sp.alone == only {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
+
+// aloneValues are the values -only-spike takes, for its help and its
+// refusal.
+func aloneValues() string {
+	var out []string
+	for _, sp := range spikes {
+		if sp.alone != "" {
+			out = append(out, sp.alone)
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+// askSpikes asks each spike in turn, under a banner with its name. A
+// spike that fails says so, and the next is asked.
+func askSpikes(ctx context.Context, settings *app.Settings, s scratch, which []spike, p *redact.Printer) {
 	tok, err := settings.Tokens().Token(ctx)
 	if err != nil {
 		p.Sayf("!! spikes skipped: no token: %v", err)
@@ -101,96 +171,40 @@ func spikes(ctx context.Context, settings *app.Settings, s scratch, only string,
 		copied.CheckRedirect = hc.CheckRedirect
 		hc = &copied
 	}
-	c := spikeClient{http: hc, root: settings.Instance.APIRoot(), token: tok}
-	if only == "G" {
-		p.Say("\n=== spike G: an mcp-scoped token over REST ===")
-		if err := spikeG(ctx, settings.Application(), c, s, p); err != nil {
-			p.Sayf("!! spike G: %v", err)
+	x := spikeRun{c: spikeClient{http: hc, root: settings.Instance.APIRoot(), token: tok}, app: settings.Application(), s: s, p: p}
+	for _, sp := range which {
+		p.Sayf("\n=== spike: %s ===", sp.name)
+		if err := sp.ask(x, ctx); err != nil {
+			p.Sayf("!! %s: %v", sp.name, err)
 		}
-		return
-	}
-	if only == "O" {
-		p.Say("\n=== spike O: a job log's size, unread ===")
-		if err := spikeO(ctx, c, s, p); err != nil {
-			p.Sayf("!! spike O: %v", err)
-		}
-		return
-	}
-	if only == "R" {
-		p.Say("\n=== spike R: a read starts the merge status check ===")
-		if err := spikeR(ctx, c, s, p); err != nil {
-			p.Sayf("!! spike R: %v", err)
-		}
-		return
-	}
-	if only == "E" {
-		p.Say("\n=== spike E: quick actions ===")
-		if err := spikeE(ctx, c, s, p); err != nil {
-			p.Sayf("!! spike E: %v", err)
-		}
-		return
-	}
-	p.Say("\n=== spike H: conditional reads ===")
-	for _, path := range []string{"projects/" + itoa(s.ID), "projects/" + itoa(s.ID) + "/issues"} {
-		if err := spikeH(ctx, c, path, p); err != nil {
-			p.Sayf("!! spike H: %v", err)
-		}
-	}
-	p.Say("\n=== spike J: job log windows ===")
-	if err := spikeJ(ctx, c, s, p); err != nil {
-		p.Sayf("!! spike J: %v", err)
-	}
-	p.Say("\n=== spike O: a job log's size, unread ===")
-	if err := spikeO(ctx, c, s, p); err != nil {
-		p.Sayf("!! spike O: %v", err)
-	}
-	p.Say("\n=== spike K: inline positions ===")
-	if err := spikeK(ctx, c, s, p); err != nil {
-		p.Sayf("!! spike K: %v", err)
-	}
-	p.Say("\n=== the protected flag of a branch a wildcard rule covers ===")
-	if err := protectedFlag(ctx, c, s, p); err != nil {
-		p.Sayf("!! protected flag: %v", err)
-	}
-	p.Say("\n=== spike M: settle by reading ===")
-	if err := spikeM(ctx, c, s, p); err != nil {
-		p.Sayf("!! spike M: %v", err)
-	}
-	p.Say("\n=== spike R: a read starts the merge status check ===")
-	if err := spikeR(ctx, c, s, p); err != nil {
-		p.Sayf("!! spike R: %v", err)
-	}
-	p.Say("\n=== spike N: a conditional comment delete ===")
-	if err := spikeN(ctx, c, s, p); err != nil {
-		p.Sayf("!! spike N: %v", err)
 	}
 }
 
-// spikeG asks what a token with only the mcp scope can do over REST
-// (§15 spike G, §18 row 10): the source lets it call the routes tagged
-// route_setting :mcp and nothing else. It signs in a second time asking
+// askMCPScope asks what a token with only the mcp scope can do over REST:
+// the source lets it call the routes tagged route_setting :mcp and nothing
+// else, which leaves out every notes route. It signs in a second time asking
 // for mcp alone, holds that token in memory only, sends it to tagged and
-// untagged routes of the scratch project, and revokes it, which also
-// asks whether revocation works for a public client (spike B).
-func spikeG(ctx context.Context, a *auth.Application, c spikeClient, s scratch, p *redact.Printer) error {
-	p.Say("a browser tab asks to authorize the mcp scope alone; approve it")
-	g, err := a.Login(ctx, []string{"mcp"}, auth.LoginOptions{})
+// untagged routes of the scratch project, and revokes it, which also asks
+// whether revocation works for a public client.
+func (x spikeRun) askMCPScope(ctx context.Context) error {
+	x.p.Say("a browser tab asks to authorize the mcp scope alone; approve it")
+	g, err := x.app.Login(ctx, []string{"mcp"}, auth.LoginOptions{})
 	if err != nil {
 		return fmt.Errorf("sign in with the mcp scope: %w", err)
 	}
-	p.Sayf("granted scopes: %s", strings.Join(g.Scopes, " "))
+	x.p.Sayf("granted scopes: %s", strings.Join(g.Scopes, " "))
 	// The token is revoked however the probes end, and the revocation is
 	// then itself probed.
 	revoked := false
 	defer func() {
 		if !revoked {
-			_ = a.Revoke(context.Background(), g.Token.AccessToken)
+			_ = x.app.Revoke(context.Background(), g.Token.AccessToken)
 		}
 	}()
-	mc := c
+	mc := x.c
 	mc.token = g.Token.AccessToken
-	proj := "projects/" + itoa(s.ID)
-	search := url.Values{"scope": {"issues"}, "search": {s.Name}}
+	proj := "projects/" + itoa(x.s.ID)
+	search := url.Values{"scope": {"issues"}, "search": {x.s.Name}}
 	probes := []struct {
 		method, route, path string
 		query               url.Values
@@ -198,20 +212,20 @@ func spikeG(ctx context.Context, a *auth.Application, c spikeClient, s scratch, 
 	}{
 		{http.MethodGet, "user", "user", nil, false},
 		{http.MethodGet, "projects/:id", proj, nil, false},
-		{http.MethodGet, "projects/:id/issues/:iid", proj + "/issues/" + itoa(s.Issue), nil, true},
+		{http.MethodGet, "projects/:id/issues/:iid", proj + "/issues/" + itoa(x.s.Issue), nil, true},
 		{http.MethodGet, "projects/:id/issues", proj + "/issues", nil, false},
 		{http.MethodGet, "projects/:id/repository/branches", proj + "/repository/branches", nil, true},
-		{http.MethodGet, "projects/:id/merge_requests/:iid", proj + "/merge_requests/" + itoa(s.MR), nil, false},
-		{http.MethodGet, "projects/:id/merge_requests/:iid/commits", proj + "/merge_requests/" + itoa(s.MR) + "/commits", nil, true},
+		{http.MethodGet, "projects/:id/merge_requests/:iid", proj + "/merge_requests/" + itoa(x.s.MR), nil, false},
+		{http.MethodGet, "projects/:id/merge_requests/:iid/commits", proj + "/merge_requests/" + itoa(x.s.MR) + "/commits", nil, true},
 		{http.MethodGet, "projects/:id/pipelines", proj + "/pipelines", nil, true},
 		{http.MethodGet, "projects/:id/search", proj + "/search", search, true},
-		{http.MethodPost, "projects/:id/issues/:iid/notes", proj + "/issues/" + itoa(s.Issue) + "/notes", nil, false},
+		{http.MethodPost, "projects/:id/issues/:iid/notes", proj + "/issues/" + itoa(x.s.Issue) + "/notes", nil, false},
 	}
 	agree := 0
 	for _, pr := range probes {
 		var r raw
 		if pr.method == http.MethodPost {
-			r, err = mc.write(ctx, pr.method, pr.path, map[string]any{"body": "Spike G " + s.Name})
+			r, err = mc.write(ctx, pr.method, pr.path, map[string]any{"body": "An mcp-scope probe " + x.s.Name})
 		} else {
 			r, err = mc.get(ctx, pr.path, pr.query, nil)
 		}
@@ -222,29 +236,29 @@ func spikeG(ctx context.Context, a *auth.Application, c spikeClient, s scratch, 
 		if ok == pr.tagged {
 			agree++
 		}
-		p.Sayf("%-4s %-45s tagged %-5v status %d %s", pr.method, pr.route, pr.tagged, r.status,
+		x.p.Sayf("%-4s %-45s tagged %-5v status %d %s", pr.method, pr.route, pr.tagged, r.status,
 			scopeError(r.header.Get("WWW-Authenticate")))
 	}
-	p.Sayf("spike G: %d of %d routes answer as their tag says", agree, len(probes))
+	x.p.Sayf("%d of %d routes answer as their tag says", agree, len(probes))
 
-	if err := a.Revoke(ctx, g.Token.AccessToken); err != nil {
+	if err := x.app.Revoke(ctx, g.Token.AccessToken); err != nil {
 		return fmt.Errorf("revoke the mcp token: %w", err)
 	}
 	revoked = true
-	r, err := mc.get(ctx, proj+"/issues/"+itoa(s.Issue), nil, nil)
+	r, err := mc.get(ctx, proj+"/issues/"+itoa(x.s.Issue), nil, nil)
 	if err != nil {
 		return err
 	}
-	p.Sayf("after revocation: the access token answers %d %s", r.status, scopeError(r.header.Get("WWW-Authenticate")))
-	fresh, err := a.Refresh(ctx, g.Token.RefreshToken)
-	p.Sayf("after revocation: the refresh token is refused invalid_grant: %v", auth.IsInvalidGrant(err))
+	x.p.Sayf("after revocation: the access token answers %d %s", r.status, scopeError(r.header.Get("WWW-Authenticate")))
+	fresh, err := x.app.Refresh(ctx, g.Token.RefreshToken)
+	x.p.Sayf("after revocation: the refresh token is refused invalid_grant: %v", auth.IsInvalidGrant(err))
 	if err == nil {
 		// Revocation did not reach the refresh token: the pair it just
 		// minted is live, and goes the same way.
-		if err := a.Revoke(ctx, fresh.Token.AccessToken); err != nil {
+		if err := x.app.Revoke(ctx, fresh.Token.AccessToken); err != nil {
 			return fmt.Errorf("revoke the pair the refresh minted: %w", err)
 		}
-		p.Say("the pair the refresh minted is revoked")
+		x.p.Say("the pair the refresh minted is revoked")
 	}
 	return nil
 }
@@ -262,14 +276,14 @@ func scopeError(h string) string {
 	return "(" + m[1] + ")"
 }
 
-// spikeN asks how GitLab holds If-Unmodified-Since on a comment delete
-// (§4.6, §18 row 62): a time before the comment's updated_at should be
-// 412, the same second as an HTTP-date too if GitLab compares below the
-// second, and the updated_at it shows, stretched to the end of its
-// millisecond in RFC 3339, should delete.
-func spikeN(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
-	notes := "projects/" + itoa(s.ID) + "/issues/" + itoa(s.Issue2) + "/notes"
-	r, err := c.write(ctx, http.MethodPost, notes, map[string]any{"body": "Spike N comment " + s.Name})
+// askConditionalDelete asks how GitLab holds If-Unmodified-Since on a
+// comment delete: a time before the comment's updated_at should be 412, the
+// same second as an HTTP-date too if GitLab compares below the second, and
+// the updated_at it shows, stretched to the end of its millisecond in RFC
+// 3339, should delete.
+func (x spikeRun) askConditionalDelete(ctx context.Context) error {
+	notes := "projects/" + itoa(x.s.ID) + "/issues/" + itoa(x.s.Issue2) + "/notes"
+	r, err := x.c.write(ctx, http.MethodPost, notes, map[string]any{"body": "A conditional-delete probe comment " + x.s.Name})
 	if err != nil {
 		return err
 	}
@@ -280,13 +294,13 @@ func spikeN(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 	if err := json.Unmarshal(r.body, &note); err != nil || note.ID == 0 {
 		return fmt.Errorf("the comment was not created: status %d", r.status)
 	}
-	p.Redactor().Known(redact.KindID, itoa(note.ID))
+	x.p.Redactor().Known(redact.KindID, itoa(note.ID))
 	shown, err := time.Parse(time.RFC3339Nano, note.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("updated_at is not RFC 3339: %w", err)
 	}
 	_, fraction, _ := strings.Cut(strings.TrimSuffix(note.UpdatedAt, "Z"), ".")
-	p.Sayf("the comment's updated_at is shown with %d digits after the second", len(fraction))
+	x.p.Sayf("the comment's updated_at is shown with %d digits after the second", len(fraction))
 	path := notes + "/" + itoa(note.ID)
 	for _, try := range []struct {
 		what   string
@@ -298,23 +312,34 @@ func spikeN(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		{"the time shown stretched to the end of its millisecond, RFC 3339",
 			shown.Truncate(time.Millisecond).Add(time.Millisecond - time.Microsecond).UTC().Format(time.RFC3339Nano)},
 	} {
-		res, err := c.send(ctx, http.MethodDelete, path, nil, http.Header{"If-Unmodified-Since": {try.header}}, nil)
+		res, err := x.c.send(ctx, http.MethodDelete, path, nil, http.Header{"If-Unmodified-Since": {try.header}}, nil)
 		if err != nil {
 			return err
 		}
-		p.Sayf("DELETE with If-Unmodified-Since %s: status %d", try.what, res.status)
+		x.p.Sayf("DELETE with If-Unmodified-Since %s: status %d", try.what, res.status)
 		if res.status == http.StatusNoContent {
 			return nil
 		}
 	}
-	p.Say("!! no header deleted the comment; it is left on the second issue")
+	x.p.Say("!! no header deleted the comment; it is left on the second issue")
 	return nil
 }
 
-// spikeH asks whether If-None-Match earns a 304 on an API read, and
-// whether a 304 is counted against the rate limit: RateLimit-Remaining
-// before and after three conditional reads.
-func spikeH(ctx context.Context, c spikeClient, path string, p *redact.Printer) error {
+// askConditionalReads asks whether If-None-Match earns a 304 on an API
+// read, and whether a 304 is counted against the rate limit, for a
+// single read and for a listing.
+func (x spikeRun) askConditionalReads(ctx context.Context) error {
+	paths := []string{"projects/" + itoa(x.s.ID), "projects/" + itoa(x.s.ID) + "/issues"}
+	errs := make([]error, 0, len(paths))
+	for _, path := range paths {
+		errs = append(errs, conditionalRead(ctx, x.c, path, x.p))
+	}
+	return errors.Join(errs...)
+}
+
+// conditionalRead prints RateLimit-Remaining before and after three
+// conditional reads of path.
+func conditionalRead(ctx context.Context, c spikeClient, path string, p *redact.Printer) error {
 	which := "a single read"
 	if strings.HasSuffix(path, "/issues") {
 		which = "a listing"
@@ -339,20 +364,20 @@ func spikeH(ctx context.Context, c spikeClient, path string, p *redact.Printer) 
 	return nil
 }
 
-// spikeJ asks what byte_offset and byte_limit do to the trace endpoint:
-// the window's size against the full log's bytes, the headers that
-// describe it, and an offset past the end.
-func spikeJ(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
-	if s.JobFailed == 0 {
-		p.Say("no finished job to read; spike J needs one")
+// askJobLogWindows asks what byte_offset and byte_limit do to the trace
+// endpoint: the window's size against the full log's bytes, the headers
+// that describe it, and an offset past the end.
+func (x spikeRun) askJobLogWindows(ctx context.Context) error {
+	if x.s.JobFailed == 0 {
+		x.p.Say("no finished job to read; this spike needs one")
 		return nil
 	}
-	path := "projects/" + itoa(s.ID) + "/jobs/" + itoa(s.JobFailed) + "/trace"
-	full, err := c.get(ctx, path, nil, nil)
+	path := "projects/" + itoa(x.s.ID) + "/jobs/" + itoa(x.s.JobFailed) + "/trace"
+	full, err := x.c.get(ctx, path, nil, nil)
 	if err != nil {
 		return err
 	}
-	p.Sayf("full: status %d, %d bytes, Content-Type %s, Content-Range %s", full.status, len(full.body),
+	x.p.Sayf("full: status %d, %d bytes, Content-Type %s, Content-Range %s", full.status, len(full.body),
 		orNone(full.header.Get("Content-Type")), orNone(full.header.Get("Content-Range")))
 	for _, q := range []url.Values{
 		{"byte_offset": {"100"}, "byte_limit": {"50"}},
@@ -360,7 +385,7 @@ func spikeJ(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		{"byte_offset": {fmt.Sprint(len(full.body) - 40)}},
 		{"byte_offset": {fmt.Sprint(len(full.body) + 10)}},
 	} {
-		r, err := c.get(ctx, path, q, nil)
+		r, err := x.c.get(ctx, path, q, nil)
 		if err != nil {
 			return err
 		}
@@ -374,51 +399,51 @@ func spikeJ(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		if len(r.body) == 0 {
 			verdict = "empty"
 		}
-		p.Sayf("%s: status %d, %d bytes, %s; Content-Range %s", q.Encode(), r.status, len(r.body), verdict,
+		x.p.Sayf("%s: status %d, %d bytes, %s; Content-Range %s", q.Encode(), r.status, len(r.body), verdict,
 			orNone(r.header.Get("Content-Range")))
 	}
 	return nil
 }
 
-// spikeO asks where a job log's size can be learned without reading the
-// log, so get_job_log can read only its window (§17a): a finished job's
-// trace artifact size against the bytes the trace endpoint serves, and
-// what a HEAD of the trace says for a finished log and for one still
-// being written. It also asks what byte_limit past GitLab's 500 KB cap
-// answers, and which paging headers a merge request's diffs carry.
-func spikeO(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
-	if s.JobFailed == 0 {
-		p.Say("no finished job to read; spike O needs one")
+// askJobLogSize asks where a job log's size can be learned without reading
+// the log, so get_job_log can read only its window: a finished job's trace
+// artifact size against the bytes the trace endpoint serves, and what a HEAD
+// of the trace says for a finished log and for one still being written. It
+// also asks what byte_limit past GitLab's 500 KB cap answers, and which
+// paging headers a merge request's diffs carry.
+func (x spikeRun) askJobLogSize(ctx context.Context) error {
+	if x.s.JobFailed == 0 {
+		x.p.Say("no finished job to read; this spike needs one")
 		return nil
 	}
-	project := "projects/" + itoa(s.ID)
-	if err := logSize(ctx, c, project, s.JobFailed, "finished", p); err != nil {
+	project := "projects/" + itoa(x.s.ID)
+	if err := logSize(ctx, x.c, project, x.s.JobFailed, "finished", x.p); err != nil {
 		return err
 	}
 	// Last, once gitlab.com has archived the finished log, whether the
 	// trace artifact's size is the log's.
 	defer func() {
-		if err := archivedSize(ctx, c, project, s.JobFailed, p); err != nil {
-			p.Sayf("!! spike O, the archived log: %v", err)
+		if err := archivedSize(ctx, x.c, project, x.s.JobFailed, x.p); err != nil {
+			x.p.Sayf("!! the archived log: %v", err)
 		}
 	}()
-	r, err := c.get(ctx, project+"/jobs/"+itoa(s.JobFailed)+"/trace", url.Values{"byte_limit": {"512001"}}, nil)
+	r, err := x.c.get(ctx, project+"/jobs/"+itoa(x.s.JobFailed)+"/trace", url.Values{"byte_limit": {"512001"}}, nil)
 	if err != nil {
 		return err
 	}
-	p.Sayf("byte_limit 512001: status %d, %d bytes", r.status, len(r.body))
+	x.p.Sayf("byte_limit 512001: status %d, %d bytes", r.status, len(r.body))
 
-	r, err = c.get(ctx, project+"/merge_requests/"+itoa(s.MR)+"/diffs", url.Values{"per_page": {"1"}}, nil)
+	r, err = x.c.get(ctx, project+"/merge_requests/"+itoa(x.s.MR)+"/diffs", url.Values{"per_page": {"1"}}, nil)
 	if err != nil {
 		return err
 	}
-	p.Sayf("merge request diffs, per_page 1: status %d, X-Total %s, X-Total-Pages %s, X-Next-Page %s, Link %s", r.status,
+	x.p.Sayf("merge request diffs, per_page 1: status %d, X-Total %s, X-Total-Pages %s, X-Next-Page %s, Link %s", r.status,
 		orNone(r.header.Get("X-Total")), orNone(r.header.Get("X-Total-Pages")), orNone(r.header.Get("X-Next-Page")),
 		present(r.header.Get("Link")))
 
 	// A log still being written: a pipeline whose slow job prints and
 	// then sleeps, read while it runs, then canceled.
-	created, err := c.write(ctx, http.MethodPost, project+"/pipeline", map[string]any{"ref": s.Default, "inputs": map[string]any{"slow": "yes"}})
+	created, err := x.c.write(ctx, http.MethodPost, project+"/pipeline", map[string]any{"ref": x.s.Default, "inputs": map[string]any{"slow": "yes"}})
 	if err != nil {
 		return err
 	}
@@ -426,21 +451,21 @@ func spikeO(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		ID int64 `json:"id"`
 	}
 	if created.status != http.StatusCreated || json.Unmarshal(created.body, &pl) != nil {
-		p.Sayf("a pipeline with the slow job: status %d; the running half is not asked", created.status)
+		x.p.Sayf("a pipeline with the slow job: status %d; the running half is not asked", created.status)
 		return nil
 	}
-	p.Redactor().Known(redact.KindID, itoa(pl.ID))
+	x.p.Redactor().Known(redact.KindID, itoa(pl.ID))
 	defer func() {
-		r, err := c.write(ctx, http.MethodPost, project+"/pipelines/"+itoa(pl.ID)+"/cancel", map[string]any{})
+		r, err := x.c.write(ctx, http.MethodPost, project+"/pipelines/"+itoa(pl.ID)+"/cancel", map[string]any{})
 		if err != nil {
-			p.Sayf("!! cancel the slow pipeline: %v", err)
+			x.p.Sayf("!! cancel the slow pipeline: %v", err)
 			return
 		}
-		p.Sayf("slow pipeline canceled: status %d", r.status)
+		x.p.Sayf("slow pipeline canceled: status %d", r.status)
 	}()
 	deadline := time.Now().Add(8 * time.Minute)
 	for {
-		r, err := c.get(ctx, project+"/pipelines/"+itoa(pl.ID)+"/jobs", nil, nil)
+		r, err := x.c.get(ctx, project+"/pipelines/"+itoa(pl.ID)+"/jobs", nil, nil)
 		if err != nil {
 			return err
 		}
@@ -456,18 +481,18 @@ func spikeO(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 			if j.Name != "slow log" || j.Status != "running" {
 				continue
 			}
-			p.Redactor().Known(redact.KindID, itoa(j.ID))
-			t, err := c.get(ctx, project+"/jobs/"+itoa(j.ID)+"/trace", nil, nil)
+			x.p.Redactor().Known(redact.KindID, itoa(j.ID))
+			t, err := x.c.get(ctx, project+"/jobs/"+itoa(j.ID)+"/trace", nil, nil)
 			if err != nil {
 				return err
 			}
 			// The job prints its lines at once; a log this long is past them.
 			if len(t.body) > 20000 {
-				return logSize(ctx, c, project, j.ID, "running", p)
+				return logSize(ctx, x.c, project, j.ID, "running", x.p)
 			}
 		}
 		if time.Now().After(deadline) {
-			p.Say("the slow job did not print its lines in time; the running half is not asked")
+			x.p.Say("the slow job did not print its lines in time; the running half is not asked")
 			return nil
 		}
 		select {
@@ -579,27 +604,29 @@ func orNone(v string) string {
 	return v
 }
 
-// quickCase is one body shape spike E sends. Each applies its own label,
-// so whether GitLab ran the command shows in the labels of the target.
+// quickCase is one body shape the quick-action spike sends. Each applies
+// its own label, so whether GitLab ran the command shows in the labels of
+// the target.
 type quickCase struct {
 	name string
 	body func(cmd string) string
 }
 
-// quickCases are the shapes of §15's spike E. The text is this driver's.
+// quickCases are the body shapes the quick-action spike sends. The text
+// is this driver's.
 var quickCases = []quickCase{
-	{"bare", func(cmd string) string { return "Spike E text.\n\n" + cmd + "\n" }},
-	{"fenced", func(cmd string) string { return "Spike E text.\n\n```\n" + cmd + "\n```\n" }},
-	{"indented", func(cmd string) string { return "Spike E text.\n\n    " + cmd + "\n" }},
-	{"quoted", func(cmd string) string { return "Spike E text.\n\n> " + cmd + "\n" }},
-	{"quoted-multiline", func(cmd string) string { return "Spike E text.\n\n>>>\n" + cmd + "\n>>>\n" }},
-	{"inline", func(cmd string) string { return "Spike E text.\n\n`" + cmd + "`\n" }},
-	{"html", func(cmd string) string { return "Spike E text.\n\n<div>\n" + cmd + "\n</div>\n" }},
-	{"after-list-item", func(cmd string) string { return "Spike E text.\n\n- a list item\n" + cmd + "\n" }},
-	{"after-list-blank", func(cmd string) string { return "Spike E text.\n\n- a list item\n\n" + cmd + "\n" }},
-	{"in-paragraph", func(cmd string) string { return "Spike E text.\n" + cmd + "\n" }},
-	{"crlf", func(cmd string) string { return "Spike E text.\r\n\r\n" + cmd + "\r\n" }},
-	{"lone-cr", func(cmd string) string { return "Spike E text.\r\r" + cmd + "\r" }},
+	{"bare", func(cmd string) string { return "Quick-action probe text.\n\n" + cmd + "\n" }},
+	{"fenced", func(cmd string) string { return "Quick-action probe text.\n\n```\n" + cmd + "\n```\n" }},
+	{"indented", func(cmd string) string { return "Quick-action probe text.\n\n    " + cmd + "\n" }},
+	{"quoted", func(cmd string) string { return "Quick-action probe text.\n\n> " + cmd + "\n" }},
+	{"quoted-multiline", func(cmd string) string { return "Quick-action probe text.\n\n>>>\n" + cmd + "\n>>>\n" }},
+	{"inline", func(cmd string) string { return "Quick-action probe text.\n\n`" + cmd + "`\n" }},
+	{"html", func(cmd string) string { return "Quick-action probe text.\n\n<div>\n" + cmd + "\n</div>\n" }},
+	{"after-list-item", func(cmd string) string { return "Quick-action probe text.\n\n- a list item\n" + cmd + "\n" }},
+	{"after-list-blank", func(cmd string) string { return "Quick-action probe text.\n\n- a list item\n\n" + cmd + "\n" }},
+	{"in-paragraph", func(cmd string) string { return "Quick-action probe text.\n" + cmd + "\n" }},
+	{"crlf", func(cmd string) string { return "Quick-action probe text.\r\n\r\n" + cmd + "\r\n" }},
+	{"lone-cr", func(cmd string) string { return "Quick-action probe text.\r\r" + cmd + "\r" }},
 }
 
 // quickSurface is one place GitLab takes a body from.
@@ -610,29 +637,30 @@ type quickSurface struct {
 	send func(ctx context.Context, body string) (int, []string, error)
 }
 
-// spikeE asks, per body shape and per surface, whether GitLab ran the
-// command, and holds each answer against internal/quickaction: a command
-// GitLab ran that Find did not report is a hole in the guard. Every shape
-// the guard reports is sent again escaped, which must not run, and the
-// escaped text is rendered to show it reads the same. Each command is
-// /label with a label of its own, so the effect is visible and harmless.
-func spikeE(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
-	id := itoa(s.ID)
+// askQuickActions asks, per body shape and per surface, whether GitLab
+// ran the command, and holds each answer against internal/quickaction: a
+// command GitLab ran that Find did not report is a hole in the guard.
+// Every shape the guard reports is sent again escaped, which must not
+// run, and the escaped text is rendered to show it reads the same. Each
+// command is /label with a label of its own, so the effect is visible and
+// harmless.
+func (x spikeRun) askQuickActions(ctx context.Context) error {
+	id := itoa(x.s.ID)
 	project := "projects/" + id
 	// A fresh issue, so the labels read are only the spike's.
 	var issue struct {
 		IID int64 `json:"iid"`
 	}
-	r, err := c.write(ctx, http.MethodPost, project+"/issues", map[string]any{"title": "Spike E " + s.Name})
+	r, err := x.c.write(ctx, http.MethodPost, project+"/issues", map[string]any{"title": "Quick-action probe " + x.s.Name})
 	if err != nil || r.status != http.StatusCreated || json.Unmarshal(r.body, &issue) != nil {
 		return fmt.Errorf("create the spike's issue: status %d: %w", r.status, err)
 	}
 	issuePath := project + "/issues/" + itoa(issue.IID)
-	surfaces := quickSurfaces(c, s, project, issuePath, project+"/merge_requests/"+itoa(s.MR))
+	surfaces := quickSurfaces(x.c, x.s, project, issuePath, project+"/merge_requests/"+itoa(x.s.MR))
 
 	// One label per case, surface and variant, made before any is used.
 	label := func(ci, si int, escaped bool) string {
-		l := fmt.Sprintf("spike-e-%d-%d", ci, si)
+		l := fmt.Sprintf("quick-action-%d-%d", ci, si)
 		if escaped {
 			l += "-esc"
 		}
@@ -641,7 +669,7 @@ func spikeE(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 	for ci := range quickCases {
 		for si := range surfaces {
 			for _, esc := range []bool{false, true} {
-				r, err := c.write(ctx, http.MethodPost, project+"/labels", map[string]any{"name": label(ci, si, esc), "color": "#6699cc"})
+				r, err := x.c.write(ctx, http.MethodPost, project+"/labels", map[string]any{"name": label(ci, si, esc), "color": "#6699cc"})
 				if err != nil || (r.status != http.StatusCreated && r.status != http.StatusConflict) {
 					return fmt.Errorf("create a spike label: status %d: %w", r.status, err)
 				}
@@ -668,7 +696,7 @@ func spikeE(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 			case !ran && found:
 				verdict = "the guard is stricter than GitLab here"
 			}
-			p.Sayf("%s, %s: status %d, GitLab ran it: %t, guard found it: %t — %s", surf.name, qc.name, status, ran, found, verdict)
+			x.p.Sayf("%s, %s: status %d, GitLab ran it: %t, guard found it: %t — %s", surf.name, qc.name, status, ran, found, verdict)
 			if !found {
 				continue
 			}
@@ -682,22 +710,22 @@ func spikeE(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 			if escRan {
 				escapeHoles++
 			}
-			p.Sayf("%s, %s escaped: status %d, GitLab ran it: %t%s", surf.name, qc.name, status, escRan,
+			x.p.Sayf("%s, %s escaped: status %d, GitLab ran it: %t%s", surf.name, qc.name, status, escRan,
 				map[bool]string{true: " — !! the escape did not hold", false: ""}[escRan])
 		}
 	}
 
-	// A note that is only a command: §2.8 says 202 and nothing saved.
+	// A note that is only a command: GitLab answers 202 and saves nothing.
 	only := "/label ~" + label(0, 0, false)
-	r, err = c.write(ctx, http.MethodPost, issuePath+"/notes", map[string]any{"body": only})
+	r, err = x.c.write(ctx, http.MethodPost, issuePath+"/notes", map[string]any{"body": only})
 	if err != nil {
 		return err
 	}
-	p.Sayf("issue note that is only a command: status %d, %d body bytes", r.status, len(r.body))
+	x.p.Sayf("issue note that is only a command: status %d, %d body bytes", r.status, len(r.body))
 
 	// The escaped line renders as the command's own text.
-	escaped, _ := quickaction.Escape("/label ~spike-e-render\n")
-	r, err = c.write(ctx, http.MethodPost, "markdown", map[string]any{"text": escaped, "gfm": true, "project": s.Path})
+	escaped, _ := quickaction.Escape("/label ~quick-action-render\n")
+	r, err = x.c.write(ctx, http.MethodPost, "markdown", map[string]any{"text": escaped, "gfm": true, "project": x.s.Path})
 	if err != nil {
 		return err
 	}
@@ -706,10 +734,10 @@ func spikeE(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 	}
 	_ = json.Unmarshal(r.body, &md)
 	text := htmlTags.ReplaceAllString(md.HTML, "")
-	p.Sayf("escaped line rendered: status %d, shows the command's text: %t, shows the backslash: %t",
+	x.p.Sayf("escaped line rendered: status %d, shows the command's text: %t, shows the backslash: %t",
 		r.status, strings.Contains(text, "/label"), strings.Contains(text, `\/label`))
 
-	p.Sayf("spike E: %d hole(s) in the guard, %d escape(s) that did not hold", holes, escapeHoles)
+	x.p.Sayf("%d hole(s) in the guard, %d escape(s) that did not hold", holes, escapeHoles)
 	return nil
 }
 
@@ -730,10 +758,10 @@ func (c spikeClient) labelsOf(ctx context.Context, path string) ([]string, error
 	return item.Labels, nil
 }
 
-// quickSurfaces are the four places spike E sends a body: a note on an
-// issue and on a merge request, a new issue's description, and a merge
-// request description update. Each answers the target's labels, read
-// back rather than taken from the write's own answer.
+// quickSurfaces are the four places the quick-action spike sends a body:
+// a note on an issue and on a merge request, a new issue's description,
+// and a merge request description update. Each answers the target's
+// labels, read back rather than taken from the write's own answer.
 func quickSurfaces(c spikeClient, s scratch, project, issuePath, mrPath string) []quickSurface {
 	postThenRead := func(method, path, target string, body func(string) map[string]any) func(context.Context, string) (int, []string, error) {
 		return func(ctx context.Context, text string) (int, []string, error) {
@@ -750,7 +778,7 @@ func quickSurfaces(c spikeClient, s scratch, project, issuePath, mrPath string) 
 		{"issue note", postThenRead(http.MethodPost, issuePath+"/notes", issuePath, noteBody)},
 		{"merge request note", postThenRead(http.MethodPost, mrPath+"/notes", mrPath, noteBody)},
 		{"new issue description", func(ctx context.Context, text string) (int, []string, error) {
-			r, err := c.write(ctx, http.MethodPost, project+"/issues", map[string]any{"title": "Spike E case " + s.Name, "description": text})
+			r, err := c.write(ctx, http.MethodPost, project+"/issues", map[string]any{"title": "Quick-action probe case " + s.Name, "description": text})
 			if err != nil {
 				return 0, nil, err
 			}
@@ -768,22 +796,24 @@ func quickSurfaces(c spikeClient, s scratch, project, issuePath, mrPath string) 
 	}
 }
 
-// ------------------------------------------------------------ spike K
+// ------------------------------------------------------------ inline positions
 
-// diffRow is one file of a merge request's diffs, as spike K reads it.
+// diffRow is one file of a merge request's diffs, as the inline-position
+// spike reads it.
 type diffRow struct {
 	OldPath string `json:"old_path"`
 	NewPath string `json:"new_path"`
 	Diff    string `json:"diff"`
 }
 
-// spikeK asks whether the positions diffpos computes land where GitLab
-// puts the same lines: a draft note answers with the line_code GitLab
-// computed from the position, and a range with the codes it stored. The
-// drafts are deleted afterwards, so the plan's review sees only its own.
-func spikeK(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
-	mrPath := "projects/" + itoa(s.ID) + "/merge_requests/" + itoa(s.MR)
-	r, err := c.get(ctx, mrPath, nil, nil)
+// askInlinePositions asks whether the positions diffpos computes land
+// where GitLab puts the same lines: a draft note answers with the
+// line_code GitLab computed from the position, and a range with the codes
+// it stored. The drafts are deleted afterwards, so the plan's review sees
+// only its own.
+func (x spikeRun) askInlinePositions(ctx context.Context) error {
+	mrPath := "projects/" + itoa(x.s.ID) + "/merge_requests/" + itoa(x.s.MR)
+	r, err := x.c.get(ctx, mrPath, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -797,7 +827,7 @@ func spikeK(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 	if r.status != http.StatusOK || json.Unmarshal(r.body, &mr) != nil {
 		return fmt.Errorf("read the merge request: status %d", r.status)
 	}
-	r, err = c.get(ctx, mrPath+"/diffs", nil, nil)
+	r, err = x.c.get(ctx, mrPath+"/diffs", nil, nil)
 	if err != nil {
 		return err
 	}
@@ -805,9 +835,9 @@ func spikeK(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 	if r.status != http.StatusOK || json.Unmarshal(r.body, &diffs) != nil {
 		return fmt.Errorf("read the diffs: status %d", r.status)
 	}
-	i := slices.IndexFunc(diffs, func(d diffRow) bool { return d.NewPath == s.File })
+	i := slices.IndexFunc(diffs, func(d diffRow) bool { return d.NewPath == x.s.File })
 	if i < 0 {
-		return fmt.Errorf("the merge request does not change %s", s.File)
+		return fmt.Errorf("the merge request does not change %s", x.s.File)
 	}
 	file := diffpos.File{OldPath: diffs[i].OldPath, NewPath: diffs[i].NewPath, Diff: diffs[i].Diff}
 	refs := diffpos.Refs{BaseSHA: mr.DiffRefs.BaseSHA, StartSHA: mr.DiffRefs.StartSHA, HeadSHA: mr.DiffRefs.HeadSHA}
@@ -827,10 +857,10 @@ func spikeK(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 	for _, tc := range cases {
 		placed, err := diffpos.Compute(refs, file, tc.side, tc.line, tc.end)
 		if err != nil {
-			p.Sayf("%s: diffpos refused it: %v", tc.what, err)
+			x.p.Sayf("%s: diffpos refused it: %v", tc.what, err)
 			continue
 		}
-		r, err := c.write(ctx, http.MethodPost, mrPath+"/draft_notes", map[string]any{"note": "Spike K: " + tc.what + ".",
+		r, err := x.c.write(ctx, http.MethodPost, mrPath+"/draft_notes", map[string]any{"note": "An inline position probe on " + tc.what + ".",
 			"position": placed.Position})
 		if err != nil {
 			return err
@@ -850,7 +880,7 @@ func spikeK(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 			} `json:"position"`
 		}
 		_ = json.Unmarshal(r.body, &draft)
-		p.Redactor().Known(redact.KindID, itoa(draft.ID))
+		x.p.Redactor().Known(redact.KindID, itoa(draft.ID))
 		ok := r.status == http.StatusCreated && draft.LineCode == placed.End.Code(file)
 		if tc.end != 0 {
 			lr := draft.Position.LineRange
@@ -859,36 +889,35 @@ func spikeK(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		if ok {
 			agree++
 		}
-		p.Sayf("%s (%s %d%s): status %d, GitLab's line_code agrees with diffpos: %t", tc.what, tc.side, tc.line,
+		x.p.Sayf("%s (%s %d%s): status %d, GitLab's line_code agrees with diffpos: %t", tc.what, tc.side, tc.line,
 			map[bool]string{true: fmt.Sprintf("–%d", tc.end), false: ""}[tc.end != 0], r.status, ok)
 		if draft.ID != 0 {
-			if d, err := c.send(ctx, http.MethodDelete, mrPath+"/draft_notes/"+itoa(draft.ID), nil, nil, nil); err != nil || d.status != http.StatusNoContent {
-				p.Sayf("!! could not delete the spike's draft: status %d", d.status)
+			if d, err := x.c.send(ctx, http.MethodDelete, mrPath+"/draft_notes/"+itoa(draft.ID), nil, nil, nil); err != nil || d.status != http.StatusNoContent {
+				x.p.Sayf("!! could not delete the spike's draft: status %d", d.status)
 			}
 		}
 	}
-	p.Sayf("spike K: %d of %d positions agree", agree, len(cases))
+	x.p.Sayf("%d of %d positions agree", agree, len(cases))
 	return nil
 }
 
 // ------------------------------------------------------------ protection
 
-// protectedFlag asks whether a branch's own protected flag reflects a
-// wildcard rule, which create_commit trusts for a branch that exists
-// (§4.4). It makes the rule and a branch under it; the plan then commits
-// to both that branch and a new one under the rule, and expects both
-// refused.
-func protectedFlag(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
-	project := "projects/" + itoa(s.ID)
-	r, err := c.write(ctx, http.MethodPost, project+"/protected_branches", map[string]any{"name": guardRule(s), "push_access_level": 40})
+// askProtectedFlag asks whether a branch's own protected flag reflects a
+// wildcard rule, which create_commit trusts for a branch that exists. It
+// makes the rule and a branch under it; the plan then commits to both that
+// branch and a new one under the rule, and expects both refused.
+func (x spikeRun) askProtectedFlag(ctx context.Context) error {
+	project := "projects/" + itoa(x.s.ID)
+	r, err := x.c.write(ctx, http.MethodPost, project+"/protected_branches", map[string]any{"name": guardRule(x.s), "push_access_level": 40})
 	if err != nil || r.status != http.StatusCreated {
 		return fmt.Errorf("create the rule: status %d: %w", r.status, err)
 	}
-	r, err = c.write(ctx, http.MethodPost, project+"/repository/branches", map[string]any{"branch": guardBranch(s), "ref": s.Default})
+	r, err = x.c.write(ctx, http.MethodPost, project+"/repository/branches", map[string]any{"branch": guardBranch(x.s), "ref": x.s.Default})
 	if err != nil || r.status != http.StatusCreated {
 		return fmt.Errorf("create the branch: status %d: %w", r.status, err)
 	}
-	r, err = c.get(ctx, project+"/repository/branches/"+url.PathEscape(guardBranch(s)), nil, nil)
+	r, err = x.c.get(ctx, project+"/repository/branches/"+url.PathEscape(guardBranch(x.s)), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -896,52 +925,52 @@ func protectedFlag(ctx context.Context, c spikeClient, s scratch, p *redact.Prin
 		Protected bool `json:"protected"`
 	}
 	_ = json.Unmarshal(r.body, &b)
-	p.Sayf("a branch under a wildcard rule: status %d, protected: %t", r.status, b.Protected)
+	x.p.Sayf("a branch under a wildcard rule: status %d, protected: %t", r.status, b.Protected)
 	return nil
 }
 
-// ------------------------------------------------------------ spike M
+// ------------------------------------------------------------ settle by reading
 
-// spikeM asks how soon each read that settles an ambiguous create (§4.5)
-// finds what the create made: it creates, then reads at once and every
-// 250 ms for up to ten seconds, and prints how long the read took to see
-// it.
-func spikeM(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
-	project := "projects/" + itoa(s.ID)
+// askSettleByReading asks how soon each read that settles an ambiguous
+// create finds what the create made: it creates, then reads at once and
+// every 250 ms for up to ten seconds, and prints how long the read took to
+// see it.
+func (x spikeRun) askSettleByReading(ctx context.Context) error {
+	project := "projects/" + itoa(x.s.ID)
 	since := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)
-	me := url.Values{"author_username": {s.User}, "created_after": {since}, "state": {"all"}, "per_page": {"100"}}
-	branch := "spike-m-" + s.Name[len(s.Name)-6:]
+	me := url.Values{"author_username": {x.s.User}, "created_after": {since}, "state": {"all"}, "per_page": {"100"}}
+	branch := "settle-probe-" + x.s.Name[len(x.s.Name)-6:]
 	checks := []struct {
 		what   string
 		create func() (int, error)
 		find   func() (bool, error)
 	}{
 		{"an issue, by author, created_after and title", func() (int, error) {
-			r, err := c.write(ctx, http.MethodPost, project+"/issues", map[string]any{"title": "Spike M issue " + s.Name})
+			r, err := x.c.write(ctx, http.MethodPost, project+"/issues", map[string]any{"title": "Settle probe issue " + x.s.Name})
 			return r.status, err
 		}, func() (bool, error) {
-			return c.listed(ctx, project+"/issues", me, "title", "Spike M issue "+s.Name)
+			return x.c.listed(ctx, project+"/issues", me, "title", "Settle probe issue "+x.s.Name)
 		}},
 		{"a comment, among the issue's threads", func() (int, error) {
 			// The second issue: a comment on the first would mark the run's
 			// own to-do item on it done, which a later read looks for.
-			r, err := c.write(ctx, http.MethodPost, project+"/issues/"+itoa(s.Issue2)+"/notes", map[string]any{"body": "Spike M comment " + s.Name})
+			r, err := x.c.write(ctx, http.MethodPost, project+"/issues/"+itoa(x.s.Issue2)+"/notes", map[string]any{"body": "Settle probe comment " + x.s.Name})
 			return r.status, err
 		}, func() (bool, error) {
-			return c.inThreads(ctx, project+"/issues/"+itoa(s.Issue2)+"/discussions", "Spike M comment "+s.Name)
+			return x.c.inThreads(ctx, project+"/issues/"+itoa(x.s.Issue2)+"/discussions", "Settle probe comment "+x.s.Name)
 		}},
 		{"a draft, among the account's drafts", func() (int, error) {
-			r, err := c.write(ctx, http.MethodPost, project+"/merge_requests/"+itoa(s.MR)+"/draft_notes", map[string]any{"note": "Spike M draft " + s.Name})
+			r, err := x.c.write(ctx, http.MethodPost, project+"/merge_requests/"+itoa(x.s.MR)+"/draft_notes", map[string]any{"note": "Settle probe draft " + x.s.Name})
 			return r.status, err
 		}, func() (bool, error) {
-			return c.listed(ctx, project+"/merge_requests/"+itoa(s.MR)+"/draft_notes", nil, "note", "Spike M draft "+s.Name)
+			return x.c.listed(ctx, project+"/merge_requests/"+itoa(x.s.MR)+"/draft_notes", nil, "note", "Settle probe draft "+x.s.Name)
 		}},
 		{"a commit, as the branch's head", func() (int, error) {
-			r, err := c.write(ctx, http.MethodPost, project+"/repository/commits", map[string]any{"branch": branch, "start_branch": s.Default,
-				"commit_message": "Spike M commit " + s.Name, "actions": []any{map[string]any{"action": "create", "file_path": "spike-m.txt", "content": "m\n"}}})
+			r, err := x.c.write(ctx, http.MethodPost, project+"/repository/commits", map[string]any{"branch": branch, "start_branch": x.s.Default,
+				"commit_message": "Settle probe commit " + x.s.Name, "actions": []any{map[string]any{"action": "create", "file_path": "settle-probe.txt", "content": "settle\n"}}})
 			return r.status, err
 		}, func() (bool, error) {
-			r, err := c.get(ctx, project+"/repository/branches/"+branch, nil, nil)
+			r, err := x.c.get(ctx, project+"/repository/branches/"+branch, nil, nil)
 			if err != nil || r.status != http.StatusOK {
 				return false, err
 			}
@@ -951,27 +980,27 @@ func spikeM(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 				} `json:"commit"`
 			}
 			_ = json.Unmarshal(r.body, &b)
-			return strings.TrimSpace(b.Commit.Message) == "Spike M commit "+s.Name, nil
+			return strings.TrimSpace(b.Commit.Message) == "Settle probe commit "+x.s.Name, nil
 		}},
 		{"a merge request, by author, created_after and title", func() (int, error) {
-			r, err := c.write(ctx, http.MethodPost, project+"/merge_requests", map[string]any{"source_branch": branch,
-				"target_branch": s.Default, "title": "Spike M merge request " + s.Name})
+			r, err := x.c.write(ctx, http.MethodPost, project+"/merge_requests", map[string]any{"source_branch": branch,
+				"target_branch": x.s.Default, "title": "Settle probe merge request " + x.s.Name})
 			return r.status, err
 		}, func() (bool, error) {
-			return c.listed(ctx, project+"/merge_requests", me, "title", "Spike M merge request "+s.Name)
+			return x.c.listed(ctx, project+"/merge_requests", me, "title", "Settle probe merge request "+x.s.Name)
 		}},
 		{"a pipeline, on the ref by source api, username and created_after", func() (int, error) {
-			r, err := c.write(ctx, http.MethodPost, project+"/pipeline", map[string]any{"ref": branch})
+			r, err := x.c.write(ctx, http.MethodPost, project+"/pipeline", map[string]any{"ref": branch})
 			return r.status, err
 		}, func() (bool, error) {
-			return c.listed(ctx, project+"/pipelines", url.Values{"ref": {branch}, "source": {"api"}, "username": {s.User},
+			return x.c.listed(ctx, project+"/pipelines", url.Values{"ref": {branch}, "source": {"api"}, "username": {x.s.User},
 				"created_after": {since}}, "ref", branch)
 		}},
 		{"a release, by its tag", func() (int, error) {
-			r, err := c.write(ctx, http.MethodPost, project+"/releases", map[string]any{"tag_name": branch, "ref": branch})
+			r, err := x.c.write(ctx, http.MethodPost, project+"/releases", map[string]any{"tag_name": branch, "ref": branch})
 			return r.status, err
 		}, func() (bool, error) {
-			r, err := c.get(ctx, project+"/releases/"+branch, nil, nil)
+			r, err := x.c.get(ctx, project+"/releases/"+branch, nil, nil)
 			return err == nil && r.status == http.StatusOK, err
 		}},
 	}
@@ -990,21 +1019,21 @@ func spikeM(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 				time.Sleep(250 * time.Millisecond)
 			}
 		}
-		p.Sayf("%s: created with status %d; found by reading: %t, after %d ms", ck.what, status, found, time.Since(start).Milliseconds())
+		x.p.Sayf("%s: created with status %d; found by reading: %t, after %d ms", ck.what, status, found, time.Since(start).Milliseconds())
 	}
 	// The spike's pipeline runs nothing the plan needs; it is canceled.
-	if r, err := c.get(ctx, project+"/pipelines", url.Values{"ref": {branch}, "source": {"api"}}, nil); err == nil && r.status == http.StatusOK {
+	if r, err := x.c.get(ctx, project+"/pipelines", url.Values{"ref": {branch}, "source": {"api"}}, nil); err == nil && r.status == http.StatusOK {
 		var rows []struct {
 			ID int64 `json:"id"`
 		}
 		_ = json.Unmarshal(r.body, &rows)
 		for _, pl := range rows {
-			p.Redactor().Known(redact.KindID, itoa(pl.ID))
-			_, _ = c.write(ctx, http.MethodPost, project+"/pipelines/"+itoa(pl.ID)+"/cancel", nil)
+			x.p.Redactor().Known(redact.KindID, itoa(pl.ID))
+			_, _ = x.c.write(ctx, http.MethodPost, project+"/pipelines/"+itoa(pl.ID)+"/cancel", nil)
 		}
 	}
 	// The draft would be published by the plan's review; it is removed.
-	r, err := c.get(ctx, project+"/merge_requests/"+itoa(s.MR)+"/draft_notes", nil, nil)
+	r, err := x.c.get(ctx, project+"/merge_requests/"+itoa(x.s.MR)+"/draft_notes", nil, nil)
 	if err == nil && r.status == http.StatusOK {
 		var drafts []struct {
 			ID   int64  `json:"id"`
@@ -1012,39 +1041,39 @@ func spikeM(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		}
 		_ = json.Unmarshal(r.body, &drafts)
 		for _, d := range drafts {
-			if strings.HasPrefix(d.Note, "Spike M draft") {
-				p.Redactor().Known(redact.KindID, itoa(d.ID))
-				_, _ = c.send(ctx, http.MethodDelete, project+"/merge_requests/"+itoa(s.MR)+"/draft_notes/"+itoa(d.ID), nil, nil, nil)
+			if strings.HasPrefix(d.Note, "Settle probe draft") {
+				x.p.Redactor().Known(redact.KindID, itoa(d.ID))
+				_, _ = x.c.send(ctx, http.MethodDelete, project+"/merge_requests/"+itoa(x.s.MR)+"/draft_notes/"+itoa(d.ID), nil, nil, nil)
 			}
 		}
 	}
 	return nil
 }
 
-// ------------------------------------------------------------ spike R
+// ------------------------------------------------------------ the merge status check
 
-// spikeR asks whether reading a merge request is what makes GitLab work
-// out whether it can merge (§18 row 136). It opens a merge request of its
-// own and watches it settle, pushes to it, watches it through the
-// listing, which the source says never starts the check, and then
-// through single reads, which it says do. Its commits skip CI.
-func spikeR(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) error {
-	project := "projects/" + itoa(s.ID)
-	branch := "spike-r-" + s.Name[len(s.Name)-6:]
+// askMergeStatusCheck asks whether reading a merge request is what makes
+// GitLab work out whether it can merge. It opens a merge request of its own
+// and watches it settle, pushes to it, watches it through the listing, which
+// the source says never starts the check, and then through single reads,
+// which it says do. Its commits skip CI.
+func (x spikeRun) askMergeStatusCheck(ctx context.Context) error {
+	project := "projects/" + itoa(x.s.ID)
+	branch := "merge-status-probe-" + x.s.Name[len(x.s.Name)-6:]
 	commit := func(body map[string]any) error {
-		body["branch"], body["commit_message"] = branch, "Spike R commit [skip ci]"
-		r, err := c.write(ctx, http.MethodPost, project+"/repository/commits", body)
+		body["branch"], body["commit_message"] = branch, "Merge status probe commit [skip ci]"
+		r, err := x.c.write(ctx, http.MethodPost, project+"/repository/commits", body)
 		if err == nil && r.status != http.StatusCreated {
 			err = fmt.Errorf("a commit answered %d", r.status)
 		}
 		return err
 	}
-	if err := commit(map[string]any{"start_branch": s.Default,
-		"actions": []any{map[string]any{"action": "create", "file_path": "spike-r.txt", "content": "r\n"}}}); err != nil {
+	if err := commit(map[string]any{"start_branch": x.s.Default,
+		"actions": []any{map[string]any{"action": "create", "file_path": "merge-status-probe.txt", "content": "first\n"}}}); err != nil {
 		return err
 	}
-	r, err := c.write(ctx, http.MethodPost, project+"/merge_requests", map[string]any{"source_branch": branch,
-		"target_branch": s.Default, "title": "Spike R merge request"})
+	r, err := x.c.write(ctx, http.MethodPost, project+"/merge_requests", map[string]any{"source_branch": branch,
+		"target_branch": x.s.Default, "title": "Merge status probe merge request"})
 	if err != nil {
 		return err
 	}
@@ -1057,13 +1086,13 @@ func spikeR(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 	path := project + "/merge_requests/" + itoa(mr.IID)
 	single := func() (string, error) {
 		var one mergeStatus
-		err := c.decode(ctx, path, nil, &one)
+		err := x.c.decode(ctx, path, nil, &one)
 		return one.String(), err
 	}
 	// with_labels_details only keeps the listing out of GitLab's cache.
 	inListing := func() (string, error) {
 		var rows []mergeStatus
-		err := c.decode(ctx, project+"/merge_requests", url.Values{"iids[]": {itoa(mr.IID)}, "with_labels_details": {"true"}}, &rows)
+		err := x.c.decode(ctx, project+"/merge_requests", url.Values{"iids[]": {itoa(mr.IID)}, "with_labels_details": {"true"}}, &rows)
 		if err == nil && len(rows) != 1 {
 			err = fmt.Errorf("the listing has %d rows for one merge request", len(rows))
 		}
@@ -1072,24 +1101,24 @@ func spikeR(ctx context.Context, c spikeClient, s scratch, p *redact.Printer) er
 		}
 		return rows[0].String(), nil
 	}
-	if err := watchMergeStatus(p, "a new merge request, read singly", single); err != nil {
+	if err := watchMergeStatus(x.p, "a new merge request, read singly", single); err != nil {
 		return err
 	}
-	if err := commit(map[string]any{"actions": []any{map[string]any{"action": "update", "file_path": "spike-r.txt",
-		"content": "r2\n"}}}); err != nil {
+	if err := commit(map[string]any{"actions": []any{map[string]any{"action": "update", "file_path": "merge-status-probe.txt",
+		"content": "second\n"}}}); err != nil {
 		return err
 	}
-	if err := watchMergeStatus(p, "after a push, through the listing", inListing); err != nil {
+	if err := watchMergeStatus(x.p, "after a push, through the listing", inListing); err != nil {
 		return err
 	}
-	if err := watchMergeStatus(p, "then read singly", single); err != nil {
+	if err := watchMergeStatus(x.p, "then read singly", single); err != nil {
 		return err
 	}
-	_, err = c.write(ctx, http.MethodPut, path, map[string]any{"state_event": "close"})
+	_, err = x.c.write(ctx, http.MethodPut, path, map[string]any{"state_event": "close"})
 	return err
 }
 
-// mergeStatus is what spike R reads of a merge request.
+// mergeStatus is what the merge-status spike reads of a merge request.
 type mergeStatus struct {
 	Status       string `json:"detailed_merge_status"`
 	HasConflicts bool   `json:"has_conflicts"`

@@ -8,11 +8,11 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// The Destructive kind (§4.3): what GitLab cannot restore. The tools
-// that reach here exist only when GITLAB_MCP_ENABLE_DESTRUCTIVE is on,
-// and register refuses every call without confirm: true. Each delete
-// holds a witness from the caller's read (§4.6) and reads afterwards to
-// report what is gone (§4.11).
+// The Destructive kind: what GitLab cannot restore. The tools that
+// reach here exist only when GITLAB_MCP_ENABLE_DESTRUCTIVE is on, and
+// register refuses every call without confirm: true. Each delete holds
+// a witness from the caller's read and reads afterwards to report what
+// is gone.
 
 // BranchDeletion is delete_branch's request.
 type BranchDeletion struct {

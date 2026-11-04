@@ -15,9 +15,9 @@ type secretRule struct {
 // their bodies contain base64 that later rules could match piecemeal;
 // JWTs before bearer headers, so a bearer JWT is one mask, not two.
 //
-// GitLab masks only the CI variables marked masked (§4.1.4); a token
-// echoed by a script, or printed by a tool on failure, reaches the log
-// as it is. These are the shapes that turn up that way.
+// GitLab masks only the CI variables marked masked; a token echoed by a
+// script, or printed by a tool on failure, reaches the log as it is.
+// These are the shapes that turn up that way.
 var secretRules = []secretRule{
 	{name: "private-key", re: regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----|\z)`)},
 	{name: "gitlab-token", re: token},

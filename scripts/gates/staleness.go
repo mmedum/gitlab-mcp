@@ -7,11 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -46,24 +44,18 @@ func staleness(out io.Writer, args []string) error {
 	return nil
 }
 
-// Documents the rules read by name.
+// Documents the rules read by name. CONTRIBUTING.md is where a
+// maintainer learns each gate and the development override.
 const (
-	stalenessArch      = "docs/architecture.md"
-	stalenessConfigDoc = "docs/configuration.md"
-	stalenessDevDoc    = "docs/development.md"
-	stalenessSetupDoc  = "docs/setup.md"
+	stalenessConfigDoc       = "docs/configuration.md"
+	stalenessContributingDoc = "CONTRIBUTING.md"
+	stalenessSetupDoc        = "docs/setup.md"
 )
 
 // stalenessInputs is everything the rules read, gathered once so the
 // rules are pure functions a test can feed.
 type stalenessInputs struct {
-	docs     map[string]string // repository path → text
-	exists   func(rel string) bool
-	topLevel map[string]bool // top-level names git would commit
-	// packages are the module's Go package directories, slash-separated
-	// and relative to the root; hasGo says which directories hold Go.
-	packages []string
-	hasGo    func(rel string) bool
+	docs map[string]string // repository path → text
 	// configVars are the variables internal/config says a person
 	// running the server may set; devVars are its development
 	// overrides.
@@ -80,8 +72,6 @@ type stalenessInputs struct {
 	// the shipped Go changed since it, a dependency bump in go.mod aside.
 	newestTag    string
 	changedSince []string
-	// built is whether any non-test Go file exists under internal/.
-	built bool
 	// tools are the built binary's tools with every flag and toolset
 	// on; toolsErr says why they could not be read.
 	tools    []string
@@ -106,34 +96,22 @@ func (r *stalenessReport) add(read string, problems []string) {
 
 func stalenessCheck(in stalenessInputs) stalenessReport {
 	var r stalenessReport
-	arch := in.docs[stalenessArch]
 
-	n, p := stalenessPackageMap(in.docs["CLAUDE.md"], in.packages, in.exists, in.hasGo)
-	r.add(fmt.Sprintf("package map: %d listed paths, %d packages", n, len(in.packages)), p)
-
-	n, p = stalenessPaths(in.docs, in.exists, in.topLevel)
-	r.add(fmt.Sprintf("paths: %d repository paths named", n), p)
-
-	n, p = stalenessEnv(in.docs[stalenessConfigDoc], in.docs[stalenessDevDoc], in.configVars, in.devVars, in.removedVars)
+	n, p := stalenessEnv(in.docs[stalenessConfigDoc], in.docs[stalenessContributingDoc], in.configVars, in.devVars, in.removedVars)
 	r.add(fmt.Sprintf("settings: %d variables", n), p)
 
 	r.add("profile rule: "+stalenessConfigDoc, stalenessProfileRule(in.docs[stalenessConfigDoc]))
 
-	n, p = stalenessGates(in.docs[stalenessDevDoc], in.commands)
+	n, p = stalenessGates(in.docs[stalenessContributingDoc], in.commands)
 	r.add(fmt.Sprintf("gates: %d commands", n), p)
 
-	r.add("status line", stalenessStatus(arch, in.docs["CHANGELOG.md#all"], in.newestTag, in.built))
-
 	r.add(fmt.Sprintf("changes since %s", cmp.Or(in.newestTag, "the first tag")),
-		stalenessChangedSinceTag(in.docs["CHANGELOG.md"], in.docs["CHANGELOG.md#all"], in.newestTag, in.changedSince))
+		stalenessChangedSinceTag(in.docs[changelogFile], in.newestTag, in.changedSince))
 
 	n, p = stalenessNoVersionInProse(in.docs)
 	r.add(fmt.Sprintf("version in prose: %d documents", n), p)
 
-	n, p = stalenessToolCounts(arch, in.tools, in.toolsErr)
-	r.add(fmt.Sprintf("§8 tool counts: %d table rows", n), p)
-
-	n, p = stalenessReadmeTools(in.docs["README.md"], in.tools)
+	n, p = stalenessReadmeTools(in.docs["README.md"], in.tools, in.toolsErr)
 	r.add(fmt.Sprintf("README tool table: %d rows", n), p)
 
 	n, p = stalenessProseCounts(in.docs)
@@ -144,10 +122,11 @@ func stalenessCheck(in stalenessInputs) stalenessReport {
 	return r
 }
 
-// stalenessDocs are the documents read besides docs/*.md. CHANGELOG.md
-// is reduced to its [Unreleased] section for every rule but the status
-// line: older entries are history, correctly describing what was true.
-var stalenessDocs = []string{"README.md", "CLAUDE.md", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md"}
+// stalenessDocs are the documents read besides docs/*.md. A rule reads
+// only the CHANGELOG's [Unreleased] section unless it needs the release
+// sections: older entries are history, correctly describing what was
+// true.
+var stalenessDocs = []string{"README.md", "CLAUDE.md", "CONTRIBUTING.md", "SECURITY.md", changelogFile}
 
 func stalenessGather(root string, args []string) (stalenessInputs, error) {
 	var in stalenessInputs
@@ -165,32 +144,6 @@ func stalenessGather(root string, args []string) (stalenessInputs, error) {
 		}
 		in.docs[name] = string(b)
 	}
-	if c, ok := in.docs["CHANGELOG.md"]; ok {
-		in.docs["CHANGELOG.md"] = stalenessUnreleased(c)
-		in.docs["CHANGELOG.md#all"] = c
-	}
-	in.exists = func(rel string) bool {
-		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
-		return err == nil
-	}
-	in.hasGo = func(rel string) bool {
-		m, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(rel), "*.go"))
-		return len(m) > 0
-	}
-	files, err := gitx.Files(root)
-	if err != nil {
-		return in, err
-	}
-	in.topLevel = map[string]bool{}
-	for _, f := range files {
-		first, _, _ := strings.Cut(f, "/")
-		in.topLevel[first] = true
-	}
-	in.packages, err = stalenessGoList(root)
-	if err != nil {
-		return in, err
-	}
-	in.built = stalenessBuilt(root)
 	in.configVars = config.EnvVars()
 	in.devVars = config.DevVars()
 	in.removedVars = config.RemovedVars()
@@ -200,8 +153,8 @@ func stalenessGather(root string, args []string) (stalenessInputs, error) {
 	in.commands = slices.Sorted(maps.Keys(commands))
 	in.newestTag = stalenessNewestTag(root)
 	if in.newestTag != "" {
-		in.changedSince, err = stalenessShippedSince(root, "v"+in.newestTag)
-		if err != nil {
+		var err error
+		if in.changedSince, err = stalenessShippedSince(root, "v"+in.newestTag); err != nil {
 			return in, err
 		}
 	}
@@ -246,49 +199,6 @@ func stalenessDumpTools(raw []byte) ([]string, error) {
 	}
 	slices.Sort(names)
 	return names, nil
-}
-
-// stalenessGoList is every package in the module, tagged ones included,
-// as slash-separated directories relative to root.
-func stalenessGoList(root string) ([]string, error) {
-	cmd := exec.Command("go", "list", "-tags", "live,evals", "-e", "-f", "{{.Dir}}", "./...")
-	cmd.Dir = root
-	b, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("go list: %w", err)
-	}
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for line := range strings.Lines(string(b)) {
-		dir := strings.TrimSpace(line)
-		if dir == "" {
-			continue
-		}
-		rel, err := filepath.Rel(abs, dir)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, filepath.ToSlash(rel))
-	}
-	return out, nil
-}
-
-// stalenessBuilt reports whether internal/ holds any non-test Go.
-func stalenessBuilt(root string) bool {
-	built := false
-	_ = filepath.WalkDir(filepath.Join(root, "internal"), func(p string, d fs.DirEntry, err error) error {
-		if err != nil || built {
-			return fs.SkipAll
-		}
-		if !d.IsDir() && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") {
-			built = true
-		}
-		return nil
-	})
-	return built
 }
 
 // stalenessShippedSince are the shipped files changed since tag, a
@@ -337,124 +247,30 @@ func stalenessUnreleased(changelog string) string {
 	return s
 }
 
-var stalenessBacktickDir = regexp.MustCompile("`([A-Za-z0-9_./-]+/)`")
+// stalenessUnreleasedFrom is stalenessUnreleased and the file line its
+// first line sits on, so a rule reading it reports the file's lines. It
+// finds the heading where MarkdownSection does: after a newline, else
+// opening the file.
+func stalenessUnreleasedFrom(changelog string) (string, int) {
+	above := 0
+	if i := strings.Index(changelog, "\n## [Unreleased]\n"); i >= 0 {
+		above = strings.Count(changelog[:i+1], "\n")
+	}
+	return stalenessUnreleased(changelog), above + 2
+}
 
-// stalenessPackageMap holds CLAUDE.md "Where things go" against the
-// module's packages, both ways. A bare `name/` in a bullet is relative
-// to the path before it in the same bullet. A listed directory holding
-// no Go of its own covers the packages beneath it.
-func stalenessPackageMap(claude string, packages []string, exists, hasGo func(string) bool) (int, []string) {
-	section, ok := gatekit.MarkdownSection(claude, "## Where things go")
-	if !ok {
-		return 0, []string{`CLAUDE.md has no "## Where things go" section`}
-	}
-	var listed []string
-	for bullet := range strings.SplitSeq(section, "\n- ") {
-		prev := ""
-		for _, m := range stalenessBacktickDir.FindAllStringSubmatch(bullet, -1) {
-			p := m[1]
-			if !strings.Contains(strings.TrimSuffix(p, "/"), "/") && prev != "" && !exists(strings.TrimSuffix(p, "/")) {
-				p = prev + p
-			}
-			listed = append(listed, strings.TrimSuffix(p, "/"))
-			prev = p
-		}
-	}
-	var problems []string
-	problems = append(problems, gatekit.Floor(`paths in CLAUDE.md "Where things go"`, len(listed), 20)...)
-	problems = append(problems, gatekit.Floor("packages from go list", len(packages), 10)...)
-	for _, l := range listed {
-		if !exists(l) {
-			problems = append(problems, "CLAUDE.md \"Where things go\" lists "+l+"/, which does not exist")
-		}
-	}
-	for _, pkg := range packages {
-		covered := slices.Contains(listed, pkg)
-		for _, l := range listed {
-			if !covered && strings.HasPrefix(pkg, l+"/") && !hasGo(l) {
-				covered = true
-			}
-		}
-		if !covered {
-			problems = append(problems, "CLAUDE.md \"Where things go\" does not name the package "+pkg+"/")
-		}
-	}
-	return len(listed), problems
+// stalenessUnfence blanks fenced code blocks and keeps their line
+// breaks, so a line found below one is reported as the file's line.
+func stalenessUnfence(text string) string {
+	return stalenessFence.ReplaceAllStringFunc(text, func(block string) string {
+		return strings.Repeat("\n", strings.Count(block, "\n"))
+	})
 }
 
 var (
 	stalenessCodeSpan = regexp.MustCompile("`([^`\n]+)`")
-	stalenessMDLink   = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 	stalenessFence    = regexp.MustCompile("(?ms)^\\s*```.*?^\\s*```")
 )
-
-// stalenessPaths stats every repository path the documents name, in a
-// code span or a relative link. A span's first segment must be a name
-// git would commit, which is what keeps `users/me` and `api/v4` from
-// reading as paths. Bare file names are checked for .md and .yml only:
-// a document and a workflow, the two a sentence names without a
-// directory. A bare .yaml is usually somebody else's file.
-func stalenessPaths(docs map[string]string, exists func(string) bool, topLevel map[string]bool) (int, []string) {
-	var problems []string
-	examined := 0
-	for _, doc := range slices.Sorted(maps.Keys(docs)) {
-		if strings.Contains(doc, "#") {
-			continue
-		}
-		text := stalenessFence.ReplaceAllString(docs[doc], "")
-		dir := path.Dir(doc)
-		for _, m := range stalenessMDLink.FindAllStringSubmatch(text, -1) {
-			target := m[1]
-			if strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") || strings.HasPrefix(target, "#") {
-				continue
-			}
-			target, _, _ = strings.Cut(target, "#")
-			examined++
-			if !exists(path.Clean(path.Join(dir, target))) {
-				problems = append(problems, fmt.Sprintf("%s links to %s, which does not exist", doc, target))
-			}
-		}
-		for _, m := range stalenessCodeSpan.FindAllStringSubmatch(text, -1) {
-			p, ok := stalenessPathLike(m[1])
-			if !ok {
-				continue
-			}
-			var candidates []string
-			if strings.Contains(p, "/") {
-				first, _, _ := strings.Cut(p, "/")
-				if !topLevel[first] {
-					continue
-				}
-				candidates = []string{p, path.Join(dir, p)}
-			} else {
-				ext := path.Ext(p)
-				if ext != ".md" && ext != ".yml" {
-					continue
-				}
-				candidates = []string{p, path.Join(dir, p), ".github/workflows/" + p, ".github/" + p,
-					".github/ISSUE_TEMPLATE/" + p}
-			}
-			examined++
-			if !slices.ContainsFunc(candidates, exists) {
-				problems = append(problems, fmt.Sprintf("%s names %s, which does not exist", doc, p))
-			}
-		}
-	}
-	problems = append(problems, gatekit.Floor("repository paths named in the documents", examined, 30)...)
-	return examined, problems
-}
-
-// stalenessPathLike cleans a code span into a candidate path.
-func stalenessPathLike(s string) (string, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" || strings.ContainsAny(s, " ~$*{}<>@=:…,()[]'\"|") || strings.Contains(s, "...") ||
-		strings.HasPrefix(s, "-") || strings.HasPrefix(s, "/") || strings.HasPrefix(s, ".") && !strings.HasPrefix(s, ".g") {
-		return "", false
-	}
-	s, _, _ = strings.Cut(s, "#")
-	s = strings.TrimSuffix(s, "/")
-	return s, s != ""
-}
 
 var stalenessEnvRef = regexp.MustCompile(`\b` + config.EnvPrefix + `[A-Z0-9_]*[A-Z0-9]\b`)
 
@@ -473,9 +289,8 @@ func stalenessEnvNames(doc string) []string {
 
 // stalenessEnv holds docs/configuration.md to the variables
 // internal/config says the server reads, both ways, and the development
-// overrides to docs/development.md alone: a person configuring the
-// server is never offered one. A removed variable may be named, to say
-// it is gone.
+// overrides to CONTRIBUTING.md alone: a person configuring the server is
+// never offered one. A removed variable may be named, to say it is gone.
 func stalenessEnv(doc, devDoc string, vars, devVars, removed []string) (int, []string) {
 	if doc == "" {
 		return 0, []string{stalenessConfigDoc + " is missing, and it is where every setting is documented"}
@@ -483,7 +298,7 @@ func stalenessEnv(doc, devDoc string, vars, devVars, removed []string) (int, []s
 	problems := gatekit.Floor("variables in internal/config.Vars", len(vars), 10)
 	for _, v := range devVars {
 		if !slices.Contains(stalenessEnvNames(devDoc), v) {
-			problems = append(problems, stalenessDevDoc+" does not document the development override "+v)
+			problems = append(problems, stalenessContributingDoc+" does not document the development override "+v)
 		}
 	}
 	documented := map[string]bool{}
@@ -498,7 +313,7 @@ func stalenessEnv(doc, devDoc string, vars, devVars, removed []string) (int, []s
 	for _, v := range slices.Sorted(maps.Keys(documented)) {
 		switch {
 		case slices.Contains(devVars, v):
-			problems = append(problems, stalenessConfigDoc+" documents "+v+", a development override that belongs in "+stalenessDevDoc+" only")
+			problems = append(problems, stalenessConfigDoc+" documents "+v+", a development override that belongs in "+stalenessContributingDoc+" only")
 		case !slices.Contains(vars, v) && !slices.Contains(removed, v):
 			problems = append(problems, stalenessConfigDoc+" documents "+v+", which the server does not read")
 		}
@@ -518,93 +333,39 @@ func stalenessProfileRule(doc string) []string {
 
 var stalenessGateRef = regexp.MustCompile("`(?:go run \\./scripts/)?gates ([a-z][a-z0-9-]*)")
 
-// stalenessGates holds docs/development.md to the gate registry, both
+// stalenessGates holds CONTRIBUTING.md to the gate registry, both
 // ways: every command named, in a code span or as `gates <name>`, and
 // every `gates <name>` it shows a command the registry has.
 func stalenessGates(doc string, names []string) (int, []string) {
 	if doc == "" {
-		return len(names), []string{stalenessDevDoc + " is missing, and it is where each gate is documented"}
+		return len(names), []string{stalenessContributingDoc + " is missing, and it is where each gate is documented"}
 	}
 	problems := gatekit.Floor("gates in the registry", len(names), 20)
 	for _, name := range names {
 		if !strings.Contains(doc, "`"+name+"`") && !strings.Contains(doc, "gates "+name) {
-			problems = append(problems, stalenessDevDoc+" does not name the "+name+" gate")
+			problems = append(problems, stalenessContributingDoc+" does not name the "+name+" gate")
 		}
 	}
 	for _, m := range stalenessGateRef.FindAllStringSubmatch(doc, -1) {
 		if !slices.Contains(names, m[1]) {
-			problems = append(problems, stalenessDevDoc+" shows `gates "+m[1]+"`, which the registry does not have")
+			problems = append(problems, stalenessContributingDoc+" shows `gates "+m[1]+"`, which the registry does not have")
 		}
 	}
 	return len(names), problems
 }
 
-var (
-	stalenessStatusLine   = regexp.MustCompile(`(?m)^\*\*Status[^*]*\*\*`)
-	stalenessVersion      = regexp.MustCompile(`\bv?(\d+\.\d+\.\d+)\b`)
-	stalenessHeading      = regexp.MustCompile(`(?m)^## \[(\d+\.\d+\.\d+)\]`)
-	stalenessNothingTag   = regexp.MustCompile(`(?i)nothing\b[^.]*\btagged|not (?:yet )?tagged|untagged`)
-	stalenessNothingBuilt = regexp.MustCompile(`(?i)design only|nothing\b[^.]*\bbuilt`)
-)
-
-// stalenessStatus holds the design document's status line against the
-// newest tag or CHANGELOG heading, and against whether code exists. The
-// heading is accepted too, or the check fails on the release commit that
-// writes the new number before the tag exists.
-func stalenessStatus(arch, changelog, tag string, built bool) []string {
-	line := stalenessStatusLine.FindString(arch)
-	if line == "" {
-		return []string{stalenessArch + " has no **Status: ...** line; the check is reading the wrong file"}
-	}
-	var known []string
-	if tag != "" {
-		known = append(known, tag)
-	}
-	if m := stalenessHeading.FindStringSubmatch(changelog); m != nil {
-		known = append(known, m[1])
-	}
-	var claims []string
-	for _, m := range stalenessVersion.FindAllStringSubmatch(line, -1) {
-		claims = append(claims, m[1])
-	}
-	var problems []string
-	switch {
-	case len(known) == 0:
-		if len(claims) > 0 {
-			problems = append(problems, fmt.Sprintf("the status line claims %v and nothing is tagged or released", claims))
-		}
-		if !stalenessNothingTag.MatchString(line) {
-			problems = append(problems, "nothing is tagged, and the status line does not say so")
-		}
-	default:
-		if stalenessNothingTag.MatchString(line) {
-			problems = append(problems, fmt.Sprintf("the status line says nothing is tagged; %v is", known))
-		}
-		ok := false
-		for _, c := range claims {
-			ok = ok || slices.Contains(known, c)
-		}
-		if !ok {
-			problems = append(problems, fmt.Sprintf("the status line names %v; the newest release is %s",
-				claims, strings.Join(known, " or ")))
-		}
-	}
-	if built && stalenessNothingBuilt.MatchString(line) {
-		problems = append(problems, "the status line says nothing is built, and internal/ holds code")
-	}
-	return problems
-}
+var stalenessHeading = regexp.MustCompile(`(?m)^## \[(\d+\.\d+\.\d+)\]`)
 
 // stalenessChangedSinceTag holds that shipped Go changed since the newest
 // tag comes with CHANGELOG entries under [Unreleased]: a release cut from
 // here would otherwise publish an empty note over real changes. The
 // release commit moves them under a version heading the tag does not yet
 // have, and those count too.
-func stalenessChangedSinceTag(unreleased, changelog, tag string, changed []string) []string {
+func stalenessChangedSinceTag(changelog, tag string, changed []string) []string {
 	if tag == "" || len(changed) == 0 {
 		return nil
 	}
-	notes := unreleased
+	notes := stalenessUnreleased(changelog)
 	if loc := stalenessHeading.FindStringSubmatchIndex(changelog); loc != nil && changelog[loc[2]:loc[3]] != tag {
 		cut := changelog[loc[1]:]
 		if end := strings.Index(cut, "\n## "); end >= 0 {
@@ -622,13 +383,11 @@ func stalenessChangedSinceTag(unreleased, changelog, tag string, changed []strin
 }
 
 // stalenessProseDocs are held to carrying no version: a badge shows it.
-// architecture.md is excluded because its pin table and evidence log
-// record versions as facts about a date, and the CHANGELOG is where
-// versions belong.
+// The CHANGELOG is excluded because it is where versions belong.
 func stalenessProseDocs(docs map[string]string) []string {
 	var out []string
 	for name := range docs {
-		if name == stalenessArch || strings.HasPrefix(name, "CHANGELOG.md") {
+		if name == changelogFile {
 			continue
 		}
 		out = append(out, name)
@@ -643,7 +402,7 @@ func stalenessNoVersionInProse(docs map[string]string) (int, []string) {
 	names := stalenessProseDocs(docs)
 	var problems []string
 	for _, name := range names {
-		text := stalenessFence.ReplaceAllString(docs[name], "")
+		text := stalenessUnfence(docs[name])
 		for i, line := range strings.Split(text, "\n") {
 			t := strings.TrimSpace(line)
 			if strings.HasPrefix(t, "[!") || strings.Contains(t, "://") {
@@ -660,73 +419,6 @@ func stalenessNoVersionInProse(docs map[string]string) (int, []string) {
 	return len(names), problems
 }
 
-var (
-	stalenessToolSentence = regexp.MustCompile(`(?i)\b([a-z0-9-]+) tools\. With the default toolsets: ([a-z0-9-]+) by default, ` +
-		`([a-z0-9-]+) in read-only mode, ([a-z0-9-]+) with Ship and Destructive both enabled\. ` +
-		`Every toolset and flag on registers all ([a-z0-9-]+)\.`)
-	stalenessToolRow = regexp.MustCompile("(?m)^\\| `([a-z_]+)` \\| ([A-Za-z]+) \\| ([a-z]+) \\|")
-	stalenessSpace   = regexp.MustCompile(`\s+`)
-)
-
-// stalenessToolCounts holds §8's sentence against §8's table, and the
-// built binary's tools against the table's names: a tool the binary
-// registers that the design does not list is a design nobody updated.
-func stalenessToolCounts(arch string, tools []string, toolsErr error) (int, []string) {
-	section, _ := gatekit.MarkdownSection(arch, "## 8. Tool surface")
-	if i := strings.Index(section, "\n### 8a"); i >= 0 {
-		section = section[:i]
-	}
-	rows := stalenessToolRow.FindAllStringSubmatch(section, -1)
-	if len(rows) < 20 {
-		return len(rows), []string{fmt.Sprintf("§8's tool table has %d rows; the check is reading the wrong section", len(rows))}
-	}
-	var names, problems []string
-	def, readOnly, shipDestr := 0, 0, 0
-	for _, r := range rows {
-		names = append(names, r[1])
-		if r[3] != "default" {
-			continue
-		}
-		switch r[2] {
-		case "Read":
-			readOnly++
-			def++
-			shipDestr++
-		case "Write", "Adding":
-			def++
-			shipDestr++
-		case "Ship", "Destructive":
-			shipDestr++
-		default:
-			problems = append(problems, fmt.Sprintf("§8 gives %s the kind %q, which is no kind this server has", r[1], r[2]))
-		}
-	}
-	m := stalenessToolSentence.FindStringSubmatch(stalenessSpace.ReplaceAllString(section, " "))
-	if m == nil {
-		problems = append(problems, "§8 states no tool counts in the form \"N tools. With the default toolsets: N by default, "+
-			"N in read-only mode, N with Ship and Destructive both enabled. Every toolset and flag on registers all N.\"; "+
-			"this rule holds nothing")
-	} else {
-		want := []int{len(rows), def, readOnly, shipDestr, len(rows)}
-		labels := []string{"tools", "by default", "in read-only mode", "with Ship and Destructive", "with everything on"}
-		for i, w := range want {
-			got, ok := stalenessNumber(m[i+1])
-			if !ok || got != w {
-				problems = append(problems, fmt.Sprintf("§8 says %q %s; the table says %d", m[i+1], labels[i], w))
-			}
-		}
-	}
-	if toolsErr != nil {
-		problems = append(problems, "the built binary's tools could not be read: "+toolsErr.Error())
-	}
-	for _, t := range tools {
-		if !slices.Contains(names, t) {
-			problems = append(problems, "the binary registers "+t+", which §8's table does not list")
-		}
-	}
-	return len(rows), problems
-}
-
 // stalenessReadmeTool is a row of a table whose first column holds a
 // tool name in backticks.
 var stalenessReadmeTool = regexp.MustCompile("^\\| `([a-z_]+)` \\|")
@@ -737,7 +429,7 @@ var stalenessReadmeTool = regexp.MustCompile("^\\| `([a-z_]+)` \\|")
 // where a person learns what the server does, so a tool it omits does
 // not exist for them, and one it lists that the binary lacks is a
 // promise nothing keeps.
-func stalenessReadmeTools(readme string, tools []string) (int, []string) {
+func stalenessReadmeTools(readme string, tools []string, toolsErr error) (int, []string) {
 	listed, found := stalenessTable(readme, "Tool")
 	if !found {
 		return 0, []string{"README.md has no table headed | Tool |; this rule holds nothing"}
@@ -749,8 +441,8 @@ func stalenessReadmeTools(readme string, tools []string) (int, []string) {
 		}
 	}
 	problems := gatekit.Floor("rows in README.md's tool table", len(names), 10)
-	if tools == nil {
-		return len(names), problems // the binary's absence is reported by the §8 rule
+	if toolsErr != nil {
+		return len(names), append(problems, "the built binary's tools could not be read: "+toolsErr.Error())
 	}
 	for _, t := range tools {
 		if !slices.Contains(names, t) {
@@ -801,11 +493,16 @@ func stalenessTable(text, first string) ([]string, bool) {
 	return nil, false
 }
 
-// stalenessCountWord is a number a sentence can state about the list
-// under it: two to twenty spelled out, or 2 to 99 in digits. "One" is
+// stalenessCountWords are the counts a sentence may spell out. "One" is
 // left out; "one of them" is too common to read as a count.
-var stalenessCountWord = regexp.MustCompile(`(?i)\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|` +
-	`thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[2-9]|[1-9][0-9])\b`)
+var stalenessCountWords = map[string]int{"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+	"nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+	"seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20}
+
+// stalenessCountWord is a number a sentence can state about the list
+// under it: one of stalenessCountWords, or 2 to 99 in digits.
+var stalenessCountWord = regexp.MustCompile(`(?i)\b(` + strings.Join(slices.Sorted(maps.Keys(stalenessCountWords)), "|") +
+	`|[2-9]|[1-9][0-9])\b`)
 
 // stalenessListItem is a top-level bullet or numbered item.
 var stalenessListItem = regexp.MustCompile(`^(?:[-*]|\d+\.) `)
@@ -818,10 +515,11 @@ func stalenessProseCounts(docs map[string]string) (int, []string) {
 	var problems []string
 	checked := 0
 	for _, name := range slices.Sorted(maps.Keys(docs)) {
-		if strings.Contains(name, "#") {
-			continue
+		text, first := docs[name], 1
+		if name == changelogFile {
+			text, first = stalenessUnreleasedFrom(text)
 		}
-		lines := strings.Split(stalenessFence.ReplaceAllString(docs[name], ""), "\n")
+		lines := strings.Split(stalenessUnfence(text), "\n")
 		for i := 0; i < len(lines); i++ {
 			if !strings.HasSuffix(strings.TrimSpace(lines[i]), ":") {
 				continue
@@ -850,8 +548,8 @@ func stalenessProseCounts(docs map[string]string) (int, []string) {
 				continue
 			}
 			checked++
-			if n, ok := stalenessNumber(strings.ToLower(words[0])); ok && n != items {
-				problems = append(problems, fmt.Sprintf("%s:%d says %q above a list of %d", name, i+1,
+			if n, ok := stalenessNumber(words[0]); ok && n != items {
+				problems = append(problems, fmt.Sprintf("%s:%d says %q above a list of %d", name, first+i,
 					strings.TrimSpace(sentence), items))
 			}
 		}
@@ -874,31 +572,14 @@ func stalenessIntro(lines []string, i int) string {
 	return para
 }
 
-// stalenessNumber reads digits or an English number up to ninety-nine.
+// stalenessNumber reads a count stalenessCountWord matched, in digits or
+// spelled out in either case.
 func stalenessNumber(s string) (int, bool) {
-	if n, err := strconv.Atoi(s); err == nil {
+	if n, ok := stalenessCountWords[strings.ToLower(s)]; ok {
 		return n, true
 	}
-	units := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-		"eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"}
-	tens := []string{"", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"}
-	s = strings.ToLower(s)
-	if i := slices.Index(units, s); i >= 0 {
-		return i, true
-	}
-	t, u, _ := strings.Cut(s, "-")
-	ti := slices.Index(tens, t)
-	if ti < 2 {
-		return 0, false
-	}
-	if u == "" {
-		return ti * 10, true
-	}
-	ui := slices.Index(units, u)
-	if ui < 1 || ui > 9 {
-		return 0, false
-	}
-	return ti*10 + ui, true
+	n, err := strconv.Atoi(s)
+	return n, err == nil
 }
 
 // stalenessSetupMarker brackets one mode's setup block in docs/setup.md.

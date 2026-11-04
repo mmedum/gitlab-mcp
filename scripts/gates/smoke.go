@@ -18,7 +18,7 @@ import (
 
 // The smoke gate drives the shipped binary over stdio, the way a client
 // does, with no credentials and on a host that cannot resolve. It is the
-// check that the artifact speaks the protocol at all (the standard's §11):
+// check that the artifact speaks the protocol at all:
 //
 //   - it negotiates at two protocol revisions, each answered with itself,
 //     which is the server's own statement that its SDK supports it;
@@ -62,7 +62,7 @@ func smoke(out io.Writer, args []string) error {
 	return runSmoke(out, executable(args[0]), env, floor)
 }
 
-// readFloor is the thirty-one read tools of §8, which the default
+// readFloor is the server's thirty-one read tools, which the default
 // configuration registers and more.
 const readFloor = 31
 

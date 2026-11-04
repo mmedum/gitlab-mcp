@@ -12,16 +12,23 @@ import (
 )
 
 // The signed-in account's own emoji reactions on an issue, a merge
-// request or a comment on either (§7.2, §18 row 106). GitLab answers
-// every refused reaction with 404, one already there included, and words
-// the reason in the account's language, so the reactions are read first
-// and again after a refusal: an add or a remove that would change nothing
-// is reported unchanged without a write, and no answer's text is read.
-// An add is never repeated; a lost answer is settled by the account's
-// reactions before and after. A remove takes the reaction's id from the
-// read and reads that id back. The item's project is held to the write
-// allow-list. register has already held type to its enum and iid and
-// note_id to at least 1.
+// request or a comment on either. The item's project is held to the
+// write allow-list. register has already held type to its enum and iid
+// and note_id to at least 1.
+//
+// GitLab answers every refused reaction with 404, one already there
+// included, never 409, and words the reason in the account's language;
+// the API docs name no error at all (v19.4.1-ee). So the reactions are
+// read first and again after a refusal: an add or a remove that would
+// change nothing is reported unchanged without a write, and no answer's
+// text is read. An add is never repeated; a lost answer is settled by
+// the account's reactions before and after. A remove takes the
+// reaction's id from the read and reads that id back. A reaction on a
+// comment moves the comment's updated_at. Checked by the live steps "an
+// alias of a reaction already there is refused", "an emoji GitLab does
+// not know is refused" and "a comment edit from before a reaction is
+// refused".
+// https://docs.gitlab.com/api/emoji_reactions/
 
 // maxAwardPages bounds the read of an item's reactions: GitLab lists
 // them oldest first and cannot filter by account.

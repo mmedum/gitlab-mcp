@@ -371,7 +371,7 @@ func (s *Server) isAncestor(ancestor, id int64) bool {
 func (s *Server) projectFor(w http.ResponseWriter, r *http.Request, seg, user string) (*project, bool) {
 	if to, ok := s.moved[strings.ToLower(seg)]; ok {
 		if r.Method != http.MethodGet {
-			// gitlab.com's words, recorded by spike L (2026-09-26).
+			// gitlab.com's words.
 			message(w, http.StatusMethodNotAllowed, "Non GET methods are not allowed for moved projects")
 			return nil, true
 		}
@@ -385,7 +385,8 @@ func (s *Server) projectFor(w http.ResponseWriter, r *http.Request, seg, user st
 			rest = ""
 		}
 		// gitlab.com redirects to the project's numeric id, not its new
-		// path, keeping the rest of the path and the query (spike L).
+		// path, keeping the rest of the path and the query. A dotted or
+		// nested full path, percent-encoded once, is not yet checked live.
 		target := to
 		for _, p := range s.projects {
 			if strings.EqualFold(p.PathWithNamespace, to) {
@@ -414,8 +415,8 @@ func (s *Server) projectFor(w http.ResponseWriter, r *http.Request, seg, user st
 }
 
 func (s *Server) projectJSON(p *project) map[string]any {
-	// A secret field GitLab has leaked through project reads (§3.19) is
-	// served so a test can prove the client never decodes it.
+	// A secret field GitLab sends on project reads is served so a test
+	// can prove the client never decodes it.
 	return withExtra(p.Project, map[string]any{
 		"runners_token":                   "fixture-secret-never-decoded",
 		"ssh_url_to_repo":                 "git@gitlab.example.com:" + p.PathWithNamespace + ".git",

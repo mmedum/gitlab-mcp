@@ -20,7 +20,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/mcpstdio"
 )
 
-// The released tool surface is a contract (CLAUDE.md rule 17). A client
+// The released tool surface is a contract (D-78). A client
 // written against the last release breaks when a tool, resource template,
 // resource or prompt goes, when an input it sends or an output field it
 // reads goes, or when an input it never sent becomes required. Adding is
@@ -35,8 +35,8 @@ import (
 const (
 	baselineFile = "testdata/schema-baseline.json"
 	// surfaceFloor is the fewest tools a real surface carries: the
-	// sixty-six of the committed baseline, frozen in phase 4 with every
-	// flag and toolset on.
+	// sixty-six of the committed baseline, recorded with every flag and
+	// toolset on.
 	surfaceFloor = 66
 )
 
@@ -289,7 +289,7 @@ func schemaDiff(out io.Writer, args []string) error {
 // declare: a **Breaking:** entry there names its tool, or its resource
 // template, in backticks. A version heading there that does not raise
 // the tag's major version is one too, since only a major release may
-// break the surface (CLAUDE.md rule 17).
+// break the surface.
 func undeclaredBreaks(c surfaceChanges, changelog, tag string) ([]string, error) {
 	version := strings.TrimPrefix(tag, "v")
 	unreleased, _, found := strings.Cut(changelog, "\n## ["+version+"]")

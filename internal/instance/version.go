@@ -62,7 +62,11 @@ func (v Version) String() string {
 	return s
 }
 
-// Metadata is what the server keeps from /api/v4/metadata.
+// Metadata is what the server keeps from /api/v4/metadata, which
+// replaces the deprecated /api/v4/version and, like it, needs
+// authentication. Its plan field, from 19.6, is null where plans belong
+// to namespaces, as on gitlab.com, so the tier is probed, never read.
+// https://docs.gitlab.com/api/metadata/
 type Metadata struct {
 	Version    Version
 	Revision   string

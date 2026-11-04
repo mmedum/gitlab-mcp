@@ -16,7 +16,7 @@ import (
 
 // upload_file against the in-memory instance: what it sends, who the
 // result says can open the image, where it may read from, and that a
-// lost answer is not sent again (§7.10). Which files it refuses is
+// lost answer is not sent again. Which files it refuses is
 // internal/localimage's test; here one refusal shows the check runs
 // before anything is sent.
 
@@ -228,7 +228,7 @@ func TestARefusedUploadIsReportedAsGitLabSaid(t *testing.T) {
 }
 
 // An upload is a create: a lost answer is never sent again, and no read
-// can settle it, so the result says what a repeat would leave (§4.5).
+// can settle it, so the result says what a repeat would leave (D-34).
 func TestALostUploadIsNotSentAgain(t *testing.T) {
 	for _, c := range []struct {
 		name           string

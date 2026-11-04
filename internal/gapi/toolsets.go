@@ -8,8 +8,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
 )
 
-// The optional toolsets of phase 3 (docs/architecture.md §7.8): project
-// wikis, snippets, releases, environments and deployments, and activity.
+// The optional toolsets: project wikis, snippets, releases, environments
+// and deployments, and activity.
 
 // ListWikiPages lists a project wiki's pages, without their content.
 // GitLab answers with every page at once; the listing is not paged.
@@ -96,7 +96,11 @@ func (c *Client) GetProjectSnippet(ctx context.Context, p Project, id int64) (*g
 	return &out, err
 }
 
-// SnippetRaw reads a personal snippet's first file as bytes.
+// SnippetRaw reads a personal snippet's first file as bytes. The raw
+// route serves only the first file, which GitLab's snippets page does
+// not say; SnippetFileRaw reads the others. Checked by the live step
+// "a snippet's witness is read once its commit settles".
+// https://docs.gitlab.com/api/snippets/
 func (c *Client) SnippetRaw(ctx context.Context, id int64) ([]byte, error) {
 	var out []byte
 	err := c.Do(ctx, Call{Method: "GET", Path: "snippets/{}/raw", Args: []string{idArg(id)}, Name: "get_snippet"}, &out)
@@ -134,7 +138,7 @@ type SnippetFileCreate struct {
 }
 
 // SnippetCreate is POST /snippets and /projects/:id/snippets. Visibility
-// is always private: the service never sends another (§7.8).
+// is always private: the service never sends another.
 type SnippetCreate struct {
 	Title       string              `json:"title"`
 	Description string              `json:"description,omitempty"`
@@ -337,7 +341,11 @@ func (c *Client) ListDeployments(ctx context.Context, p Project, q DeploymentQue
 }
 
 // EventQuery filters ListEvents. Before and After are days, YYYY-MM-DD,
-// and exclusive.
+// and exclusive. Action takes the stored action, such as created or
+// pushed, which an event shows as opened or pushed to; GitLab's events
+// page shows the difference only in an example. Checked by the live step
+// "project events are filtered by action and date".
+// https://docs.gitlab.com/api/events/
 type EventQuery struct {
 	Action     string
 	TargetType string

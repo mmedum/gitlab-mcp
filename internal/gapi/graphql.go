@@ -10,11 +10,12 @@ import (
 )
 
 // GraphQL is used only where the REST API has no route for an operation
-// (§4.10). Each operation is a literal written here and sent by mutate,
-// which `scripts/gates api-coverage` reads and holds against the list in
-// §8a. mutate goes through Do like any REST call, so the token, the rate
-// model, the refused redirects, a write never repeated and a dry run
-// that sends nothing all hold.
+// (D-09). Each operation is a literal written here, sent by mutate from a
+// function whose doc comment says why REST cannot do it; `scripts/gates
+// api-coverage` requires that comment to mention REST. mutate goes
+// through Do like any REST call, so the token, the rate model, the
+// refused redirects, a write never repeated and a dry run that sends
+// nothing all hold.
 
 // rereviewMutation is mergeRequestReviewerRereview, asking for its own
 // errors only.
@@ -67,7 +68,8 @@ func gid(kind string, id int64) string {
 // review. GitLab sets their review state back to unreviewed, removes
 // their approval if they gave one, notifies them and adds a to-do and a
 // system note (MergeRequests::RequestReviewService). The REST API has no
-// route for it.
+// route for it: GitLab's lib/api and ee/lib/api at 4119fde2 define none,
+// and the merge request API documents only GET …/reviewers.
 func (c *Client) RereviewMergeRequest(ctx context.Context, projectPath string, iid, userID int64) error {
 	var out gitlab.ReviewerRereview
 	vars := map[string]any{"projectPath": projectPath, "iid": strconv.FormatInt(iid, 10), "userId": gid("User", userID)}

@@ -5,32 +5,74 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/mmedum/gitlab-mcp.svg)](https://pkg.go.dev/github.com/mmedum/gitlab-mcp)
 [![License: Apache 2.0](https://img.shields.io/github/license/mmedum/gitlab-mcp)](./LICENSE)
 
-An MCP server for gitlab.com. One binary over stdio, signed in as you.
-It works inside projects: issues,
-merge requests, reviews, the repository and CI. Instance and group
-administration, runners, CI variables and tokens are out of scope.
+An MCP server for gitlab.com. One binary over stdio, signed in as you,
+with your own OAuth application and the token in your OS keyring.
+
+It is for a person with a gitlab.com account who wants an assistant to
+find and read issues, review merge requests, follow CI and make the
+changes they ask for, as them. It works **inside** projects: issues,
+merge requests, reviews, the repository and CI. It does not administer
+an instance or a group, and it does not serve self-managed instances.
 
 Unofficial, and not affiliated with GitLab Inc. See `NOTICE`.
 
+## Goals and non-goals
+
+Goals:
+
+- **Content never steers the assistant through the server.** Issues,
+  reviews, files and job logs come back marked as untrusted data, hidden
+  text is counted, nothing they link to is fetched, and token shapes in
+  CI output are masked.
+- **Nothing it writes runs a command.** A quick action such as `/merge`
+  in a comment is refused or escaped, never executed.
+- **Nothing ships, deletes or reaches further unless you turn it on.**
+  Merging, approving, running CI and deleting are not registered by
+  default, code reaches a protected branch only through a merge request,
+  and writes can be confined to the groups you name.
+- **A write changes only what you read and named.** Writes carry what
+  they read and are refused when it moved, a lost create is settled by
+  reading, and every write takes `dry_run`.
+- **Reads are bounded.** Every read has a budget and says what it left
+  out and how to continue.
+- **Act as you, and log nothing about your work.** Every call runs as
+  the signed-in account, and the logs never carry paths, titles or
+  bodies.
+
+Non-goals:
+
+- **Self-managed instances.** It talks to gitlab.com and nothing else.
+- **Administration.** Instance and group settings, users, runners,
+  access tokens, deploy keys, webhooks and integrations are out.
+- **CI variables and secure files.** Reading them would put secrets in a
+  model's context.
+- **Deleting projects or groups, force pushes and protected-branch
+  settings**, not even behind a switch.
+- **A raw API tool.** Every call is a tool with its own guards; nothing
+  sends an arbitrary REST or GraphQL request.
+- **Events pushed to it.** Webhooks need a listener, and a stdio process
+  has none.
+- **A hosted service.** It speaks stdio only, so Claude on the web and on
+  mobile cannot reach it.
+- **Asking you before a call.** Your client approves each call; the
+  server asks nothing.
+
 ## What makes this one different
 
-- **A small surface, gated by registration.** About sixty tools rather
-  than an API mirror, and a tool that is switched off is not registered,
-  so it cannot be called at all.
-- **Nothing it writes runs a quick action.** `/merge` in a comment is
-  refused or escaped, never executed.
+- **A curated surface, gated by registration.** A tool for each thing a
+  person does in a project, rather than an API mirror, and a tool that
+  is switched off is not registered, so it cannot be called at all.
+- **Nothing it writes runs a quick action.** GitLab runs `/merge` and
+  the rest from any comment or description sent through its API.
 - **Content is marked as untrusted.** Issues, reviews, files and job
   logs come back inside boundaries the content cannot close.
+- **Reviews the way people review.** Draft comments, published together,
+  and the server, not the model, computes where an inline comment lands.
 - **Signs in like a desktop app.** Your own OAuth application, a browser
-  tab, the token in the OS keyring.
+  tab, the token in the OS keyring. GitLab's own MCP server runs on the
+  instance over HTTP, and a stdio client reaches it through a Node.js
+  proxy.
 - **Verifiable releases.** Signed checksums, build provenance and SBOMs.
-
-## Status
-
-Stable: the release badge above names the newest tag, and
-`CHANGELOG.md` says what each one holds. The tool surface is a
-contract: tools keep their names and output fields.
-`docs/architecture.md` §16 is the plan.
 
 ## Tools
 
@@ -143,10 +185,10 @@ contract: tools keep their names and output fields.
 | `list_events` | Recent activity, yours or a project's (`activity` toolset) |
 
 Ship and Destructive tools are registered only with the settings below,
-and the six toolsets only when `GITLAB_MCP_TOOLSETS` names them.
+and the toolsets only when `GITLAB_MCP_TOOLSETS` names them.
 
-Three resources carry the same text for clients that attach rather
-than call: an issue, a merge request and a job log.
+Resources carry the same text for clients that attach rather than call:
+an issue, a merge request and a job log.
 
 ## Install
 
@@ -209,8 +251,8 @@ Any client that takes a JSON server list:
 ```
 
 Claude Desktop can instead open the `.mcpb` bundle from a release. It
-asks for the same settings: merging, approving, applying suggestions,
-moving issues, CI and releases (`enable_ship`) and deleting
+asks for the same settings: merging, approving, rebasing, applying
+suggestions, moving issues, CI and releases (`enable_ship`) and deleting
 (`enable_destructive`) stay off unless you turn them on, and
 `write_namespaces` confines writes to the groups and projects you name.
 This server asks nobody before a call. Claude Desktop approves each
@@ -236,12 +278,12 @@ scope cannot separate any of it:
 |---|---|
 | `GITLAB_MCP_READ_ONLY=true` | Read tools only, with a `read_api` token |
 | default | Read, Write and Adding: issues, comments, reviews, branches, merge requests |
-| `GITLAB_MCP_ENABLE_SHIP=true` | adds merging, approving, running CI and releases |
+| `GITLAB_MCP_ENABLE_SHIP=true` | adds merging, approving, rebasing, applying suggestions, moving issues, running CI and releases |
 | `GITLAB_MCP_ENABLE_DESTRUCTIVE=true` | adds deletion and making an issue public, and each call must pass `confirm: true` |
 
 Your MCP client approves each call; the server does not ask you
 itself. claude.ai, Claude Desktop and Codex prompt for every tool
-marked destructive: every write but the six that only add, such as
+marked destructive: every write but the ones that only add, such as
 `create_issue` and `create_label`. VS Code prompts for every tool that
 writes. In Claude Code, `delete_label`, `delete_milestone` and
 `make_issue_public` ask on every call whatever your rules say, since
@@ -299,10 +341,38 @@ cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
 gh attestation verify <archive> --repo mmedum/gitlab-mcp
 ```
 
+## Getting help
+
+Run `gitlab-mcp doctor` first: it checks the connection, the sign-in,
+the application and the granted scopes, and names what is missing.
+[`docs/troubleshooting.md`](docs/troubleshooting.md) covers each
+failure. Then open an issue with `doctor`'s output and the version.
+**Do not paste a tool result**: it is your organization's code and other
+people's words.
+
+## Documentation
+
+- [`docs/setup.md`](docs/setup.md): registering the OAuth application
+  and logging in.
+- [`docs/configuration.md`](docs/configuration.md): every setting, what
+  each registers, and where state is stored.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md): symptoms and
+  their fixes, then rotating the token, revoking access and handling a
+  suspected exposure.
+- [`docs/security.md`](docs/security.md): the threat model.
+- [`docs/architecture.md`](docs/architecture.md): how it works, and the
+  design decisions a contributor should not undo.
+- [`docs/release.md`](docs/release.md): how a release is cut and
+  checked.
+- [`CHANGELOG.md`](CHANGELOG.md): what each release changed. The tool
+  names and their output fields are the contract, and anything you have
+  to act on is marked **Breaking**.
+
 ## Contributing
 
-`CONTRIBUTING.md`. Security reports go through `SECURITY.md`, not an
-issue.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) covers the gates, the live run and
+the review flow. Security reports go through [`SECURITY.md`](SECURITY.md),
+not an issue.
 
 ## License
 

@@ -322,8 +322,8 @@ func (s *Settings) Probe(ctx context.Context, logger *slog.Logger, version strin
 	if err == nil && tok == "" && len(st.Granted) == 0 {
 		// Nothing recorded these scopes: no login, or a token from
 		// GITLAB_MCP_REFRESH_TOKEN, whose grant the login's scopes do not
-		// describe. A read_api token never gets a write tool (§3), so
-		// only a live read can decide.
+		// describe. A read_api token never gets a write tool, so only a
+		// live read can decide.
 		tok, err = ts.Token(ctx)
 	}
 	if err != nil {
@@ -363,7 +363,7 @@ func (p probeToken) Token(context.Context) (string, error) { return p.access, ni
 func (p probeToken) Invalidate(rejected string)            { p.src.Invalidate(rejected) }
 
 // CheckScopes refuses a configuration the sign-in cannot serve: a
-// read_api token with the write tools on, above all (§9.4). An unknown
+// read_api token with the write tools on, above all (D-31). An unknown
 // grant passes, and the calls report what is missing.
 func (s *Settings) CheckScopes(granted []string) error {
 	if len(granted) == 0 {

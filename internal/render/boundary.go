@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Boundary marks text someone else wrote (§4.1.1). Its token is drawn
+// Boundary marks text someone else wrote (D-13). Its token is drawn
 // per tool call, so text written before the call cannot know it and
 // cannot close the block early: a forged end marker carries the wrong
 // token. Markers are also defused inside the text, so a forgery does not

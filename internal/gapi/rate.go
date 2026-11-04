@@ -11,8 +11,12 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// Defaults of the rate model (§11). gitlab.com allows 2,000
-// authenticated API requests a minute per user and 60 notes a minute.
+// Defaults of the rate model. gitlab.com allows at most 2,000
+// authenticated API requests a minute per user, and 60 notes a minute.
+// A Free or Premium plan's burst limit is lower, 100 and 1,250 a minute;
+// the model cannot read the plan, so it lowers the bucket from the
+// RateLimit headers and backs off on a 429.
+// https://docs.gitlab.com/user/gitlab_com/rate_limits/
 const (
 	DefaultRequestsPerMinute = 2000
 	DefaultNotesPerMinute    = 60
@@ -21,7 +25,9 @@ const (
 
 // Reading is the last rate-limit state GitLab reported. get_me shows it.
 // The headers describe only the instance throttles, never an
-// application limit, and are often absent (§2.13).
+// application limit, and are often absent, though GitLab's rate limits
+// page says every response carries them: an application limit answers
+// 429 while RateLimit-Remaining still shows quota.
 type Reading struct {
 	// Known is false until a response carried RateLimit-Remaining.
 	Known     bool
@@ -127,7 +133,7 @@ func waitLimiter(ctx context.Context, l *rate.Limiter, what string) error {
 }
 
 // observe reads RateLimit-* from a response. They lower the bucket when
-// present and are never trusted to be present (§11).
+// present and are never trusted to be present.
 func (m *rateModel) observe(h http.Header) {
 	remaining, err := strconv.Atoi(strings.TrimSpace(h.Get("RateLimit-Remaining")))
 	if err != nil {

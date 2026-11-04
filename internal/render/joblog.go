@@ -20,10 +20,14 @@ import (
 // continues the line before it. Log shows what the job page shows: the
 // timestamps, escapes and markers gone, continued lines joined, each
 // section's start as one line naming it, and a line overwritten by a
-// carriage return as it was left.
+// carriage return as it was left. GitLab's jobs page does not describe
+// the timestamps. GitLab masks glpat- tokens in a log itself; the
+// server's masking still runs for the shapes it does not. Checked by the
+// live step "a failed job's log is read".
+// https://docs.gitlab.com/api/jobs/
 
 // JobLogBytes is the default window of a job log, in bytes of the stored
-// log, and MaxJobLogBytes the most one call reads (§4.8).
+// log, and MaxJobLogBytes the most one call reads.
 const (
 	JobLogBytes    = 40000
 	MaxJobLogBytes = 100000

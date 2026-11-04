@@ -9,7 +9,7 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// The phase-1 CI reads (§7.6).
+// The CI reads.
 
 // pipelineStatuses and jobStatuses are the values GitLab filters by.
 var (

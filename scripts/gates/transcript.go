@@ -29,11 +29,14 @@ func transcript(out io.Writer, _ []string) error {
 	return transcriptCheck(out, ".", transcriptPackages, transcriptExempt)
 }
 
+// liveDriverDir is the live driver's package.
+const liveDriverDir = "scripts/livegitlab"
+
 // transcriptPackages may not reach a terminal. Besides the two drivers,
 // the packages every line they print passes through: a debugging Println
 // in any of them would leak past everything else here.
 var transcriptPackages = []string{
-	"scripts/livegitlab",
+	liveDriverDir,
 	"scripts/evals",
 	"scripts/internal/mcpstdio",
 }

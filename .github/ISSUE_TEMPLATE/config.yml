@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/mmedum/gitlab-mcp/security/advisories/new
     about: Report a vulnerability privately rather than in an issue.
   - name: Run `gitlab-mcp doctor` first
-    url: https://github.com/mmedum/gitlab-mcp/blob/main/docs/runbook.md
+    url: https://github.com/mmedum/gitlab-mcp/blob/main/docs/troubleshooting.md
     about: Most sign-in and setup problems are named by `doctor`, with what to do next.

@@ -11,8 +11,8 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/service"
 )
 
-// definitions is every tool this server has, in the order §8 lists
-// them. Adding a tool here is the whole of registering it.
+// definitions is every tool this server has. Adding a tool here is the
+// whole of registering it.
 func definitions() []definition {
 	return []definition{
 		getMe(), resolveURL(),

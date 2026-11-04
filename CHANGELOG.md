@@ -18,6 +18,10 @@ lifted verbatim.
 ### Changed
 
 - `gitlab-mcp --dump-schemas` also prints the instructions the server gives a client, for the full surface and for the default, read-only and `read_api` configurations.
+- For contributors: `make check` runs a docs gate. Decisions carry IDs in `docs/architecture.md`, and every citation must resolve.
+- For contributors: what was verified about GitLab lives in the comment at the code that depends on it, naming the live step that checks it.
+- For contributors: a GitLab or GraphQL client library cannot be imported; the lint fails on it.
+- For contributors: live-driver steps and spikes carry names. `-spike` is `-only-spike`, which takes a key such as `merge-status`, not a name; `-help` lists the keys.
 
 ## [4.2.0] - 2026-11-01
 

@@ -2,7 +2,7 @@
 
 // Command livegitlab drives the built server over stdio against
 // gitlab.com, which is the check no fake can make: that the tools behave
-// against GitLab itself (docs/architecture.md §9.1, §13).
+// against GitLab itself.
 //
 // It reads only what it wrote. It creates two private scratch projects
 // named for the run under the group -namespace names, fills them with its
@@ -11,7 +11,7 @@
 // is set. Group and instance-wide searches carry the run's own word, so
 // what comes back is the run's. Creating and deleting the projects are
 // the driver's own writes, made through the client with the profile's
-// token: the server has neither (§8a).
+// token: the server has neither, since both are administration.
 //
 // Every line goes through the one redacting printer (`gates transcript`
 // refuses any other way out). Hosts, paths, the account and the ids the
@@ -55,7 +55,7 @@ type options struct {
 	profile   string
 	keep      bool
 	record    string
-	spike     string
+	onlySpike string
 }
 
 func main() {
@@ -65,7 +65,7 @@ func main() {
 	flag.StringVar(&o.profile, "profile", "", "the signed-in profile to use; empty takes the default")
 	flag.BoolVar(&o.keep, "keep", false, "leave the scratch projects in place for a look afterwards")
 	flag.StringVar(&o.record, "record", "testdata/live-cover-record.tsv", "where to write what the run sent")
-	flag.StringVar(&o.spike, "spike", "", "run only this spike after seeding (E, G, O or R), and drive no tool")
+	flag.StringVar(&o.onlySpike, "only-spike", "", "ask only this spike after seeding ("+aloneValues()+"), and drive no tool")
 	flag.Parse()
 
 	p := redact.NewPrinter(redact.NewRedactor(false))
@@ -73,8 +73,8 @@ func main() {
 		p.Fail("livegitlab: -namespace is required; the run creates its projects in -namespace and reads nothing else")
 		os.Exit(2)
 	}
-	if o.spike != "" && o.spike != "E" && o.spike != "G" && o.spike != "O" && o.spike != "R" {
-		p.Fail("livegitlab: -spike takes E, G, O or R; the other spikes run with every run")
+	if o.onlySpike != "" && len(spikesFor(o.onlySpike)) == 0 {
+		p.Fail("livegitlab: -only-spike takes %s; the other spikes are asked only by a full run", aloneValues())
 		os.Exit(2)
 	}
 	err := run(context.Background(), o, p)
@@ -131,7 +131,7 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	}
 	s := scratch{Namespace: o.namespace, Name: name, User: user.Username, Default: "main",
 		Feature: "feature-" + name[len(name)-6:], Feature2: "draft-" + name[len(name)-6:],
-		File: "docs/live.md", Label: "live-" + name[len(name)-6:], Label2: "live-" + name[len(name)-6:] + "-b",
+		File: "notes/live.md", Label: "live-" + name[len(name)-6:], Label2: "live-" + name[len(name)-6:] + "-b",
 		Milestone: "Live milestone " + name}
 	p.Sayf("run %s against the %s instance, in %s", name, app.InstanceKind(settings.Instance), o.namespace)
 
@@ -156,18 +156,18 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	if err != nil {
 		return fmt.Errorf("seed the scratch projects: %w", err)
 	}
-	if o.spike == "E" || o.spike == "G" || o.spike == "R" {
-		spikes(ctx, settings, s, o.spike, p)
+	// A full run waits for the pipeline the plan reads; a spike asked
+	// alone waits only when it reads it too.
+	asked := spikesFor(o.onlySpike)
+	if o.onlySpike == "" || slices.ContainsFunc(asked, func(sp spike) bool { return sp.afterCI }) {
+		if err := waitForCI(ctx, client, &s, p); err != nil {
+			return err
+		}
+	}
+	askSpikes(ctx, settings, s, asked, p)
+	if o.onlySpike != "" {
 		return nil
 	}
-	if err := waitForCI(ctx, client, &s, p); err != nil {
-		return err
-	}
-	if o.spike == "O" {
-		spikes(ctx, settings, s, o.spike, p)
-		return nil
-	}
-	spikes(ctx, settings, s, "", p)
 
 	images, cleanup, err := writeImages(&s, red)
 	if err != nil {
@@ -188,7 +188,7 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	p.Say("\n=== with Ship, Destructive and every toolset ===")
 	flagged := append(slices.Clone(serverEnv), config.EnvEnableShip+"=true", config.EnvEnableDestructive+"=true",
 		config.EnvToolsets+"="+config.ToolsetAll, config.EnvWriteNamespaces+"="+o.namespace)
-	more, surface, err := session(o.binary, flagged, rec, planShip(s), s, p)
+	more, surface, err := session(o.binary, flagged, rec, shipDestructiveAndToolsets(s), s, p)
 	if err != nil {
 		return err
 	}
@@ -275,7 +275,8 @@ func drive(sess *mcpstdio.Session, steps []step, s scratch, p *redact.Printer) (
 	saved := map[string]any{}
 	for _, st := range steps {
 		if err := confined(st, s); err != nil {
-			return unexpected, fmt.Errorf("the plan reads outside the scratch project, which §9.1 forbids: %w", err)
+			return unexpected, fmt.Errorf("the step %q reads outside the scratch project, and the driver reads only what it wrote: %w",
+				st.name, err)
 		}
 		if st.pause > 0 {
 			time.Sleep(st.pause)
@@ -283,19 +284,21 @@ func drive(sess *mcpstdio.Session, steps []step, s scratch, p *redact.Printer) (
 		args, missing := fill(st.args, saved)
 		if missing != "" {
 			unexpected++
-			p.Sayf("\n=== %s ===\n!! not sent: %s was never saved by an earlier step", st.tool, missing)
+			p.Sayf("%s\n!! not sent: %s was never saved by an earlier step", banner(st), missing)
 			continue
 		}
 		if st.until != nil && !waitUntil(sess, st, args, saved, p) {
 			unexpected++
 		}
 		for {
-			p.Sayf("\n=== %s %s ===", st.tool, mcpstdio.Encode(args))
-			if st.why != "" && !st.anyOutcome {
-				p.Sayf("(expecting a refusal: %s)", st.why)
-			}
-			if st.anyOutcome {
+			p.Sayf("%s %s", banner(st), mcpstdio.Encode(args))
+			switch {
+			case st.anyOutcome:
 				p.Sayf("(either outcome is a finding: %s)", st.why)
+			case st.expectError && st.why != "":
+				p.Sayf("(expecting a refusal: %s)", st.why)
+			case st.expectError:
+				p.Say("(expecting a refusal)")
 			}
 			res, err := sess.CallTool(st.tool, args)
 			if err != nil {
@@ -332,11 +335,17 @@ func waitUntil(sess *mcpstdio.Session, st step, args, saved map[string]any, p *r
 			return true
 		}
 		if time.Now().After(deadline) {
-			p.Sayf("\n=== %s ===\n!! %s did not move from the value saved as %s within %v", st.tool, w.path, w.saved, w.within)
+			p.Sayf("%s\n!! %s did not move from the value saved as %s within %v", banner(st), w.path, w.saved, w.within)
 			return false
 		}
 		time.Sleep(w.every)
 	}
+}
+
+// banner is what the transcript prints above a step: its name, then its
+// tool.
+func banner(st step) string {
+	return fmt.Sprintf("\n=== %s ===\n%s", st.name, st.tool)
 }
 
 func copyWith(m map[string]any, k string, v any) map[string]any {
@@ -486,7 +495,7 @@ func seed(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor)
 	for _, n := range thread.Notes {
 		red.Known(redact.KindID, itoa(n.ID))
 	}
-	return created, seedPhase1(ctx, c, s, red)
+	return created, seedPlanningAndDrafts(ctx, c, s, red)
 }
 
 // seedWrite is one POST the seed makes, and what it creates.
@@ -497,10 +506,11 @@ type seedWrite struct {
 	what string
 }
 
-// seedPhase1 adds what the phase-1 reads need: a second label, two
-// milestones, two tags, to-do items on the run's issue and merge request,
-// and enough draft review comments to fill more than one page.
-func seedPhase1(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor) error {
+// seedPlanningAndDrafts adds what readReviewCIAndPlanning needs: a
+// second label, two milestones, two tags, to-do items on the run's issue
+// and merge request, and enough draft review comments to fill more than
+// one page.
+func seedPlanningAndDrafts(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor) error {
 	id := itoa(s.ID)
 	writes := make([]seedWrite, 0, 14)
 	writes = append(writes,
@@ -599,7 +609,8 @@ func seedBoards(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Red
 // pipeline listing has more than one page at little cost. A trigger job
 // starts a child pipeline that fails, so get_pipeline has one to name. The passing
 // and the manual job declare an input, and the input slow adds a job that
-// keeps its log open for spike O. A merge request from an mrpipe- branch
+// keeps its log open for the spike "where a job log's size shows without
+// reading it". A merge request from an mrpipe- branch
 // gets merge request pipelines, the passing job alone, for
 // run_merge_request_pipeline; no other merge request does.
 func ciConfig(s scratch) string {

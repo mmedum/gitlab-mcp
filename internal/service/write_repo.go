@@ -12,12 +12,12 @@ import (
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
 )
 
-// Branches, commits and to-do items (§7.5, §7.7, §4.4).
+// Branches, commits and to-do items.
 
 // CreateBranch creates a branch at ref, the default branch when ref is
 // empty. A name a protected rule covers is refused as create_commit
 // refuses it: a new protected branch at a ref of the caller's choosing
-// would put code there that no merge request showed (§4.4).
+// would put code there that no merge request showed.
 func (s *Service) CreateBranch(ctx context.Context, raw, branch, ref string) (model.BranchWrite, error) {
 	if strings.TrimSpace(branch) == "" {
 		return model.BranchWrite{}, gapi.Errf(gapi.ClassInvalid, "branch is empty")
@@ -94,7 +94,7 @@ func (in CommitCreate) check() error {
 		case a.Action != "create" && a.Action != "update" && a.Action != "delete" && a.Action != "move":
 			return gapi.Errf(gapi.ClassInvalid, "action %d: action must be create, update, delete or move", n)
 		case a.Action != "create" && a.LastCommitID == "":
-			// The witness (§4.6): GitLab refuses the change when the file
+			// The witness: GitLab refuses the change when the file
 			// moved on since this commit id.
 			return gapi.Errf(gapi.ClassInvalid, "action %d (%s) needs the file's last_commit_id, as get_file returned it, so a change "+
 				"made since is not overwritten", n, a.Action)
@@ -109,7 +109,7 @@ func (in CommitCreate) check() error {
 
 // CreateCommit commits file changes to a branch. It refuses the default
 // branch and every protected branch, read at call time: code reaches a
-// protected branch only through a merge request (§4.4).
+// protected branch only through a merge request.
 func (s *Service) CreateCommit(ctx context.Context, in CommitCreate) (model.CommitWrite, error) {
 	if err := in.check(); err != nil {
 		return model.CommitWrite{}, err
@@ -146,7 +146,11 @@ func (s *Service) CreateCommit(ctx context.Context, in CommitCreate) (model.Comm
 		case a.Action == "create" || a.Action == "update":
 			action.Content = &a.Content
 		case a.Action == "move" && a.Content != "":
-			// A move without content keeps the file's own.
+			// A move keeps the file's own content only when content is left
+			// out, as the API docs say: an empty one empties the moved file.
+			// Checked by the live steps "a commit changes, moves and deletes
+			// files" and "a moved file is read at its new path".
+			// https://docs.gitlab.com/api/commits/
 			action.Content = &a.Content
 		}
 		body.Actions = append(body.Actions, action)
@@ -202,10 +206,14 @@ func (s *Service) findCommit(ctx context.Context, p gapi.Project, branch, messag
 // a thousand rules, far past any project's.
 const maxProtectedPages = 10
 
-// guardBranch refuses the default branch and any protected branch (§4.4).
+// guardBranch refuses the default branch and any protected branch (D-33).
 // A branch that exists says itself whether a rule protects it, as
-// GitLab matched it; one the commit would create is held to the rules,
-// read at call time, since it would be protected once made.
+// GitLab matched it, wildcard rules included; one the commit would
+// create is held to the rules, read at call time, since it would be
+// protected once made. Checked by the live steps "a commit to a branch a
+// wildcard rule protects is refused" and "a commit starting a branch a
+// wildcard rule would protect is refused".
+// https://docs.gitlab.com/api/branches/
 func (s *Service) guardBranch(ctx context.Context, t target, branch string, existing *gitlab.Branch) error {
 	if branch == t.project.DefaultBranch {
 		return gapi.Errf(gapi.ClassBlocked, "the default branch takes code only through a merge request, so this server does not commit to it; "+
@@ -290,7 +298,7 @@ const MaxTodos = 100
 
 // MarkTodosDone marks the signed-in account's to-do items done by id.
 // Under GITLAB_MCP_WRITE_NAMESPACES an item whose project is outside it
-// is refused like any other write (§4.7); the items' projects are read
+// is refused like any other write; the items' projects are read
 // once for that, and only then.
 func (s *Service) MarkTodosDone(ctx context.Context, ids []int64) (model.TodosDone, error) {
 	if _, err := s.api(); err != nil {

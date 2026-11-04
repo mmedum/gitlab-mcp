@@ -33,7 +33,7 @@ GATES     ?= ./.gates$(EXE)
 # holds each version here against the one in the workflows.
 GOLANGCI_LINT ?= github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 GOVULNCHECK   ?= golang.org/x/vuln/cmd/govulncheck@v1.8.0
-# v1.6.0 until docs/architecture.md §17.6 settles v1 against v2.
+# v1.6.0 rather than v2: both pass the same allow-list over this module.
 GOLICENSES    ?= github.com/google/go-licenses@v1.6.0
 # The module path is zricethezav: the project moved organization and the
 # module path did not follow.
@@ -50,7 +50,7 @@ all: check
 # The definition of done. `make checklist` holds this list against
 # CLAUDE.md, both ways.
 .PHONY: check
-check: fmt vet tidy lint cover vuln licenses secrets leaks pins classes api-coverage api-fields schema-diff descriptions bodies smoke staleness checklist changelog-links transcript live-cover outcomes evals-check mcpb release server-json actionlint goreleaser-check parity
+check: fmt vet tidy lint cover vuln licenses secrets leaks pins classes api-coverage api-fields schema-diff descriptions bodies smoke staleness docs checklist changelog-links transcript live-cover outcomes evals-check mcpb release server-json actionlint goreleaser-check parity
 
 # --- build ---------------------------------------------------------------
 
@@ -161,6 +161,10 @@ smoke: build gates ## Drive the binary over stdio
 staleness: build gates ## The docs match the code
 	$(GATES) staleness $(BIN)
 
+.PHONY: docs
+docs: gates ## Decision IDs, citations, links, paths and live-step names resolve
+	$(GATES) docs
+
 .PHONY: checklist
 checklist: gates ## CLAUDE.md's definition of done against `check`
 	$(GATES) checklist
@@ -262,7 +266,7 @@ release-rehearse: ## Build the whole release locally, unsigned (manual)
 	$(GO) run $(GORELEASER) release --snapshot --clean --skip=publish,sign,sbom
 
 .PHONY: live
-live: build ## Drive the built binary against a scratch project on gitlab.com (docs/development.md)
+live: build ## Drive the built binary against a scratch project on gitlab.com (CONTRIBUTING.md#the-live-run)
 	$(GO) run -tags=live ./scripts/livegitlab -bin $(BIN) $(LIVE_ARGS)
 
 # Not in `check`: it spends money and is not deterministic. Its

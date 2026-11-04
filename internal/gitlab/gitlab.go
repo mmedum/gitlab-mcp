@@ -1,13 +1,13 @@
 // Package gitlab holds the wire types of GitLab's REST API v4.
 //
-// Hand-written, for exactly the fields the server uses (CLAUDE.md rule
-// 13, docs/architecture.md §4.10). A field is added when a tool reads
-// it, and `scripts/gates api-fields` holds every field here against the
-// OpenAPI snapshot. Fields GitLab adds without notice are reported by
-// the client as drift rather than failing a call.
+// Hand-written, for exactly the fields the server uses, with no client
+// library (D-08). A field is added when a tool reads it, and
+// `scripts/gates api-fields` holds every field here against the OpenAPI
+// snapshot. Fields GitLab adds without notice are reported by the client
+// as drift rather than failing a call.
 //
 // No field whose name ends in `_token` is ever declared: a project read
-// once carried a runner registration token, and a field that is never
+// can carry a runner registration token, and a field that is never
 // decoded cannot leak. TestNoTokenFields holds it.
 package gitlab
 
@@ -116,7 +116,7 @@ type Namespace struct {
 // Project is GET /projects/:id and the rows of GET /projects.
 //
 // Secret fields (runners_token and the rest) are never declared, so they
-// are never decoded (§3.19).
+// are never decoded.
 type Project struct {
 	ID                int64  `json:"id"`
 	Name              string `json:"name"`
@@ -448,7 +448,7 @@ type File struct {
 	BlobID        string `json:"blob_id"`
 	CommitID      string `json:"commit_id"`
 	// LastCommitID is the witness an update or delete of this file
-	// carries (§4.6).
+	// carries.
 	LastCommitID    string `json:"last_commit_id"`
 	ExecuteFilemode bool   `json:"execute_filemode"`
 }
@@ -502,8 +502,10 @@ type CommitStats struct {
 }
 
 // Diff is one file of a commit or merge request diff. TooLarge and
-// Collapsed are kept, because a diff GitLab cut is not an empty one
-// (§3.10).
+// Collapsed are kept, because a diff GitLab cut is not an empty one.
+// GitLab collapses a diff at a tenth of its limits and sends none past
+// them: by default 200 KB of patch, 1,000 files or 50,000 lines.
+// https://docs.gitlab.com/administration/diff_limits/
 type Diff struct {
 	OldPath       string `json:"old_path"`
 	NewPath       string `json:"new_path"`
@@ -814,7 +816,12 @@ type MergeRequestDependency struct {
 // LinkedIssue is one row of GET /projects/:id/merge_requests/:iid/
 // closes_issues and …/related_issues. A row is an issue, or an issue in
 // an external tracker: {title, id} with a string id such as "PROJ-123".
-// The issue rows carry no references.
+// The issue rows carry no references. GitLab leaves out what the account
+// cannot read without saying so, and its OpenAPI file publishes
+// closes_issues as a note and related_issues with no schema. Checked by
+// the live steps "an issue is read with its links" and
+// "an MR is read with its links".
+// https://docs.gitlab.com/api/merge_requests/
 type LinkedIssue struct {
 	// ID is a number for an issue and a string for an external one.
 	ID        json.RawMessage `json:"id"`
@@ -944,7 +951,10 @@ type BoardTimebox struct {
 }
 
 // Member is one row of GET /projects/:id/members/all. The email an
-// administrator is shown is never declared.
+// administrator is shown is never declared. AccessLevel is an integer,
+// 50 for an owner, though GitLab's OpenAPI file types it as a string.
+// Checked by the live step "the run's account is found among the members".
+// https://docs.gitlab.com/api/project_members/
 type Member struct {
 	ID          int64   `json:"id"`
 	Username    string  `json:"username"`
@@ -1026,7 +1036,10 @@ type SearchHit struct {
 
 // SearchBlob is one row of a blobs or wiki blobs search: a file that
 // matched by its content or its name. Its id is not read: GitLab sends
-// the blob's SHA for a match by name and null otherwise (§18 row 129).
+// the blob's SHA for a match by name and null otherwise, where its search
+// page shows only null. Checked by the live steps
+// "search finds a file by its name" and "search finds wiki pages".
+// https://docs.gitlab.com/api/search/
 type SearchBlob struct {
 	Path      string `json:"path"`
 	Ref       string `json:"ref"`
@@ -1054,8 +1067,7 @@ type WikiPageBasic struct {
 }
 
 // WikiPage is GET /projects/:id/wikis/:slug. GitLab exposes no version
-// and no updated_at, so the server's witness is a hash of Content
-// (§4.6).
+// and no updated_at, so the server's witness is a hash of Content.
 type WikiPage struct {
 	Format   string `json:"format"`
 	Slug     string `json:"slug"`
@@ -1066,7 +1078,7 @@ type WikiPage struct {
 
 // Snippet is GET /snippets/:id and /projects/:id/snippets/:snippet_id.
 // ProjectID is null for a personal snippet. raw_url is not decoded: no
-// URL a response names is ever called (§11).
+// URL a response names is ever called.
 type Snippet struct {
 	ID          int64         `json:"id"`
 	Title       string        `json:"title"`

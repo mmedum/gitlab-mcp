@@ -105,7 +105,7 @@ func (s *Server) fillReview(p *project, mr *gitlab.MergeRequest) {
 	thread := fakeSHA("mr:"+itoa(mr.IID), "thread")
 	three := 3
 	// GitLab returns drafts in no stable order, and gives a general draft
-	// a position with no paths rather than none (live, 2026-09-26).
+	// a position with no paths rather than none, as gitlab.com does.
 	p.drafts[mr.IID] = []gitlab.DraftNote{
 		{ID: firstDraftID + (mr.IID-1)*10 + 1, AuthorID: s.user(DefaultUser).ID, Note: "Agreed; resolving.",
 			DiscussionID: &thread, ResolveDiscussion: true, Position: &gitlab.Position{PositionType: "text"}},
