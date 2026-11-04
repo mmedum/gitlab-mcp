@@ -149,7 +149,9 @@ type Project struct {
 	// a plan that has merge trains (ee/lib/ee/api/entities/project.rb,
 	// ee/app/models/ee/project_ci_cd_setting.rb, v19.5.3-ee). The live
 	// step "a project is read by its path" sees them absent on the Free
-	// tier; no live step reaches a train (#97).
+	// tier, and a read by hand of a Premium train project on gitlab.com
+	// 19.6.0-pre returned all three as booleans; no live step reaches a
+	// train (#97).
 	// https://docs.gitlab.com/api/projects/
 	MergePipelinesEnabled       *bool `json:"merge_pipelines_enabled"`
 	MergeTrainsEnabled          *bool `json:"merge_trains_enabled"`
