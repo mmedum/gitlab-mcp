@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -97,22 +98,115 @@ func TestParseGoDir(t *testing.T) {
 	}
 }
 
-func TestMarkdownSection(t *testing.T) {
-	doc := "# T\n\n## A\n\none\n\n### A1\n\n```\n## not a heading\n```\n\ntwo\n\n## B\n\nthree\n"
-	got, ok := MarkdownSection(doc, "## A")
-	if !ok {
-		t.Fatal("## A not found")
+// The go command's words are read as the shell splits them, its flags
+// and their values skipped, so a flag never reads as the package.
+func TestGoRunsInSkipsTheFlags(t *testing.T) {
+	for line, want := range map[string][]GoRun{
+		"go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...": {
+			{Pkg: "golang.org/x/vuln/cmd/govulncheck@v1.8.0", Args: []string{"./..."}}},
+		"go run -mod=mod -modfile tools.mod -trimpath ./scripts/gates pins": {
+			{Pkg: "./scripts/gates", Args: []string{"pins"}}},
+		`CGO_ENABLED=0 go run "x.org/y@v1" && go run -C dir ./z a`: {
+			{Pkg: "x.org/y@v1"},
+			{Pkg: "./z", Args: []string{"a"}}},
+		`go run -ldflags "-s -w" ./scripts/gates docs`: {
+			{Pkg: "./scripts/gates", Args: []string{"docs"}}},
+		`go run -ldflags="-X a=b -s" tool.org/x@v1 x`: {
+			{Pkg: "tool.org/x@v1", Args: []string{"x"}}},
+		`go run -ldflags=-X\ a=b ./scripts/gates pins`: {
+			{Pkg: "./scripts/gates", Args: []string{"pins"}}},
+		`go run -ldflags '-X a=b c' ./scripts/gates pins`: {
+			{Pkg: "./scripts/gates", Args: []string{"pins"}}},
+		`go run -gcflags 'all=-N -l' ./cmd/x; echo done`: {
+			{Pkg: "./cmd/x"}},
+		`$GOROOT/bin/go run x.org/y@main`: {
+			{Pkg: "x.org/y@main"}},
+		"go run -mod":              nil,
+		"cargo run x":              nil,
+		`echo "go run x.org/y@v1"`: nil,
+		"echo go run":              nil,
+		"go vet ./...":             nil,
+		// A command substitution and a subshell hold commands of their own,
+		// and a quoted ")" is a word, not the end of one.
+		"OUT=$(go run x.org/y@v1 ./...)": {
+			{Pkg: "x.org/y@v1", Args: []string{"./..."}}},
+		"OUT=`go run x.org/y@v1` && echo \"$(go run ./scripts/gates docs)\"": {
+			{Pkg: "x.org/y@v1"},
+			{Pkg: "./scripts/gates", Args: []string{"docs"}}},
+		"echo $(echo $(go run x.org/y@v1 a) b)": {
+			{Pkg: "x.org/y@v1", Args: []string{"a"}}},
+		"(go run x.org/y@v1)": {
+			{Pkg: "x.org/y@v1"}},
+		`go run x.org/y@v1 ")" a`: {
+			{Pkg: "x.org/y@v1", Args: []string{")", "a"}}},
+		`echo '$(go run x.org/y@v1)' "\$(go run x.org/y@v2)"`: nil,
+		// A substitution's end goes back to the quote it was opened in.
+		`echo "$(go version) go run x.org/y@v1"`: nil,
+		`X="$(date)a" go run x.org/y@v1`: {
+			{Pkg: "x.org/y@v1"}},
+		"go run x.org/y@v1 # go run x.org/z@v2": {
+			{Pkg: "x.org/y@v1"}},
+	} {
+		got := GoRunsIn(line)
+		if !slices.EqualFunc(got, want, func(a, b GoRun) bool { return a.Pkg == b.Pkg && slices.Equal(a.Args, b.Args) }) {
+			t.Errorf("GoRunsIn(%q) = %q, want %q", line, got, want)
+		}
 	}
-	if want := "\none\n\n### A1\n\n```\n## not a heading\n```\n\ntwo\n\n"; got != want {
-		t.Errorf("section = %q, want %q", got, want)
+}
+
+func TestGoCommandsEndAtTheCommand(t *testing.T) {
+	got := GoCommands(`go install -v a.org/b@v1 c.org/d@v2 | tee log && go vet -tags=live ./...; echo go; go`)
+	want := []GoCommand{{"install", []string{"-v", "a.org/b@v1", "c.org/d@v2"}}, {"vet", []string{"-tags=live", "./..."}}}
+	if !slices.EqualFunc(got, want, func(a, b GoCommand) bool { return a.Sub == b.Sub && slices.Equal(a.Args, b.Args) }) {
+		t.Errorf("GoCommands = %q, want %q", got, want)
 	}
-	if got, _ := MarkdownSection(doc, "## B"); got != "\nthree\n" {
-		t.Errorf("last section = %q", got)
+	if got, want := GoAfterFlags([]string{"-tags", "x", "-v", "a.org/b@v1"}), []string{"a.org/b@v1"}; !slices.Equal(got, want) {
+		t.Errorf("GoAfterFlags = %q, want %q", got, want)
 	}
-	if _, ok := MarkdownSection(doc, "## C"); ok {
-		t.Error("found a heading that is not there")
+	got = GoCommands("X=$(go env GOPATH)/bin; go vet ./...")
+	want = []GoCommand{{"env", []string{"GOPATH"}}, {"vet", []string{"./..."}}}
+	if !slices.EqualFunc(got, want, func(a, b GoCommand) bool { return a.Sub == b.Sub && slices.Equal(a.Args, b.Args) }) {
+		t.Errorf("GoCommands = %q, want %q: a substitution's ) ends its command", got, want)
 	}
-	if _, ok := MarkdownSection(doc, "## "); ok {
-		t.Error("matched a heading prefix")
+}
+
+// A flag build, run or vet reads a value for takes the next word when the
+// value is written apart from it.
+func TestGoAfterFlagsSkipsTheValues(t *testing.T) {
+	for _, words := range [][]string{
+		{"-o", "bin/gates", "./scripts/gates"},
+		{"-vettool", "/usr/local/bin/shadow", "./scripts/gates"},
+		{"-c", "2", "./scripts/gates"},
+		{"-printf.funcs", "Wrapf", "./scripts/gates"},
+		{"-unusedresult.funcs", "pkg.F", "./scripts/gates"},
+		{"-exec", "wrapper", "./scripts/gates"},
+		{"-debug-trace", "/tmp/trace.json", "./scripts/gates"},
+		{"-debug-actiongraph", "graph.json", "./scripts/gates"},
+		{"-debug-runtime-trace", "runtime.trace", "./scripts/gates"},
+	} {
+		if got := GoAfterFlags(words); !slices.Equal(got, []string{"./scripts/gates"}) {
+			t.Errorf("GoAfterFlags(%q) = %q, want [./scripts/gates]", words, got)
+		}
+	}
+}
+
+func TestShellWords(t *testing.T) {
+	for line, want := range map[string][]string{
+		`a "b c" 'd e' f\ g`: {"a", "b c", "d e", "f g"},
+		`"a\"b" 'a\b' "a\b"`: {`a"b`, `a\b`, `a\b`},
+		"a;b&&c||d|e":        {"a", ";", "b", "&&", "c", "||", "d", "|", "e"},
+		`x="" y`:             {"x=", "y"},
+		"\t a \t":            {"a"},
+		// A # that starts a word starts a comment; inside a word, quoted or
+		// escaped, it is a character.
+		"a # b c":        {"a"},
+		"a;#b":           {"a", ";"},
+		`a#b "#" \# ""#`: {"a#b", "#", "#", "#"},
+		"${#x} y":        {"${#x}", "y"},
+		"# all of it":    nil,
+	} {
+		if got := ShellWords(line); !slices.Equal(got, want) {
+			t.Errorf("ShellWords(%q) = %q, want %q", line, got, want)
+		}
 	}
 }

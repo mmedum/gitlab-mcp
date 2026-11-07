@@ -12,6 +12,7 @@ import (
 	"go/token"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -118,31 +119,202 @@ func ParseGoDir(fset *token.FileSet, dir string, mode parser.Mode, tags ...strin
 	return files, nil
 }
 
-// MarkdownSection is the text under a heading line, to the next heading
-// of the same or a higher level: a subsection stays inside its parent.
-// ok is false when the heading is not there.
-func MarkdownSection(text, heading string) (section string, ok bool) {
-	i := strings.Index(text, "\n"+heading+"\n")
+// GoRun is one `go run` command: the package it runs, such as
+// example.com/tool@v1.2.3 or ./scripts/gates, and the words after it.
+type GoRun struct {
+	Pkg  string
+	Args []string
+}
+
+// goValueFlags are the flags the go command reads its next word for, as
+// go1.27.3's `go help build`, `go help run`, `go help vet` and `go tool vet
+// -flags` list them: the build flags and build's -o, run's -exec, vet's
+// -vettool and the vet tool's own
+// (https://pkg.go.dev/cmd/go#hdr-Compile_packages_and_dependencies). The
+// help leaves out three debug flags that take a value too
+// (https://github.com/golang/go/blob/go1.27.3/src/cmd/go/internal/work/build.go#L358-L361).
+var goValueFlags = map[string]bool{
+	"C": true, "p": true, "covermode": true, "coverpkg": true, "asmflags": true, "buildmode": true,
+	"compiler": true, "gccgoflags": true, "gcflags": true, "installsuffix": true, "ldflags": true,
+	"mod": true, "modfile": true, "overlay": true, "pgo": true, "pkgdir": true, "tags": true,
+	"toolexec": true, "o": true, "exec": true, "vettool": true, "c": true, "printf.funcs": true,
+	"printfuncs": true, "unusedfuncs": true, "unusedresult.funcs": true, "unusedresult.stringmethods": true,
+	"unusedstringmethods": true, "debug-actiongraph": true, "debug-runtime-trace": true, "debug-trace": true,
+}
+
+// GoRunsIn is each `go run` a command line holds, its flags skipped, so
+// `go run -mod=mod tool@v1` runs tool@v1.
+func GoRunsIn(line string) []GoRun {
+	var runs []GoRun
+	for _, c := range GoCommands(line) {
+		if rest := GoAfterFlags(c.Args); c.Sub == "run" && len(rest) > 0 {
+			runs = append(runs, GoRun{Pkg: rest[0], Args: rest[1:]})
+		}
+	}
+	return runs
+}
+
+// GoAfterFlags is a go command's words after its flags, a flag that takes
+// a value skipping that value too: the packages, or for `go run` its one
+// package and the program's arguments.
+func GoAfterFlags(words []string) []string {
+	i := 0
+	for i < len(words) && strings.HasPrefix(words[i], "-") {
+		name, _, inline := strings.Cut(strings.TrimLeft(words[i], "-"), "=")
+		if i++; !inline && goValueFlags[name] {
+			i++
+		}
+	}
+	return words[min(i, len(words)):]
+}
+
+// GoCommand is one `go <sub>` on a command line: the subcommand, such as
+// run or vet, and the words after it to the end of its command.
+type GoCommand struct {
+	Sub  string
+	Args []string
+}
+
+// GoCommands is each go command a command line holds, the line split once
+// as the shell splits it. A command substitution, backticks and a subshell
+// hold commands of their own, so `OUT=$(go run x@v1)` runs x@v1.
+func GoCommands(line string) []GoCommand {
+	words := shellSplit(line, true)
+	var out []GoCommand
+	for i := 0; i+1 < len(words); i++ {
+		// The go command by any path, such as $GOROOT/bin/go.
+		if path.Base(words[i].text) != "go" || words[i+1].op {
+			continue
+		}
+		end := i + 2
+		var args []string
+		for ; end < len(words) && !words[end].op; end++ {
+			args = append(args, words[end].text)
+		}
+		out = append(out, GoCommand{Sub: words[i+1].text, Args: args})
+		i = end
+	}
+	return out
+}
+
+// ShellWords splits a command line into words as a POSIX shell does,
+// expanding nothing: blanks separate words, quotes group and are dropped,
+// a backslash outside single quotes keeps the next character, a run of ;,
+// & or | is a word of its own, which ends a command, and a # that starts a
+// word starts a comment
+// (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_03).
+func ShellWords(line string) []string {
+	split := shellSplit(line, false)
+	words := make([]string, 0, len(split))
+	for _, w := range split {
+		words = append(words, w.text)
+	}
+	return words
+}
+
+// shellWord is one word of a command line, op when it is an operator that
+// ends a command rather than text.
+type shellWord struct {
+	text string
+	op   bool
+}
+
+// shellSplit is ShellWords with each word's kind. With subst, $(, (, ) and
+// a backtick are operators too, since a command substitution or a subshell
+// holds commands of its own
+// (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_06_03).
+func shellSplit(line string, subst bool) []shellWord {
+	var s shellSplitter
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case s.quote == '\'':
+			if c == '\'' {
+				s.quote = 0
+			} else {
+				s.word.WriteByte(c)
+			}
+		case c == '\\' && i+1 < len(line) && (s.quote == 0 || strings.IndexByte("\"\\$`", line[i+1]) >= 0):
+			i++
+			s.word.WriteByte(line[i])
+			s.inWord = true
+		case subst && s.substitution(line, &i):
+		case s.quote == '"':
+			if c == '"' {
+				s.quote = 0
+			} else {
+				s.word.WriteByte(c)
+			}
+		case c == '\'' || c == '"':
+			s.quote, s.inWord = c, true
+		case c == '#' && !s.inWord:
+			return s.words
+		case c == ' ' || c == '\t':
+			s.flush()
+		case strings.IndexByte(";&|", c) >= 0:
+			j := i
+			for j+1 < len(line) && line[j+1] == c {
+				j++
+			}
+			s.operator(line[i : j+1])
+			i = j
+		default:
+			s.word.WriteByte(c)
+			s.inWord = true
+		}
+	}
+	s.flush()
+	return s.words
+}
+
+// shellSplitter is shellSplit's state: the words read, the one being read,
+// the quote the reader is in, and the substitutions and subshells around
+// it, each with the character that ends it and the quote it was opened in.
+type shellSplitter struct {
+	words  []shellWord
+	word   strings.Builder
+	inWord bool
+	quote  byte
+	opened []struct{ end, quote byte }
+}
+
+func (s *shellSplitter) flush() {
+	if s.inWord {
+		s.words = append(s.words, shellWord{text: s.word.String()})
+		s.word.Reset()
+		s.inWord = false
+	}
+}
+
+func (s *shellSplitter) operator(op string) {
+	s.flush()
+	s.words = append(s.words, shellWord{text: op, op: true})
+}
+
+// substitution reads the start or the end of a substitution or a subshell
+// at line[*i], moving *i past a $(, and reports whether there was one. Its
+// end goes back to the quote it was opened in.
+func (s *shellSplitter) substitution(line string, i *int) bool {
+	c, n := line[*i], len(s.opened)
+	op, end := string(c), byte(')')
 	switch {
-	case i >= 0:
-		text = text[i+1:]
-	case strings.HasPrefix(text, heading+"\n"):
-	default:
-		return "", false
+	case n > 0 && c == s.opened[n-1].end && (c == '`' || s.quote == 0):
+		s.operator(op)
+		s.quote, s.opened = s.opened[n-1].quote, s.opened[:n-1]
+		s.inWord = s.quote != 0
+		return true
+	case s.quote == 0 && c == ')':
+		s.operator(op)
+		return true
+	case c == '`':
+		end = '`'
+	case strings.HasPrefix(line[*i:], "$("):
+		op = "$("
+		*i++
+	case s.quote != 0 || c != '(':
+		return false
 	}
-	level := len(heading) - len(strings.TrimLeft(heading, "#"))
-	rest := text[len(heading)+1:]
-	offset := 0
-	fenced := false
-	for _, line := range strings.SplitAfter(rest, "\n") {
-		if strings.HasPrefix(line, "```") {
-			fenced = !fenced
-		}
-		trimmed := strings.TrimLeft(line, "#")
-		if n := len(line) - len(trimmed); !fenced && n > 0 && n <= level && strings.HasPrefix(trimmed, " ") {
-			return rest[:offset], true
-		}
-		offset += len(line)
-	}
-	return rest, true
+	s.operator(op)
+	s.opened = append(s.opened, struct{ end, quote byte }{end, s.quote})
+	s.quote = 0
+	return true
 }

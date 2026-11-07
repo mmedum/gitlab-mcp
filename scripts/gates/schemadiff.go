@@ -292,14 +292,16 @@ func schemaDiff(out io.Writer, args []string) error {
 // break the surface.
 func undeclaredBreaks(c surfaceChanges, changelog, tag string) ([]string, error) {
 	version := strings.TrimPrefix(tag, "v")
-	unreleased, _, found := strings.Cut(changelog, "\n## ["+version+"]")
-	if !found {
+	doc := readChangelog(changelog)
+	at := slices.IndexFunc(doc.headings, func(h changelogHeading) bool { return h.label == version })
+	if at < 0 {
 		// Without the tag's heading nothing tells unreleased from
 		// released, so no entry can declare a break.
 		return nil, fmt.Errorf("%s has no ## [%s] heading for %s, so no break can be declared against it", changelogFile, version, tag)
 	}
+	above := doc.headings[at].line
 	named := map[string]bool{}
-	for line := range strings.Lines(unreleased) {
+	for _, line := range doc.prose[:above] {
 		if !strings.Contains(line, "**Breaking:**") {
 			continue
 		}
@@ -318,9 +320,9 @@ func undeclaredBreaks(c surfaceChanges, changelog, tag string) ([]string, error)
 		n, _ := strconv.Atoi(m)
 		return n
 	}
-	for _, m := range changelogVersionHeading.FindAllStringSubmatch(unreleased, -1) {
-		if major(m[1]) <= major(version) {
-			out = append(out, fmt.Sprintf("release %s breaks the surface without raising the major version from %s", m[1], version))
+	for _, h := range doc.versions() {
+		if h.line < above && major(h.label) <= major(version) {
+			out = append(out, fmt.Sprintf("release %s breaks the surface without raising the major version from %s", h.label, version))
 		}
 	}
 	return out, nil

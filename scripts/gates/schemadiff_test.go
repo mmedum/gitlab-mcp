@@ -350,6 +350,11 @@ func TestUndeclaredBreaks(t *testing.T) {
 			[]string{"release 1.5.0 breaks the surface without raising the major version from 1.4.0"}},
 		{"a prerelease that does not", "## [1.5.0-rc.1] - 2026-02-01\n\n- **Breaking:** " + all + ".\n" + released,
 			[]string{"release 1.5.0-rc.1 breaks the surface without raising the major version from 1.4.0"}},
+		// A fence holds an example: its Breaking entry declares nothing, and
+		// its headings are neither the tag's nor a release.
+		{"a Breaking entry in a fence", "## [Unreleased]\n\n```markdown\n- **Breaking:** " + all + ".\n```\n" + released, texts},
+		{"the tag's heading and a release in a fence", "## [Unreleased]\n\n```markdown\n## [1.4.0]\n## [1.5.0]\n```\n\n" +
+			"- **Breaking:** " + all + ".\n" + released, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := undeclaredBreaks(c, "# Changelog\n\n"+tc.changelog, "v1.4.0")

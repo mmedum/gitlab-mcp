@@ -488,7 +488,7 @@ code.
 | D-85 | Evals score planted instructions against the in-memory GitLab, fail-closed | accepted | evals-check, TestTheFenceIsClosedAtTheSource, TestReadEventFailsAToolOutsideTheFence, TestScorers |
 | D-86 | Every gate asserts a floor on how much it read | accepted | TestTheClassesFloorsFire, TestSmokeFloorFires, TestPinsFloors, TestTranscriptFloorOnFiles, TestFloor |
 | D-87 | Every check is Go in one registry, and `make check` and CI run the same set | accepted | parity, checklist, TestEveryCommandDeclaresAMode, TestParityRefuses, TestChecklist, TestCoverpkgIsTheMakefiles |
-| D-88 | Every tool runs at one exact pinned version through `go run` | accepted | pins, TestPinsRefuses, TestPinsPassesWhenTheyAgree |
+| D-88 | Every tool runs at one exact pinned version through `go run` | accepted | pins, TestPinsRefuses, TestPinsNamesEachProblem, TestPinsPassesWhenTheyAgree |
 | D-89 | A release is reproducible, signed and attested, from a tag whose CI is green | accepted | release, goreleaser-check, actionlint, TestReleaseRefuses, review |
 | D-90 | The registry entry is published from the signed checksums, never for a prerelease | accepted | server-json, TestServerJSONPublish, TestServerJSONRules |
 | D-91 | The bundle asks for every setting, with defaults that start the server as no settings do | accepted | mcpb, TestMcpbUserConfigIsDerivedFromTheSettings, TestMcpbFieldDiffNamesTheFieldsThatDiffer, TestMcpbRefusedCombinationsAreDeclared, TestMcpbACredentialFieldIsSensitive |
@@ -649,7 +649,8 @@ in a public repository is a leak nobody can take back.
 
 The leak gate is an allow-list anchored on shapes the server's generated
 fields cannot take: an `@` before a dotted domain outside the example
-and invalid set, an `https://` host outside that set, any GitLab token
+and invalid set, an `https://` host outside that set or one that does
+not parse, any GitLab token
 prefix, `gitlab.com/` followed by a namespace outside the fixture set,
 and the OAuth shapes. It decodes base64url blobs, treats a tracked
 binary as a finding and prints findings redacted. `make leaks-history`
@@ -2726,10 +2727,18 @@ Every tool the Makefile runs is `go run module@version` at one exact
 version, never a binary from `PATH`: golangci-lint, goreleaser,
 gitleaks, govulncheck, go-licenses and actionlint among them. Every
 action in a workflow is pinned to a full commit SHA with its version in
-a trailing comment. The `pins` gate holds it: exact semver only, no
+a trailing comment, and every container image to its sha256 digest. The
+Go version comes from `go.mod`, its toolchain line before its go line,
+as setup-go reads it. The `pins` gate holds it: exact semver only, no
 range or `latest`, every action classified as an installer or not,
-installer tool versions required, and every pin the Makefile and a
-workflow share compared, with floors.
+installer tool versions required, a Makefile pin held to the recipe
+that runs it, and every pin the Makefile and a workflow share compared,
+with floors. A known tool's `module@version` on any line of a workflow
+or the Makefile but a comment line is held to one exact version as text
+too. A `module@version` in a Go comment is not a pin. A workflow
+with a `<<` merge key is refused: GitHub documents anchors and aliases
+but not merge keys
+([YAML anchors and aliases](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases)).
 
 The version that runs locally is the version that runs in CI, so a lint
 or a scan that passes on one passes on the other. A tool from `PATH`
@@ -2738,7 +2747,9 @@ and a SHA cannot. The golangci-lint and gitleaks actions are not used,
 because their steps would be a second pin the Makefile does not share.
 
 Rejected: a version copied from another project; a tool from `PATH`;
-the golangci-lint and gitleaks actions.
+the golangci-lint and gitleaks actions; a reader for `bash -c`, `eval`
+and make conditionals, which the text rule makes unneeded; reading merge
+keys as yaml.v3 merges them, which GitHub may not.
 Cost: a version bump changes the Makefile and the workflow together, and
 a dependabot bump of an action keeps its version comment or `pins`
 fails.

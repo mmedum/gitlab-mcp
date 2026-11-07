@@ -96,7 +96,7 @@ func depsCheck(out io.Writer, gomod string, listing []byte, now time.Time) error
 // depsPinned reports the reason go.mod gives for holding a module back:
 // `// pinned: <reason>` on its require line.
 func depsPinned(gomod, path string) (string, bool) {
-	re := regexp.MustCompile(`(?m)^(?:require\s+|\s+)` + regexp.QuoteMeta(path) + `\s+\S+.*//\s*pinned:(.*)$`)
+	re := regexp.MustCompile(`(?m)^(?:require[ \t]+|[ \t]+)` + regexp.QuoteMeta(path) + `[ \t]+\S+.*//[ \t]*pinned:(.*)$`)
 	m := re.FindStringSubmatch(gomod)
 	if m == nil {
 		return "", false

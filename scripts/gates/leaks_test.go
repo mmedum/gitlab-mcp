@@ -25,7 +25,7 @@ func TestLeaksAllowListHasReasons(t *testing.T) {
 			}
 		}
 	}
-	for _, m := range []map[string]string{leaksPublicHosts, leaksGitLabPaths, leaksSkip, leaksBinaryAllowed} {
+	for _, m := range []map[string]string{leaksPublicHosts, leaksGitLabPaths, leaksSkip, leaksBinaryAllowed, leaksUnreadURLs} {
 		for k, reason := range m {
 			entries++
 			if len(strings.TrimSpace(reason)) < 10 {
@@ -34,12 +34,14 @@ func TestLeaksAllowListHasReasons(t *testing.T) {
 		}
 	}
 	// The count is stated, so a new exemption changes this test too.
-	if want := 13 + len(leaksPublicHosts) + len(leaksGitLabPaths) + len(leaksSkip) + len(leaksBinaryAllowed); entries != want {
+	if want := 13 + len(leaksPublicHosts) + len(leaksGitLabPaths) + len(leaksSkip) + len(leaksBinaryAllowed) +
+		len(leaksUnreadURLs); entries != want {
 		t.Errorf("%d exemptions, want %d", entries, want)
 	}
-	if len(leaksPublicHosts) != 30 || len(leaksGitLabPaths) != 6 || len(leaksSkip) != 4 || len(leaksBinaryAllowed) != 0 {
-		t.Errorf("exemption lists are %d hosts, %d paths, %d skipped files, %d binaries; want 30, 6, 4, 0",
-			len(leaksPublicHosts), len(leaksGitLabPaths), len(leaksSkip), len(leaksBinaryAllowed))
+	if len(leaksPublicHosts) != 32 || len(leaksGitLabPaths) != 6 || len(leaksSkip) != 4 || len(leaksBinaryAllowed) != 0 ||
+		len(leaksUnreadURLs) != 2 {
+		t.Errorf("exemption lists are %d hosts, %d paths, %d skipped files, %d binaries, %d unread URLs; want 32, 6, 4, 0, 2",
+			len(leaksPublicHosts), len(leaksGitLabPaths), len(leaksSkip), len(leaksBinaryAllowed), len(leaksUnreadURLs))
 	}
 }
 
@@ -66,6 +68,23 @@ func TestLeaksFind(t *testing.T) {
 		{"userinfo does not fool the host", "https://gitlab.example.com@" + "git." + tDomain + "/x", "a URL to a host outside"},
 		{"a lookalike suffix", "https://gitlab.example.com." + tDomain + "/x", "a URL to a host outside"},
 		{"a template has no host", "https://{host}/api and https://<instance>/x", ""},
+		// The host ends at a backslash, which a browser reads as a slash, so
+		// an escape after a host does not hide it.
+		{"a host before an escape", "https://" + "gitlab." + tDomain + `\x/group/proj`, "a URL to a host outside"},
+		{"a reserved host before a string escape, and a pattern", `"https://gitlab.example.com\n" and http://\S+/a\?\S+`, ""},
+		// Only the scheme and authority are parsed: a template in the path
+		// says nothing about the host.
+		{"a template in the path", "https://github.com/%s/%s#readme", ""},
+		{"a host somebody owns before a template in the path", "https://" + "git." + tDomain + "/%s/x", "a URL to a host outside"},
+		// A host that does not parse is a finding, at its position.
+		{"a port that is not a number", "https://" + "host:abc/x", "a URL whose host does not parse"},
+		{"a reserved host with a port that is not a number", "https://" + "gitlab.example.com:abc/x", "a URL whose host does not parse"},
+		{"a host somebody owns with a port that is not a number", "https://" + "git." + tDomain + ":abc/x", "a URL whose host does not parse"},
+		{"a host written as a format verb", "https://" + "%s/api", "a URL whose host does not parse"},
+		{"the position of a host that does not parse", "first line\n  see https://" + "host:abc/x", "a URL whose host does not parse, at line 2, column 7"},
+		{"the two unreadable URLs the tests use", "https://evil.example.net%zz/a and https://alice:[MASKED url-password]@gitlab.example.com", ""},
+		{"another malformed escape", "https://" + "evil.example.net%zy/a", "a URL whose host does not parse"},
+		{"a public host at the end of a sentence", "see https://docs.gitlab.com. Or https://semver.org: or https://go.dev;", ""},
 		{"a URL inside a regular expression", `regexp.MustCompile('https://github\.com/mmedum/gitlab-mcp')`, ""},
 		{"an escaped host somebody owns", "https://" + `git\.` + tDomain + `/x`, "a URL to a host outside"},
 		{"a fixture namespace", "https://gitlab.com/example-group/alpha and gitlab.com/alice", ""},

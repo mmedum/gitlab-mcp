@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"os"
@@ -25,12 +26,124 @@ const changelogFile = "CHANGELOG.md"
 var changelogWatched = []string{"cmd/", "internal/", "packaging/", "go.mod", ".goreleaser.yaml"}
 
 var (
-	changelogVersionHeading = regexp.MustCompile(`(?m)^## \[(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\]`)
-	changelogLinkDefinition = regexp.MustCompile(`(?m)^\[([^\]]+)\]:\s*(\S+)`)
-	// changelogCutHeading is a version heading a diff adds: a release cut,
-	// which moves the entries rather than adding one.
-	changelogCutHeading = regexp.MustCompile(`(?m)^\+## \[(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\]`)
+	// changelogVersion is a release's version, a prerelease suffix allowed.
+	changelogVersion = regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$`)
+	// changelogLink is a link-reference line, `[label]: url`, its URL on
+	// the same line or not yet written: either ends a section.
+	changelogLink = regexp.MustCompile(`^\[([^\]]+)\]:[ \t]*(\S*)`)
 )
+
+// changelogDoc is a CHANGELOG read once, fenced code as an example: a
+// heading, a link reference or an entry inside a fence is none of them.
+type changelogDoc struct {
+	// lines are the file's lines, CRLF read as LF, and prose the same
+	// lines with fenced code blanked.
+	lines, prose []string
+	// headings are the `## [label]` headings, in file order.
+	headings []changelogHeading
+	// links are the link references that give a URL, by label.
+	links map[string]string
+}
+
+// changelogHeading is a `## [label]` heading and the index of its line.
+type changelogHeading struct {
+	label string
+	line  int
+}
+
+func readChangelog(text string) changelogDoc {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	c := changelogDoc{lines: strings.Split(text, "\n"), prose: docsProse(text), links: map[string]string{}}
+	for i, line := range c.prose {
+		if label, ok := changelogLabel(line); ok {
+			c.headings = append(c.headings, changelogHeading{label, i})
+		}
+		if m := changelogLink.FindStringSubmatch(line); m != nil && m[2] != "" {
+			c.links[m[1]] = m[2]
+		}
+	}
+	return c
+}
+
+// changelogLabel is the label of a `## [label]` heading line.
+func changelogLabel(line string) (string, bool) {
+	if docsHeadingLevel(line) != 2 {
+		return "", false
+	}
+	title := docsATXHeading.FindStringSubmatch(line)[1]
+	label, _, ok := strings.Cut(strings.TrimPrefix(title, "["), "]")
+	return label, ok && strings.HasPrefix(title, "[")
+}
+
+// changelogCompare orders two versions changelogVersion matches by semver
+// precedence: by number, a prerelease before its release, and prerelease
+// fields compared in turn, numbers below words (https://semver.org/#spec-item-11).
+func changelogCompare(a, b string) int {
+	coreA, preA, _ := strings.Cut(a, "-")
+	coreB, preB, _ := strings.Cut(b, "-")
+	if c := slices.CompareFunc(strings.Split(coreA, "."), strings.Split(coreB, "."), changelogCompareNumbers); c != 0 {
+		return c
+	}
+	switch {
+	case preA == preB:
+		return 0
+	case preA == "":
+		return 1
+	case preB == "":
+		return -1
+	}
+	return slices.CompareFunc(strings.Split(preA, "."), strings.Split(preB, "."), func(x, y string) int {
+		xNum, yNum := changelogDigits(x), changelogDigits(y)
+		switch {
+		case xNum && yNum:
+			return changelogCompareNumbers(x, y)
+		case xNum:
+			return -1
+		case yNum:
+			return 1
+		}
+		return strings.Compare(x, y)
+	})
+}
+
+// changelogCompareNumbers orders two runs of digits by the number they
+// write, however long. Semver allows no leading zero.
+func changelogCompareNumbers(x, y string) int {
+	return cmp.Or(cmp.Compare(len(x), len(y)), strings.Compare(x, y))
+}
+
+// changelogDigits reports whether a prerelease field is a number.
+func changelogDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// section is the range of lines under `## [label]`, empty when there is
+// no such heading. It ends at the next heading of its level or above and
+// at the link-reference footer.
+func (c changelogDoc) section(label string) (from, to int) {
+	i := slices.IndexFunc(c.headings, func(h changelogHeading) bool { return h.label == label })
+	if i < 0 {
+		return 0, 0
+	}
+	from = c.headings[i].line + 1
+	for to = from; to < len(c.prose); to++ {
+		if level := docsHeadingLevel(c.prose[to]); (level > 0 && level <= 2) || changelogLink.MatchString(c.prose[to]) {
+			break
+		}
+	}
+	return from, to
+}
+
+// versions are the headings that name a release, in file order.
+func (c changelogDoc) versions() []changelogHeading {
+	var out []changelogHeading
+	for _, h := range c.headings {
+		if changelogVersion.MatchString(h.label) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
 
 func changelog(out io.Writer, args []string) error {
 	return changelogCheck(out, ".", args[0], args[1])
@@ -85,11 +198,11 @@ func changelogCheck(out io.Writer, root, base, head string) error {
 		return fmt.Errorf("%d shipped file(s) changed (%s) and %s did not", len(watched),
 			strings.Join(watched[:min(3, len(watched))], ", "), changelogFile)
 	}
-	if v := changelogCutHeading.FindStringSubmatch(diff); v != nil {
-		_, _ = fmt.Fprintf(out, "changelog ok: a release cut, adding ## [%s]\n", v[1])
+	cut, n := changelogDiff(diff)
+	if cut != "" {
+		_, _ = fmt.Fprintf(out, "changelog ok: a release cut, adding ## [%s]\n", cut)
 		return nil
 	}
-	n := changelogAddedUnderUnreleased(diff)
 	if n == 0 {
 		return fmt.Errorf("%s changed and no line was added under [Unreleased]; an entry under a released "+
 			"heading is invisible to the release it belongs to", changelogFile)
@@ -188,27 +301,49 @@ func goModBumpable(f []string) bool {
 		!slices.Contains(changelogNotedModules, strings.Trim(f[0], `"`))
 }
 
-// changelogAddedUnderUnreleased counts added lines under [Unreleased].
+// changelogDiff reads a CHANGELOG diff's hunk as each side of the file
+// reads, fenced code as an example: the first release heading it adds,
+// which makes it a release cut, and how many lines it adds under
+// [Unreleased].
 //
 // A release cut renames [Unreleased] to the version, so its entries no
 // longer sit under [Unreleased] and are still where they belong. When
-// the diff removes the [Unreleased] heading, the version heading it
-// added is read as the unreleased section.
-func changelogAddedUnderUnreleased(diff string) int {
-	cut := strings.Contains(diff, "\n-## [Unreleased]")
-	count, inHunk, inside := 0, false, false
-	for line := range strings.SplitSeq(diff, "\n") {
-		switch {
-		case strings.HasPrefix(line, "@@"):
-			inHunk = true
-		case !inHunk:
-		case strings.HasPrefix(line, "+## [") || strings.HasPrefix(line, " ## ["):
-			inside = strings.Contains(line, "[Unreleased]") || (cut && strings.HasPrefix(line, "+## ["))
-		case inside && strings.HasPrefix(line, "+") && strings.TrimSpace(line[1:]) != "":
-			count++
+// the diff removes the [Unreleased] heading, a heading it adds is read as
+// the unreleased section.
+func changelogDiff(diff string) (cut string, added int) {
+	var hunk []string
+	if _, body, ok := strings.Cut(diff, "\n@@"); ok {
+		hunk = strings.Split(body, "\n")[1:]
+	}
+	// side is each hunk line's text on one side, with whether it is outside
+	// a fence and whether the diff changes it there.
+	side := func(mark byte, line func(text string, prose, changed bool)) {
+		var fence docsFence
+		for _, l := range hunk {
+			if l != "" && (l[0] == ' ' || l[0] == mark) {
+				line(l[1:], !fence.code(l[1:]), l[0] == mark)
+			}
 		}
 	}
-	return count
+	removed := false
+	side('-', func(text string, prose, changed bool) {
+		label, ok := changelogLabel(text)
+		removed = removed || (prose && changed && ok && label == "Unreleased")
+	})
+	inside := false
+	side('+', func(text string, prose, changed bool) {
+		if label, ok := changelogLabel(text); prose && ok {
+			if changed && cut == "" && changelogVersion.MatchString(label) {
+				cut = label
+			}
+			inside = label == "Unreleased" || (removed && changed)
+			return
+		}
+		if inside && changed && strings.TrimSpace(text) != "" {
+			added++
+		}
+	})
+	return cut, added
 }
 
 func changelogLinks(out io.Writer, _ []string) error {
@@ -229,18 +364,16 @@ func changelogLinks(out io.Writer, _ []string) error {
 // [Unreleased] must still be there and linked.
 func changelogLinkProblems(text string) (int, []string) {
 	var problems []string
-	if !strings.Contains(text, "\n## [Unreleased]") && !strings.HasPrefix(text, "## [Unreleased]") {
+	doc := readChangelog(text)
+	if !slices.ContainsFunc(doc.headings, func(h changelogHeading) bool { return h.label == "Unreleased" }) {
 		problems = append(problems, "there is no ## [Unreleased] heading, so there is nowhere for the next entry")
 	}
-	headings := changelogVersionHeading.FindAllStringSubmatch(text, -1)
+	headings := doc.versions()
 	versions := make([]string, 0, len(headings))
-	for _, m := range headings {
-		versions = append(versions, m[1])
+	for _, h := range headings {
+		versions = append(versions, h.label)
 	}
-	links := map[string]string{}
-	for _, m := range changelogLinkDefinition.FindAllStringSubmatch(text, -1) {
-		links[m[1]] = m[2]
-	}
+	links := doc.links
 	unreleased, ok := links["Unreleased"]
 	if !ok {
 		problems = append(problems, "[Unreleased] has no link reference, so the heading renders as literal brackets")
@@ -261,7 +394,7 @@ func changelogLinkProblems(text string) (int, []string) {
 		}
 	}
 	for name := range links {
-		if name != "Unreleased" && !slices.Contains(versions, name) && changelogVersionHeading.MatchString("## ["+name+"]") {
+		if name != "Unreleased" && !slices.Contains(versions, name) && changelogVersion.MatchString(name) {
 			problems = append(problems, fmt.Sprintf("[%s]: is a link reference with no heading", name))
 		}
 	}

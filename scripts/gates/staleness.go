@@ -151,11 +151,15 @@ func stalenessGather(root string, args []string) (stalenessInputs, error) {
 		in.modes = append(in.modes, stalenessMode{Name: string(m.Mode), Block: scopes.SetupBlock(m.Mode)})
 	}
 	in.commands = slices.Sorted(maps.Keys(commands))
-	in.newestTag = stalenessNewestTag(root)
+	// A git that cannot answer leaves the changes-since-tag rule with no
+	// verdict, which is not a pass.
+	var err error
+	if in.newestTag, err = stalenessNewestTag(root); err != nil {
+		return in, couldNotRun{err}
+	}
 	if in.newestTag != "" {
-		var err error
 		if in.changedSince, err = stalenessShippedSince(root, "v"+in.newestTag); err != nil {
-			return in, err
+			return in, couldNotRun{err}
 		}
 	}
 	in.tools, in.toolsErr = stalenessTools(args)
@@ -223,54 +227,25 @@ func stalenessShipped(files []string) []string {
 	return out
 }
 
-var stalenessSemver = regexp.MustCompile(`^v(\d+\.\d+\.\d+)$`)
-
-func stalenessNewestTag(root string) string {
-	tags, err := gitx.Output(root, "tag", "--sort=-v:refname")
+// stalenessNewestTag is the newest release tag's version by semver order,
+// a prerelease included, "" when there is none. git's version sort puts
+// v2.0.0-rc.1 after v2.0.0, so the order is semver's.
+func stalenessNewestTag(root string) (string, error) {
+	tags, err := gitx.Output(root, "tag")
 	if err != nil {
-		return ""
+		return "", err
 	}
+	newest := ""
 	for line := range strings.Lines(tags) {
-		if m := stalenessSemver.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-			return m[1]
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "v")
+		if ok && changelogVersion.MatchString(v) && (newest == "" || changelogCompare(v, newest) > 0) {
+			newest = v
 		}
 	}
-	return ""
+	return newest, nil
 }
 
-func stalenessUnreleased(changelog string) string {
-	s, _ := gatekit.MarkdownSection(changelog, "## [Unreleased]")
-	// The link references sit under no heading.
-	if i := strings.Index(s, "\n["); i >= 0 {
-		s = s[:i]
-	}
-	return s
-}
-
-// stalenessUnreleasedFrom is stalenessUnreleased and the file line its
-// first line sits on, so a rule reading it reports the file's lines. It
-// finds the heading where MarkdownSection does: after a newline, else
-// opening the file.
-func stalenessUnreleasedFrom(changelog string) (string, int) {
-	above := 0
-	if i := strings.Index(changelog, "\n## [Unreleased]\n"); i >= 0 {
-		above = strings.Count(changelog[:i+1], "\n")
-	}
-	return stalenessUnreleased(changelog), above + 2
-}
-
-// stalenessUnfence blanks fenced code blocks and keeps their line
-// breaks, so a line found below one is reported as the file's line.
-func stalenessUnfence(text string) string {
-	return stalenessFence.ReplaceAllStringFunc(text, func(block string) string {
-		return strings.Repeat("\n", strings.Count(block, "\n"))
-	})
-}
-
-var (
-	stalenessCodeSpan = regexp.MustCompile("`([^`\n]+)`")
-	stalenessFence    = regexp.MustCompile("(?ms)^\\s*```.*?^\\s*```")
-)
+var stalenessCodeSpan = regexp.MustCompile("`([^`\n]+)`")
 
 var stalenessEnvRef = regexp.MustCompile(`\b` + config.EnvPrefix + `[A-Z0-9_]*[A-Z0-9]\b`)
 
@@ -354,26 +329,23 @@ func stalenessGates(doc string, names []string) (int, []string) {
 	return len(names), problems
 }
 
-var stalenessHeading = regexp.MustCompile(`(?m)^## \[(\d+\.\d+\.\d+)\]`)
-
 // stalenessChangedSinceTag holds that shipped Go changed since the newest
 // tag comes with CHANGELOG entries under [Unreleased]: a release cut from
 // here would otherwise publish an empty note over real changes. The
-// release commit moves them under a version heading the tag does not yet
-// have, and those count too.
+// release commit moves them under a version heading newer than the tag,
+// and those count too.
 func stalenessChangedSinceTag(changelog, tag string, changed []string) []string {
 	if tag == "" || len(changed) == 0 {
 		return nil
 	}
-	notes := stalenessUnreleased(changelog)
-	if loc := stalenessHeading.FindStringSubmatchIndex(changelog); loc != nil && changelog[loc[2]:loc[3]] != tag {
-		cut := changelog[loc[1]:]
-		if end := strings.Index(cut, "\n## "); end >= 0 {
-			cut = cut[:end]
-		}
-		notes += cut
+	doc := readChangelog(changelog)
+	from, to := doc.section("Unreleased")
+	notes := doc.prose[from:to]
+	if v := doc.versions(); len(v) > 0 && changelogCompare(v[0].label, tag) > 0 {
+		from, to := doc.section(v[0].label)
+		notes = append(slices.Clone(notes), doc.prose[from:to]...)
 	}
-	for line := range strings.Lines(notes) {
+	for _, line := range notes {
 		if strings.HasPrefix(strings.TrimSpace(line), "- ") {
 			return nil
 		}
@@ -402,8 +374,7 @@ func stalenessNoVersionInProse(docs map[string]string) (int, []string) {
 	names := stalenessProseDocs(docs)
 	var problems []string
 	for _, name := range names {
-		text := stalenessUnfence(docs[name])
-		for i, line := range strings.Split(text, "\n") {
+		for i, line := range docsProse(docs[name]) {
 			t := strings.TrimSpace(line)
 			if strings.HasPrefix(t, "[!") || strings.Contains(t, "://") {
 				continue
@@ -515,11 +486,12 @@ func stalenessProseCounts(docs map[string]string) (int, []string) {
 	var problems []string
 	checked := 0
 	for _, name := range slices.Sorted(maps.Keys(docs)) {
-		text, first := docs[name], 1
+		lines, first := docsProse(docs[name]), 1
 		if name == changelogFile {
-			text, first = stalenessUnreleasedFrom(text)
+			doc := readChangelog(docs[name])
+			from, to := doc.section("Unreleased")
+			lines, first = doc.prose[from:to], from+1
 		}
-		lines := strings.Split(stalenessUnfence(text), "\n")
 		for i := 0; i < len(lines); i++ {
 			if !strings.HasSuffix(strings.TrimSpace(lines[i]), ":") {
 				continue

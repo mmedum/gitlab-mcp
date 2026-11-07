@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,11 @@ func TestReleaseRefuses(t *testing.T) {
 		{"space-separated subjects", wf, `"dist/*.tar.gz,dist/*.zip,dist/checksums.txt,dist/*.mcpb"`,
 			`"dist/*.tar.gz dist/*.zip dist/checksums.txt dist/*.mcpb"`, "separates with a space"},
 		{"the bundle unattested", wf, ",dist/*.mcpb\"", "\"", "does not name .mcpb"},
+		{"the Windows archives unattested", wf, ",dist/*.zip", "", "does not name .zip"},
+		{"a signature attested in the bundle's place", wf, ",dist/*.mcpb\"", ",dist/*.mcpb.sigstore.json\"", "does not name .mcpb"},
+		{"the checksum file's signature attested in its place", wf, ",dist/checksums.txt,", ",dist/checksums.txt.bundle,",
+			"does not name checksums.txt"},
+		{"no checksum name", gr, "  name_template: checksums.txt\n", "", "checksum.name_template is empty"},
 		{"no dispatch", wf, "  workflow_dispatch:\n", "", "has no workflow_dispatch"},
 		{"write at the top", wf, "permissions:\n  contents: read\n\ndefaults", "permissions:\n  contents: write\n\ndefaults", "top-level permissions"},
 		{"publishing without the ci check", wf, "    needs: verify-ci\n", "", "without needing the job that checks ci is green"},
@@ -92,8 +98,23 @@ func TestReleaseRefuses(t *testing.T) {
 	}
 }
 
+// The action splits subject-path at commas and newlines and trims each
+// glob, so space around an entry is not a separator.
 func TestReleaseSubjectProblems(t *testing.T) {
-	if p := releaseSubjectProblems("dist/*.tar.gz\ndist/*.zip\ndist/checksums.txt\ndist/*.mcpb", "checksums.txt"); len(p) != 0 {
-		t.Errorf("newline-separated subjects refused: %v", p)
+	for name, subjects := range map[string]string{
+		"newlines":                          "dist/*.tar.gz\ndist/*.zip\ndist/checksums.txt\ndist/*.mcpb",
+		"commas and a space after each":     "dist/*.tar.gz, dist/*.zip, dist/checksums.txt, dist/*.mcpb",
+		"a block, one glob with a trailing": "dist/*.tar.gz \n  dist/*.zip\n  dist/checksums.txt\n  dist/*.mcpb\n",
+	} {
+		if p := releaseSubjectProblems(subjects, "checksums.txt"); len(p) != 0 {
+			t.Errorf("%s: subjects refused: %v", name, p)
+		}
+	}
+	want := []string{
+		"checksum.name_template is empty, so nothing holds the subject-path to the file every other artifact is verified through",
+		`subject-path "dist/*.tar.gz,dist/*.zip.sigstore.json,dist/*.mcpb" does not name .zip, so it carries no attestation`,
+	}
+	if p := releaseSubjectProblems("dist/*.tar.gz,dist/*.zip.sigstore.json,dist/*.mcpb", ""); !slices.Equal(p, want) {
+		t.Errorf("problems\n got %q\nwant %q", p, want)
 	}
 }
