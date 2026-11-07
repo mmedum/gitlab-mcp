@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -100,6 +102,87 @@ func TestStalenessPassesOnAReleaseCut(t *testing.T) {
 	in.changedSince = []string{"internal/p01/a.go"}
 	in.docs["CHANGELOG.md"] = "## [Unreleased]\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- A thing.\n\n## [0.1.0] - 2026-01-01\n"
 	wantClean(t, stalenessCheck(in).problems)
+	// A release candidate is a release cut too.
+	in.docs["CHANGELOG.md"] = "## [Unreleased]\n\n## [0.2.0-rc.1] - 2026-02-01\n\n### Added\n\n- A thing.\n\n## [0.1.0] - 2026-01-01\n"
+	wantClean(t, stalenessCheck(in).problems)
+	// A heading in a fence is an example, not a release cut.
+	in.docs["CHANGELOG.md"] = "## [Unreleased]\n\n```markdown\n## [0.2.0]\n\n- A thing.\n```\n\n## [0.1.0] - 2026-01-01\n"
+	wantProblem(t, stalenessCheck(in).problems, "1 shipped file(s) changed since v0.1.0 (internal/p01/a.go) and CHANGELOG.md has no entry under [Unreleased]")
+}
+
+// A release candidate's tag is a release: the changes since it need entries
+// of their own, and its section is not read as one waiting for a tag.
+func TestStalenessReadsAReleaseCandidateAsReleased(t *testing.T) {
+	changelog := "## [Unreleased]\n\n## [2.0.0-rc.1] - 2026-02-01\n\n### Added\n\n- A thing.\n\n## [1.9.0] - 2026-01-01\n"
+	dir := gitRepo(t, map[string]string{"CHANGELOG.md": changelog, "internal/x/x.go": "package x\n"})
+	gitDo(t, dir, "tag", "v1.9.0")
+	gitCommit(t, dir, "rc", map[string]string{"internal/x/x.go": "package x // rc\n"})
+	gitDo(t, dir, "tag", "v2.0.0-rc.1")
+	gitCommit(t, dir, "after", map[string]string{"internal/x/y.go": "package x\n"})
+	in, err := stalenessGather(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := stalenessChangedSinceTag(in.docs[changelogFile], in.newestTag, in.changedSince)
+	want := []string{"1 shipped file(s) changed since v2.0.0-rc.1 (internal/x/y.go) and CHANGELOG.md has no entry under [Unreleased]"}
+	if !slices.Equal(got, want) {
+		t.Errorf("newest tag %q; problems\n got %q\nwant %q", in.newestTag, got, want)
+	}
+}
+
+// The newest tag is the newest by semver order, a prerelease before its
+// release, and a tag that is no version is not one.
+func TestStalenessNewestTagOrdersAsSemver(t *testing.T) {
+	dir := gitRepo(t, map[string]string{"a": "a"})
+	for _, step := range []struct{ tag, want string }{
+		{"v1.9.0", "1.9.0"},
+		{"v2.0.0-rc.2", "2.0.0-rc.2"},
+		{"v2.0.0-rc.10", "2.0.0-rc.10"},
+		{"v2.0.0-beta.3", "2.0.0-rc.10"},
+		{"v2.0.0", "2.0.0"},
+		{"v2.0.1-rc.1", "2.0.1-rc.1"},
+		{"v10.0.0-alpha.1", "10.0.0-alpha.1"},
+		{"v10.0.0-alpha", "10.0.0-alpha.1"},
+		{"v11", "10.0.0-alpha.1"},
+		{"latest", "10.0.0-alpha.1"},
+	} {
+		gitDo(t, dir, "tag", step.tag)
+		if got, err := stalenessNewestTag(dir); err != nil || got != step.want {
+			t.Errorf("after tagging %s: newest tag %q, %v; want %q", step.tag, got, err, step.want)
+		}
+	}
+}
+
+// Outside a git checkout the changes since the newest tag cannot be read,
+// so the gate could not run: exit 2, not a finding's 1.
+func TestStalenessNeedsAGitCheckout(t *testing.T) {
+	code, out, errOut := runOutsideGit(t, "staleness")
+	if code != 2 || out.String() != "" || !strings.HasPrefix(errOut.String(), "gates staleness: could not run: git tag") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 2, nothing and a git tag failure", code, out.String(), errOut.String())
+	}
+}
+
+// A tag git cannot diff from leaves the changes since it unread, so the
+// gate could not run.
+func TestStalenessNeedsTheChangesSinceTheTag(t *testing.T) {
+	dir := gitRepo(t, map[string]string{"README.md": "# x\n"})
+	gitDo(t, dir, "tag", "v0.1.0", gitDo(t, dir, "hash-object", "-w", "README.md"))
+	t.Chdir(dir)
+	var out, errOut bytes.Buffer
+	code := run([]string{"staleness"}, &out, &errOut)
+	if code != 2 || out.String() != "" || !strings.HasPrefix(errOut.String(), "gates staleness: could not run: git diff") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 2, nothing and a git diff failure", code, out.String(), errOut.String())
+	}
+}
+
+// Inside one, what the rules find is a refusal, which exits 1.
+func TestStalenessRefusesInAGitCheckout(t *testing.T) {
+	t.Chdir(gitRepo(t, map[string]string{"README.md": "# x\n"}))
+	var out, errOut bytes.Buffer
+	code := run([]string{"staleness"}, &out, &errOut)
+	if code != 1 || !regexp.MustCompile(`^gates staleness: \d+ problem\(s\) in the documents\n$`).MatchString(errOut.String()) {
+		t.Errorf("exit %d, stderr %q; want 1 and the documents' problems", code, errOut.String())
+	}
 }
 
 func TestStalenessRefuses(t *testing.T) {
@@ -134,6 +217,11 @@ func TestStalenessRefuses(t *testing.T) {
 			in.changedSince = []string{"internal/p01/a.go"}
 			in.docs["CHANGELOG.md"] = "## [Unreleased]\n\n### Added\n\n"
 		}, "1 shipped file(s) changed since v0.1.0"},
+		{"shipped Go since a release, with only its candidate's entries", func(in *stalenessInputs) {
+			in.newestTag = "2.0.0"
+			in.changedSince = []string{"internal/p01/a.go"}
+			in.docs["CHANGELOG.md"] = "## [Unreleased]\n\n## [2.0.0-rc.1] - 2026-02-01\n\n### Added\n\n- A thing.\n"
+		}, "1 shipped file(s) changed since v2.0.0"},
 		{"shipped Go since the tag with only the tag's own entries", func(in *stalenessInputs) {
 			in.newestTag = "0.1.0"
 			in.changedSince = []string{"internal/p01/a.go"}
@@ -185,6 +273,18 @@ func TestStalenessRefuses(t *testing.T) {
 // A variable is documented by its whole name: a longer name that holds
 // one is that longer name, in either document, a letter of either case
 // on either side included, and a name followed by * is a pattern.
+// A version in a fence of either kind is an example, and the lines below
+// it keep their numbers.
+func TestStalenessReadsVersionsOutsideFences(t *testing.T) {
+	_, got := stalenessNoVersionInProse(map[string]string{
+		"docs/extra.md": "~~~\ngo install example.com/x@v0.9.9\n~~~\n\n```\nv0.9.8\n```\n\nThis is v1.2.3 of the server.\n",
+		"README.md":     "", "CLAUDE.md": "", "SECURITY.md": "",
+	})
+	if want := []string{"docs/extra.md:9 writes v1.2.3 in prose; a badge shows the version and cannot go stale"}; !slices.Equal(got, want) {
+		t.Errorf("problems %q, want %q", got, want)
+	}
+}
+
 func TestStalenessEnvReadsWholeNames(t *testing.T) {
 	in := stalenessFixture()
 	doc := strings.NewReplacer("`GITLAB_MCP_PROFILE`", "`GITLAB_MCP_PROFILE_NAME`",

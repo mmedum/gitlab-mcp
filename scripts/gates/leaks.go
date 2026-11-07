@@ -62,8 +62,9 @@ type leaksRule struct {
 	// whole match.
 	group int
 	// value, when set, turns the match into the value the allow-list is
-	// held against, such as a URL into its host.
-	value func(string) string
+	// held against, such as a URL into its host, and is false when it
+	// cannot read one: that is a finding of its own.
+	value func(string) (string, bool)
 	allow []leaksAllow
 }
 
@@ -100,6 +101,8 @@ var leaksPublicHosts = map[string]string{
 	"spec.commonmark.org":                 "the CommonMark specification the docs gate reads Markdown by",
 	"github.github.com":                   "GitHub Flavored Markdown's specification, for its tables",
 	"toml.io":                             "the TOML specification, for its multi-line strings",
+	"www.gnu.org":                         "GNU make's manual, which the Makefile reader follows",
+	"pubs.opengroup.org":                  "the POSIX shell specification, which the command-line reader follows",
 	"img.shields.io":                      "the README's release badge",
 	"pkg.go.dev":                          "public package documentation",
 	"go.dev":                              "the Go project",
@@ -113,6 +116,16 @@ var leaksPublicHosts = map[string]string{
 	"docs.github.com":                     "GitHub's public documentation",
 	"127.0.0.1":                           "loopback: the sign-in redirect and test servers",
 	"[::1]":                               "loopback over IPv6: test servers",
+}
+
+// leaksUnreadURLs are tokens whose host does not parse that the tree and
+// its history hold, each with the reason it names nobody. Only the exact
+// token is allowed.
+var leaksUnreadURLs = map[string]string{
+	"https://evil.example.net%zz/a": "a reserved host with a malformed escape, " +
+		"which the renderer's test gives as a link it cannot read",
+	"https://alice:[MASKED": "the redactor's test output, a URL to a reserved host whose password " +
+		"is masked with a space in it, so the token stops before the host",
 }
 
 // leaksGitLabPaths are gitlab.com paths that name GitLab's own pages or
@@ -130,9 +143,9 @@ var leaksRules = []leaksRule{
 	{
 		name: "an address at a domain somebody could own",
 		re:   regexp.MustCompile(`[A-Za-z0-9._%+\-=]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}`),
-		value: func(m string) string {
+		value: func(m string) (string, bool) {
 			_, domain, _ := strings.Cut(m, "@")
-			return domain
+			return domain, true
 		},
 		allow: []leaksAllow{
 			{regexp.MustCompile(leaksReserved), "RFC 2606 and RFC 6761 reserve these domains; they can never deliver"},
@@ -220,29 +233,43 @@ func leaksPathSet() *regexp.Regexp {
 // leaksURLHost is the host a URL is for, decided by parsing rather than
 // by matching text: userinfo before an @, a lookalike suffix and a case
 // difference all fool a pattern. A URL that is a template or a pattern
-// has no host, and gives "".
-func leaksURLHost(raw string) string {
-	// A URL written inside a regular expression escapes its dots.
-	raw = strings.ReplaceAll(raw, `\.`, ".")
-	raw = strings.TrimRight(raw, ".:;\\")
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return ""
+// has no host, and gives "". ok is false when the host does not parse: a
+// host nothing can read is one no allow-list can be held against.
+func leaksURLHost(raw string) (host string, ok bool) {
+	if _, known := leaksUnreadURLs[raw]; known {
+		return "", true
 	}
-	host := strings.ToLower(u.Hostname())
-	if strings.ContainsAny(host, "{}<>$%*") || host == "" {
-		return ""
+	// A URL written inside a regular expression escapes its dots. Any other
+	// backslash reads as a slash, as internal/render reads a link, so an
+	// escape such as \n ends the host rather than hiding it.
+	s := strings.ReplaceAll(strings.ReplaceAll(raw, `\.`, "."), `\`, "/")
+	// Only the scheme and authority are parsed, so a template in the path
+	// (/%s) does not hide the host.
+	scheme, rest, _ := strings.Cut(s, "://")
+	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
+		rest = rest[:end]
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() {
-			if ip.To4() == nil {
-				return "[::1]"
-			}
-			return "127.0.0.1"
+	u, err := url.Parse(scheme + "://" + strings.TrimRight(rest, ".:;"))
+	if err != nil {
+		return "", false
+	}
+	host = strings.ToLower(u.Hostname())
+	if strings.ContainsAny(host, "{}<>$%*") {
+		return "", true
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if ip.To4() == nil {
+			return "[::1]", true
 		}
-		return host
+		return "127.0.0.1", true
 	}
-	return host
+	return host, true
+}
+
+// leaksPosition is where offset falls in text, as a line and a column.
+func leaksPosition(text string, offset int) string {
+	before := text[:offset]
+	return fmt.Sprintf("line %d, column %d", strings.Count(before, "\n")+1, offset-strings.LastIndex(before, "\n"))
 }
 
 // leaksSkip are files that are not ours to police, by repository path,
@@ -296,15 +323,20 @@ func leaksFind(text string) []string {
 func leaksFindPlain(text string) []string {
 	var out []string
 	for _, rule := range leaksRules {
-		for _, m := range rule.re.FindAllStringSubmatch(text, -1) {
-			value := m[rule.group]
+		for _, at := range rule.re.FindAllStringSubmatchIndex(text, -1) {
+			match, value := text[at[0]:at[1]], text[at[2*rule.group]:at[2*rule.group+1]]
 			if rule.value != nil {
-				value = rule.value(value)
+				var ok bool
+				if value, ok = rule.value(value); !ok {
+					// The position, so the redacted finding can be found.
+					out = append(out, "a URL whose host does not parse, at "+leaksPosition(text, at[0])+": "+leaksRedact(match))
+					continue
+				}
 			}
 			if slices.ContainsFunc(rule.allow, func(a leaksAllow) bool { return a.re.MatchString(value) }) {
 				continue
 			}
-			out = append(out, rule.name+": "+leaksRedact(m[0]))
+			out = append(out, rule.name+": "+leaksRedact(match))
 		}
 	}
 	return out

@@ -59,7 +59,7 @@ runs one.
 |---|---|---|
 | `coverage` | 80% per package, scored on its own files; a lower floor or an exemption carries its reason | check |
 | `leaks` | nothing from a real instance or account in the working tree; `leaks-history` scans every blob, commit message and tag | check; history by hand |
-| `pins` | actions pinned by SHA with a version comment, and every tool at one exact version, the same in the `Makefile` and the workflows | check |
+| `pins` | actions pinned by SHA with a version comment, container images by digest, and every tool at one exact version, the same in the `Makefile` and the workflows | check |
 | `classes` | every error class the code emits is declared in `internal/gapi/errors.go` and listed in `Classes`, and every declared class is emitted | check |
 | `api-coverage` | every operation in the OpenAPI snapshot has a verdict in `testdata/api-coverage.tsv`, every client call a `used` row, and every GraphQL operation a doc comment that mentions REST on the function that sends it | check |
 | `api-fields` | every parameter sent and field decoded exists on its operation, or carries a verified omission in `testdata/api-fields.tsv` | check |
@@ -68,7 +68,7 @@ runs one.
 | `bodies` | every string a write sends goes through `internal/quickaction`, or is listed as a plain field with a reason | check |
 | `smoke` | the built binary over stdio at two protocol revisions: stdout carries only frames, `[auth]` with no credentials, a clean exit on disconnect | check |
 | `staleness` | the docs against the code: the README's tool table, the settings in `docs/configuration.md`, the blocks in `docs/setup.md`, this file's gates and test instance, and no version in prose | check |
-| `docs` | the decision index, every `D-` citation and doc anchor, the paths and targets a doc names, the codemap, and the live steps comments name | check |
+| `docs` | the decision index, every `D-` citation and doc anchor, the paths and targets a doc names, the codemap, and the live steps comments, docs and records name | check |
 | `checklist` | `CLAUDE.md`'s definition of done against `make check`, in order | check |
 | `changelog-links` | every CHANGELOG version heading has its link reference | check |
 | `transcript` | the live driver and the evals reach a terminal only through the redacting printer | check |

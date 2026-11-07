@@ -61,3 +61,14 @@ func TestDepsCheck(t *testing.T) {
 		})
 	}
 }
+
+// A pinned reason is read on the module's own line.
+func TestDepsPinnedReadsOneLine(t *testing.T) {
+	gomod := "require (\n\texample.com/a v1.0.0 //\npinned: not a's reason\n\texample.com/b v1.0.0 // pinned: b's reason\n)\n"
+	if reason, ok := depsPinned(gomod, "example.com/a"); ok {
+		t.Errorf("example.com/a is pinned with %q from the next line", reason)
+	}
+	if reason, ok := depsPinned(gomod, "example.com/b"); !ok || reason != "b's reason" {
+		t.Errorf("example.com/b: %q, %v; want %q", reason, ok, "b's reason")
+	}
+}

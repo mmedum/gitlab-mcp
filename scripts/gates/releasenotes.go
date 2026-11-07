@@ -34,27 +34,11 @@ func releaseNotesFrom(out io.Writer, file, version string) error {
 }
 
 // releaseNotesSection is the text under `## [version]`, blank lines at
-// either end removed. It stops at the next h2 and at the link-reference
-// footer, and reads nothing inside a fenced block as either.
+// either end removed.
 func releaseNotesSection(changelog, version string) string {
-	want := "## [" + version + "]"
-	var body []string
-	inside, fenced := false, false
-	for line := range strings.SplitSeq(changelog, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if !inside {
-			if strings.HasPrefix(line, want) {
-				inside = true
-			}
-			continue
-		}
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			fenced = !fenced
-		} else if !fenced && (strings.HasPrefix(line, "## ") || changelogLinkDefinition.MatchString(line)) {
-			break
-		}
-		body = append(body, line)
-	}
+	doc := readChangelog(changelog)
+	from, to := doc.section(version)
+	body := doc.lines[from:to]
 	for len(body) > 0 && strings.TrimSpace(body[0]) == "" {
 		body = body[1:]
 	}

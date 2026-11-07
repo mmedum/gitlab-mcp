@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"cmp"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -148,6 +150,45 @@ func TestChangelogPR(t *testing.T) {
 	}
 }
 
+// The diff is read as each side of the file reads: a heading in a fence is
+// an example, neither a release cut nor the start of a section.
+func TestChangelogPRReadsFencesInTheDiff(t *testing.T) {
+	const (
+		fenced  = "## [Unreleased]\n\n```markdown\n## [0.1.0]\n```\n\n## [0.1.0] - 2026-01-01\n\n- First.\n"
+		example = "## [Unreleased]\n\n- One.\n\n## [0.1.0] - 2026-01-01\n\n~~~\n## [Unreleased]\n~~~\n"
+	)
+	cases := []struct{ name, base, head, want string }{
+		{"a fenced version heading under a release", changelogBase,
+			strings.Replace(changelogBase, "- First.\n", "- First.\n\n```markdown\n## [0.2.0] - 2026-02-01\n```\n", 1),
+			"no line was added under [Unreleased]"},
+		{"a fenced [Unreleased] heading under a release", changelogBase,
+			strings.Replace(changelogBase, "- First.\n", "- First.\n\n~~~\n## [Unreleased]\n\n- Late.\n~~~\n", 1),
+			"no line was added under [Unreleased]"},
+		{"an entry under [Unreleased] below a fenced version heading", fenced,
+			strings.Replace(fenced, "```\n\n", "```\n\n- Two.\n\n", 1), ""},
+		{"[Unreleased] renamed, the renamed section's new lines read as unreleased", changelogBase,
+			strings.Replace(changelogBase, "## [Unreleased]\n\n### Added\n\n- One.\n", "## [Next]\n\n### Added\n\n- One.\n- Two.\n", 1), ""},
+		{"a fenced [Unreleased] heading removed, which removes no section", example,
+			strings.Replace(example, "~~~\n## [Unreleased]\n~~~\n", "## [Notes]\n\n- Late.\n", 1),
+			"no line was added under [Unreleased]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := gitRepo(t, map[string]string{"CHANGELOG.md": tc.base, "internal/x/x.go": "package x\n", "go.mod": changelogGoMod})
+			gitDo(t, dir, "checkout", "-q", "-b", "topic")
+			gitCommit(t, dir, "work", map[string]string{"CHANGELOG.md": tc.head, "internal/x/x.go": "package x // changed\n"})
+			var out bytes.Buffer
+			err := changelogCheck(&out, dir, "main", "topic")
+			switch {
+			case tc.want == "" && err != nil:
+				t.Errorf("want a pass, got %v", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Errorf("want an error with %q, got %v (%s)", tc.want, err, out.String())
+			}
+		})
+	}
+}
+
 func TestMergeBaseGate(t *testing.T) {
 	dir := gitRepo(t, map[string]string{"a": "a"})
 	base := gitDo(t, dir, "rev-parse", "HEAD")
@@ -174,6 +215,11 @@ func TestChangelogLinks(t *testing.T) {
 	}
 	cases := []struct{ name, old, new, want string }{
 		{"a heading with no link", "[0.1.0]: https://example.com/releases/tag/v0.1.0\n", "", "## [0.1.0] has no [0.1.0]: link reference"},
+		{"an empty definition, which does not take the next line's URL", "[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n" +
+			"[0.1.0]: https://example.com/releases/tag/v0.1.0\n", "[0.1.0]:\n[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n",
+			"## [0.1.0] has no [0.1.0]: link reference"},
+		// A fence holds an example, so a heading or a link in one is neither.
+		{"a heading and a link in a fence", "- One.\n", "- One.\n\n```markdown\n## [9.9.9]\n[0.0.1]: https://example.com/x\n```\n", ""},
 		{"Unreleased unlinked", "[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n", "", "[Unreleased] has no link reference"},
 		{"Unreleased from an old release", "compare/v0.1.0...HEAD", "compare/v0.0.9...HEAD", "should compare from v0.1.0..."},
 		{"no Unreleased heading", "## [Unreleased]\n", "## Unreleased\n", "there is no ## [Unreleased] heading"},
@@ -185,8 +231,68 @@ func TestChangelogLinks(t *testing.T) {
 				t.Fatalf("nothing to break: %q", tc.old)
 			}
 			_, problems := changelogLinkProblems(strings.Replace(changelogBase, tc.old, tc.new, 1))
+			if tc.want == "" {
+				wantClean(t, problems)
+				return
+			}
 			wantProblem(t, problems, tc.want)
 		})
+	}
+}
+
+// Versions order as semver.org's precedence example lists them, numbers
+// compared as numbers.
+func TestChangelogCompareOrdersAsSemver(t *testing.T) {
+	ordered := []string{"1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2",
+		"1.0.0-beta.11", "1.0.0-rc.1", "1.0.0", "1.0.1", "1.2.0", "1.10.0", "2.0.0", "10.0.0"}
+	for i, a := range ordered {
+		for j, b := range ordered {
+			if got, want := changelogCompare(a, b), cmp.Compare(i, j); got != want {
+				t.Errorf("changelogCompare(%s, %s) = %d, want %d", a, b, got, want)
+			}
+		}
+	}
+}
+
+// The CHANGELOG is read once, as a reader sees it: CRLF as LF, a fence
+// holding an example, only level-2 headings as sections, a section ending
+// at the next heading of its level, tab or space, and at the footer.
+func TestReadChangelog(t *testing.T) {
+	doc := readChangelog(strings.ReplaceAll("# Changelog\n\n## [Unreleased]\n\n- a\n### [8.8.8]\n\n```markdown\n## [9.9.9]\n"+
+		"[9.9.9]: https://example.com/x\n```\n\n- b\n\n## [2.0.0-rc.1] - 2026-01-01\n\n- c\n##\tLater\n- d\n\n"+
+		"[Unreleased]: https://example.com/u\n[2.0.0-rc.1]:\n", "\n", "\r\n"))
+	if want := []changelogHeading{{"Unreleased", 2}, {"2.0.0-rc.1", 14}}; !slices.Equal(doc.headings, want) {
+		t.Errorf("headings = %v, want %v", doc.headings, want)
+	}
+	if want := []changelogHeading{{"2.0.0-rc.1", 14}}; !slices.Equal(doc.versions(), want) {
+		t.Errorf("versions = %v, want %v", doc.versions(), want)
+	}
+	if want := map[string]string{"Unreleased": "https://example.com/u"}; !maps.Equal(doc.links, want) {
+		t.Errorf("links = %v, want %v", doc.links, want)
+	}
+	if from, to := readChangelog("## [1.0.0]\n- a\n# Notes\n- b\n").section("1.0.0"); from != 1 || to != 2 {
+		t.Errorf("a section ends at an h1 too: lines [%d, %d), want [1, 2)", from, to)
+	}
+	for label, want := range map[string]string{
+		"Unreleased": "\n- a\n### [8.8.8]\n\n```markdown\n## [9.9.9]\n[9.9.9]: https://example.com/x\n```\n\n- b\n",
+		"2.0.0-rc.1": "\n- c",
+		"9.9.9":      "",
+	} {
+		if from, to := doc.section(label); strings.Join(doc.lines[from:to], "\n") != want {
+			t.Errorf("section %s = %q, want %q", label, strings.Join(doc.lines[from:to], "\n"), want)
+		}
+	}
+}
+
+// A footer line with no URL yet still ends the section above it.
+func TestReleaseNotesStopAtAnEmptyFooterLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
+	if err := os.WriteFile(path, []byte("## [Unreleased]\n\n## [1.0.0]\n\n- b\n\n[Unreleased]:\n[1.0.0]: https://example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := releaseNotesFrom(&out, path, "1.0.0"); err != nil || out.String() != "- b\n" {
+		t.Errorf("notes = %q, %v; want %q", out.String(), err, "- b\n")
 	}
 }
 

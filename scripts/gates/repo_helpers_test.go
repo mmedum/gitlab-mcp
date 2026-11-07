@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,18 @@ func wantClean(t *testing.T, problems []string) {
 	if len(problems) > 0 {
 		t.Errorf("problems on a clean fixture:\n%s", strings.Join(problems, "\n"))
 	}
+}
+
+// runOutsideGit runs the gates program with args in an empty directory
+// git does not see as a checkout, and returns its exit code, stdout and
+// stderr.
+func runOutsideGit(t *testing.T, args ...string) (code int, stdout, stderr *bytes.Buffer) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+	stdout, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	return run(args, stdout, stderr), stdout, stderr
 }
 
 // mustSay fails unless a gate's output says want. Every gate says how

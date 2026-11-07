@@ -49,6 +49,12 @@ type workflowJob struct {
 	Needs       yaml.Node         `yaml:"needs"`
 	Permissions yaml.Node         `yaml:"permissions"`
 	Steps       []workflowStep    `yaml:"steps"`
+	// Container and each service are an image, or a mapping with an
+	// image: key.
+	Container yaml.Node            `yaml:"container"`
+	Services  map[string]yaml.Node `yaml:"services"`
+	// uses is where Uses sits, for its SHA and version comment.
+	uses workflowRef
 }
 
 // workflowPermissions reads a permissions node as scope → access. A
@@ -73,8 +79,53 @@ type workflowStep struct {
 	Run  string            `yaml:"run"`
 	With map[string]any    `yaml:"with"`
 	Env  map[string]string `yaml:"env"`
+	uses workflowRef
 	// job names the job the step belongs to.
 	job string
+}
+
+// workflowRef is where a `uses:` value sits and the comment after it,
+// which names the version a SHA is.
+type workflowRef struct {
+	line    int
+	comment string
+}
+
+// UnmarshalYAML keeps the `uses:` value's line and comment, which the
+// decoded string loses.
+func (s *workflowStep) UnmarshalYAML(node *yaml.Node) error {
+	type plain workflowStep
+	if err := node.Decode((*plain)(s)); err != nil {
+		return err
+	}
+	s.uses = workflowRefOf(node)
+	return nil
+}
+
+// UnmarshalYAML keeps the job-level `uses:` value's line and comment.
+func (j *workflowJob) UnmarshalYAML(node *yaml.Node) error {
+	type plain workflowJob
+	if err := node.Decode((*plain)(j)); err != nil {
+		return err
+	}
+	j.uses = workflowRefOf(node)
+	return nil
+}
+
+// workflowRefOf reads the `uses:` value of a step or job mapping. yaml.v3
+// gives a trailing comment to the value in block style, and to the
+// mapping itself in flow style ({uses: …} # v1.0.0). node is never an
+// alias: yaml.v3 resolves one before it calls UnmarshalYAML.
+func workflowRefOf(node *yaml.Node) workflowRef {
+	v := workflowResolve(workflowMappingValue(node, "uses"))
+	if v == nil {
+		return workflowRef{}
+	}
+	comment := v.LineComment
+	if comment == "" && node.Style&yaml.FlowStyle != 0 && node.Line == v.Line {
+		comment = node.LineComment
+	}
+	return workflowRef{line: v.Line, comment: strings.TrimSpace(strings.TrimPrefix(comment, "#"))}
 }
 
 // input reads one `with:` value as text. Values are not all strings
@@ -145,7 +196,30 @@ func (w workflow) triggersOnTag(prefix string) bool {
 	return strings.HasPrefix(tags.Value, prefix)
 }
 
-// workflowMappingValue reads one key out of a YAML mapping node.
+// workflowImage is the image a job's container or service names, or empty
+// when there is none.
+func workflowImage(node *yaml.Node) string {
+	node = workflowResolve(node)
+	if node != nil && node.Kind == yaml.MappingNode {
+		node = workflowResolve(workflowMappingValue(node, "image"))
+	}
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return strings.TrimSpace(node.Value)
+}
+
+// workflowResolve is the node an alias such as *img stands for, or node
+// itself when it is not an alias.
+func workflowResolve(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+	return node
+}
+
+// workflowMappingValue reads one key out of a YAML mapping node. A value
+// that is an alias comes back as one, for the caller to resolve.
 func workflowMappingValue(node *yaml.Node, key string) *yaml.Node {
 	if node == nil {
 		return nil
@@ -164,6 +238,27 @@ func workflowMappingValue(node *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
+// workflowMergeKey is the line of the first << key under node, or 0. GitHub
+// documents anchors and aliases and not merge keys
+// (https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases),
+// and yaml.v3 merges one, so a step read here could differ from the step
+// GitHub runs.
+func workflowMergeKey(node *yaml.Node) int {
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if k := node.Content[i]; k.Kind == yaml.ScalarNode && k.Value == "<<" {
+				return k.Line
+			}
+		}
+	}
+	for _, child := range node.Content {
+		if line := workflowMergeKey(child); line > 0 {
+			return line
+		}
+	}
+	return 0
+}
+
 // readWorkflow parses one workflow file. name is the path to report.
 func readWorkflow(path, name string) (workflow, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // a path under .github/workflows
@@ -173,6 +268,13 @@ func readWorkflow(path, name string) (workflow, error) {
 	var w workflow
 	if err := yaml.Unmarshal(data, &w); err != nil {
 		return workflow{}, fmt.Errorf("%s is not valid YAML: %w", name, err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return workflow{}, fmt.Errorf("%s is not valid YAML: %w", name, err)
+	}
+	if line := workflowMergeKey(&doc); line > 0 {
+		return workflow{}, fmt.Errorf("%s:%d: GitHub Actions does not document merge keys; write the mapping out", name, line)
 	}
 	w.path = name
 	w.text = string(data)

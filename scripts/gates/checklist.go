@@ -76,25 +76,40 @@ func checklistCheck(root string) (int, []string, error) {
 }
 
 // checklistDocumented is the words of the first fenced block under the
-// definition-of-done heading.
+// definition-of-done heading, read as the docs gate reads a fence.
 func checklistDocumented(doc string) ([]string, error) {
-	_, section, ok := strings.Cut(doc, checklistHeading)
-	if !ok {
+	lines, prose := strings.Split(doc, "\n"), docsProse(doc)
+	start := slices.Index(prose, checklistHeading)
+	if start < 0 {
 		return nil, fmt.Errorf("%s has no %q heading", checklistDoc, checklistHeading)
 	}
-	if next := strings.Index(section, "\n## "); next >= 0 {
-		section = section[:next]
+	var fence docsFence
+	var block []string
+	opened, closed := false, false
+	for _, line := range lines[start+1:] {
+		if !fence.code(line) {
+			if level := docsHeadingLevel(line); level == 1 || level == 2 {
+				break
+			}
+			continue
+		}
+		if !opened {
+			opened = true // the opening line, with its info string
+			continue
+		}
+		if fence.open == "" {
+			closed = true
+			break
+		}
+		block = append(block, line)
 	}
-	_, rest, ok := strings.Cut(section, "```")
-	if !ok {
+	switch {
+	case !opened:
 		return nil, fmt.Errorf("%s: no fenced block under %q", checklistDoc, checklistHeading)
-	}
-	_, rest, _ = strings.Cut(rest, "\n") // the fence's info string
-	block, _, ok := strings.Cut(rest, "```")
-	if !ok {
+	case !closed:
 		return nil, fmt.Errorf("%s: the fenced block under %q is not closed", checklistDoc, checklistHeading)
 	}
-	words := strings.Fields(block)
+	words := strings.Fields(strings.Join(block, "\n"))
 	if len(words) == 0 {
 		return nil, fmt.Errorf("%s: the fenced block under %q is empty", checklistDoc, checklistHeading)
 	}
