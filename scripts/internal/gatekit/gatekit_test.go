@@ -210,3 +210,61 @@ func TestShellWords(t *testing.T) {
 		}
 	}
 }
+
+// A redirection is one word with its target, and no operator: 2>&1 runs
+// nothing in the background.
+func TestShellWordsKeepARedirectionWhole(t *testing.T) {
+	got := ShellWords("go test ./... 2>&1 | tee log >/dev/null")
+	want := []string{"go", "test", "./...", "2>&1", "|", "tee", "log", ">/dev/null"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ShellWords = %q, want %q", got, want)
+	}
+	if c := GoCommands("go vet ./... 2>&1"); len(c) != 1 || !slices.Equal(c[0].Args, []string{"./..."}) {
+		t.Errorf("GoCommands = %+v, want vet ./... alone", c)
+	}
+}
+
+func TestLists(t *testing.T) {
+	got := Lists("make a && make b 2>&1; c || d & e | f")
+	want := [][]string{{"make", "a"}, {"make", "b"}, {"c"}, {"d"}, {"e", "|", "f"}}
+	if !slices.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("Lists = %q, want %q", got, want)
+	}
+}
+
+func TestSwallowed(t *testing.T) {
+	for line, want := range map[string]string{
+		"make leaks":                "",
+		"make leaks && make pins":   "",
+		"make leaks || true":        "`|| true` passes whatever came before",
+		"make leaks || :":           "`|| :` passes whatever came before",
+		"make leaks || exit 0":      "`|| exit 0` passes whatever came before",
+		"make leaks || exit 1":      "",
+		"make leaks; true":          "`; true` ends it with success whatever came before",
+		"make leaks; make pins":     "",
+		"make leaks &":              "& runs a command in the background, where its failure is never seen",
+		"! make leaks":              "! turns a failure into success",
+		"set +e; make leaks":        "set +e lets the commands after it fail",
+		"make leaks 2>&1 | tee log": "",
+		"out=$(gofmt -l .); exit 1": "",
+		"echo 'make x || true'":     "",
+	} {
+		if got := Swallowed(line); got != want {
+			t.Errorf("Swallowed(%q) = %q, want %q", line, got, want)
+		}
+	}
+}
+
+func TestUncommented(t *testing.T) {
+	for line, want := range map[string]string{
+		"go run x ./... # was: go run y@v1": "go run x ./... ",
+		"echo 'a # b' # c":                  "echo 'a # b' ",
+		`echo "a # b" \# c`:                 `echo "a # b" \# c`,
+		"echo a#b":                          "echo a#b",
+		"# all of it":                       "",
+	} {
+		if got := Uncommented(line); got != want {
+			t.Errorf("Uncommented(%q) = %q, want %q", line, got, want)
+		}
+	}
+}

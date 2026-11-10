@@ -487,9 +487,9 @@ code.
 | D-84 | The drivers print only through one redacting writer | accepted | transcript, TestTranscriptRefuses, TestTranscriptCoversTheDrivers, TestPrinterMasksEveryLine, TestIdsAResultCarriesAreMasked |
 | D-85 | Evals score planted instructions against the in-memory GitLab, fail-closed | accepted | evals-check, TestTheFenceIsClosedAtTheSource, TestReadEventFailsAToolOutsideTheFence, TestScorers |
 | D-86 | Every gate asserts a floor on how much it read | accepted | TestTheClassesFloorsFire, TestSmokeFloorFires, TestPinsFloors, TestTranscriptFloorOnFiles, TestFloor |
-| D-87 | Every check is Go in one registry, and `make check` and CI run the same set | accepted | parity, checklist, TestEveryCommandDeclaresAMode, TestParityRefuses, TestChecklist, TestCoverpkgIsTheMakefiles |
-| D-88 | Every tool runs at one exact pinned version through `go run` | accepted | pins, TestPinsRefuses, TestPinsNamesEachProblem, TestPinsPassesWhenTheyAgree |
-| D-89 | A release is reproducible, signed and attested, from a tag whose CI is green | accepted | release, goreleaser-check, actionlint, TestReleaseRefuses, review |
+| D-87 | Every check is Go in one registry, and `make check` and CI run the same set | accepted | parity, checklist, TestEveryCommandDeclaresAMode, TestParityRefuses, TestParityHoldsCheckToWhatAPushRuns, TestSwallowed, TestChecklist, TestCoverpkgIsTheMakefiles |
+| D-88 | Every tool runs at one exact pinned version through `go run` | accepted | pins, TestPinsRefuses, TestPinsNamesEachProblem, TestPinsPassesWhenTheyAgree, TestPinsPassesWhatTheRunnerReadsAlike |
+| D-89 | A release is reproducible, signed and attested, from a tag whose CI is green | accepted | release, goreleaser-check, actionlint, TestReleaseRefuses, TestReleaseGrants, review |
 | D-90 | The registry entry is published from the signed checksums, never for a prerelease | accepted | server-json, TestServerJSONPublish, TestServerJSONRules |
 | D-91 | The bundle asks for every setting, with defaults that start the server as no settings do | accepted | mcpb, TestMcpbUserConfigIsDerivedFromTheSettings, TestMcpbFieldDiffNamesTheFieldsThatDiffer, TestMcpbRefusedCombinationsAreDeclared, TestMcpbACredentialFieldIsSensitive |
 | D-92 | The bundle manifest is held to its vendored schema, read as every host reads it | accepted | mcpb, TestMcpbRefusesARepeatedKey, TestMcpbRefusesEachBreak, TestMcpbArgsAreReadAsAList, TestMcpbStampHoldsTheStampedManifestToTheSchema, TestVendorSchemasLoadAndCarryTheirFloor |
@@ -2708,6 +2708,11 @@ their recipes, and fails on a gate implemented but never run or run but
 not registered. The `checklist` gate holds the definition-of-done list
 in `CLAUDE.md` to the `check:` prerequisites, both ways. CI and the
 Makefile use the same `-coverpkg`, held by a test.
+Only what a push to `main` runs counts: a step a pull request alone
+runs, or whose failure passes, does not. A recipe or a CI line that
+lets a failure pass is refused: a `-` prefix, `.IGNORE`, `|| true`, a
+last `; true`, `&`, `!` or `set +e`. The Makefile is read as make reads
+it, and a line the reader does not read is refused by name.
 
 A check that exists in one place but not the other drifts, and a gate
 in shell is a gate nothing tests. In Go, the code holding the gates shut
@@ -2733,9 +2738,16 @@ as setup-go reads it. The `pins` gate holds it: exact semver only, no
 range or `latest`, every action classified as an installer or not,
 installer tool versions required, a Makefile pin held to the recipe
 that runs it, and every pin the Makefile and a workflow share compared,
-with floors. A known tool's `module@version` on any line of a workflow
-or the Makefile but a comment line is held to one exact version as text
-too. A `module@version` in a Go comment is not a pin. A workflow
+with floors. A known tool's `module@version` on any line of a workflow,
+the Makefile, the git hook or `.goreleaser.yaml` but a comment line is a
+pin, held to the tool's one version. Input and env version names match
+in any case, a reusable workflow's version is held, `go-version` beside
+`go-version-file` is refused, and every level of a workflow runs bash.
+A recipe or the hook that runs a known tool from `PATH`, or fetches
+whatever release is newest, is refused. The goreleaser config's commands
+are read as goreleaser renders them, by a reader checked against the
+version the release runs. A line break YAML parsers do not all read
+alike is refused. A `module@version` in a Go comment is not a pin. A workflow
 with a `<<` merge key is refused: GitHub documents anchors and aliases
 but not merge keys
 ([YAML anchors and aliases](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases)).
@@ -2747,9 +2759,10 @@ and a SHA cannot. The golangci-lint and gitleaks actions are not used,
 because their steps would be a second pin the Makefile does not share.
 
 Rejected: a version copied from another project; a tool from `PATH`;
-the golangci-lint and gitleaks actions; a reader for `bash -c`, `eval`
-and make conditionals, which the text rule makes unneeded; reading merge
-keys as yaml.v3 merges them, which GitHub may not.
+the golangci-lint and gitleaks actions; a reader for `bash -c` and
+`eval`, which the text rule makes unneeded, or for make conditionals,
+which the Makefile reader refuses by name; reading merge keys as yaml.v3
+merges them, which GitHub may not.
 Cost: a version bump changes the Makefile and the workflow together, and
 a dependabot bump of an action keeps its version comment or `pins`
 fails.
@@ -2773,7 +2786,10 @@ A reproducible build lets anyone rebuild and compare. A tag is only a
 pointer, so the CI run on its commit is what says the code passed.
 
 The `release` gate holds `.goreleaser.yaml` against the release
-workflow and the packer. `make release-rehearse` runs goreleaser
+workflow and the packer. The attest step sits in each job that runs
+goreleaser, in any form, and that job grants `id-token` and
+`attestations` write. Its subject-path names each file the release
+writes, and nothing else. `make release-rehearse` runs goreleaser
 locally without publishing.
 
 Rejected: a certificate identity matched by a regular expression; `go

@@ -117,9 +117,19 @@ var (
 	pinsExact = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
 	// pinsModuleAt is a module@version in text. The version ends where a
 	// shell word or command does.
-	pinsModuleAt  = regexp.MustCompile(`([A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+)@([^\s"'` + "`" + `);&|\\]+)`)
-	pinsSemverIn  = regexp.MustCompile(`v?\d+\.\d+\.\d+`)
-	pinsVersionEn = regexp.MustCompile(`_VERSION$`)
+	pinsModuleAt = regexp.MustCompile(`([A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+)@([^\s"'` + "`" + `);&|\\]+)`)
+	pinsSemverIn = regexp.MustCompile(`v?\d+\.\d+\.\d+`)
+	// pinsVersionEn is an env name holding a version, in any case: the
+	// runner does not fold env names, and a reader that did not either
+	// would pass `Tool_Version: latest`.
+	pinsVersionEn = regexp.MustCompile(`(?i)_VERSION$`)
+	// pinsContextRef is one context's value, such as ${{ inputs.tag }}: a
+	// reusable workflow of this repository holds it where it uses it.
+	pinsContextRef = regexp.MustCompile(`^\$\{\{\s*[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)+\s*\}\}$`)
+	// floatingDownload is a tool fetched at whatever version is newest: a
+	// GitHub "latest release" download, or a Go module at @latest.
+	// `runs-on: ubuntu-latest` is an image label, not a tool.
+	floatingDownload = regexp.MustCompile(`releases/latest/download|@latest\b`)
 	// pinsImageDigest is a container image pinned by its content digest.
 	pinsImageDigest = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
 	// pinsGoModToolchain and pinsGoModGo are setup-go's own patterns for
@@ -197,9 +207,17 @@ func pinsCheck(root string) (*pinsReport, error) {
 		return nil, err
 	}
 	gomod := string(raw)
+	g, err := readGoreleaser(root)
+	if err != nil {
+		return nil, err
+	}
+	hook, err := os.ReadFile(filepath.Join(root, parityHook)) //nolint:gosec // a repository path
+	if err != nil {
+		return nil, err
+	}
 
 	r := &pinsReport{tools: map[string][]pinsFound{}, installed: map[string]bool{}, judged: map[string]bool{},
-		workflows: len(flows)}
+		workflows: len(flows), problems: slices.Clone(mk.refused)}
 	for _, base := range pinsRequiredWorkflows {
 		if _, ok := workflowNamed(flows, base); !ok {
 			r.fail("%s/%s does not exist", workflowDir, base)
@@ -209,6 +227,8 @@ func pinsCheck(root string) (*pinsReport, error) {
 		pinsWorkflow(gomod, w, r)
 	}
 	pinsMakefileRecipes(mk, pinsMakefileVars(mk, r), r)
+	pinsGoreleaser(g, r)
+	pinsHook(string(hook), r)
 	pinsGoModVersions(gomod, r)
 	if err := pinsGoSource(root, r); err != nil {
 		return nil, err
@@ -217,7 +237,13 @@ func pinsCheck(root string) (*pinsReport, error) {
 	for _, w := range flows {
 		pinsTextVersions(w.path, w.text, func(s string) string { return s }, r)
 	}
-	pinsTextVersions(pinsMakefile, mk.text, mk.expand, r)
+	// A recipe line runs up to the shell's comment, which pins nothing.
+	pinsTextVersions(pinsMakefile, mk.text, func(line string) string {
+		if strings.HasPrefix(line, "\t") {
+			return gatekit.Uncommented(mk.expand(line))
+		}
+		return mk.expand(line)
+	}, r)
 
 	for _, t := range pinsTools {
 		found := r.tools[t.name]
@@ -231,6 +257,14 @@ func pinsCheck(root string) (*pinsReport, error) {
 					t.name, found[0].version, found[0].at, f.version, f.at)
 			}
 		}
+	}
+
+	// The goreleaser reader's key paths and template rule are goreleaser's
+	// at one version, so a release that runs another is read on belief.
+	if found := r.tools["goreleaser"]; len(found) > 0 && pinsNormal(found[0].version) != pinsNormal(goreleaserChecked) {
+		r.fail("%s runs goreleaser %s, and the %s reader is checked against %s's source; check its key paths "+
+			"and template rule against %s's, then set goreleaserChecked",
+			found[0].at, found[0].version, releaseGoreleaser, goreleaserChecked, found[0].version)
 	}
 
 	// Floors: zero findings and zero inputs look the same otherwise.
@@ -251,10 +285,8 @@ func pinsCheck(root string) (*pinsReport, error) {
 // pinsWorkflow applies the workflow rules to one file, with gomod the
 // repository's go.mod.
 func pinsWorkflow(gomod string, w workflow, r *pinsReport) {
-	if strings.TrimSpace(w.Defaults.Run.Shell) == "" {
-		r.fail("%s: no workflow-level `defaults: run: shell:`. Every run step goes to a shell, "+
-			"so a job-level block only fixes the jobs that exist today", w.path)
-	}
+	pinsShells(w, r)
+	pinsCalls(w, r)
 	pinsLatestLines(w, r)
 
 	// Every `uses:` is held on the parse, which sees it in every shape YAML
@@ -329,16 +361,23 @@ func pinsLatestLines(w workflow, r *pinsReport) {
 // or refused is not reported again.
 func pinsTextVersions(path, text string, expand func(string) string, r *pinsReport) {
 	for i, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			pinsModules(fmt.Sprintf("%s:%d", path, i+1), expand(line), r)
+		}
+	}
+}
+
+// pinsModules records each known tool's module@version in text, at at, as
+// a pin held to the tool's one version, but a version a rule already
+// recorded or refused, and one still written as a reference, which the
+// structured rules resolve or refuse.
+func pinsModules(at, text string, r *pinsReport) {
+	for _, m := range pinsModuleAt.FindAllStringSubmatch(text, -1) {
+		tool, version := pinsToolByModule(m[1]), m[2]
+		if tool == "" || r.judged[tool+"@"+version] || strings.ContainsAny(version, "$({") {
 			continue
 		}
-		for _, m := range pinsModuleAt.FindAllStringSubmatch(expand(line), -1) {
-			tool, version := pinsToolByModule(m[1]), m[2]
-			if tool == "" || pinsExact.MatchString(version) || r.judged[tool+"@"+version] {
-				continue
-			}
-			r.fail("%s:%d: %s is pinned to %q, which is not one exact version", path, i+1, tool, version)
-		}
+		r.add(tool, version, at)
 	}
 }
 
@@ -401,13 +440,20 @@ func pinsStep(gomod string, w workflow, s workflowStep, r *pinsReport) {
 			v = version
 		}
 		r.add(t.name, w.resolveEnv(v), at)
+		// setup-go reads go-version before go-version-file
+		// (https://github.com/actions/setup-go/blob/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e/README.md#L44),
+		// so one beside go.mod is the Go the step installs.
+		if _, set := s.input("go-version"); t.fromGoMod == "go" && set {
+			r.fail("%s sets go-version, which setup-go reads before %s; pin Go by go.mod alone", at, key)
+		}
 	}
+	pinsInputCase(at, s.With, r)
 	if _, known := pinsNotInstallers[action]; !installer && !known {
 		r.fail("%s is not classified: add it to pinsTools with the input that pins its tool, "+
 			"or to pinsNotInstallers with the reason", at)
 	}
 	for _, key := range slices.Sorted(maps.Keys(s.With)) {
-		if key == "go-version-file" || (!strings.HasSuffix(key, "version") && !strings.HasSuffix(key, "release")) {
+		if !pinsVersionInput(key) {
 			continue
 		}
 		if v, _ := s.input(key); !pinsExact.MatchString(w.resolveEnv(v)) {
@@ -535,9 +581,17 @@ func pinsMakefileRecipes(mk *makefile, pinnedBy map[string][]string, r *pinsRepo
 	// ran is each variable and module@version a recipe naming it runs.
 	ran := map[[2]string]bool{}
 	for _, target := range slices.Sorted(maps.Keys(mk.targets)) {
-		for _, raw := range mk.targets[target].recipe {
+		t := mk.targets[target]
+		for i, raw := range t.recipe {
+			line := mk.expand(raw)
+			at := fmt.Sprintf("%s:%d", pinsMakefile, t.lines[i])
+			// A go run at @latest is the go run rule's to report.
+			if !slices.ContainsFunc(pinsGoRuns(line), func(g pinsGoRun) bool { return strings.HasSuffix(g.pkg, "@latest") }) {
+				pinsFloating(at, line, r)
+			}
+			pinsFromPath(at, line, "run it with $(GO) run and the variable that pins it", r)
 			refs := mk.refs(raw)
-			for _, g := range pinsGoRuns(mk.expand(raw)) {
+			for _, g := range pinsGoRuns(line) {
 				named := false
 				for name := range refs {
 					if slices.Contains(pinnedBy[name], g.pkg) {
@@ -609,11 +663,19 @@ func pinsGoSource(root string, r *pinsReport) error {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(root, path)
+		// A slash name, so a position reads the same on every OS.
+		src, err := os.ReadFile(path) //nolint:gosec // a file under scripts/
+		if err != nil {
+			return err
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.ToSlash(rel), src, parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			lit, ok := n.(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
@@ -649,7 +711,7 @@ func pinsToolByModule(module string) string {
 
 func pinsToolByEnv(key string) string {
 	for _, t := range pinsTools {
-		if slices.Contains(t.envKeys, key) {
+		if slices.ContainsFunc(t.envKeys, func(k string) bool { return strings.EqualFold(k, key) }) {
 			return t.name
 		}
 	}
@@ -657,3 +719,146 @@ func pinsToolByEnv(key string) string {
 }
 
 func pinsNormal(v string) string { return strings.TrimPrefix(strings.TrimSpace(v), "v") }
+
+// pinsShells holds every level of a workflow to bash. The runner's default
+// is bash on Linux and macOS and PowerShell on Windows, so a step without
+// a shell reads its line one way or the other by the runner it lands on
+// (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#defaultsrunshell).
+func pinsShells(w workflow, r *pinsReport) {
+	switch sh := strings.TrimSpace(w.Defaults.Run.Shell); {
+	case sh == "":
+		r.fail("%s: no workflow-level `defaults: run: shell:`. Every run step goes to a shell, "+
+			"so a job-level block only fixes the jobs that exist today", w.path)
+	case sh != "bash":
+		r.fail("%s: the workflow runs its steps in %s; every level is bash", w.path, sh)
+	}
+	for _, id := range slices.Sorted(maps.Keys(w.Jobs)) {
+		if sh := w.Jobs[id].Defaults.Run.Shell; sh != "" && sh != "bash" {
+			r.fail("%s: job %s runs its steps in %s; every level is bash", w.path, id, sh)
+		}
+	}
+	for _, s := range w.steps() {
+		if s.Shell != "" && s.Shell != "bash" {
+			r.fail("%s: job %s has a step in %s; every level is bash", w.path, s.job, s.Shell)
+		}
+	}
+}
+
+// pinsCalls holds the versions a job passes a reusable workflow. A remote
+// one's are held as a step's inputs are, since its code is not read here.
+// One of this repository's may be one context's value, which the workflow
+// holds where it uses it; a literal is still exact.
+func pinsCalls(w workflow, r *pinsReport) {
+	for _, id := range slices.Sorted(maps.Keys(w.Jobs)) {
+		job := w.Jobs[id]
+		if job.Uses == "" {
+			continue
+		}
+		at := fmt.Sprintf("%s: job %s calls %s", w.path, id, job.Uses)
+		pinsInputCase(at, job.With, r)
+		local := strings.HasPrefix(job.Uses, "./")
+		for _, key := range slices.Sorted(maps.Keys(job.With)) {
+			if !pinsVersionInput(key) {
+				continue
+			}
+			v, _ := workflowInput(job.With, key)
+			if !pinsExact.MatchString(v) && (!local || !pinsContextRef.MatchString(v)) {
+				r.fail("%s with %s %q, which is not one exact version", at, key, v)
+			}
+		}
+	}
+}
+
+// pinsVersionInput reports whether an input name holds a version, in any
+// case: the runner reads input names upper-cased.
+func pinsVersionInput(key string) bool {
+	k := strings.ToLower(key)
+	return k != "go-version-file" && (strings.HasSuffix(k, "version") || strings.HasSuffix(k, "release"))
+}
+
+// pinsInputCase refuses two inputs whose names differ only in case: the
+// runner reads both into one INPUT_ variable, so which one wins is not
+// written down.
+func pinsInputCase(at string, with map[string]any, r *pinsReport) {
+	seen := map[string]string{}
+	for _, key := range slices.Sorted(maps.Keys(with)) {
+		upper := strings.ToUpper(key)
+		if other, twice := seen[upper]; twice {
+			r.fail("%s: inputs %s and %s are one input to the runner, which reads names in upper case", at, other, key)
+		}
+		seen[upper] = key
+	}
+}
+
+// pinsFloating refuses a line that fetches a tool at whatever version is
+// newest.
+func pinsFloating(at, line string, r *pinsReport) {
+	if floating := floatingDownload.FindString(line); floating != "" {
+		r.fail("%s: %s installs whatever is newest. Name the version: what builds a release must not float",
+			at, floating)
+		r.judgeLatest(line)
+	}
+}
+
+// pinsFromPath refuses each word of a command line that names a tool
+// pinsTools knows, by its name or a path ending in it, wherever it sits:
+// a pipeline, a substitution and `env -i tool` run it from the PATH as a
+// first word does. The go command is go.mod's, and the module a go run
+// names is the run that pins the tool. remedy says how to run it instead.
+func pinsFromPath(at, line, remedy string, r *pinsReport) {
+	module := map[string]bool{}
+	for _, run := range gatekit.GoRunsIn(line) {
+		module[run.Pkg] = true
+	}
+	named := map[string]bool{}
+	for _, w := range gatekit.Words(line) {
+		tool := path.Base(w)
+		if tool == "go" || module[w] || named[tool] ||
+			!slices.ContainsFunc(pinsTools, func(t pinsTool) bool { return t.name == tool }) {
+			continue
+		}
+		named[tool] = true
+		r.fail("%s: names %s as a word of its own, which runs it from the PATH at whatever version is "+
+			"installed there; %s", at, tool, remedy)
+	}
+}
+
+// pinsGoreleaser holds each command the goreleaser config runs in the
+// release as a workflow's run line is held: nothing fetched at whatever
+// version is newest, each module@version the go command runs or installs a
+// pin of a tool pinsTools knows, and a known tool's module@version
+// anywhere in the line, such as in a bash -c, a pin as well. A sign's
+// cosign and an SBOM's syft run from the PATH the release job's installers
+// set, so the PATH rule is not applied here.
+func pinsGoreleaser(g goreleaserFile, r *pinsReport) {
+	r.problems = append(r.problems, g.refused...)
+	for _, run := range g.runs {
+		at := fmt.Sprintf("%s:%d", releaseGoreleaser, run.line)
+		pinsFloating(at, run.text, r)
+		for _, gr := range pinsGoRuns(run.text) {
+			module, version, _ := strings.Cut(gr.pkg, "@")
+			switch tool := pinsToolByModule(module); {
+			case tool == "":
+				r.fail("%s: go %s %s names a tool pinsTools does not know", at, gr.verb, gr.pkg)
+			case !r.judged[tool+"@"+version]:
+				r.add(tool, version, at+": go "+gr.verb+" "+module)
+			}
+		}
+		pinsModules(at, run.text, r)
+	}
+}
+
+// pinsHook holds the pre-commit hook's lines as a recipe's are held: no
+// known tool from the PATH, nothing at whatever version is newest, and a
+// known tool's module@version held to its one version.
+func pinsHook(text string, r *pinsReport) {
+	for i, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		at := fmt.Sprintf("%s:%d", parityHook, i+1)
+		pinsFloating(at, line, r)
+		pinsFromPath(at, line, "run it through a make target that pins it", r)
+		pinsModules(at, line, r)
+	}
+}

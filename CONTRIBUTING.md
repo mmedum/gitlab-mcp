@@ -47,7 +47,7 @@ Besides the gates below, `check` runs `fmt`, `vet` (untagged, and with
 the `live` and `evals` tags so the drivers keep compiling), `tidy`,
 `lint` (golangci-lint, forbidigo included), `cover` (race tests, then
 the `coverage` gate), `vuln` (govulncheck), `licenses`, `secrets`
-(gitleaks over the tree and every commit), `evals-check`, `actionlint`
+(gitleaks over the tree and HEAD's history), `evals-check`, `actionlint`
 and `goreleaser-check`.
 
 Every check this repository runs on itself is Go, under `scripts/gates`,
@@ -271,6 +271,8 @@ Every user-visible change gets an entry under `## [Unreleased]` in
 `CHANGELOG.md`, in the same pull request that makes the change. Leave out
 changes only contributors see, unless they must act on them.
 
+- **An entry is a bullet at the margin.** The `changelog` gate counts
+  nothing else, and nothing in fenced code.
 - **Sections** are the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
   set and nothing else: Added, Changed, Deprecated, Removed, Fixed and
   Security, in that order.
