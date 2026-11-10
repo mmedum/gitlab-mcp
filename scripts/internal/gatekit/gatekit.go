@@ -179,7 +179,8 @@ type GoCommand struct {
 // as the shell splits it. A command substitution, backticks and a subshell
 // hold commands of their own, so `OUT=$(go run x@v1)` runs x@v1.
 func GoCommands(line string) []GoCommand {
-	words := shellSplit(line, true)
+	// A redirection is no word of the command it sits in.
+	words := slices.DeleteFunc(shellSplit(line, true), func(w shellWord) bool { return w.redir })
 	var out []GoCommand
 	for i := 0; i+1 < len(words); i++ {
 		// The go command by any path, such as $GOROOT/bin/go.
@@ -203,6 +204,7 @@ func GoCommands(line string) []GoCommand {
 // & or | is a word of its own, which ends a command, and a # that starts a
 // word starts a comment
 // (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_03).
+// A redirection, such as 2>&1, is one word with its target.
 func ShellWords(line string) []string {
 	split := shellSplit(line, false)
 	words := make([]string, 0, len(split))
@@ -212,82 +214,261 @@ func ShellWords(line string) []string {
 	return words
 }
 
+// Words is a command line's words, read through command substitutions
+// and subshells, operators and redirections dropped: each word a command
+// may run.
+func Words(line string) []string {
+	var out []string
+	for _, w := range shellSplit(line, true) {
+		if !w.op && !w.redir {
+			out = append(out, w.text)
+		}
+	}
+	return out
+}
+
+// Uncommented is a command line up to the # that starts a comment: one
+// that begins a word, outside quotes
+// (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_03).
+func Uncommented(line string) string {
+	quote := byte(0)
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case c == '\\' && i+1 < len(line):
+			i++
+		case quote == '"':
+			if c == '"' {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+			return line[:i]
+		}
+	}
+	return line
+}
+
+// listOps are the operators that end a command in a list
+// (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_09_03).
+var listOps = map[string]bool{";": true, "&": true, "&&": true, "||": true}
+
+// Lists is a command line's commands, split at its list operators, each
+// as its words with any redirection dropped. A pipeline stays one command.
+func Lists(line string) [][]string {
+	words := shellSplit(line, false)
+	var out [][]string
+	start := 0
+	for i := 0; i <= len(words); i++ {
+		if i < len(words) && (!words[i].op || !listOps[words[i].text]) {
+			continue
+		}
+		command := make([]string, 0, i-start)
+		for _, w := range words[start:i] {
+			if !w.redir {
+				command = append(command, w.text)
+			}
+		}
+		if len(command) > 0 {
+			out = append(out, command)
+		}
+		start = i + 1
+	}
+	return out
+}
+
+// Swallowed names how a command line lets a failure pass, or is "": ||
+// with true, : or exit 0 after it, a last command of true, : or exit 0
+// after ;, a command run in the background with &, ! before a command, and
+// set +e (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_09).
+func Swallowed(line string) string {
+	words := slices.DeleteFunc(shellSplit(line, true), func(w shellWord) bool { return w.redir })
+	op := ""
+	for i := 0; i < len(words); {
+		if words[i].op {
+			if words[i].text == "&" {
+				return "& runs a command in the background, where its failure is never seen"
+			}
+			op = words[i].text
+			i++
+			continue
+		}
+		end := i
+		var command []string
+		for ; end < len(words) && !words[end].op; end++ {
+			command = append(command, words[end].text)
+		}
+		passes := command[0] == "true" || command[0] == ":" || command[0] == "exit" && len(command) == 2 && command[1] == "0"
+		switch {
+		case op == "||" && passes:
+			return "`|| " + strings.Join(command, " ") + "` passes whatever came before"
+		case op == ";" && end == len(words) && passes:
+			return "`; " + strings.Join(command, " ") + "` ends it with success whatever came before"
+		case command[0] == "!":
+			return "! turns a failure into success"
+		case command[0] == "set" && slices.ContainsFunc(command[1:], func(a string) bool {
+			return strings.HasPrefix(a, "+") && strings.Contains(a, "e")
+		}):
+			return "set +e lets the commands after it fail"
+		}
+		i = end
+	}
+	return ""
+}
+
 // shellWord is one word of a command line, op when it is an operator that
-// ends a command rather than text.
+// ends a command rather than text, and redir when it is a redirection.
 type shellWord struct {
-	text string
-	op   bool
+	text  string
+	op    bool
+	redir bool
 }
 
 // shellSplit is ShellWords with each word's kind. With subst, $(, (, ) and
 // a backtick are operators too, since a command substitution or a subshell
 // holds commands of its own
 // (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_06_03).
+// A redirection, such as 2>&1, < in or bash's &>log, is one word with its
+// target, and neither a word of its command nor an operator that ends it
+// (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_07,
+// https://www.gnu.org/software/bash/manual/bash.html#Redirecting-Standard-Output-and-Standard-Error).
 func shellSplit(line string, subst bool) []shellWord {
 	var s shellSplitter
 	for i := 0; i < len(line); i++ {
 		switch c := line[i]; {
 		case s.quote == '\'':
-			if c == '\'' {
-				s.quote = 0
-			} else {
-				s.word.WriteByte(c)
-			}
-		case c == '\\' && i+1 < len(line) && (s.quote == 0 || strings.IndexByte("\"\\$`", line[i+1]) >= 0):
+			s.inQuote(c)
+		case s.escaped(line, i):
 			i++
-			s.word.WriteByte(line[i])
-			s.inWord = true
+			s.add(line[i])
 		case subst && s.substitution(line, &i):
 		case s.quote == '"':
-			if c == '"' {
-				s.quote = 0
-			} else {
-				s.word.WriteByte(c)
-			}
-		case c == '\'' || c == '"':
+			s.inQuote(c)
+		case strings.IndexByte(`'"`, c) >= 0:
 			s.quote, s.inWord = c, true
 		case c == '#' && !s.inWord:
-			return s.words
-		case c == ' ' || c == '\t':
+			return s.finish()
+		case strings.IndexByte(" \t", c) >= 0:
 			s.flush()
-		case strings.IndexByte(";&|", c) >= 0:
-			j := i
-			for j+1 < len(line) && line[j+1] == c {
-				j++
-			}
-			s.operator(line[i : j+1])
-			i = j
+		case s.redirection(line, &i):
+		case s.operatorRun(line, &i):
 		default:
-			s.word.WriteByte(c)
-			s.inWord = true
+			s.add(c)
 		}
 	}
-	s.flush()
-	return s.words
+	return s.finish()
 }
 
 // shellSplitter is shellSplit's state: the words read, the one being read,
-// the quote the reader is in, and the substitutions and subshells around
-// it, each with the character that ends it and the quote it was opened in.
+// the quote the reader is in, the substitutions and subshells around it,
+// each with the character that ends it and the quote it was opened in, and
+// a redirection's operator waiting for its target.
 type shellSplitter struct {
-	words  []shellWord
-	word   strings.Builder
-	inWord bool
-	quote  byte
-	opened []struct{ end, quote byte }
+	words    []shellWord
+	word     strings.Builder
+	inWord   bool
+	quote    byte
+	opened   []struct{ end, quote byte }
+	redirect string
 }
 
+// inQuote reads c inside a quote, whose own character ends it.
+func (s *shellSplitter) inQuote(c byte) {
+	if c == s.quote {
+		s.quote = 0
+	} else {
+		s.word.WriteByte(c)
+	}
+}
+
+// escaped reports whether line[i] is a backslash that keeps the next
+// character: any outside quotes, and in double quotes one before ", \, $
+// or a backtick.
+func (s *shellSplitter) escaped(line string, i int) bool {
+	return line[i] == '\\' && i+1 < len(line) && (s.quote == 0 || strings.IndexByte("\"\\$`", line[i+1]) >= 0)
+}
+
+// add appends c to the word being read.
+func (s *shellSplitter) add(c byte) {
+	s.word.WriteByte(c)
+	s.inWord = true
+}
+
+// operatorRun reads a run of one of ;, & or | at line[*i] as one
+// operator, moving *i to its last character, and reports whether there
+// was one.
+func (s *shellSplitter) operatorRun(line string, i *int) bool {
+	c := line[*i]
+	if strings.IndexByte(";&|", c) < 0 {
+		return false
+	}
+	j := *i
+	for j+1 < len(line) && line[j+1] == c {
+		j++
+	}
+	s.operator(line[*i : j+1])
+	*i = j
+	return true
+}
+
+// flush ends the word being read, the target of a waiting redirection
+// when there is one.
 func (s *shellSplitter) flush() {
 	if s.inWord {
-		s.words = append(s.words, shellWord{text: s.word.String()})
+		w := shellWord{text: s.word.String()}
+		if s.redirect != "" {
+			w = shellWord{text: s.redirect + w.text, redir: true}
+			s.redirect = ""
+		}
+		s.words = append(s.words, w)
 		s.word.Reset()
 		s.inWord = false
 	}
 }
 
-func (s *shellSplitter) operator(op string) {
+// finish ends the line: the word being read, and a redirection that never
+// got its target, as it is.
+func (s *shellSplitter) finish() []shellWord {
 	s.flush()
-	s.words = append(s.words, shellWord{text: op, op: true})
+	if s.redirect != "" {
+		s.words = append(s.words, shellWord{text: s.redirect, redir: true})
+		s.redirect = ""
+	}
+	return s.words
+}
+
+func (s *shellSplitter) operator(op string) {
+	s.words = append(s.finish(), shellWord{text: op, op: true})
+}
+
+// redirection reads a redirection operator at line[*i], moving *i to its
+// last character, and reports whether there was one. The operator waits
+// for the next word as its target. A word of digits alone and unquoted
+// before it is the file descriptor it redirects, part of the redirection
+// (https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_10_01).
+func (s *shellSplitter) redirection(line string, i *int) bool {
+	c := line[*i]
+	if c != '<' && c != '>' && !strings.HasPrefix(line[*i:], "&>") {
+		return false
+	}
+	j := *i + 1
+	for j < len(line) && strings.IndexByte("<>&|", line[j]) >= 0 {
+		j++
+	}
+	op := line[*i:j]
+	if fd := s.word.String(); s.inWord && s.redirect == "" && c != '&' && fd != "" &&
+		strings.Trim(fd, "0123456789") == "" && strings.HasSuffix(line[:*i], fd) {
+		op = fd + op
+		s.word.Reset()
+		s.inWord = false
+	}
+	s.finish()
+	s.redirect, *i = op, j-1
+	return true
 }
 
 // substitution reads the start or the end of a substitution or a subshell

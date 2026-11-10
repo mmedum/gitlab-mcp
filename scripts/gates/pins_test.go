@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -39,6 +40,8 @@ func pinsFixture() map[string]string {
 			"      - uses: sigstore/cosign-installer@" + pinsSHA1 + " # v4.1.2\n        with:\n          cosign-release: v3.1.3\n" +
 			"      - env:\n          PUBLISHER_VERSION: v1.8.1\n        run: echo\n",
 		"scripts/gates/precommit.go": "package main\n\n// reads $(GITLEAKS) from the Makefile\n",
+		".goreleaser.yaml":           "version: 2\nbefore:\n  hooks:\n    - go mod download\n",
+		".githooks/pre-commit":       "#!/bin/sh\nexec go run ./scripts/gates precommit\n",
 	}
 }
 
@@ -97,6 +100,50 @@ func TestPinsRefuses(t *testing.T) {
 			"not valid YAML"},
 		{"a tool pinned nowhere", ".github/workflows/publish-mcp.yml", "PUBLISHER_VERSION: v1.8.1", "OTHER: v1.8.1",
 			"mcp-publisher is pinned nowhere"},
+		{"an env version name in another case", ".github/workflows/ci.yml", "      - run: make check\n",
+			"      - env:\n          Gitleaks_Version: latest\n        run: make check\n", `gitleaks is pinned to "latest"`},
+		{"a version input in another case", ".github/workflows/release.yml", "syft-version: v1.52.0", "Syft-Version: latest",
+			`Syft-Version is "latest", which is not one exact version`},
+		{"one input written twice, in two cases", ".github/workflows/release.yml", "          syft-version: v1.52.0\n",
+			"          syft-version: v1.52.0\n          SYFT-VERSION: v1.52.0\n", "are one input to the runner"},
+		{"a local reusable call given latest", ".github/workflows/ci.yml", "jobs:\n  test:\n",
+			"jobs:\n  call:\n    uses: ./.github/workflows/publish-mcp.yml\n    with:\n      tool-version: latest\n  test:\n",
+			`with tool-version "latest", which is not one exact version`},
+		{"a remote reusable call given latest", ".github/workflows/ci.yml", "jobs:\n  test:\n",
+			"jobs:\n  call:\n    uses: some-org/some-repo/.github/workflows/x.yml@" + pinsSHA1 + " # v1.0.0\n" +
+				"    with:\n      tool-version: latest\n  test:\n",
+			`with tool-version "latest", which is not one exact version`},
+		{"go-version beside go-version-file", ".github/workflows/ci.yml", "          go-version-file: go.mod\n",
+			"          go-version-file: go.mod\n          go-version: 1.20.1\n", "sets go-version, which setup-go reads before"},
+		{"a workflow in another shell", ".github/workflows/ci.yml", "    shell: bash\n", "    shell: pwsh\n",
+			"the workflow runs its steps in pwsh"},
+		{"a step in another shell", ".github/workflows/ci.yml", "      - run: make check\n",
+			"      - shell: pwsh\n        run: make check\n", "has a step in pwsh"},
+		{"an env value naming a tool at another version", ".github/workflows/ci.yml", "      - run: make check\n",
+			"      - env:\n          GOVULNCHECK: golang.org/x/vuln/cmd/govulncheck@v1.1.0\n        run: make check\n",
+			"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and v1.1.0"},
+		{"a recipe that downloads the latest release", "Makefile", "vuln:\n\tgo run $(GOVULNCHECK) ./...\n",
+			"vuln:\n\tgo run $(GOVULNCHECK) ./...\n\tcurl -fsSLO https://github.com/x/y/releases/latest/download/z\n",
+			"releases/latest/download installs whatever is newest"},
+		{"a Makefile line the reader does not read", "Makefile", "lint:\n", "include other.mk\nlint:\n",
+			"is a directive or an assignment"},
+		{"a goreleaser hook that runs an unknown tool", ".goreleaser.yaml", "    - go mod download\n",
+			"    - go mod download\n    - go run example.org/tool@v1.0.0\n", "names a tool pinsTools does not know"},
+		{"a goreleaser hook whose else branch runs another tool", ".goreleaser.yaml", "    - go mod download\n",
+			"    - go mod download\n    - '{{ if .IsSnapshot }}true{{ else }}go run example.org/tool@main{{ end }}'\n",
+			"a template control action"},
+		{"a goreleaser hook that runs a tool at another version through bash -c", ".goreleaser.yaml",
+			"    - go mod download\n", "    - go mod download\n    - bash -c \"go run golang.org/x/vuln/cmd/govulncheck@v1.1.0 ./...\"\n",
+			"govulncheck is"},
+		{"a goreleaser merge key", ".goreleaser.yaml", "before:\n", "before:\n  <<: {skip: true}\n", "a merge key"},
+		{"goreleaser at a version the reader was not checked against", ".github/workflows/release.yml",
+			"GORELEASER_VERSION: v2.18.2", "GORELEASER_VERSION: v2.18.3", "reader is checked against v2.18.2's source"},
+		{"the hook runs a known tool from the PATH", ".githooks/pre-commit", "exec go run",
+			"gitleaks git --staged\nexec go run", "names gitleaks as a word of its own"},
+		{"a lone CR in a workflow", ".github/workflows/ci.yml", "      - run: make check\n",
+			"      - run: make check\r      - uses: evil-org/x@main\n", "a CR with no LF after it"},
+		{"a line separator in a workflow", ".github/workflows/ci.yml", "      - run: make check\n",
+			"      - run: make check\u2028      - uses: evil-org/x@main\n", "U+2028 (LINE SEPARATOR)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -150,6 +197,12 @@ func TestPinsFloors(t *testing.T) {
 }
 
 // Each row edits the fixture and wants exactly these problems, or none.
+// fromPath is the PATH rule's problem for govulncheck on a Makefile line.
+func fromPath(line int) string {
+	return fmt.Sprintf("Makefile:%d: names govulncheck as a word of its own, which runs it from the PATH at whatever "+
+		"version is installed there; run it with $(GO) run and the variable that pins it", line)
+}
+
 func TestPinsNamesEachProblem(t *testing.T) {
 	const (
 		ci      = ".github/workflows/ci.yml"
@@ -276,10 +329,10 @@ func TestPinsNamesEachProblem(t *testing.T) {
 		}},
 		{name: "a tool the Makefile runs from the PATH", edits: []docsEdit{
 			replace("Makefile", vuln, "\tgovulncheck ./...\n"),
-		}, want: []string{pathRun}},
+		}, want: []string{fromPath(10), pathRun}},
 		{name: "a tool the Makefile names but does not run", edits: []docsEdit{
 			replace("Makefile", vuln, "\t@echo $(GOVULNCHECK)\n\tgovulncheck ./...\n"),
-		}, want: []string{pathRun}},
+		}, want: []string{fromPath(11), pathRun}},
 		{name: "a run's program arguments and a module the go command downloads, which are no pins", edits: []docsEdit{
 			replace("Makefile", vuln, "\tgo run $(GOVULNCHECK) ./... user@example.com\n\tgo mod download golang.org/x/vuln@v1.0.0\n"),
 		}},
@@ -392,7 +445,7 @@ func TestPinsNamesEachProblem(t *testing.T) {
 			replace("Makefile", "GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@v1.8.0\n", ""),
 			replace("Makefile", vuln, "\tgovulncheck ./...\n"),
 			add("scripts/gates/run.go", "package main\n\n// GoRun runs a package, such as golang.org/x/vuln/cmd/govulncheck@v1.8.0.\n"),
-		}, want: []string{nowhere}},
+		}, want: []string{fromPath(9), nowhere}},
 		{name: "a pin in a Go raw string, at another version", edits: []docsEdit{
 			add("scripts/gates/run.go", "package main\n\nconst vuln = `golang.org/x/vuln/cmd/govulncheck@v1.7.0`\n"),
 		}, want: []string{"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and v1.7.0 at scripts/gates/run.go: " +
@@ -416,13 +469,19 @@ func TestPinsNamesEachProblem(t *testing.T) {
 			`.github/workflows/ci.yml:15: govulncheck is pinned to "main", which is not one exact version`,
 			`.github/workflows/ci.yml:16: actionlint is pinned to "main", which is not one exact version`,
 			`.github/workflows/ci.yml:17: go-licenses is pinned to "v1", which is not one exact version`,
+			"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and master at .github/workflows/ci.yml:13: one tool, one version",
+			"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and main at .github/workflows/ci.yml:15: one tool, one version",
+			"go-licenses is v1.6.0 at Makefile: GOLICENSES and v1 at .github/workflows/ci.yml:17: one tool, one version",
+			"actionlint is v1.7.12 at Makefile: ACTIONLINT and main at .github/workflows/ci.yml:16: one tool, one version",
 		}},
 		{name: "a tool CI runs after $'…' quoting", edits: []docsEdit{
 			replace(ci, run, "      - run: echo $'\\'' ; go run golang.org/x/vuln/cmd/govulncheck@master ./...\n"+run),
-		}, want: []string{`.github/workflows/ci.yml:13: govulncheck is pinned to "master", which is not one exact version`}},
+		}, want: []string{`.github/workflows/ci.yml:13: govulncheck is pinned to "master", which is not one exact version`,
+			"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and master at .github/workflows/ci.yml:13: one tool, one version"}},
 		{name: "a tool CI runs from an env value", edits: []docsEdit{
 			replace(ci, run, "      - env:\n          VULN: golang.org/x/vuln/cmd/govulncheck@master\n        run: go run $VULN ./...\n"+run),
-		}, want: []string{`.github/workflows/ci.yml:14: govulncheck is pinned to "master", which is not one exact version`}},
+		}, want: []string{`.github/workflows/ci.yml:14: govulncheck is pinned to "master", which is not one exact version`,
+			"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and master at .github/workflows/ci.yml:14: one tool, one version"}},
 		{name: "latest in a command the reader does not read, reported once", edits: []docsEdit{
 			replace(ci, run, "      - run: bash -c \"go run golang.org/x/vuln/cmd/govulncheck@latest ./...\"\n"+run),
 		}, want: []string{".github/workflows/ci.yml:13: something is pinned to @latest"}},
@@ -433,11 +492,11 @@ func TestPinsNamesEachProblem(t *testing.T) {
 		{name: "a Makefile pin behind a # inside $(…)", edits: []docsEdit{
 			replace("Makefile", "GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@v1.8.0\n",
 				"GOVULNCHECK ?= $(if x#,golang.org/x/vuln/cmd/govulncheck@master)\n"),
-		}, want: []string{`Makefile:2: govulncheck is pinned to "master", which is not one exact version`, nowhere}},
+		}, want: []string{`Makefile:2: govulncheck is pinned to "master", which is not one exact version`}},
 		{name: "a Makefile pin at latest behind a # inside $(…)", edits: []docsEdit{
 			replace("Makefile", "GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@v1.8.0\n",
 				"GOVULNCHECK ?= $(if x#,golang.org/x/vuln/cmd/govulncheck@latest)\n"),
-		}, want: []string{`Makefile:2: govulncheck is pinned to "latest", which is not one exact version`, nowhere}},
+		}, want: []string{`Makefile:2: govulncheck is pinned to "latest", which is not one exact version`}},
 		{name: "a variable at latest that also holds a version that floats", edits: []docsEdit{
 			replace("Makefile", goreleaser, goreleaser+
 				"TOOLS ?= github.com/rhysd/actionlint/cmd/actionlint@latest golang.org/x/vuln/cmd/govulncheck@master\n"),
@@ -448,17 +507,28 @@ func TestPinsNamesEachProblem(t *testing.T) {
 			"Makefile: TOOLS pins golang.org/x/vuln/cmd/govulncheck@master and no recipe runs it with the go command, " +
 				"so the tool runs from the PATH",
 			`Makefile:7: govulncheck is pinned to "master", which is not one exact version`,
+			"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and master at Makefile:7: one tool, one version",
 		}},
 		{name: "a Makefile pin at master after a conditional one", edits: []docsEdit{
 			replace("Makefile", "GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@v1.8.0\n",
 				"ifeq (1,0)\nGOVULNCHECK = golang.org/x/vuln/cmd/govulncheck@v1.8.0\nendif\n"+
 					"GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@master\n"),
-		}, want: []string{`Makefile:5: govulncheck is pinned to "master", which is not one exact version`}},
+		}, want: []string{
+			`Makefile:2: "ifeq (1,0)" is a directive or an assignment, which this reader does not read`,
+			`Makefile:4: "endif" is a directive or an assignment, which this reader does not read`,
+			`Makefile:5: govulncheck is pinned to "master", which is not one exact version`,
+			"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and master at Makefile:5: one tool, one version",
+		}},
 		{name: "a Makefile pin at master before a conditional one", edits: []docsEdit{
 			replace("Makefile", "GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@v1.8.0\n",
 				"GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@master\nifeq (1,0)\n"+
 					"GOVULNCHECK = golang.org/x/vuln/cmd/govulncheck@v1.8.0\nendif\n"),
-		}, want: []string{`Makefile:2: govulncheck is pinned to "master", which is not one exact version`}},
+		}, want: []string{
+			`Makefile:3: "ifeq (1,0)" is a directive or an assignment, which this reader does not read`,
+			`Makefile:5: "endif" is a directive or an assignment, which this reader does not read`,
+			`Makefile:2: govulncheck is pinned to "master", which is not one exact version`,
+			"govulncheck is v1.8.0 at Makefile: GOVULNCHECK and master at Makefile:2: one tool, one version",
+		}},
 		{name: "a tool named on comment lines in the Makefile, a workflow and a run block", edits: []docsEdit{
 			replace("Makefile", goreleaser, goreleaser+"  # was golang.org/x/vuln/cmd/govulncheck@master\n"),
 			replace(ci, run, "      # go run golang.org/x/vuln/cmd/govulncheck@master\n"+
@@ -487,6 +557,28 @@ func TestPinsNamesEachProblem(t *testing.T) {
 			if !slices.Equal(r.problems, tc.want) {
 				t.Errorf("problems\n got %q\nwant %q", r.problems, tc.want)
 			}
+		})
+	}
+}
+
+// The runner reads input names in upper case, so an installer's version
+// input written in another case is the input; and a reusable workflow of
+// this repository may be given one context's value, which it holds where
+// it uses it.
+func TestPinsPassesWhatTheRunnerReadsAlike(t *testing.T) {
+	for name, edit := range map[string][3]string{
+		"an input in another case": {".github/workflows/release.yml", "cosign-release: v3.1.3", "Cosign-Release: v3.1.3"},
+		"a local call given one context": {".github/workflows/ci.yml", "jobs:\n  test:\n",
+			"jobs:\n  call:\n    uses: ./.github/workflows/publish-mcp.yml\n    with:\n      tool-version: ${{ inputs.v }}\n  test:\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := pinsFixture()
+			breakFile(t, files, edit[0], edit[1], edit[2])
+			r, err := pinsCheck(repoTree(t, files))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantClean(t, r.problems)
 		})
 	}
 }

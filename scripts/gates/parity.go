@@ -105,13 +105,17 @@ func (r *parityReport) fail(format string, a ...any) {
 
 // parityPipelines is what the Makefile and CI run, as parityCheck read it.
 type parityPipelines struct {
-	mk                      *makefile
-	ciTargets               map[string]bool
-	ciCommands              []string
-	ciClosure, checkClosure []string
+	mk        *makefile
+	ciTargets map[string]bool
+	// ciCommands are every CI command line, and pushCommands those a push
+	// to main runs.
+	ciCommands, pushCommands []string
+	ciClosure, checkClosure  []string
+	// prTargets are what only a pull request runs, and otherTargets what a
+	// push to main runs; ciClosure is the second's closure.
 	prTargets, otherTargets map[string]bool
-	// checkLines are the recipe lines `make check` runs, and ciLines CI's
-	// with its own command lines, each raw and expanded.
+	// checkLines are the recipe lines `make check` runs, and ciLines those
+	// a push runs, with its command lines, each raw and expanded.
 	checkLines, ciLines []string
 }
 
@@ -138,12 +142,21 @@ func parityCheck(root string, registry map[string]command) (*parityReport, error
 		return nil, fmt.Errorf("reading the build tags the code uses: %w", err)
 	}
 
-	r := &parityReport{prereqs: len(check.prereqs)}
+	r := &parityReport{prereqs: len(check.prereqs), problems: slices.Clone(mk.refused)}
 	p := parityPipelines{mk: mk, ciTargets: map[string]bool{}, prTargets: map[string]bool{}, otherTargets: map[string]bool{}}
+	// What a push to main runs is what `make check` is held to; a step a
+	// pull request alone runs, or whose failure passes, is not.
 	for _, s := range ci.steps() {
+		onPush := ci.onPush(s)
 		for _, line := range workflowRunLines(s.Run) {
 			r.ciLines++
 			p.ciCommands = append(p.ciCommands, line)
+			if onPush {
+				p.pushCommands = append(p.pushCommands, line)
+			}
+			if how := gatekit.Swallowed(line); how != "" {
+				r.fail("%s job %s runs `%s`, where %s, so a failing check passes", parityCI, s.job, line, how)
+			}
 			targets := parityMakeTargets(line)
 			if len(targets) == 0 {
 				r.fail("%s job %s runs %q, which is not a make target; every CI step is one, "+
@@ -151,18 +164,20 @@ func parityCheck(root string, registry map[string]command) (*parityReport, error
 			}
 			for _, t := range targets {
 				p.ciTargets[t] = true
-				if s.job == "pr" {
-					p.prTargets[t] = true
-				} else {
+				if onPush {
 					p.otherTargets[t] = true
+				} else {
+					p.prTargets[t] = true
 				}
 			}
 		}
 	}
-	p.ciClosure = mk.closure(slices.Sorted(maps.Keys(p.ciTargets))...)
+	p.ciClosure = mk.closure(slices.Sorted(maps.Keys(p.otherTargets))...)
 	p.checkClosure = mk.closure("check")
 	p.checkLines = parityLines(mk, p.checkClosure, nil)
-	p.ciLines = parityLines(mk, p.ciClosure, p.ciCommands)
+	p.ciLines = parityLines(mk, p.ciClosure, p.pushCommands)
+
+	r.checkFailuresStop(mk, append(slices.Clone(p.checkClosure), mk.closure(slices.Sorted(maps.Keys(p.ciTargets))...)...))
 
 	r.checkPrereqs(p, check.prereqs)
 	r.checkCITargets(p)
@@ -182,7 +197,7 @@ func (r *parityReport) checkPrereqs(p parityPipelines, prereqs []string) {
 			r.fail("check: names %s, which the Makefile does not define", t)
 			continue
 		}
-		if !slices.Contains(p.ciClosure, t) && !parityRecipeInCI(p.mk.recipe(t), p.ciCommands) {
+		if !slices.Contains(p.ciClosure, t) && !parityRecipeInCI(p.mk.recipe(t), p.pushCommands) {
 			r.fail("`make check` runs %s and %s never does", t, parityCI)
 		}
 	}
@@ -208,7 +223,7 @@ func (r *parityReport) checkCITargets(p parityPipelines) {
 		case strings.TrimSpace(reason) == "":
 			r.fail("%s is excused as PR-only with no reason", t)
 		case p.otherTargets[t] || !p.prTargets[t]:
-			r.fail("%s is excused as PR-only and %s runs it outside the pr job", t, parityCI)
+			r.fail("%s is excused as PR-only and %s runs it on a push to main", t, parityCI)
 		}
 	}
 	for _, t := range slices.Sorted(maps.Keys(parityPROnly)) {
@@ -403,18 +418,51 @@ func (r *parityReport) checkFloors() {
 
 // parityMakeTargets are the targets a `make` command line names.
 func parityMakeTargets(line string) []string {
-	fields := strings.Fields(line)
-	if len(fields) == 0 || (fields[0] != "make" && fields[0] != "$(MAKE)") {
-		return nil
-	}
 	var out []string
-	for _, f := range fields[1:] {
-		if strings.HasPrefix(f, "-") || strings.Contains(f, "=") {
+	for _, words := range gatekit.Lists(line) {
+		// ! inverts a command's status and is not the command.
+		if words[0] == "!" {
+			words = words[1:]
+		}
+		if len(words) == 0 || (words[0] != "make" && words[0] != "$(MAKE)") {
 			continue
 		}
-		out = append(out, f)
+		for _, f := range words[1:] {
+			if strings.HasPrefix(f, "-") || strings.Contains(f, "=") {
+				continue
+			}
+			out = append(out, f)
+		}
 	}
 	return out
+}
+
+// checkFailuresStop holds that make stops on a failing command in every
+// target check or CI runs: a - before a recipe line, a .IGNORE target and
+// a command that swallows its own failure each let one pass
+// (https://www.gnu.org/software/make/manual/html_node/Errors.html).
+func (r *parityReport) checkFailuresStop(mk *makefile, targets []string) {
+	if _, ok := mk.targets[".IGNORE"]; ok {
+		r.fail("%s: .IGNORE makes make ignore a failing command; drop it", parityMakefile)
+	}
+	seen := map[string]bool{}
+	for _, t := range targets {
+		target, ok := mk.targets[t]
+		if !ok || seen[t] {
+			continue
+		}
+		seen[t] = true
+		for i, prefix := range target.prefixes {
+			if strings.Contains(prefix, "-") {
+				r.fail("%s:%d: %s's recipe line starts with -, so make goes on when it fails",
+					parityMakefile, target.lines[i], t)
+			}
+			if how := gatekit.Swallowed(mk.expand(target.recipe[i])); how != "" {
+				r.fail("%s:%d: %s's recipe line is one where %s, so a failing check passes",
+					parityMakefile, target.lines[i], t, how)
+			}
+		}
+	}
 }
 
 // parityRecipeInCI reports whether every line of a recipe is a command

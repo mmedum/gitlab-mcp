@@ -52,7 +52,7 @@ func parityFixture() (map[string]string, map[string]command) {
 		"      - name: descriptions\n        run: make descriptions\n" +
 		"      - uses: actions/upload-artifact@0000000000000000000000000000000000000000 # v7\n" +
 		"        with:\n          name: schemas\n          path: schemas.json\n" +
-		"  pr:\n    steps:\n" +
+		"  pr:\n    if: github.event_name == 'pull_request'\n    steps:\n" +
 		"      - name: base\n        run: make merge-base\n" +
 		"      - name: changelog\n        run: make changelog\n" +
 		"      - name: ack\n        run: make schema-ack\n"
@@ -104,8 +104,8 @@ func TestParityRefuses(t *testing.T) {
 			want: "ci.yml runs `make deps` and `make check` does not"},
 		{name: "a stale PR-only excuse", file: ".github/workflows/ci.yml",
 			old: "run: make merge-base\n", new: "run: make g01\n", want: "merge-base is excused as PR-only and ci.yml no longer runs it"},
-		{name: "a PR-only target outside the pr job", file: ".github/workflows/ci.yml",
-			old: "run: make g08\n", new: "run: make g08 changelog\n", want: "changelog is excused as PR-only and ci.yml runs it outside the pr job"},
+		{name: "a PR-only target on a push", file: ".github/workflows/ci.yml",
+			old: "run: make g08\n", new: "run: make g08 changelog\n", want: "changelog is excused as PR-only and ci.yml runs it on a push to main"},
 		{name: "a prerequisite named as a gate", file: "Makefile",
 			old: "vet descriptions\n", new: "vet descriptions schemas\n", want: "schemas is excused as a prerequisite and check: names it"},
 		{name: "a check gate no target calls", registry: func(r map[string]command) {
@@ -256,8 +256,11 @@ func TestParityHoldsTheTreesTagsToAVetPass(t *testing.T) {
 			"internal/soak/soak_test.go builds only with -tags=soak (//go:build soak) and ci.yml vets no pass that builds it; it compiles only on a maintainer's machine",
 		}},
 		{"a recipe line's prefixes, which are not part of the command", []docsEdit{
-			replace("Makefile", "\t$(GO) vet -tags=live ./...\n", "\t@-+$(GO) vet -tags=live ./...\n"),
+			replace("Makefile", "\t$(GO) vet -tags=live ./...\n", "\t@+$(GO) vet -tags=live ./...\n"),
 		}, nil},
+		{"a recipe line make goes on past", []docsEdit{
+			replace("Makefile", "\t$(GO) vet -tags=live ./...\n", "\t-$(GO) vet -tags=live ./...\n"),
+		}, []string{"Makefile:107: vet's recipe line starts with -, so make goes on when it fails"}},
 		// A pass compiles a file when the file's line holds with exactly the
 		// pass's tags: one more tag can keep it out.
 		{"a file another tag keeps out, vetted by a pass without that tag", []docsEdit{
@@ -536,4 +539,44 @@ func TestChecklist(t *testing.T) {
 			wantProblem(t, problems, tc.want)
 		})
 	}
+}
+
+// What a push to main runs is what `make check` is held to, and a CI line
+// or a recipe that lets a failure pass is refused.
+func TestParityHoldsCheckToWhatAPushRuns(t *testing.T) {
+	const ci = ".github/workflows/ci.yml"
+	notRun := []string{
+		"`make check` runs g00 and ci.yml never does",
+		"the g00 gate runs in check by the registry, and ci.yml never calls it",
+	}
+	checkParityCases(t, []parityCase{
+		{"a step a pull request alone runs", []docsEdit{
+			replace(ci, "      - name: g00\n", "      - name: g00\n        if: github.event_name == 'pull_request'\n"),
+		}, notRun},
+		{"a step whose failure passes", []docsEdit{
+			replace(ci, "      - name: g00\n", "      - name: g00\n        continue-on-error: true\n"),
+		}, notRun},
+		{"a step that never runs", []docsEdit{
+			replace(ci, "      - name: g00\n", "      - name: g00\n        if: false\n"),
+		}, notRun},
+		{"a step a matrix filter runs", []docsEdit{
+			replace(ci, "      - name: g00\n", "      - name: g00\n        if: matrix.os == 'ubuntu-latest'\n"),
+		}, nil},
+		{"a CI line that passes whatever it ran", []docsEdit{
+			replace(ci, "        run: make g00\n", "        run: make g00 || true\n"),
+		}, []string{"ci.yml job test runs `make g00 || true`, where `|| true` passes whatever came before, so a failing check passes"}},
+		{"a CI line that runs a check in the background", []docsEdit{
+			replace(ci, "        run: make g00\n", "        run: make g00 2>&1 &\n"),
+		}, []string{"ci.yml job test runs `make g00 2>&1 &`, where & runs a command in the background, " +
+			"where its failure is never seen, so a failing check passes"}},
+		{"a recipe that passes whatever it ran", []docsEdit{
+			replace("Makefile", "\t$(GATES) g00\n", "\t$(GATES) g00 || true\n"),
+		}, []string{"Makefile:11: g00's recipe line is one where `|| true` passes whatever came before, so a failing check passes"}},
+		{".IGNORE", []docsEdit{
+			replace("Makefile", "vet:\n", ".IGNORE: g00\nvet:\n"),
+		}, []string{"Makefile: .IGNORE makes make ignore a failing command; drop it"}},
+		{"a line the Makefile reader does not read", []docsEdit{
+			replace("Makefile", "vet:\n", "include other.mk\nvet:\n"),
+		}, []string{`Makefile:105: "include other.mk" is a directive or an assignment, which this reader does not read`}},
+	})
 }

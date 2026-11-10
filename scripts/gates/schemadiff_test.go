@@ -215,8 +215,8 @@ func newFakeRepo(t *testing.T) *fakeRepo {
 
 func (r *fakeRepo) git(args ...string) string {
 	r.t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "user.name=alice", "-c", "user.email=alice@example.com",
-		"-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}, args...)...)
+	cmd := exec.Command("git", slices.Concat(gitQuiet, []string{"-c", "user.name=alice", "-c", "user.email=alice@example.com",
+		"-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}, args)...)
 	cmd.Dir = r.root
 	out, err := cmd.CombinedOutput()
 	if err != nil {

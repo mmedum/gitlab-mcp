@@ -38,7 +38,7 @@ func gitRepo(t *testing.T, files map[string]string) string {
 
 func gitDo(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := gitx.Output(dir, args...)
+	out, err := gitx.Output(dir, append(slices.Clone(gitQuiet), args...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +171,15 @@ func TestChangelogPRReadsFencesInTheDiff(t *testing.T) {
 		{"a fenced [Unreleased] heading removed, which removes no section", example,
 			strings.Replace(example, "~~~\n## [Unreleased]\n~~~\n", "## [Notes]\n\n- Late.\n", 1),
 			"no line was added under [Unreleased]"},
+		// Only a bullet at the margin is an entry, and none in a fence.
+		{"a subheading alone under [Unreleased]", changelogBase,
+			strings.Replace(changelogBase, "- One.\n", "- One.\n\n### Fixed\n", 1), "no line was added under [Unreleased]"},
+		{"a line of prose under [Unreleased]", changelogBase,
+			strings.Replace(changelogBase, "- One.\n", "- One.\n\nFixed the thing.\n", 1), "no line was added under [Unreleased]"},
+		{"a bullet in a fence under [Unreleased]", changelogBase,
+			strings.Replace(changelogBase, "- One.\n", "- One.\n\n```\n- not an entry\n```\n", 1),
+			"no line was added under [Unreleased]"},
+		{"a bullet written with a star", changelogBase, strings.Replace(changelogBase, "- One.\n", "- One.\n* Two.\n", 1), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -218,6 +227,8 @@ func TestChangelogLinks(t *testing.T) {
 		{"an empty definition, which does not take the next line's URL", "[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n" +
 			"[0.1.0]: https://example.com/releases/tag/v0.1.0\n", "[0.1.0]:\n[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n",
 			"## [0.1.0] has no [0.1.0]: link reference"},
+		{"a version semver does not allow", "- One.\n", "- One.\n\n## [1.2.3-rc..1]\n", "## [1.2.3-rc..1] is not a semver version"},
+		{"a version with a leading zero", "- One.\n", "- One.\n\n## [1.02.3]\n", "## [1.02.3] is not a semver version"},
 		// A fence holds an example, so a heading or a link in one is neither.
 		{"a heading and a link in a fence", "- One.\n", "- One.\n\n```markdown\n## [9.9.9]\n[0.0.1]: https://example.com/x\n```\n", ""},
 		{"Unreleased unlinked", "[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n", "", "[Unreleased] has no link reference"},

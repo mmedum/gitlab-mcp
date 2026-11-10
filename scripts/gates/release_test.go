@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // releaseFixture is a repository whose release wiring agrees: the
@@ -71,11 +73,22 @@ func TestReleaseRefuses(t *testing.T) {
 		{"cosign unpinned", wf, "          cosign-release: v3.1.3\n", "", "installs no cosign"},
 		{"space-separated subjects", wf, `"dist/*.tar.gz,dist/*.zip,dist/checksums.txt,dist/*.mcpb"`,
 			`"dist/*.tar.gz dist/*.zip dist/checksums.txt dist/*.mcpb"`, "separates with a space"},
-		{"the bundle unattested", wf, ",dist/*.mcpb\"", "\"", "does not name .mcpb"},
-		{"the Windows archives unattested", wf, ",dist/*.zip", "", "does not name .zip"},
-		{"a signature attested in the bundle's place", wf, ",dist/*.mcpb\"", ",dist/*.mcpb.sigstore.json\"", "does not name .mcpb"},
+		{"the bundle unattested", wf, ",dist/*.mcpb\"", "\"", "names nothing matching dist/gitlab-mcp_1.2.3.mcpb"},
+		{"the Windows archives unattested", wf, ",dist/*.zip", "", "names nothing matching dist/gitlab-mcp_1.2.3_linux_amd64.zip"},
+		{"a signature attested in the bundle's place", wf, ",dist/*.mcpb\"", ",dist/*.mcpb.sigstore.json\"",
+			`entry "dist/*.mcpb.sigstore.json" matches no file the release writes`},
+		{"the bundle attested in another directory", wf, ",dist/*.mcpb\"", ",dist/unused/*.mcpb\"",
+			"names nothing matching dist/gitlab-mcp_1.2.3.mcpb"},
 		{"the checksum file's signature attested in its place", wf, ",dist/checksums.txt,", ",dist/checksums.txt.bundle,",
-			"does not name checksums.txt"},
+			"names nothing matching dist/checksums.txt"},
+		{"no attestations scope", wf, "      attestations: write\n", "", "job goreleaser does not grant attestations: write"},
+		{"the attest step in a job of its own", wf, "      - uses: actions/attest-build-provenance@",
+			"      - name: handoff\n        run: echo\n  attest:\n    runs-on: ubuntu-latest\n    permissions:\n" +
+				"      id-token: write\n      attestations: write\n    steps:\n      - uses: actions/attest-build-provenance@",
+			"job attest attests, and runs no goreleaser"},
+		{"a second job running goreleaser bare", wf, "  registry:\n",
+			"  nightly:\n    runs-on: ubuntu-latest\n    steps:\n      - run: goreleaser --clean\n  registry:\n",
+			"job nightly runs goreleaser and attests nothing it wrote"},
 		{"no checksum name", gr, "  name_template: checksums.txt\n", "", "checksum.name_template is empty"},
 		{"no dispatch", wf, "  workflow_dispatch:\n", "", "has no workflow_dispatch"},
 		{"write at the top", wf, "permissions:\n  contents: read\n\ndefaults", "permissions:\n  contents: write\n\ndefaults", "top-level permissions"},
@@ -98,6 +111,10 @@ func TestReleaseRefuses(t *testing.T) {
 	}
 }
 
+// releaseTestWrites is one file of each kind the release writes.
+var releaseTestWrites = []string{"dist/gitlab-mcp_1.2.3_linux_amd64.tar.gz", "dist/gitlab-mcp_1.2.3_linux_amd64.zip",
+	"dist/gitlab-mcp_1.2.3.mcpb", "dist/checksums.txt"}
+
 // The action splits subject-path at commas and newlines and trims each
 // glob, so space around an entry is not a separator.
 func TestReleaseSubjectProblems(t *testing.T) {
@@ -106,15 +123,39 @@ func TestReleaseSubjectProblems(t *testing.T) {
 		"commas and a space after each":     "dist/*.tar.gz, dist/*.zip, dist/checksums.txt, dist/*.mcpb",
 		"a block, one glob with a trailing": "dist/*.tar.gz \n  dist/*.zip\n  dist/checksums.txt\n  dist/*.mcpb\n",
 	} {
-		if p := releaseSubjectProblems(subjects, "checksums.txt"); len(p) != 0 {
+		if p := releaseSubjectProblems(subjects, releaseTestWrites); len(p) != 0 {
 			t.Errorf("%s: subjects refused: %v", name, p)
 		}
 	}
+	const bad = "dist/*.tar.gz,dist/*.zip.sigstore.json,dist/*.mcpb"
 	want := []string{
-		"checksum.name_template is empty, so nothing holds the subject-path to the file every other artifact is verified through",
-		`subject-path "dist/*.tar.gz,dist/*.zip.sigstore.json,dist/*.mcpb" does not name .zip, so it carries no attestation`,
+		`subject-path "` + bad + `" names nothing matching dist/gitlab-mcp_1.2.3_linux_amd64.zip, which the release writes, so it carries no attestation`,
+		`subject-path "` + bad + `" names nothing matching dist/checksums.txt, which the release writes, so it carries no attestation`,
+		`subject-path entry "dist/*.zip.sigstore.json" matches no file the release writes`,
 	}
-	if p := releaseSubjectProblems("dist/*.tar.gz,dist/*.zip.sigstore.json,dist/*.mcpb", ""); !slices.Equal(p, want) {
+	if p := releaseSubjectProblems(bad, releaseTestWrites); !slices.Equal(p, want) {
 		t.Errorf("problems\n got %q\nwant %q", p, want)
+	}
+}
+
+// A permissions block grants a scope by naming it write, or by write-all.
+func TestReleaseGrants(t *testing.T) {
+	for text, want := range map[string]bool{
+		"id-token: write": true,
+		"write-all":       true,
+		"id-token: read":  false,
+		"contents: write": false,
+		"read-all":        false,
+	} {
+		var node yaml.Node
+		if err := yaml.Unmarshal([]byte(text), &node); err != nil {
+			t.Fatal(err)
+		}
+		if got := releaseGrants(node.Content[0], "id-token"); got != want {
+			t.Errorf("releaseGrants(%q, id-token) = %v, want %v", text, got, want)
+		}
+	}
+	if releaseGrants(&yaml.Node{}, "id-token") {
+		t.Error("no permissions block granted id-token")
 	}
 }

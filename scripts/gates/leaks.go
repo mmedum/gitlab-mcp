@@ -103,6 +103,8 @@ var leaksPublicHosts = map[string]string{
 	"toml.io":                             "the TOML specification, for its multi-line strings",
 	"www.gnu.org":                         "GNU make's manual, which the Makefile reader follows",
 	"pubs.opengroup.org":                  "the POSIX shell specification, which the command-line reader follows",
+	"yaml.org":                            "the YAML specification, whose line breaks the workflow reader holds",
+	"git-scm.com":                         "git's own documentation, for the configuration the tests run git with",
 	"img.shields.io":                      "the README's release badge",
 	"pkg.go.dev":                          "public package documentation",
 	"go.dev":                              "the Go project",

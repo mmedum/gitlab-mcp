@@ -320,14 +320,32 @@ func docsCheckout(t *testing.T, files map[string]string) string {
 	return root
 }
 
+// gitQuiet is git config every test git carries: no command starts `git
+// maintenance run --auto` after a write
+// (https://git-scm.com/docs/git-maintenance#Documentation/git-maintenance.txt-maintenanceauto),
+// and a command that runs `git gc --auto` itself finds no work
+// (https://git-scm.com/docs/git-gc#Documentation/git-gc.txt-gcauto).
+// Automatic maintenance runs detached and holds .git/objects/maintenance.lock
+// after git returns, so a copy of the repository races it
+// (https://github.com/git/git/blob/v2.51.0/builtin/gc.c#L1663).
+var gitQuiet = []string{"-c", "maintenance.auto=false", "-c", "gc.auto=0"}
+
 // isolateGit keeps the machine's git configuration from every git the
 // test runs, the gate's own included, so a global ignore file cannot hide
-// a fixture file.
+// a fixture file, and turns automatic maintenance off as gitQuiet does,
+// through command-scope pairs every config file yields to
+// (https://git-scm.com/docs/git-config#Documentation/git-config.txt-GITCONFIGCOUNT).
 func isolateGit(t *testing.T) {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for i := 0; i+1 < len(gitQuiet); i += 2 {
+		key, value, _ := strings.Cut(gitQuiet[i+1], "=")
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", i/2), key)
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", i/2), value)
+	}
+	t.Setenv("GIT_CONFIG_COUNT", fmt.Sprint(len(gitQuiet)/2))
 }
 
 // docsFixtureFloors keeps the floors out of the rows whose subject is not a

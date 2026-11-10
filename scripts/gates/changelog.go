@@ -26,8 +26,14 @@ const changelogFile = "CHANGELOG.md"
 var changelogWatched = []string{"cmd/", "internal/", "packaging/", "go.mod", ".goreleaser.yaml"}
 
 var (
-	// changelogVersion is a release's version, a prerelease suffix allowed.
-	changelogVersion = regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$`)
+	// changelogVersion is a release's version, semver with its prerelease
+	// identifiers, as semver.org gives the grammar
+	// (https://semver.org/spec/v2.0.0.html#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string).
+	changelogVersion = regexp.MustCompile(`^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)` +
+		`(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$`)
+	// changelogEntry is an entry: a bullet at the margin. A subheading or
+	// a line of prose under [Unreleased] tells a reader nothing changed.
+	changelogEntry = regexp.MustCompile(`^[-*+][ \t]+\S`)
 	// changelogLink is a link-reference line, `[label]: url`, its URL on
 	// the same line or not yet written: either ends a section.
 	changelogLink = regexp.MustCompile(`^\[([^\]]+)\]:[ \t]*(\S*)`)
@@ -339,7 +345,7 @@ func changelogDiff(diff string) (cut string, added int) {
 			inside = label == "Unreleased" || (removed && changed)
 			return
 		}
-		if inside && changed && strings.TrimSpace(text) != "" {
+		if inside && changed && prose && changelogEntry.MatchString(text) {
 			added++
 		}
 	})
@@ -367,6 +373,11 @@ func changelogLinkProblems(text string) (int, []string) {
 	doc := readChangelog(text)
 	if !slices.ContainsFunc(doc.headings, func(h changelogHeading) bool { return h.label == "Unreleased" }) {
 		problems = append(problems, "there is no ## [Unreleased] heading, so there is nowhere for the next entry")
+	}
+	for _, h := range doc.headings {
+		if h.label != "Unreleased" && !changelogVersion.MatchString(h.label) {
+			problems = append(problems, fmt.Sprintf("## [%s] is not a semver version, so no release reads it", h.label))
+		}
 	}
 	headings := doc.versions()
 	versions := make([]string, 0, len(headings))
