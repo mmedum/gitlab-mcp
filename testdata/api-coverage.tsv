@@ -642,7 +642,7 @@ POST /projects/{id}/github/webhooks	written-off	1	GitHub delivers it, signed, fo
 * /chat/*	written-off	1	GitLab Duo Chat: another product's surface, not project work
 * /duo_code_review/*	written-off	1	GitLab Duo code review: another product's surface, not project work
 * /vscode/*	written-off	10	the VS Code extension's settings sync: another product's surface, not project work
-* /orbit*	written-off	9	GitLab Orbit, the knowledge graph Premium serves to agents through its own MCP endpoint: another product's surface
+* /orbit*	written-off	10	GitLab Orbit, the knowledge graph Premium serves to agents through its own MCP endpoint: another product's surface
 * /projects/{id}/ai_agent*	written-off	5	GitLab Duo agent sessions: another product's surface, not project work
 * /mcp*	written-off	2	GitLab's own MCP server: another product's surface, not project work
 * /glql*	written-off	2	GitLab Query Language: another product's surface, not project work
