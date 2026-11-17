@@ -17,11 +17,13 @@ func repo(t *testing.T) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
+	// Unset, the machine's signing, hooks or templates reach every git here.
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "-b", "main")
 	git(t, dir, "config", "user.email", "alice@example.com")
 	git(t, dir, "config", "user.name", "alice")
-	git(t, dir, "config", "commit.gpgsign", "false")
 	return dir
 }
 
