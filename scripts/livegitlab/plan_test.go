@@ -307,6 +307,9 @@ func TestJudge(t *testing.T) {
 		{"the refusal named", step{expectError: true, errorClass: "stale"}, true, "[stale] moved", ""},
 		{"another refusal", step{expectError: true, errorClass: "stale"}, true, "[conflict] busy", "expected a [stale] refusal"},
 		{"either outcome", step{anyOutcome: true, errorClass: "stale"}, true, "[conflict] busy", ""},
+		{"the refusal's words", step{expectError: true, errorClass: "invalid", errorHas: "scope"}, true, "[invalid] scope=all", ""},
+		{"the class without the words", step{expectError: true, errorClass: "invalid", errorHas: "scope"}, true, "[invalid] milestone",
+			"expected the refusal to say scope"},
 	} {
 		if got := judge(c.st, c.isError, c.text); got != c.want {
 			t.Errorf("%s: judge = %q, want %q", c.name, got, c.want)
