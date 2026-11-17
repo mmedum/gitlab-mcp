@@ -214,14 +214,16 @@ What it does, so nothing is a surprise:
 
 - **gitlab.com, as you.** There is no instance flag. It signs in with
   your stored profile (`-profile` picks one) and needs a group you own,
-  named by `-namespace`.
+  named by `-namespace`, where you may create subgroups.
 - **Its own projects only.** It creates private scratch projects named
-  for the run under that group, fills them with its own files, branches,
-  issues, comments and merge requests, and drives every tool and option
-  against them. Every read stays inside what it created, and searches
-  carry the run's own word (D-83).
-- **Cleanup.** At the end it deletes the projects, unless `-keep` is
-  set. On gitlab.com deletion is delayed, and the driver says so.
+  for the run under that group, the second in a private subgroup it
+  makes, so a dotted, nested path is driven too. It fills them with its
+  own files, branches, issues, comments and merge requests, and drives
+  every tool and option against them. Every read stays inside what it
+  created, and searches carry the run's own word (D-83).
+- **Cleanup.** At the end it deletes the projects, then the subgroup,
+  unless `-keep` is set. On gitlab.com deletion is delayed, and the
+  driver says so.
 - **Spikes.** A full run also asks the spikes that check a load-bearing
   GitLab behavior, each named in the comment that relies on it.
   `-only-spike <key>` asks one alone after seeding and drives no tool.

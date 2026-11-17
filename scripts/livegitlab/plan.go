@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"maps"
 	"slices"
@@ -46,6 +50,11 @@ type scratch struct {
 	Path      string // Namespace/Name
 	ID        int64
 	WebURL    string
+	// PathB and WebURLB are the second project's, Name.b in the subgroup
+	// GroupID: a dotted path, nested below Namespace.
+	PathB     string
+	WebURLB   string
+	GroupID   int64
 	Default   string // the default branch
 	Feature   string // a branch with one commit on top of Default
 	Feature2  string
@@ -640,6 +649,35 @@ func writePath(s scratch) []step {
 	}
 }
 
+// probeMake is the camera maker the probe JPEG's Exif names: metadata
+// GitLab says it removes, and a string no kept tag can hold.
+const probeMake = "gitlab-mcp-live-probe-camera"
+
+// exifJPEG is a small JPEG whose Exif segment holds one tag, Make, set to
+// probeMake. The segment is spliced in after the start-of-image marker,
+// since image/jpeg writes none: APP1, "Exif" and two zero bytes, then a
+// little-endian TIFF header and IFD0 (JEITA CP-3451, 4.5.4 and 4.6.2).
+func exifJPEG() ([]byte, error) {
+	var img bytes.Buffer
+	if err := jpeg.Encode(&img, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {
+		return nil, err
+	}
+	value := probeMake + "\x00"
+	tiff := binary.LittleEndian.AppendUint16([]byte("II*\x00\x08\x00\x00\x00"), 1) // one entry in IFD0, at offset 8
+	tiff = binary.LittleEndian.AppendUint16(tiff, 0x010F)                          // Make
+	tiff = binary.LittleEndian.AppendUint16(tiff, 2)                               // ASCII
+	tiff = binary.LittleEndian.AppendUint32(tiff, uint32(len(value)))
+	tiff = binary.LittleEndian.AppendUint32(tiff, 8+2+12+4) // the value follows the IFD
+	tiff = binary.LittleEndian.AppendUint32(tiff, 0)        // no next IFD
+	payload := slices.Concat([]byte("Exif\x00\x00"), tiff, []byte(value))
+	segment := binary.BigEndian.AppendUint16([]byte{0xFF, 0xE1}, uint16(len(payload)+2))
+	data := img.Bytes()
+	return slices.Concat(data[:2], segment, payload, data[2:]), nil
+}
+
+// keepsProbeMake reports whether a JPEG still names the probe's maker.
+func keepsProbeMake(data []byte) bool { return bytes.Contains(data, []byte(probeMake)) }
+
 // sg names a suggestion for apply_suggestions by what a read saved: its
 // id under name and its text under name_text.
 func sg(name string) map[string]any {
@@ -987,9 +1025,13 @@ func linksMovesAndTags(s scratch) []step {
 		// Move an issue of the run's to its second project.
 		{name: "an issue to move is created", tool: "create_issue", args: map[string]any{"project": p, "title": "An issue to move " + s.Name}, save: map[string]string{"to_move": "iid"}},
 		{name: "the issue to move is read", tool: "get_issue", args: map[string]any{"project": p, "iid": "{{to_move}}"}, save: map[string]string{"to_move_at": "updated_at"}},
-		{name: "an issue move is previewed", tool: "move_issue", args: map[string]any{"project": p, "iid": "{{to_move}}", "to_project": p + "-b", "updated_at": "{{to_move_at}}",
+		// The second project's path is dotted and nested, and is sent
+		// percent-encoded once.
+		{name: "the second project is read by its dotted, nested path", tool: "get_project", args: map[string]any{"project": s.PathB}},
+		{name: "the second project's URL resolves", tool: "resolve_url", args: map[string]any{"url": s.WebURLB}},
+		{name: "an issue move is previewed", tool: "move_issue", args: map[string]any{"project": p, "iid": "{{to_move}}", "to_project": s.PathB, "updated_at": "{{to_move_at}}",
 			"dry_run": true}},
-		{name: "an issue moves to the run's second project", tool: "move_issue", args: map[string]any{"project": p, "iid": "{{to_move}}", "to_project": p + "-b", "updated_at": "{{to_move_at}}"}},
+		{name: "an issue moves to the run's second project", tool: "move_issue", args: map[string]any{"project": p, "iid": "{{to_move}}", "to_project": s.PathB, "updated_at": "{{to_move_at}}"}},
 
 		// A label and a milestone, made, changed and deleted.
 		{name: "a label create is previewed", tool: "create_label", args: map[string]any{"project": p, "name": "live-made-" + w, "color": "#336699", "dry_run": true}},
@@ -1041,10 +1083,12 @@ func itoa(n int64) string { return fmt.Sprint(n) }
 // instance-wide search without it, or a link somewhere else that is not
 // the one expected refusal. The driver reads only what it wrote (D-83).
 func confined(st step, s scratch) error {
+	second := secondProjectReads[st.tool]
 	for k, v := range st.args {
 		switch k {
 		case "project":
-			if !sameProject(v, s) {
+			isSecond := second && (v == s.PathB || v == s.WebURLB)
+			if !sameProject(v, s) && !isSecond {
 				return fmt.Errorf("%s: project %v is not the scratch project", st.tool, v)
 			}
 		case "group":
@@ -1053,7 +1097,7 @@ func confined(st step, s scratch) error {
 			}
 		case "url":
 			u, _ := v.(string)
-			inside := strings.HasPrefix(u, s.WebURL+"/")
+			inside := strings.HasPrefix(u, s.WebURL+"/") || second && u == s.WebURLB
 			refusedElsewhere := st.expectError && strings.Contains(u, ".invalid/")
 			if !inside && !refusedElsewhere {
 				return fmt.Errorf("%s: %q is not inside the scratch project", st.tool, u)
@@ -1074,6 +1118,10 @@ func confined(st step, s scratch) error {
 	}
 	return rule(st, s)
 }
+
+// secondProjectReads may name the run's second project, which only they
+// and move_issue's target reach: it is there for its dotted, nested path.
+var secondProjectReads = map[string]bool{"get_project": true, "resolve_url": true}
 
 // rule is what one tool must be sent to stay inside the run, beyond the
 // argument checks every step gets.
@@ -1146,7 +1194,7 @@ var rules = map[string]rule{
 		return inProject(st, s)
 	},
 	"move_issue": func(st step, s scratch) error {
-		if st.args["to_project"] != s.Path+"-b" {
+		if st.args["to_project"] != s.PathB {
 			return fmt.Errorf("%s: an issue moves only to the run's second project", st.tool)
 		}
 		return inProject(st, s)

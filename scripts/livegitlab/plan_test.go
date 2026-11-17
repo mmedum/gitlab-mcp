@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +20,9 @@ func sampleScratch() scratch {
 		Namespace: "example-group/scratch", Name: "gitlab-mcp-live-20260926-0a0b0c",
 		Path: "example-group/scratch/gitlab-mcp-live-20260926-0a0b0c", ID: 1234,
 		WebURL:  "https://gitlab.example.com/example-group/scratch/gitlab-mcp-live-20260926-0a0b0c",
+		PathB:   "example-group/scratch/gitlab-mcp-live-20260926-0a0b0c-g/gitlab-mcp-live-20260926-0a0b0c.b",
+		WebURLB: "https://gitlab.example.com/example-group/scratch/gitlab-mcp-live-20260926-0a0b0c-g/gitlab-mcp-live-20260926-0a0b0c.b",
+		GroupID: 99,
 		Default: "main", Feature: "feature-0a0b0c", Feature2: "draft-0a0b0c", File: "notes/live.md",
 		SHA: strings.Repeat("a", 40), Issue: 1, Issue2: 2, MR: 1, MR2: 2, Note: 77, User: "alice", Label: "live-0a0b0c",
 		Label2: "live-0a0b0c-b", Milestone: "Live milestone gitlab-mcp-live-20260926-0a0b0c", Pipeline: 5001, JobFailed: 6001,
@@ -157,6 +162,8 @@ func TestConfinedRefusesAStepOutside(t *testing.T) {
 		{step{tool: "get_job_log", args: map[string]any{"job_id": 1}}, "scratch project only"},
 		{step{tool: "upload_file", args: map[string]any{"project": s.Path, "path": "/home/example/.ssh/id_ed25519"}}, "the run generated"},
 		{step{tool: "list_everything", args: map[string]any{}}, "no confinement rule"},
+		{step{tool: "create_issue", args: map[string]any{"project": s.PathB, "title": "t"}}, "not the scratch project"},
+		{step{tool: "resolve_url", args: map[string]any{"url": s.WebURLB + "/-/issues/1"}}, "not inside"},
 	}
 	for _, tc := range cases {
 		err := confined(tc.st, s)
@@ -280,5 +287,27 @@ func TestWritesNameOnlyTheRunsAccount(t *testing.T) {
 	ok := step{tool: "create_issue", args: map[string]any{"project": s.Path, "title": "x", "assignees": []any{s.User}}}
 	if err := confined(ok, s); err != nil {
 		t.Errorf("the run's own account was refused: %v", err)
+	}
+}
+
+// The probe JPEG decodes as a JPEG and names the probe's maker in its
+// Exif, which the spike asks GitLab to remove; a plain JPEG names none.
+func TestExifJPEG(t *testing.T) {
+	data, err := exifJPEG()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(data)); err != nil {
+		t.Errorf("the probe is not a JPEG: %v", err)
+	}
+	if !keepsProbeMake(data) || !bytes.Contains(data[:40], []byte("Exif\x00\x00II*")) {
+		t.Errorf("the probe carries no Exif segment naming its maker: % x", data[:min(64, len(data))])
+	}
+	var plain bytes.Buffer
+	if err := jpeg.Encode(&plain, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if keepsProbeMake(plain.Bytes()) {
+		t.Error("a JPEG without the tag was read as naming the maker")
 	}
 }

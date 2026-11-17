@@ -138,20 +138,10 @@ func run(ctx context.Context, o options, p *redact.Printer) error {
 	projects, err := seed(ctx, client, &s, red)
 	defer func() {
 		if o.keep {
-			p.Sayf("\n-keep: the scratch projects stay in %s; delete them by hand", o.namespace)
+			p.Sayf("\n-keep: the scratch projects and subgroup stay in %s; delete them by hand", o.namespace)
 			return
 		}
-		for _, id := range projects {
-			if err := client.Do(context.Background(), gapi.Call{Method: "DELETE", Path: "projects/{}",
-				Args: []string{itoa(id)}, Name: "live_delete_project"}, nil); err != nil {
-				p.Sayf("!! could not delete scratch project %s: %v", redact.ID(itoa(id)), err)
-				continue
-			}
-			p.Sayf("deleted scratch project %s", redact.ID(itoa(id)))
-		}
-		if len(projects) > 0 && app.InstanceKind(settings.Instance) == "gitlab.com" {
-			p.Say("gitlab.com delays a project's deletion: it is marked now and removed after the retention period")
-		}
+		deleteScratch(client, projects, s.GroupID, app.InstanceKind(settings.Instance) == "gitlab.com", p)
 	}()
 	if err != nil {
 		return fmt.Errorf("seed the scratch projects: %w", err)
@@ -362,6 +352,68 @@ func copyWith(m map[string]any, k string, v any) map[string]any {
 // is written here, so nothing in a transcript is anybody else's words.
 // It returns the ids of the projects it created, for the teardown, even
 // when it fails part-way.
+// deleteScratch deletes the run's projects, then its subgroup, saying
+// what it could not delete.
+func deleteScratch(client *gapi.Client, projects []int64, group int64, gitlabCom bool, p *redact.Printer) {
+	for _, id := range projects {
+		if err := client.Do(context.Background(), gapi.Call{Method: "DELETE", Path: "projects/{}",
+			Args: []string{itoa(id)}, Name: "live_delete_project"}, nil); err != nil {
+			p.Sayf("!! could not delete scratch project %s: %v", redact.ID(itoa(id)), err)
+			continue
+		}
+		p.Sayf("deleted scratch project %s", redact.ID(itoa(id)))
+	}
+	if group != 0 {
+		if err := client.Do(context.Background(), gapi.Call{Method: "DELETE", Path: "groups/{}",
+			Args: []string{itoa(group)}, Name: "live_delete_group"}, nil); err != nil {
+			p.Sayf("!! could not delete the scratch subgroup %s: %v", redact.ID(itoa(group)), err)
+		} else {
+			p.Sayf("deleted the scratch subgroup %s", redact.ID(itoa(group)))
+		}
+	}
+	if (len(projects) > 0 || group != 0) && gitlabCom {
+		p.Say("gitlab.com may delay a deletion: what is marked now is removed after the retention period")
+	}
+}
+
+// scratchProject is what the driver reads of a project it made.
+type scratchProject struct {
+	ID                int64  `json:"id"`
+	PathWithNamespace string `json:"path_with_namespace"`
+	WebURL            string `json:"web_url"`
+}
+
+// createProject makes a private scratch project named name in the
+// namespace ns.
+func createProject(ctx context.Context, c *gapi.Client, name string, ns int64, readme bool, branch string) (scratchProject, error) {
+	var project scratchProject
+	body := map[string]any{"name": name, "path": name, "namespace_id": ns, "visibility": "private",
+		"initialize_with_readme": readme, "default_branch": branch,
+		"description": "A scratch project the live driver made for one run."}
+	if err := c.Do(ctx, gapi.Call{Method: "POST", Path: "projects", Body: body, Name: "live_create_project"}, &project); err != nil {
+		return project, fmt.Errorf("create a scratch project: %w", err)
+	}
+	return project, nil
+}
+
+// seedSubgroup makes the run's private subgroup under the namespace,
+// where the second project goes.
+func seedSubgroup(ctx context.Context, c *gapi.Client, s *scratch, parent int64, red *redact.Redactor) error {
+	var group struct {
+		ID       int64  `json:"id"`
+		FullPath string `json:"full_path"`
+	}
+	if err := c.Do(ctx, gapi.Call{Method: "POST", Path: "groups", Body: map[string]any{"name": s.Name + "-g", "path": s.Name + "-g",
+		"parent_id": parent, "visibility": "private", "description": "A scratch subgroup the live driver made for one run."},
+		Name: "live_create_group"}, &group); err != nil {
+		return fmt.Errorf("create the scratch subgroup: %w", err)
+	}
+	s.GroupID = group.ID
+	red.Known(redact.KindPath, group.FullPath)
+	red.Known(redact.KindID, itoa(group.ID))
+	return nil
+}
+
 func seed(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor) ([]int64, error) {
 	var ns struct {
 		ID   int64  `json:"id"`
@@ -373,26 +425,28 @@ func seed(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor)
 	if ns.Kind != "group" {
 		return nil, errors.New("-namespace must be a group: a personal namespace is where the account's own projects live")
 	}
-	var created []int64
-	var project struct {
-		ID                int64  `json:"id"`
-		PathWithNamespace string `json:"path_with_namespace"`
-		WebURL            string `json:"web_url"`
+	// The second project sits in a subgroup of its own and has a dot in
+	// its path, so the tools are driven through a dotted, nested path.
+	if err := seedSubgroup(ctx, c, s, ns.ID, red); err != nil {
+		return nil, err
 	}
-	for i, suffix := range []string{"", "-b"} {
-		body := map[string]any{"name": s.Name + suffix, "path": s.Name + suffix, "namespace_id": ns.ID,
-			"visibility": "private", "initialize_with_readme": i == 0, "default_branch": s.Default,
-			"description": "A scratch project the live driver made for one run."}
-		if err := c.Do(ctx, gapi.Call{Method: "POST", Path: "projects", Body: body, Name: "live_create_project"}, &project); err != nil {
-			return created, fmt.Errorf("create a scratch project: %w", err)
+	var created []int64
+	for i, at := range []struct {
+		suffix string
+		ns     int64
+		path   *string
+		webURL *string
+	}{{"", ns.ID, &s.Path, &s.WebURL}, {".b", s.GroupID, &s.PathB, &s.WebURLB}} {
+		project, err := createProject(ctx, c, s.Name+at.suffix, at.ns, i == 0, s.Default)
+		if err != nil {
+			return created, err
 		}
 		created = append(created, project.ID)
 		red.Known(redact.KindPath, project.PathWithNamespace)
 		red.Known(redact.KindID, itoa(project.ID))
-		if i == 0 {
-			s.ID, s.Path, s.WebURL = project.ID, project.PathWithNamespace, project.WebURL
-		}
+		*at.path, *at.webURL = project.PathWithNamespace, project.WebURL
 	}
+	s.ID = created[0]
 	// gitlab.com makes a new project refuse pipeline variables from
 	// everyone; run_pipeline and play_job send them.
 	if err := c.Do(ctx, gapi.Call{Method: "PUT", Path: "projects/{}", Args: []string{itoa(s.ID)},

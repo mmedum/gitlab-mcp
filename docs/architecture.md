@@ -2607,13 +2607,15 @@ CI. Some behaviors no step reaches yet (#97).
 ### D-83 The live driver reads only what it wrote, in scratch projects it makes and deletes
 
 The live driver creates private scratch projects named for the run,
-under a group the person names with `-namespace` and owns. It writes its
-own files, branches, issues, comments, merge requests and pipelines
+under a group the person names with `-namespace` and owns. The second
+sits in a private subgroup the driver also makes, with a dot in its
+path, so the tools are driven through a dotted, nested path. It writes
+its own files, branches, issues, comments, merge requests and pipelines
 there, and every read it makes is inside what it created. Its searches
-carry the run's own word. At the end it deletes the projects, unless
-`-keep` is set. A test holds every step to the scratch project, and
-another holds every assignee, reviewer and to-do a write names to the
-run's own account.
+carry the run's own word. At the end it deletes the projects, then the
+subgroup, unless `-keep` is set. A test holds every step to the scratch
+project, and another holds every assignee, reviewer and to-do a write
+names to the run's own account.
 
 The account a live run signs in with can see real organizations' code
 and real people's words. A read outside the scratch projects would put
@@ -2626,8 +2628,8 @@ and nothing it does widens what a tool may do.
 
 Rejected: driving the tools against an existing project, whose content
 would reach the transcript.
-Cost: project deletion is the one write the driver has that the server
-does not, and gitlab.com deletes a project only after a 30-day delay
+Cost: project and subgroup deletion are the writes the driver has that
+the server does not, and gitlab.com deletes a project only after a 30-day delay
 ([GitLab.com settings](https://docs.gitlab.com/user/gitlab_com/)), so
 scratch projects linger in the group meanwhile.
 

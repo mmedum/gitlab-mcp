@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -130,6 +131,7 @@ var spikes = []spike{
 	{name: "how a comment delete holds If-Unmodified-Since", everyRun: true, ask: spikeRun.askConditionalDelete},
 	{name: "where GitLab runs a quick action from an API body", alone: "quick-actions", ask: spikeRun.askQuickActions},
 	{name: "which REST routes an mcp-scoped token reaches", alone: "mcp-scope", ask: spikeRun.askMCPScope},
+	{name: "whether GitLab removes a JPEG's metadata", alone: "jpeg-metadata", everyRun: true, ask: spikeRun.askJPEGMetadata},
 }
 
 // spikesFor is the spikes a run asks: those of every run when only is
@@ -178,6 +180,61 @@ func askSpikes(ctx context.Context, settings *app.Settings, s scratch, which []s
 			p.Sayf("!! %s: %v", sp.name, err)
 		}
 	}
+}
+
+// askJPEGMetadata asks whether GitLab removes a JPEG's metadata when it
+// stores an upload, as upload_file's note says. It uploads a JPEG whose
+// Exif names a camera maker and reads the stored file back. Workhorse
+// keeps a JPEG's size, resolution and orientation, so the check is the
+// maker, not the Exif segment. The upload's secret is masked.
+func (x spikeRun) askJPEGMetadata(ctx context.Context) error {
+	data, err := exifJPEG()
+	if err != nil {
+		return err
+	}
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	part, err := mw.CreateFormFile("file", "live-exif.jpg")
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(data); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+	uploads := "projects/" + itoa(x.s.ID) + "/uploads"
+	r, err := x.c.send(ctx, http.MethodPost, uploads, nil, http.Header{"Content-Type": {mw.FormDataContentType()}}, form.Bytes())
+	if err != nil {
+		return err
+	}
+	var up struct {
+		URL string `json:"url"`
+	}
+	stored, ok := "", false
+	if json.Unmarshal(r.body, &up) == nil {
+		stored, ok = strings.CutPrefix(up.URL, "/uploads/")
+	}
+	if !ok || stored == "" {
+		return fmt.Errorf("the JPEG was not uploaded: status %d", r.status)
+	}
+	secret, _, _ := strings.Cut(stored, "/")
+	x.p.Redactor().Known(redact.KindPath, secret)
+	back, err := x.c.get(ctx, uploads+"/"+stored, nil, nil)
+	if err != nil {
+		return errors.New("the stored JPEG was not read back: the request failed")
+	}
+	if back.status != http.StatusOK {
+		return fmt.Errorf("the stored JPEG was not read back: status %d", back.status)
+	}
+	x.p.Sayf("a JPEG of %d bytes whose Exif names a maker was uploaded; %d bytes were read back", len(data), len(back.body))
+	if keepsProbeMake(back.body) {
+		x.p.Say("!! GitLab kept the JPEG's camera maker, which upload_file's note says it removes")
+		return errors.New("the stored JPEG still names its camera maker")
+	}
+	x.p.Say("GitLab removed the JPEG's camera maker")
+	return nil
 }
 
 // askMCPScope asks what a token with only the mcp scope can do over REST:
