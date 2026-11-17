@@ -401,7 +401,39 @@ func (c *Client) do(ctx context.Context, call Call, out any) (*response, error) 
 	if err != nil {
 		return nil, err
 	}
-	return c.send(ctx, p, out)
+	res, err := c.send(ctx, p, out)
+	if isWrite(call) {
+		err = c.settleRoleRefusal(ctx, err)
+	}
+	return res, err
+}
+
+// settleRoleRefusal settles a write's 401 that GitLab did not mark
+// invalid_token with a read of the account (D-104): [forbidden] when it
+// works, [auth] when it is refused too, and unchanged when the read fails
+// otherwise. GitLab answers 401, not 403, for a merge or an approval the
+// role does not allow, and a plain 401 for a malformed token. Status
+// stays 401. The live step "the author approves their own MR" reaches it
+// where the project refuses self-approval.
+// https://docs.gitlab.com/api/merge_requests/
+func (c *Client) settleRoleRefusal(ctx context.Context, err error) error {
+	var e *Error
+	if !errors.As(err, &e) || e.unsettled == nil {
+		return err
+	}
+	u := e.unsettled
+	_, readErr := c.GetCurrentUser(ctx)
+	switch {
+	case readErr == nil:
+		return &Error{Class: ClassForbidden, Status: e.Status, err: e, Message: fmt.Sprintf("GitLab refused %s for this "+
+			"account, and the token still works: the account's role or the project's rules do not allow it. GitLab said: %s",
+			u.name, u.detail)}
+	case IsClass(readErr, ClassAuth):
+		return &Error{Class: ClassAuth, Status: e.Status, err: e, Message: fmt.Sprintf("GitLab refused %s for this "+
+			"account, and a read of the account was refused too: the token does not work. Run `gitlab-mcp login`. GitLab "+
+			"said: %s", u.name, u.detail)}
+	}
+	return err
 }
 
 // prepare checks a call and builds its request. Everything it refuses is

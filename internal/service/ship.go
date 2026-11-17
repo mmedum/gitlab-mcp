@@ -290,7 +290,7 @@ func (s *Service) approvalFailed(ctx context.Context, t target, iid int64, sha s
 	}
 	var e *gapi.Error
 	if approve && errors.As(err, &e) && e.Status == 401 {
-		return model.ApprovalWrite{}, gapi.Errf(gapi.ClassForbidden, "GitLab did not take the approval, and nothing changed: the "+
+		return model.ApprovalWrite{}, gapi.Wrap(gapi.ClassForbidden, err, "GitLab did not take the approval, and nothing changed: the "+
 			"account may not be an eligible approver here, or the project may forbid approving your own merge request")
 	}
 	if gapi.IsClass(err, gapi.ClassAmbiguousOutcome) {

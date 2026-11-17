@@ -98,6 +98,14 @@ type Error struct {
 	// request URL, a path or a query.
 	Message string
 	err     error
+	// unsettled is set on a 401 GitLab did not mark invalid_token, which
+	// a read of the account settles for a write (D-104).
+	unsettled *unsettled401
+}
+
+// unsettled401 is what a settled 401 is worded from.
+type unsettled401 struct {
+	name, detail string
 }
 
 // Error renders "[class] message".

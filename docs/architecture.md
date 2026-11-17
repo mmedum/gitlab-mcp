@@ -504,6 +504,7 @@ code.
 | D-101 | Personal access tokens or the device flow sign the person in | rejected | — |
 | D-102 | The server confirms a write by asking the person through elicitation | rejected | — |
 | D-103 | On a merge-train project, a merge goes through the train | accepted | TestMergeOnATrainProject, TestGetProjectReportsMergeTrains |
+| D-104 | A write's 401 is settled by a read of the account | accepted | TestAWriteRefusedWithAWorkingTokenIsForbidden |
 
 ### D-01 One stdio binary per person, signed in with their own OAuth application
 
@@ -2393,14 +2394,13 @@ action: `stale` asks for a re-read, `ambiguous_outcome` for a look and
 never a repeat, `blocked` names a guard and its override.
 
 A 401 that does not call the token invalid is `[auth]`, with a message
-naming the role as the likely cause. Only `approve_merge_request`
-remaps it to `[forbidden]`, after a read shows the token works.
+naming the role as the likely cause; on a write, D-104 settles it.
 
 Rejected: six classes, since `stale`, `ambiguous_outcome`, `forbidden`
 beside `auth`, `blocked`, `rate_limited` and `unexpected` each ask for a
 different action.
 Cost: the vocabulary and the code change in the same commit, or the
-gate fails. A 401 on a valid token is `[auth]` on most writes (#96).
+gate fails.
 
 ### D-75 Requests are paced by a per-instance rate model, with buckets for GitLab's known application limits
 
@@ -3131,4 +3131,26 @@ train, with or without GitLab's `skip_merge_train`.
 Cost: an agent cannot merge immediately on a train project, even where
 the project allows skipping; a person does that in GitLab.
 
-Next ID: D-104
+### D-104 A write's 401 is settled by a read of the account
+
+A write that GitLab refuses with 401, without marking the token
+`invalid_token`, is followed by one read of the account. It is
+`[forbidden]` when the read works, and `[auth]`, saying the token does
+not work, when the read is refused too. A read that fails otherwise
+leaves the `[auth]` that names the role as the likely cause. `Status`
+stays 401.
+
+GitLab answers 401, not 403, for a merge or an approval the role does
+not allow ([merge requests](https://docs.gitlab.com/api/merge_requests/)),
+and a plain 401 for a malformed token. `[auth]` tells the caller to sign
+in again, which changes nothing for a role; only the read tells the two
+apart. `internal/gapi` settles it for every write, so no tool has to
+remember it. A read's 401 is not settled, because the read already
+shows the token does not work there.
+
+Rejected: `[auth]` for every 401, which sends a person to sign in for a
+role problem; a remap in each tool, which the next write forgets.
+Cost: a write refused with 401 costs one more read. Supersedes D-74's
+earlier rule that only `approve_merge_request` remapped a 401.
+
+Next ID: D-105

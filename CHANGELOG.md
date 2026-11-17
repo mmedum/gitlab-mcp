@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Changed
+
+- A write GitLab refuses with 401 while the token still works answers `[forbidden]`, not `[auth]`, after one read of the account.
+
 ### Security
 
 - The login's loopback server, which `govulncheck` found reachable, could crash on a header race in `net/http`; built with Go 1.27.4, which fixes GO-2026-6859 (CVE-2026-97054).

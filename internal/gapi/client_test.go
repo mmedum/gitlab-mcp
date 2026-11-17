@@ -1405,3 +1405,51 @@ func TestABodyCanBeReplayed(t *testing.T) {
 		t.Errorf("GetBody gave %q, want %q", replay, want)
 	}
 }
+
+// A write's 401 that GitLab did not mark invalid_token is [forbidden]
+// when a read of the account still works, and [auth] saying the token
+// does not work when the read is refused too. A read that fails otherwise
+// settles nothing, and a token marked invalid is [auth] without the read.
+func TestAWriteRefusedWithAWorkingTokenIsForbidden(t *testing.T) {
+	plain := `{"message":"401 Unauthorized"}`
+	invalid := `{"error":"invalid_token","error_description":"Token was revoked."}`
+	jsonType := http.Header{"Content-Type": {"application/json"}}
+	const loginAgain = "the token does not work"
+	for _, c := range []struct {
+		name       string
+		writeBody  string
+		userStatus int
+		want       Class
+		wantLogin  bool
+		wantReads  int
+	}{
+		{"the token reads", plain, 0, ClassForbidden, false, 1},
+		{"the read is refused too", plain, 401, ClassAuth, true, 1},
+		{"the read fails otherwise", plain, 500, ClassAuth, false, 4},
+		{"the token is invalid", invalid, 0, ClassAuth, false, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t, gitlabtest.Options{})
+			f.srv.Inject(gitlabtest.Fault{Method: http.MethodPost, Path: "/todos/1/mark_as_done", Status: 401, Body: c.writeBody, Header: jsonType})
+			if c.userStatus != 0 {
+				f.srv.Inject(gitlabtest.Fault{Path: "/user", Status: c.userStatus, Body: plain, Header: jsonType, Times: 10})
+			}
+			_, err := f.client.MarkTodoDone(t.Context(), 1)
+			if e := wantClass(t, err, c.want); e.Status != 401 {
+				t.Errorf("status = %d, want 401", e.Status)
+			}
+			if got := strings.Contains(err.Error(), loginAgain); got != c.wantLogin {
+				t.Errorf("%q says %q: %v, want %v", err, loginAgain, got, c.wantLogin)
+			}
+			reads := 0
+			for _, r := range f.srv.Requests() {
+				if r.EscapedPath == "/api/v4/user" {
+					reads++
+				}
+			}
+			if reads != c.wantReads {
+				t.Errorf("%d reads of /user, want %d", reads, c.wantReads)
+			}
+		})
+	}
+}

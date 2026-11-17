@@ -156,10 +156,10 @@ evals-check mcpb release server-json actionlint goreleaser-check parity
   is written from what we believe GitLab does; only `make live` tests it.
 - **GitLab runs quick actions from API bodies**, whatever the flags say.
   A body input that skips the guard is a hole, not a style issue.
-- **A merge's 401 is `[auth]`, not `[forbidden]`.** GitLab answers 401
-  for a merge the role does not allow, without calling the token
-  invalid. Only `approve_merge_request` remaps it, after a read shows
-  the token works.
+- **A write's 401 is `[forbidden]` only after a read.** GitLab answers
+  401, not 403, for a merge the role does not allow, and a plain 401 for
+  a malformed token. `internal/gapi` reads the account after a write's
+  401 and answers `[forbidden]` only if that read works (D-104).
 - **`[not_found]` also means the token cannot see it.** GitLab answers
   404 for both.
 - **A forbidigo settings block that fails to load leaves forbidigo on
