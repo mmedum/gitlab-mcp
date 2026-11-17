@@ -11,3 +11,18 @@
 #               it takes. The count has a ceiling that only goes down.
 find_users.page_token	undrivable	a second page needs two accounts that match one search, and the driver may look up no account but its own, since any other is a real person; gitlabtest pages it
 list_members.page_token	undrivable	the driver lists members by the signed-in username only, since everyone else a group gives access is another person; a second page needs a second match, and gitlabtest pages it
+list_iterations.*	undrivable	the driver reads only what it wrote, and GitLab's REST API has no route that creates an iteration; gitlabtest serves them, and the state numbers are cited from GitLab's source
+list_iterations.group	undrivable	as list_iterations.*
+list_iterations.include_ancestors	undrivable	as list_iterations.*
+list_iterations.max	undrivable	as list_iterations.*
+list_iterations.page_token	undrivable	as list_iterations.*
+list_iterations.project	undrivable	as list_iterations.*
+list_iterations.search	undrivable	as list_iterations.*
+list_iterations.state	undrivable	as list_iterations.*
+search_epics.labels	undrivable	no Premium group is available to the live run, so its epic create is refused and only the [forbidden] reads go out; gitlabtest drives it
+get_epic.offset	undrivable	no Premium group is available to the live run, so its epic create is refused and only the [forbidden] reads go out; gitlabtest drives it
+search_epics.author	undrivable	no Premium group is available to the live run, so its epic create is refused and only the [forbidden] reads go out; gitlabtest drives it
+search_epics.include_descendant_groups	undrivable	no Premium group is available to the live run, so its epic create is refused and only the [forbidden] reads go out; gitlabtest drives it
+search_epics.max	undrivable	no Premium group is available to the live run, so its epic create is refused and only the [forbidden] reads go out; gitlabtest drives it
+search_epics.page_token	undrivable	no Premium group is available to the live run, so its epic create is refused and only the [forbidden] reads go out; gitlabtest drives it
+search_epics.state	undrivable	no Premium group is available to the live run, so its epic create is refused and only the [forbidden] reads go out; gitlabtest drives it

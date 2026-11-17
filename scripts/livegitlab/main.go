@@ -347,11 +347,6 @@ func copyWith(m map[string]any, k string, v any) map[string]any {
 	return out
 }
 
-// seed creates the scratch projects and everything the plan reads,
-// through the client with the profile's own token. Every title and body
-// is written here, so nothing in a transcript is anybody else's words.
-// It returns the ids of the projects it created, for the teardown, even
-// when it fails part-way.
 // deleteScratch deletes the run's projects, then its subgroup, saying
 // what it could not delete.
 func deleteScratch(client *gapi.Client, projects []int64, group int64, gitlabCom bool, p *redact.Printer) {
@@ -408,12 +403,44 @@ func seedSubgroup(ctx context.Context, c *gapi.Client, s *scratch, parent int64,
 		Name: "live_create_group"}, &group); err != nil {
 		return fmt.Errorf("create the scratch subgroup: %w", err)
 	}
-	s.GroupID = group.ID
+	s.GroupID, s.GroupPath = group.ID, group.FullPath
 	red.Known(redact.KindPath, group.FullPath)
 	red.Known(redact.KindID, itoa(group.ID))
+	return seedEpics(ctx, c, s, red)
+}
+
+// seedEpics writes a parent epic and a child in the run's subgroup. Epics
+// are a Premium feature: a group without it refuses the create
+// [forbidden], and the epics stay unset, so the steps expect that refusal.
+func seedEpics(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor) error {
+	var parent, child struct {
+		ID  int64 `json:"id"`
+		IID int64 `json:"iid"`
+	}
+	err := c.Do(ctx, gapi.Call{Method: "POST", Path: "groups/{}/epics", Args: []string{itoa(s.GroupID)},
+		Body: map[string]any{"title": "Live epic " + s.Name, "description": "An epic the live run wrote, with a child epic."},
+		Name: "live_seed"}, &parent)
+	if gapi.IsClass(err, gapi.ClassForbidden) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("create the scratch epic: %w", err)
+	}
+	if err := c.Do(ctx, gapi.Call{Method: "POST", Path: "groups/{}/epics", Args: []string{itoa(s.GroupID)},
+		Body: map[string]any{"title": "Live child epic " + s.Name, "parent_id": parent.ID}, Name: "live_seed"}, &child); err != nil {
+		return fmt.Errorf("create the scratch child epic: %w", err)
+	}
+	red.Known(redact.KindID, itoa(parent.ID))
+	red.Known(redact.KindID, itoa(child.ID))
+	s.Epic = parent.IID
 	return nil
 }
 
+// seed creates the scratch projects and everything the plan reads,
+// through the client with the profile's own token. Every title and body
+// is written here, so nothing in a transcript is anybody else's words.
+// It returns the ids of the projects it created, for the teardown, even
+// when it fails part-way.
 func seed(ctx context.Context, c *gapi.Client, s *scratch, red *redact.Redactor) ([]int64, error) {
 	var ns struct {
 		ID   int64  `json:"id"`

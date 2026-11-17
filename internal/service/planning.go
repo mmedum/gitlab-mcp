@@ -9,6 +9,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/mmedum/gitlab-mcp/v4/internal/gapi"
 	"github.com/mmedum/gitlab-mcp/v4/internal/gitlab"
@@ -83,6 +84,188 @@ func (s *Service) ListMilestones(ctx context.Context, q MilestoneSearch) (model.
 		out.Milestones = append(out.Milestones, row)
 	}
 	return out, nil
+}
+
+// EpicSearch is search_epics' query.
+type EpicSearch struct {
+	Group                   string
+	State                   string
+	Search                  string
+	Labels                  []string
+	Author                  string
+	IncludeDescendantGroups *bool
+	List                    gapi.ListOptions
+}
+
+// SearchEpics lists a group's epics.
+func (s *Service) SearchEpics(ctx context.Context, q EpicSearch) (model.Epics, error) {
+	c, err := s.api()
+	if err != nil {
+		return model.Epics{}, err
+	}
+	g, err := gapi.ParseGroup(q.Group)
+	if err != nil {
+		return model.Epics{}, err
+	}
+	rows, page, err := c.SearchEpics(ctx, g, gapi.EpicQuery{State: q.State, Search: q.Search, Labels: q.Labels,
+		AuthorUsername: q.Author, IncludeDescendantGroups: q.IncludeDescendantGroups}, q.List)
+	if err != nil {
+		return model.Epics{}, err
+	}
+	out := model.Epics{Group: g.String(), Epics: make([]model.EpicRow, 0, len(rows)), Listing: listing(len(rows), page)}
+	for _, e := range rows {
+		out.Epics = append(out.Epics, epicRow(e))
+	}
+	return out, nil
+}
+
+// GetEpic reads an epic, then the first of its child epics and issues
+// at once; the children and issues are best effort, and a
+// read that continues the description from an offset leaves them out.
+func (s *Service) GetEpic(ctx context.Context, group string, iid int64, offset int) (model.Epic, error) {
+	c, err := s.api()
+	if err != nil {
+		return model.Epic{}, err
+	}
+	g, err := gapi.ParseGroup(group)
+	if err != nil {
+		return model.Epic{}, err
+	}
+	// The epic is read first: the children and issues need it to exist.
+	e, err := c.GetEpic(ctx, g, iid)
+	if err != nil {
+		return model.Epic{}, err
+	}
+	var (
+		wg                     sync.WaitGroup
+		children               *model.EpicChildren
+		issues                 *model.LinkedItems
+		childrenErr, issuesErr error
+	)
+	if offset == 0 {
+		wg.Go(func() { children, childrenErr = epicChildren(ctx, c, g, iid) })
+		wg.Go(func() {
+			issues, issuesErr = linked(func(opts gapi.ListOptions) ([]gitlab.LinkedIssue, gapi.Page, error) {
+				return c.ListEpicIssues(ctx, g, iid, opts)
+			}, s.linkedIssue)
+		})
+	}
+	wg.Wait()
+	for _, err := range []error{childrenErr, issuesErr} {
+		if err != nil {
+			return model.Epic{}, err
+		}
+	}
+	desc, budget, err := s.description(e.Description, offset)
+	if err != nil {
+		return model.Epic{}, err
+	}
+	return model.Epic{Group: g.String(), EpicRow: epicRow(*e), CreatedAt: e.CreatedAt, UntrustedDescription: desc,
+		DescriptionBudget: budget, Children: children, Issues: issues}, nil
+}
+
+// epicChildren reads an epic's child epics, which GitLab answers all at
+// once, unpaged (ee/lib/api/epic_links.rb at v19.5.3-ee), and keeps the
+// first page's worth. A soft failure leaves them out.
+func epicChildren(ctx context.Context, c *gapi.Client, g gapi.Group, iid int64) (*model.EpicChildren, error) {
+	rows, err := c.ListEpicChildren(ctx, g, iid)
+	if err != nil {
+		if soft(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := &model.EpicChildren{Items: []model.EpicRow{}, More: len(rows) > linkedPage, Total: len(rows)}
+	for _, e := range rows[:min(len(rows), linkedPage)] {
+		out.Items = append(out.Items, epicRow(e))
+	}
+	return out, nil
+}
+
+func epicRow(e gitlab.Epic) model.EpicRow {
+	title, _ := render.Line(e.Title, render.TitleChars)
+	row := model.EpicRow{IID: e.IID, Reference: e.Reference, GroupID: e.GroupID, ParentIID: e.ParentIID, State: e.State,
+		Confidential: e.Confidential, Labels: nonNil(e.Labels), Author: user(e.Author), UpdatedAt: e.UpdatedAt,
+		WebURL: e.WebURL, UntrustedTitle: title}
+	if e.StartDate != "" {
+		d := e.StartDate
+		row.StartDate = &d
+	}
+	if e.DueDate != "" {
+		d := e.DueDate
+		row.DueDate = &d
+	}
+	return row
+}
+
+// IterationSearch is list_iterations' query: a project or a group.
+type IterationSearch struct {
+	Project          string
+	Group            string
+	State            string
+	Search           string
+	IncludeAncestors *bool
+	List             gapi.ListOptions
+}
+
+// ListIterations lists a project's or a group's iterations.
+func (s *Service) ListIterations(ctx context.Context, q IterationSearch) (model.Iterations, error) {
+	c, err := s.api()
+	if err != nil {
+		return model.Iterations{}, err
+	}
+	if (q.Project == "") == (q.Group == "") {
+		return model.Iterations{}, gapi.Errf(gapi.ClassInvalid, "pass a project or a group, one of them")
+	}
+	iq := gapi.IterationQuery{State: q.State, Search: q.Search, IncludeAncestors: q.IncludeAncestors}
+	out := model.Iterations{Iterations: []model.IterationRow{}}
+	if q.Project != "" {
+		p, ref, err := s.project(ctx, q.Project)
+		if err != nil {
+			return model.Iterations{}, err
+		}
+		iq.Project, out.Project = p, &ref
+	} else {
+		if iq.Group, err = gapi.ParseGroup(q.Group); err != nil {
+			return model.Iterations{}, err
+		}
+		g := iq.Group.String()
+		out.Group = &g
+	}
+	rows, page, err := c.ListIterations(ctx, iq, q.List)
+	if err != nil {
+		return model.Iterations{}, err
+	}
+	out.Listing = listing(len(rows), page)
+	for _, it := range rows {
+		out.Iterations = append(out.Iterations, iterationRow(it))
+	}
+	return out, nil
+}
+
+// iterationStates names GitLab's iteration states, which the API answers
+// as numbers (STATE_ENUM_MAP in ee/app/models/iteration.rb, exposed as
+// state by ee/lib/api/entities/iteration.rb, at v19.5.3-ee). No live step
+// checks it: the driver cannot create an iteration over REST.
+var iterationStates = map[int]string{1: "upcoming", 2: "current", 3: "closed"}
+
+func iterationRow(it gitlab.Iteration) model.IterationRow {
+	title, _ := render.Line(it.Title, render.TitleChars)
+	state, ok := iterationStates[it.State]
+	if !ok {
+		state = "unknown"
+	}
+	row := model.IterationRow{ID: it.ID, IID: it.IID, GroupID: it.GroupID, Sequence: it.Sequence, State: state,
+		UpdatedAt: it.UpdatedAt, WebURL: it.WebURL, UntrustedTitle: title}
+	if it.StartDate != "" {
+		d := it.StartDate
+		row.StartDate = &d
+	}
+	if it.DueDate != "" {
+		d := it.DueDate
+		row.DueDate = &d
+	}
+	return row
 }
 
 // boardPages bounds how many pages of boards list_boards reads.

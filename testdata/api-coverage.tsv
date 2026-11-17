@@ -506,13 +506,17 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	approving
 * /groups/{id}/dora*	deferred	1	Premium/Ultimate DORA metrics, not covered yet
 
 # Premium and Ultimate planning, security and compliance: not covered yet
-* /groups/{id}/epics*	deferred	33	Premium/Ultimate planning object, not covered yet
-* /groups/{id}/(-/)epics*	deferred	11	Premium/Ultimate planning object, not covered yet
+GET /groups/{id}/epics	gated	1	Client.SearchEpics: search_epics, planning toolset; Premium
+GET /groups/{id}/epics/{epic_iid}	gated	1	Client.GetEpic: get_epic, planning toolset; Premium
+GET /groups/{id}/(-/)epics/{epic_iid}/epics	gated	1	Client.ListEpicChildren: get_epic's child epics, planning toolset; Premium
+GET /groups/{id}/epics/{epic_iid}/issues	gated	1	Client.ListEpicIssues: get_epic's issues, planning toolset; Premium
+GET /groups/{id}/iterations	gated	1	Client.ListIterations: list_iterations in a group, planning toolset; Premium
+GET /projects/{id}/iterations	gated	1	Client.ListIterations: list_iterations in a project, planning toolset; Premium
+* /groups/{id}/epics*	deferred	30	the rest of an epic: its writes, notes, events, links and award emoji; get_epic and search_epics read it
+* /groups/{id}/(-/)epics*	deferred	10	an epic's writes and its issue and child links; get_epic reads the children
 * /groups/{id}/-/epics*	deferred	3	Premium/Ultimate planning object, not covered yet
 * /groups/{id}/epic_boards*	deferred	4	Premium/Ultimate planning object, not covered yet
 * /groups/{id}/related_epic_links*	deferred	1	Premium/Ultimate planning object, not covered yet
-* /groups/{id}/iterations*	deferred	1	Premium/Ultimate planning object, not covered yet
-* /projects/{id}/iterations*	deferred	1	Premium/Ultimate planning object, not covered yet
 * /projects/{id}/vulnerabilities*	deferred	7	Premium/Ultimate security finding or export, not covered yet
 * /projects/{id}/vulnerability_findings*	deferred	1	Premium/Ultimate security finding or export, not covered yet
 * /vulnerabilities/*	deferred	9	Premium/Ultimate security finding or export, not covered yet

@@ -131,7 +131,8 @@ const maintainersNote = "The project's Maintainers can list every upload and dow
 // resolution and orientation, and leaves PNG, GIF and WebP alone, which
 // the upload docs do not say (workhorse/internal/upload/exif at
 // v19.4.1-ee). Workhorse acts only on a name ending .jpg, .jpeg or
-// .tiff, and localimage names a JPEG .jpg.
+// .tiff, and localimage names a JPEG .jpg. Checked by the live step
+// "whether GitLab removes a JPEG's metadata".
 func metadataNote(contentType string) string {
 	if contentType == "image/jpeg" {
 		return "GitLab removes a JPEG's metadata, such as EXIF location and camera details, when it stores it, keeping only " +

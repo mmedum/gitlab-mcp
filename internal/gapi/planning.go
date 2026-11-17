@@ -71,6 +71,94 @@ func (c *Client) ListMilestones(ctx context.Context, q MilestoneQuery, opts List
 	return out, page, err
 }
 
+// EpicQuery filters SearchEpics. Epics are a Premium feature: on a group
+// without it GitLab answers 403.
+type EpicQuery struct {
+	State          string // opened, closed or all
+	Search         string
+	Labels         []string
+	AuthorUsername string
+	// IncludeDescendantGroups adds the epics of every group below; nil
+	// leaves GitLab's default, true (ee/lib/api/epics.rb at v19.5.3-ee).
+	IncludeDescendantGroups *bool
+}
+
+// SearchEpics lists a group's epics, newest first.
+func (c *Client) SearchEpics(ctx context.Context, g Group, q EpicQuery, opts ListOptions) ([]gitlab.Epic, Page, error) {
+	v := url.Values{}
+	setString(v, "state", q.State)
+	setString(v, "search", q.Search)
+	setString(v, "labels", strings.Join(q.Labels, ","))
+	setString(v, "author_username", q.AuthorUsername)
+	if q.IncludeDescendantGroups != nil {
+		v.Set("include_descendant_groups", strconv.FormatBool(*q.IncludeDescendantGroups))
+	}
+	var out []gitlab.Epic
+	page, err := c.list(ctx, Call{Method: "GET", Path: "groups/{}/epics", Args: []string{g.segment()}, Query: v,
+		Name: "search_epics"}, opts, &out)
+	return out, page, err
+}
+
+// GetEpic reads one epic by its iid in the group.
+func (c *Client) GetEpic(ctx context.Context, g Group, iid int64) (*gitlab.Epic, error) {
+	var out gitlab.Epic
+	err := c.Do(ctx, Call{Method: "GET", Path: "groups/{}/epics/{}", Args: []string{g.segment(), idArg(iid)}, Name: "get_epic"}, &out)
+	return &out, err
+}
+
+// ListEpicChildren lists an epic's child epics. GitLab answers them all
+// at once, unpaged.
+func (c *Client) ListEpicChildren(ctx context.Context, g Group, iid int64) ([]gitlab.Epic, error) {
+	var out []gitlab.Epic
+	err := c.Do(ctx, Call{Method: "GET", Path: "groups/{}/epics/{}/epics", Args: []string{g.segment(), idArg(iid)},
+		Name: "get_epic"}, &out)
+	return out, err
+}
+
+// ListEpicIssues lists the issues assigned to an epic.
+func (c *Client) ListEpicIssues(ctx context.Context, g Group, iid int64, opts ListOptions) ([]gitlab.LinkedIssue, Page, error) {
+	var out []gitlab.LinkedIssue
+	page, err := c.list(ctx, Call{Method: "GET", Path: "groups/{}/epics/{}/issues", Args: []string{g.segment(), idArg(iid)},
+		Name: "get_epic"}, opts, &out)
+	return out, page, err
+}
+
+// IterationQuery filters ListIterations. Exactly one of Project and Group
+// is set. Iterations are a Premium feature.
+type IterationQuery struct {
+	Project Project
+	Group   Group
+	State   string // opened, upcoming, current, closed or all
+	Search  string
+	// IncludeAncestors adds the iterations of the groups above; nil leaves
+	// GitLab's default, true (ee/lib/api/iterations.rb at v19.5.3-ee).
+	IncludeAncestors *bool
+}
+
+// ListIterations lists a project's or a group's iterations.
+func (c *Client) ListIterations(ctx context.Context, q IterationQuery, opts ListOptions) ([]gitlab.Iteration, Page, error) {
+	if q.Project.IsZero() == q.Group.IsZero() {
+		return nil, Page{}, Errf(ClassInvalid, "pass a project or a group, one of them")
+	}
+	v := url.Values{}
+	setString(v, "state", q.State)
+	setString(v, "search", q.Search)
+	if q.IncludeAncestors != nil {
+		v.Set("include_ancestors", strconv.FormatBool(*q.IncludeAncestors))
+	}
+	var out []gitlab.Iteration
+	var page Page
+	var err error
+	if !q.Project.IsZero() {
+		page, err = c.list(ctx, Call{Method: "GET", Path: "projects/{}/iterations", Args: []string{q.Project.segment()},
+			Query: v, Name: "list_iterations"}, opts, &out)
+	} else {
+		page, err = c.list(ctx, Call{Method: "GET", Path: "groups/{}/iterations", Args: []string{q.Group.segment()},
+			Query: v, Name: "list_iterations"}, opts, &out)
+	}
+	return out, page, err
+}
+
 // ListBoards lists a project's issue boards, each with its lists, which
 // GitLab includes whole.
 func (c *Client) ListBoards(ctx context.Context, p Project, opts ListOptions) ([]gitlab.Board, Page, error) {

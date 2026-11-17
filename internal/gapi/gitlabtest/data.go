@@ -350,6 +350,7 @@ func (s *Server) fillAlpha(p *project) {
 	}
 	s.fillCI(p)
 	s.fillPlanning(p)
+	s.fillEpics(p)
 	s.fillBoards(p)
 	s.fillToolsets(p)
 }
