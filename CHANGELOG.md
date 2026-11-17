@@ -20,6 +20,10 @@ lifted verbatim.
 - `apply_suggestions` refuses a suggestion that replaces more than one line unless `from_line` and `to_line` name them, so a client's prompt shows the lines removed.
 - A write GitLab refuses with 401 while the token still works answers `[forbidden]`, not `[auth]`, after one read of the account.
 
+### Fixed
+
+- `search_issues` no longer suggests `scope: all` across the instance, which gitlab.com refuses; it says to pass a group or project.
+
 ### Security
 
 - The login's loopback server, which `govulncheck` found reachable, could crash on a header race in `net/http`; built with Go 1.27.4, which fixes GO-2026-6859 (CVE-2026-97054).

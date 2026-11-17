@@ -93,6 +93,9 @@ type step struct {
 	// errorClass, when set, is the [class] an expected refusal must carry,
 	// so a refusal for another reason does not pass the step.
 	errorClass string
+	// errorHas, when set, is text the refusal must hold, so a refusal for
+	// another reason of the same class does not pass the step.
+	errorHas string
 	// why is a fact the name leaves out: why GitLab or the server refuses
 	// the step, or what decides an anyOutcome step.
 	why string
@@ -168,7 +171,13 @@ func readItemsAndCode(s scratch) []step {
 			"author": s.User, "search": s.Name, "order_by": "created_at", "sort": "asc", "max": 1,
 			"created_after": yesterday, "created_before": tomorrow, "updated_after": yesterday, "updated_before": tomorrow}, paged: true},
 		{name: "a group's issues are searched by the run's word", tool: "search_issues", args: map[string]any{"group": s.Namespace, "search": s.Name, "scope": "created_by_me", "state": "all"}},
-		{name: "issues are searched instance-wide by the run's word", tool: "search_issues", args: map[string]any{"search": s.Name, "scope": "all", "assignee": s.User, "milestone": "None"}},
+		// gitlab.com answers scope all on GET /issues 400, behind the flag
+		// restrict_global_issues_scope_all; merge requests still take it
+		// (https://gitlab.com/gitlab-org/gitlab/-/blob/4bbbb8e7203243ea29c3d1dcad27781374e93e8c/lib/api/issues.rb#L29-38).
+		{name: "issues are searched instance-wide by the run's word", tool: "search_issues", args: map[string]any{"search": s.Name, "scope": "created_by_me", "assignee": s.User, "milestone": "None"}},
+		{name: "issues across the instance refuse scope all", tool: "search_issues", args: map[string]any{"search": s.Name, "scope": "all"},
+			expectError: true, errorClass: "invalid", errorHas: "`scope=all` is not supported",
+			why: "gitlab.com takes only created_by_me and assigned_to_me without a project or group"},
 		{name: "an issue is read with its links", tool: "get_issue", args: map[string]any{"project": p, "iid": s.Issue}},
 		{name: "an issue is read from an offset", tool: "get_issue", args: map[string]any{"project": p, "iid": s.Issue, "offset": 10}},
 		{name: "an issue that does not exist is refused", tool: "get_issue", args: map[string]any{"project": p, "iid": 99999}, expectError: true},
@@ -662,6 +671,8 @@ func judge(st step, isError bool, text string) string {
 		return map[bool]string{true: "expected a refusal and got a result", false: "unexpected tool error"}[st.expectError]
 	case st.errorClass != "" && !strings.HasPrefix(text, "["+st.errorClass+"]"):
 		return "expected a [" + st.errorClass + "] refusal"
+	case st.errorHas != "" && isError && !strings.Contains(text, st.errorHas):
+		return "expected the refusal to say " + st.errorHas
 	}
 	return ""
 }
