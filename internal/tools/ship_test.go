@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -806,15 +807,15 @@ func suggest(h *harness, iid int64, from, to int, replacement string) (int64, in
 	return note, id
 }
 
-// sgs names suggestions for apply_suggestions, each with the text the
-// in-memory GitLab holds for it, as a caller copies it from
-// list_discussions.
+// sgs names suggestions for apply_suggestions, each with the text and
+// the lines the in-memory GitLab holds for it, as a caller copies them
+// from list_discussions.
 func sgs(h *harness, ids ...int64) []any {
 	h.t.Helper()
 	out := []any{}
 	for _, id := range ids {
 		sg, _ := h.gl.Suggestion(id)
-		out = append(out, map[string]any{"id": id, "text": sg.ToContent})
+		out = append(out, map[string]any{"id": id, "text": sg.ToContent, "from_line": sg.FromLine, "to_line": sg.ToLine})
 	}
 	return out
 }
@@ -933,6 +934,60 @@ func TestApplySuggestionsHoldsTheText(t *testing.T) {
 	if _, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 3,
 		"suggestions": []any{map[string]any{"id": whole, "text": strings.Repeat("y", 1999) + "\n"}}}); get(out, "outcome") != "applied" {
 		t.Errorf("2,000 characters: %v", out)
+	}
+}
+
+// A suggestion that replaces more than one line comes with those lines,
+// so the call names what it removes; a range that differs is stale, half
+// a range or a reversed one is invalid, and nothing is sent. A one-line
+// suggestion, or one already applied, needs no range.
+func TestApplySuggestionsHoldsTheLineRange(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: ship})
+	const body = "// login is real now.\nfunc login() { return }\n"
+	_, id := suggest(h, 1, 3, 4, body)
+	with := func(lines map[string]any) map[string]any {
+		sg := map[string]any{"id": id, "text": body}
+		maps.Copy(sg, lines)
+		return map[string]any{"project": alpha, "iid": 1, "suggestions": []any{sg}}
+	}
+	refusals := []struct {
+		name  string
+		lines map[string]any
+		class string
+	}{
+		{"no range for two lines", nil, "invalid"},
+		{"from_line alone", map[string]any{"from_line": 3}, "invalid"},
+		{"to_line alone", map[string]any{"to_line": 4}, "invalid"},
+		{"a negative from_line alone", map[string]any{"from_line": -1}, "invalid"},
+		{"to_line before from_line", map[string]any{"from_line": 4, "to_line": 3}, "invalid"},
+		{"one line of two", map[string]any{"from_line": 3, "to_line": 3}, "stale"},
+		{"one line more", map[string]any{"from_line": 3, "to_line": 5}, "stale"},
+	}
+	for _, c := range refusals {
+		if reply, _, isErr := h.call("apply_suggestions", with(c.lines)); !isErr || !strings.HasPrefix(reply, "["+c.class+"]") {
+			t.Errorf("%s: %s, want [%s]", c.name, reply, c.class)
+		}
+	}
+	if refused := h.fails("apply_suggestions", with(nil), "invalid"); !strings.Contains(refused, "lines 3 to 4") {
+		t.Errorf("the refusal does not name GitLab's range: %s", refused)
+	}
+	if applyPuts(h) != 0 {
+		t.Fatalf("%d applies sent by refused calls", applyPuts(h))
+	}
+	if _, out := h.ok("apply_suggestions", with(map[string]any{"from_line": 3, "to_line": 4})); get(out, "outcome") != "applied" || applyPuts(h) != 1 {
+		t.Errorf("GitLab's own range: %v; %d sent", out, applyPuts(h))
+	}
+	// Applied, it sends nothing, so it needs no range and is held to none.
+	for _, lines := range []map[string]any{nil, {"from_line": 9, "to_line": 9}} {
+		if _, out := h.ok("apply_suggestions", with(lines)); get(out, "outcome") != "unchanged" || applyPuts(h) != 1 {
+			t.Errorf("applied, with %v: %v; %d sent", lines, out, applyPuts(h))
+		}
+	}
+
+	_, one := suggest(h, 2, 3, 3, "// one line.\n")
+	if _, out := h.ok("apply_suggestions", map[string]any{"project": alpha, "iid": 2,
+		"suggestions": []any{map[string]any{"id": one, "text": "// one line.\n"}}}); get(out, "outcome") != "applied" {
+		t.Errorf("one line without a range: %v", out)
 	}
 }
 

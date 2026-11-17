@@ -81,6 +81,9 @@ type step struct {
 	tool        string
 	args        map[string]any
 	expectError bool
+	// errorClass, when set, is the [class] an expected refusal must carry,
+	// so a refusal for another reason does not pass the step.
+	errorClass string
 	// why is a fact the name leaves out: why GitLab or the server refuses
 	// the step, or what decides an anyOutcome step.
 	why string
@@ -640,10 +643,31 @@ func writePath(s scratch) []step {
 	}
 }
 
+// judge says what is wrong with a step's outcome, or "" when it is what
+// the step expects.
+func judge(st step, isError bool, text string) string {
+	switch {
+	case st.anyOutcome:
+		return ""
+	case isError != st.expectError:
+		return map[bool]string{true: "expected a refusal and got a result", false: "unexpected tool error"}[st.expectError]
+	case st.errorClass != "" && !strings.HasPrefix(text, "["+st.errorClass+"]"):
+		return "expected a [" + st.errorClass + "] refusal"
+	}
+	return ""
+}
+
 // sg names a suggestion for apply_suggestions by what a read saved: its
 // id under name and its text under name_text.
 func sg(name string) map[string]any {
 	return map[string]any{"id": "{{" + name + "}}", "text": "{{" + name + "_text}}"}
+}
+
+// withLines gives a suggestion the line range it replaces.
+func withLines(sg map[string]any, from, to any) map[string]any {
+	out := maps.Clone(sg)
+	out["from_line"], out["to_line"] = from, to
+	return out
 }
 
 // shipDestructiveAndToolsets is sent to a second server with Ship,
@@ -753,10 +777,12 @@ func shipDestructiveAndToolsets(s scratch) []step {
 		// and the batch with the texts read lands.
 		{name: "a suggestion with another text is refused", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{
 			map[string]any{"id": "{{sg_first}}", "text": "not what was suggested\n"}}}, expectError: true},
+		{name: "a suggestion with another line range is refused", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{
+			withLines(sg("sg_first"), 2, 2)}}, expectError: true, errorClass: "stale"},
 		{name: "applying suggestions is previewed", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_first"),
 			sg("sg_third")}, "commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}", "dry_run": true}},
-		{name: "two suggestions apply in one commit", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_first"),
-			sg("sg_third")}, "commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}"}},
+		{name: "two suggestions apply in one commit", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{withLines(sg("sg_first"), 1, 1),
+			withLines(sg("sg_third"), 3, 3)}, "commit_message": "Apply %{suggestions_count} suggestions to %{branch_name}"}},
 		{name: "an applied suggestion is applied again", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_first")}}},
 		{name: "the file shows the applied suggestions", tool: "get_file", args: map[string]any{"project": p, "path": "ship/mr-pipeline.txt", "ref": mrBranch}},
 		{name: "a suggestion is posted on the second line", tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}",
@@ -768,6 +794,20 @@ func shipDestructiveAndToolsets(s scratch) []step {
 		{name: "a suggestion applies after the head moved", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_second")}},
 			anyOutcome: true,
 			why:        "GitLab refuses a suggestion until it has moved the comments to the branch's new head, which takes a moment"},
+		// One that replaces two lines is applied only with those lines named.
+		{name: "a suggestion on two lines is posted", tool: "add_comment", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}",
+			"body": "Two lines.\n\n```suggestion:-0+1\ntwo lines, suggested\n```\n", "file": "ship/mr-pipeline.txt", "line": 1, "side": "new"},
+			pause: 20 * time.Second},
+		{name: "the two-line suggestion is read with its text", tool: "list_discussions", args: map[string]any{"project": p, "type": "merge_request", "iid": "{{mrpipe_mr}}"},
+			save: map[string]string{"sg_two": "threads.0.notes.0.suggestions.0.id",
+				"sg_two_text": "threads.0.notes.0.suggestions.0.untrusted_to_content",
+				"sg_two_from": "threads.0.notes.0.suggestions.0.from_line", "sg_two_to": "threads.0.notes.0.suggestions.0.to_line"}},
+		{name: "a two-line suggestion without its lines is refused", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}", "suggestions": []any{sg("sg_two")}},
+			expectError: true, errorClass: "invalid"},
+		// A dry run makes every check and sends nothing: the range read is
+		// the range GitLab holds.
+		{name: "a two-line suggestion is previewed with its lines", tool: "apply_suggestions", args: map[string]any{"project": p, "iid": "{{mrpipe_mr}}",
+			"suggestions": []any{withLines(sg("sg_two"), "{{sg_two_from}}", "{{sg_two_to}}")}, "dry_run": true}},
 
 		// An auto-merge set while the merge request's pipeline runs, then
 		// canceled; a pipeline that already passed merges it instead,

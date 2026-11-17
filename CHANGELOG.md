@@ -17,6 +17,7 @@ lifted verbatim.
 
 ### Changed
 
+- `apply_suggestions` refuses a suggestion that replaces more than one line unless `from_line` and `to_line` name them, so a client's prompt shows the lines removed.
 - A write GitLab refuses with 401 while the token still works answers `[forbidden]`, not `[auth]`, after one read of the account.
 
 ### Security

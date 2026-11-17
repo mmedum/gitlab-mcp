@@ -282,3 +282,27 @@ func TestWritesNameOnlyTheRunsAccount(t *testing.T) {
 		t.Errorf("the run's own account was refused: %v", err)
 	}
 }
+
+// A step's outcome is judged by whether it was refused and, when the step
+// names one, by the refusal's class.
+func TestJudge(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		st      step
+		isError bool
+		text    string
+		want    string
+	}{
+		{"a result, as expected", step{}, false, "done", ""},
+		{"a refusal, unexpected", step{}, true, "[stale] moved", "unexpected tool error"},
+		{"a result where a refusal was due", step{expectError: true}, false, "done", "expected a refusal and got a result"},
+		{"any refusal", step{expectError: true}, true, "[conflict] busy", ""},
+		{"the refusal named", step{expectError: true, errorClass: "stale"}, true, "[stale] moved", ""},
+		{"another refusal", step{expectError: true, errorClass: "stale"}, true, "[conflict] busy", "expected a [stale] refusal"},
+		{"either outcome", step{anyOutcome: true, errorClass: "stale"}, true, "[conflict] busy", ""},
+	} {
+		if got := judge(c.st, c.isError, c.text); got != c.want {
+			t.Errorf("%s: judge = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
