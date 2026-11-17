@@ -89,7 +89,12 @@ The version must agree across the filenames, the bundle's
 Check the `registry` job itself, since a release with no entry looks the
 same. Run `go run ./scripts/gates smoke <path>` on the downloaded binary
 (`make smoke` builds its own), then `gitlab-mcp doctor`, and open the
-bundle in Claude Desktop.
+bundle in Claude Desktop. The live driver reaches neither the bundle
+nor a client's prompt, so check both there by hand: `get_me` answers
+through the bundle, and a Destructive tool asks before it runs, since
+the client prompts on `destructiveHint`. gitlab.com's 429 is not
+provoked; `TestRateLimited429IsRetriedHonoringRetryAfter` holds the
+retry against GitLab's documented answer.
 
 Last, run the README's install command outside the repository, as a user
 would, and check that `gitlab-mcp --version` names the release.
