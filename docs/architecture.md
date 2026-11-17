@@ -783,7 +783,8 @@ reading CI and, when the operator opts in, driving it. It stops at
 administration.
 
 Out of scope are instance and group settings, users, runners, project
-settings, access tokens, deploy keys and tokens, webhooks, integrations
+settings, access tokens, deploy keys and tokens, the members' SSH keys
+and tokens in a group's credentials inventory, webhooks, integrations
 and audit events. `testdata/api-coverage.tsv` writes each group off with
 its reason.
 

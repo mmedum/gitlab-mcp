@@ -550,7 +550,6 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	approving
 * /groups/{id}/dependency_proxy*	deferred	1	the dependency proxy's cache; no tool reads it yet
 * /projects/{id}/debian_distributions*	deferred	6	Debian package distributions; no tool reads them yet
 * /groups/{id}/-/debian_distributions*	deferred	6	Debian package distributions; no tool reads them yet
-* /groups/{id}/manage*	deferred	8	the group credentials inventory: its members' tokens and SSH keys; no tool reads them
 
 # Infrastructure: runners, clusters, agents and Kubernetes, written off
 * /runners*	written-off	16	runners: infrastructure administration (D-11)
@@ -564,7 +563,7 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	approving
 * /projects/{id}/terraform*	written-off	12	Terraform state: infrastructure administration (D-11)
 * /projects/{id}/google_cloud*	written-off	2	Google Cloud setup scripts: infrastructure administration (D-11)
 
-# Credentials: deploy keys, deploy tokens and access tokens, written off
+# Credentials: keys, tokens and certificates, written off
 * /deploy_keys*	written-off	2	deploy keys: credential administration (D-11)
 * /projects/{id}/deploy_keys*	written-off	6	a project's deploy keys: credential administration (D-11)
 * /deploy_tokens*	written-off	1	deploy tokens: credential administration (D-11)
@@ -573,6 +572,7 @@ POST /projects/{id}/deployments/{deployment_id}/approval	written-off	1	approving
 * /projects/{id}/access_tokens*	written-off	6	project access tokens: credential administration (D-11)
 * /groups/{id}/access_tokens*	written-off	6	group access tokens: credential administration (D-11)
 * /groups/{id}/ssh_certificates*	written-off	3	a group's SSH certificates: credential administration (D-11)
+* /groups/{id}/manage/*	written-off	8	the group credentials inventory, which lists, revokes and rotates its members' tokens and SSH keys: credential administration (D-11)
 * /token_exchange*	written-off	1	exchanging one token for another: experiment, and credential administration (D-11)
 * /iam/*	written-off	1	an authentication user-info endpoint; get_me reads the account through /user
 * /web_commits/*	written-off	1	the public key GitLab signs web commits with; no tool verifies a signature
