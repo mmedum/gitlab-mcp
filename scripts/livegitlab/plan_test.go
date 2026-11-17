@@ -22,7 +22,7 @@ func sampleScratch() scratch {
 		WebURL:  "https://gitlab.example.com/example-group/scratch/gitlab-mcp-live-20260926-0a0b0c",
 		PathB:   "example-group/scratch/gitlab-mcp-live-20260926-0a0b0c-g/gitlab-mcp-live-20260926-0a0b0c.b",
 		WebURLB: "https://gitlab.example.com/example-group/scratch/gitlab-mcp-live-20260926-0a0b0c-g/gitlab-mcp-live-20260926-0a0b0c.b",
-		GroupID: 99,
+		GroupID: 99, GroupPath: "example-group/scratch/gitlab-mcp-live-20260926-0a0b0c-g", Epic: 1,
 		Default: "main", Feature: "feature-0a0b0c", Feature2: "draft-0a0b0c", File: "notes/live.md",
 		SHA: strings.Repeat("a", 40), Issue: 1, Issue2: 2, MR: 1, MR2: 2, Note: 77, User: "alice", Label: "live-0a0b0c",
 		Label2: "live-0a0b0c-b", Milestone: "Live milestone gitlab-mcp-live-20260926-0a0b0c", Pipeline: 5001, JobFailed: 6001,
@@ -113,10 +113,13 @@ func TestEveryToolHasARule(t *testing.T) {
 }
 
 func TestEveryStepStaysInTheScratchProject(t *testing.T) {
-	s := sampleScratch()
-	for _, st := range slices.Concat(plan(s), shipDestructiveAndToolsets(s)) {
-		if err := confined(st, s); err != nil {
-			t.Errorf("%v", err)
+	premium, free := sampleScratch(), sampleScratch()
+	free.Epic = 0
+	for _, s := range []scratch{premium, free} {
+		for _, st := range slices.Concat(plan(s), shipDestructiveAndToolsets(s)) {
+			if err := confined(st, s); err != nil {
+				t.Errorf("%v", err)
+			}
 		}
 	}
 }
@@ -163,6 +166,8 @@ func TestConfinedRefusesAStepOutside(t *testing.T) {
 		{step{tool: "upload_file", args: map[string]any{"project": s.Path, "path": "/home/example/.ssh/id_ed25519"}}, "the run generated"},
 		{step{tool: "list_everything", args: map[string]any{}}, "no confinement rule"},
 		{step{tool: "create_issue", args: map[string]any{"project": s.PathB, "title": "t"}}, "not the scratch project"},
+		{step{tool: "search_epics", args: map[string]any{"group": s.Namespace, "search": s.Name}}, "the run's subgroup"},
+		{step{tool: "get_epic", args: map[string]any{"group": "example-group", "iid": 1}}, "carry the run's word"},
 		{step{tool: "resolve_url", args: map[string]any{"url": s.WebURLB + "/-/issues/1"}}, "not inside"},
 	}
 	for _, tc := range cases {

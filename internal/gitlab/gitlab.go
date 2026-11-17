@@ -910,6 +910,43 @@ type ProjectMilestone struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// Epic is one row of GET /groups/:id/epics, and GET
+// /groups/:id/epics/:epic_iid. Epics are a Premium feature.
+type Epic struct {
+	ID           int64     `json:"id"`
+	IID          int64     `json:"iid"`
+	GroupID      int64     `json:"group_id"`
+	ParentIID    *int64    `json:"parent_iid"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	State        string    `json:"state"`
+	Confidential bool      `json:"confidential"`
+	Labels       []string  `json:"labels"`
+	Author       UserBasic `json:"author"`
+	StartDate    string    `json:"start_date"` // a date, not an instant
+	DueDate      string    `json:"due_date"`   // a date, not an instant
+	Reference    string    `json:"reference"`
+	WebURL       string    `json:"web_url"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// Iteration is one row of GET /groups/:id/iterations and GET
+// /projects/:id/iterations. Iterations are a Premium feature. State is a
+// number in the answer, though the filter takes a word.
+type Iteration struct {
+	ID        int64     `json:"id"`
+	IID       int64     `json:"iid"`
+	GroupID   int64     `json:"group_id"`
+	Sequence  int       `json:"sequence"`
+	Title     string    `json:"title"`
+	State     int       `json:"state"`
+	StartDate string    `json:"start_date"` // a date, not an instant
+	DueDate   string    `json:"due_date"`   // a date, not an instant
+	WebURL    string    `json:"web_url"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // Board is one row of GET /projects/:id/boards, its lists included.
 // The scope fields are absent unless the project has scoped boards, a
 // paid feature.

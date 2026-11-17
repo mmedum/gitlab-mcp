@@ -35,6 +35,7 @@ func definitions() []definition {
 		listSnippets(), getSnippet(), createSnippet(), updateSnippet(), deleteSnippet(),
 		listReleases(), getRelease(), createRelease(), createTag(), deleteTag(),
 		createLabel(), updateLabel(), deleteLabel(), createMilestone(), updateMilestone(), deleteMilestone(),
+		searchEpics(), getEpic(), listIterations(),
 		listEnvironments(), listDeployments(),
 		listEvents(),
 	}

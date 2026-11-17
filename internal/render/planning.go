@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/mmedum/gitlab-mcp/v4/internal/model"
@@ -59,6 +60,107 @@ func Milestones(m model.Milestones, bd Boundary) string {
 		if x.Expired {
 			b.WriteString(", expired")
 		}
+		if x.StartDate != nil {
+			fmt.Fprintf(&b, ", starts %s", Ident(*x.StartDate))
+		}
+		if x.DueDate != nil {
+			fmt.Fprintf(&b, ", due %s", Ident(*x.DueDate))
+		}
+	}
+	return b.String()
+}
+
+// Epics renders search_epics.
+func Epics(l model.Epics, bd Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Epics of the group %s\n", Ident(l.Group))
+	b.WriteString(listingLine("epics", l.Listing))
+	if len(l.Epics) > 0 {
+		b.WriteString("\n" + bd.Notice())
+	}
+	for _, e := range l.Epics {
+		b.WriteString("\n- " + epicLine(e, bd))
+	}
+	return b.String()
+}
+
+// epicLine is one epic: its reference, title, state and dates.
+func epicLine(e model.EpicRow, bd Boundary) string {
+	line := fmt.Sprintf("%s in group id %d, %s: %s", Ident(e.Reference), e.GroupID, bd.Inline(e.UntrustedTitle), Ident(e.State))
+	if e.Confidential {
+		line += ", confidential"
+	}
+	if e.StartDate != nil {
+		line += ", starts " + Ident(*e.StartDate)
+	}
+	if e.DueDate != nil {
+		line += ", due " + Ident(*e.DueDate)
+	}
+	return line
+}
+
+// Epic renders get_epic.
+func Epic(e model.Epic, bd Boundary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Epic %s, iid %d, in the group %s\n", Ident(e.Reference), e.IID, Ident(e.Group))
+	fmt.Fprintf(&b, "%s; %s; confidential %s.\n", Ident(e.WebURL), Ident(e.State), yesNo(e.Confidential))
+	fmt.Fprintf(&b, "Author @%s; labels %s.\n", Ident(e.Author.Username), idents(e.Labels))
+	fmt.Fprintf(&b, "Created %s; updated %s", when(e.CreatedAt), when(e.UpdatedAt))
+	if e.StartDate != nil {
+		fmt.Fprintf(&b, "; starts %s", Ident(*e.StartDate))
+	}
+	if e.DueDate != nil {
+		fmt.Fprintf(&b, "; due %s", Ident(*e.DueDate))
+	}
+	b.WriteString(".\n")
+	if e.ParentIID != nil {
+		fmt.Fprintf(&b, "Parent epic: iid %d in its own group, this one or one above.\n", *e.ParentIID)
+	}
+	b.WriteString(bd.Notice() + "\n")
+	fmt.Fprintf(&b, "Title: %s\n", bd.Inline(e.UntrustedTitle))
+	o := Origin{Kind: "epic_description", Project: e.Group, Item: "&" + strconv.FormatInt(e.IID, 10), Author: e.Author.Username}
+	b.WriteString(bd.Block(o, e.UntrustedDescription) + "\n")
+	b.WriteString(budgetLine("Description", e.DescriptionBudget))
+	// A read that continues the description does not read the children
+	// and issues again, and says nothing of them.
+	if e.DescriptionBudget.Offset != 0 {
+		return b.String()
+	}
+	switch c := e.Children; {
+	case c == nil:
+		b.WriteString("\nChild epics: could not be read.")
+	case len(c.Items) == 0:
+		b.WriteString("\nChild epics: none.")
+	default:
+		fmt.Fprintf(&b, "\nChild epics: %d shown of %d.", len(c.Items), c.Total)
+		for _, x := range c.Items {
+			b.WriteString("\n- " + epicLine(x, bd))
+		}
+	}
+	b.WriteString("\nIssues are as GitLab returned them: it leaves out any you cannot read.")
+	b.WriteString("\n" + linkedItems("Issues in the epic", e.Issues, bd))
+	return b.String()
+}
+
+// Iterations renders list_iterations.
+func Iterations(l model.Iterations, bd Boundary) string {
+	var b strings.Builder
+	switch {
+	case l.Project != nil:
+		fmt.Fprintf(&b, "Iterations of %s\n", projectLine(*l.Project))
+	case l.Group != nil:
+		fmt.Fprintf(&b, "Iterations of the group %s\n", Ident(*l.Group))
+	}
+	b.WriteString(listingLine("iterations", l.Listing))
+	if len(l.Iterations) > 0 {
+		b.WriteString("\n" + bd.Notice())
+	}
+	for _, x := range l.Iterations {
+		title := "untitled"
+		if x.UntrustedTitle != "" {
+			title = bd.Inline(x.UntrustedTitle)
+		}
+		fmt.Fprintf(&b, "\n- %s (id %d, sequence %d): %s", title, x.ID, x.Sequence, Ident(x.State))
 		if x.StartDate != nil {
 			fmt.Fprintf(&b, ", starts %s", Ident(*x.StartDate))
 		}

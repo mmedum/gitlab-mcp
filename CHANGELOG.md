@@ -15,6 +15,10 @@ lifted verbatim.
 
 ## [Unreleased]
 
+### Added
+
+- `search_epics`, `get_epic` and `list_iterations` read Premium epics and iterations, in the `planning` toolset.
+
 ### Changed
 
 - `apply_suggestions` refuses a suggestion that replaces more than one line unless `from_line` and `to_line` name them, so a client's prompt shows the lines removed.

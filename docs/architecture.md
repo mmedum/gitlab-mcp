@@ -505,6 +505,7 @@ code.
 | D-102 | The server confirms a write by asking the person through elicitation | rejected | — |
 | D-103 | On a merge-train project, a merge goes through the train | accepted | TestMergeOnATrainProject, TestGetProjectReportsMergeTrains |
 | D-104 | A write's 401 is settled by a read of the account | accepted | TestAWriteRefusedWithAWorkingTokenIsForbidden |
+| D-105 | Epics and iterations are read through REST, in the `planning` toolset | accepted | TestSearchEpics, TestGetEpic, TestListIterations, TestPremiumReadsOnFree |
 
 ### D-01 One stdio binary per person, signed in with their own OAuth application
 
@@ -799,8 +800,8 @@ assistant task worth that risk.
 Rejected: instance and group settings, users, runners, access tokens,
 deploy keys, webhooks, integrations and audit events.
 Cost: a task that needs any of these, such as adding a member or a
-webhook, is done by a person in GitLab's own interface. Premium and
-Ultimate planning objects are not covered yet (#94).
+webhook, is done by a person in GitLab's own interface. Epics and
+iterations are read, not written (D-105).
 
 ### D-12 A convention is verified against GitLab's source, a specification or a live probe before it is adopted
 
@@ -1324,7 +1325,7 @@ model can make wrongly, and a description it must read on every
 request. The toolsets hold what lies outside the daily path. Wiki
 pages, snippets and releases publish, deployments and activity read
 across infrastructure and people, and planning changes labels and
-milestones every issue shares. A read joins the default when it answers
+milestones every issue shares and reads Premium epics and iterations. A read joins the default when it answers
 a question a default tool acts on. `list_boards` did, beside
 `list_labels` and `list_milestones`, since a board's columns are read
 with `search_issues`.
@@ -3165,4 +3166,26 @@ role problem; a remap in each tool, which the next write forgets.
 Cost: a write refused with 401 costs one more read. Supersedes D-74's
 earlier rule that only `approve_merge_request` remapped a 401.
 
-Next ID: D-105
+### D-105 Epics and iterations are read through REST, in the `planning` toolset
+
+`search_epics`, `get_epic` and `list_iterations` read a group's epics,
+one epic with its child epics and issues, and a group's or a project's
+iterations. They are Kind Read in the `planning` toolset, off by
+default. A group without Premium refuses them `[forbidden]`, as GitLab
+answers 403. GitLab's iteration state is a number in the answer and a
+word in the filter; the server names it.
+
+REST has a route for each read, so GraphQL is not needed (D-09), and
+the OpenAPI snapshot marks none of them deprecated. Off by default, three tools
+that always fail on Free stay out of a Free account's surface (D-32).
+Each read is a group's, which the server's project-shaped writes do not
+reach, so a read is all a task needs to plan around an epic.
+
+Rejected: GraphQL work items, which REST covers; writing epics or
+iterations, which changes what every issue under a group shows;
+registering the reads by default, which shows Free accounts tools that
+always fail.
+Cost: a person on Premium turns the `planning` toolset on to read epics,
+and gets the label and milestone writes with it.
+
+Next ID: D-106

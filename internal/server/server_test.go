@@ -46,7 +46,7 @@ func TestDumpSchemas(t *testing.T) {
 	if got := slices.Sorted(maps.Keys(d.Instructions)); !slices.Equal(got, []string{"default", "full", "read_api", "read_only"}) {
 		t.Errorf("instructions for %v", got)
 	}
-	if len(d.Tools) != 105 || len(d.ResourceTemplates) != 3 {
+	if len(d.Tools) != 108 || len(d.ResourceTemplates) != 3 {
 		t.Fatalf("%d tools, templates %v", len(d.Tools), d.ResourceTemplates)
 	}
 	var names []string

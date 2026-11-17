@@ -3,10 +3,12 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/mmedum/gitlab-mcp/v4/internal/config"
 	"github.com/mmedum/gitlab-mcp/v4/internal/gapi/gitlabtest"
 )
 
@@ -364,4 +366,119 @@ func TestListBoardsSchema(t *testing.T) {
 	if !strings.Contains(string(raw), "iteration or open-status lists") {
 		t.Errorf("open_list is not described as GitLab's backlog: %s", raw)
 	}
+}
+
+// planning turns on the toolset that holds the Premium planning reads.
+var planning = config.Config{Toolsets: []string{"planning"}}
+
+// titles is a list's untrusted titles, in order.
+func titles(rows any) string {
+	var got []string
+	for _, row := range rows.([]any) {
+		got = append(got, fmt.Sprint(row.(map[string]any)["untrusted_title"]))
+	}
+	return strings.Join(got, ",")
+}
+
+// A group's epics come newest first, its subgroups' included unless
+// left out, as GitLab does, filtered by state, labels, author and text.
+// Each names its group, since a subgroup's &1 is another epic.
+func TestSearchEpics(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: planning})
+	text, out := h.ok("search_epics", map[string]any{"group": gitlabtest.GroupTop})
+	if got := titles(get(out, "epics")); got != "Sub-group login polish,Retire the old login,Launch the login" {
+		t.Errorf("epics = %s", got)
+	}
+	if !strings.Contains(text, "Epics of the group example-group") || !strings.Contains(text, "&1 in group id 3002, ") ||
+		!strings.Contains(text, "opened, starts 2026-01-05, due 2026-03-31") {
+		t.Errorf("text:\n%s", text)
+	}
+	for _, c := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{"include_descendant_groups": false}, "Retire the old login,Launch the login"},
+		{map[string]any{"state": "opened", "include_descendant_groups": false}, "Launch the login"},
+		{map[string]any{"state": "closed"}, "Retire the old login"},
+		{map[string]any{"labels": []any{"feature"}}, "Launch the login"},
+		{map[string]any{"author": "alice"}, "Sub-group login polish"},
+		{map[string]any{"search": "old"}, "Retire the old login"},
+	} {
+		args := map[string]any{"group": gitlabtest.GroupTop}
+		maps.Copy(args, c.args)
+		if _, out := h.ok("search_epics", args); titles(get(out, "epics")) != c.want {
+			t.Errorf("%v: epics = %s, want %s", c.args, titles(get(out, "epics")), c.want)
+		}
+	}
+	h.fails("search_epics", map[string]any{"group": "example-group/missing"}, "not_found")
+}
+
+// An epic is read with its description, its child epics, its parent and
+// its issues; a read that continues the description leaves the lists out.
+func TestGetEpic(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: planning})
+	text, out := h.ok("get_epic", map[string]any{"group": gitlabtest.GroupTop, "iid": gitlabtest.EpicLaunch})
+	if get(out, "untrusted_description") != gitlabtest.EpicLaunchText || get(out, "state") != "opened" ||
+		get(out, "parent_iid") != nil || get(out, "author", "username") != "bob" {
+		t.Errorf("epic = %v", out)
+	}
+	if got := titles(get(out, "children", "items")); got != "Retire the old login,Sub-group login polish" ||
+		get(out, "children", "total") != float64(2) {
+		t.Errorf("children = %v", get(out, "children"))
+	}
+	if got := titles(get(out, "issues", "items")); len(get(out, "issues", "items").([]any)) != 2 || got == "" {
+		t.Errorf("issues = %v", get(out, "issues"))
+	}
+	if !strings.Contains(text, "Child epics: 2 shown of 2.") || !strings.Contains(text, "Issues in the epic") {
+		t.Errorf("text:\n%s", text)
+	}
+	_, more := h.ok("get_epic", map[string]any{"group": gitlabtest.GroupTop, "iid": gitlabtest.EpicLaunch, "offset": 5})
+	if get(more, "children") != nil || get(more, "issues") != nil || get(more, "description_budget", "offset") != float64(5) {
+		t.Errorf("from an offset = %v", more)
+	}
+	_, sub := h.ok("get_epic", map[string]any{"group": gitlabtest.GroupSub, "iid": gitlabtest.EpicSub})
+	if get(sub, "parent_iid") != float64(gitlabtest.EpicLaunch) || len(get(sub, "children", "items").([]any)) != 0 {
+		t.Errorf("sub-group epic = %v", sub)
+	}
+	h.fails("get_epic", map[string]any{"group": gitlabtest.GroupTop, "iid": 99}, "not_found")
+}
+
+// Iterations are listed for a group or a project, their numeric state
+// named, the groups above included unless left out, as GitLab does.
+func TestListIterations(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: planning})
+	text, out := h.ok("list_iterations", map[string]any{"group": gitlabtest.GroupTop})
+	if column(out, "iterations", "state") != "closed,current,upcoming" || column(out, "iterations", "sequence") != "1,2,3" {
+		t.Errorf("iterations = %v", get(out, "iterations"))
+	}
+	if !strings.Contains(text, "Iterations of the group example-group") || !strings.Contains(text, "- untitled (id ") {
+		t.Errorf("text:\n%s", text)
+	}
+	for _, c := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{"group": gitlabtest.GroupTop, "state": "opened"}, fmt.Sprintf("%d,%d", gitlabtest.IterationCurrent, gitlabtest.IterationUpcoming)},
+		{map[string]any{"group": gitlabtest.GroupTop, "state": "closed"}, fmt.Sprint(gitlabtest.IterationClosed)},
+		{map[string]any{"group": gitlabtest.GroupTop, "search": "sprint c"}, fmt.Sprint(gitlabtest.IterationUpcoming)},
+		{map[string]any{"group": gitlabtest.GroupSub, "include_ancestors": false}, fmt.Sprint(gitlabtest.IterationSub)},
+		{map[string]any{"group": gitlabtest.GroupSub, "state": "current"},
+			fmt.Sprintf("%d,%d", gitlabtest.IterationSub, gitlabtest.IterationCurrent)},
+		{map[string]any{"project": gitlabtest.ProjectAlpha, "state": "current"}, fmt.Sprint(gitlabtest.IterationCurrent)},
+	} {
+		if _, out := h.ok("list_iterations", c.args); column(out, "iterations", "id") != c.want {
+			t.Errorf("%v: ids = %s, want %s", c.args, column(out, "iterations", "id"), c.want)
+		}
+	}
+	h.fails("list_iterations", map[string]any{}, "invalid")
+	h.fails("list_iterations", map[string]any{"project": gitlabtest.ProjectAlpha, "group": gitlabtest.GroupTop}, "invalid")
+}
+
+// Without the Premium feature GitLab refuses each read, and the tools
+// say so rather than answer empty.
+func TestPremiumReadsOnFree(t *testing.T) {
+	h := newHarness(t, harnessOptions{cfg: planning, gl: gitlabtest.Options{Free: true}})
+	h.fails("search_epics", map[string]any{"group": gitlabtest.GroupTop}, "forbidden")
+	h.fails("get_epic", map[string]any{"group": gitlabtest.GroupTop, "iid": gitlabtest.EpicLaunch}, "forbidden")
+	h.fails("list_iterations", map[string]any{"group": gitlabtest.GroupTop}, "forbidden")
 }

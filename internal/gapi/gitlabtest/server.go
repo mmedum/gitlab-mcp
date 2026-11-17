@@ -63,6 +63,9 @@ type Options struct {
 	// ExternalTracker gives ProjectAlpha an external issue tracker whose
 	// issues are named like EXT-7.
 	ExternalTracker bool
+	// Free makes the instance a Free one: epics and iterations answer
+	// 403, as GitLab does without the Premium feature.
+	Free bool
 }
 
 // Server is the in-memory instance. URL is its base, and the instance to
@@ -107,6 +110,11 @@ type Server struct {
 	// Planning state outside any one project: group milestones and
 	// labels, group members' access levels, and each user's to-do items.
 	groupMilestones map[int64][]gitlab.ProjectMilestone
+	// epics and iterations are each group's, by group id.
+	epics           map[int64][]gitlab.Epic
+	iterations      map[int64][]gitlab.Iteration
+	epicIssues      map[int64][]*gitlab.Issue
+	epicParentGroup map[int64]int64
 	groupLabels     map[int64][]gitlab.Label
 	groupLevels     map[int64]map[string]int
 	todos           []todo

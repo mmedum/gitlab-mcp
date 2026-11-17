@@ -55,6 +55,10 @@ type scratch struct {
 	PathB     string
 	WebURLB   string
 	GroupID   int64
+	GroupPath string
+	// Epic is the parent epic seeded in the subgroup, with one child;
+	// zero on a group without Premium.
+	Epic      int64
 	Default   string // the default branch
 	Feature   string // a branch with one commit on top of Default
 	Feature2  string
@@ -1001,7 +1005,29 @@ func shipDestructiveAndToolsets(s scratch) []step {
 		{name: "project events page one at a time", tool: "list_events", args: map[string]any{"project": p, "max": 1}, paged: true},
 		{name: "project events are filtered by action and date", tool: "list_events", args: map[string]any{"project": p, "action": "created", "target_type": "issue",
 			"after": now.Add(-48 * time.Hour).Format(time.DateOnly), "before": now.Add(48 * time.Hour).Format(time.DateOnly), "sort": "asc"}},
-	}, linksMovesAndTags(s))
+	}, slices.Concat(epicSteps(s), linksMovesAndTags(s)))
+}
+
+// epicSteps reads the epics the run seeded in its subgroup. On a group
+// without Premium nothing was seeded, and GitLab refuses each read.
+func epicSteps(s scratch) []step {
+	g := s.GroupPath
+	if s.Epic == 0 {
+		return []step{
+			{name: "epics are refused without Premium", tool: "search_epics", args: map[string]any{"group": g, "search": s.Name},
+				expectError: true, errorClass: "forbidden", why: "epics are a Premium feature"},
+			{name: "an epic is refused without Premium", tool: "get_epic", args: map[string]any{"group": g, "iid": 1},
+				expectError: true, errorClass: "forbidden", why: "epics are a Premium feature"},
+		}
+	}
+	return []step{
+		{name: "the run's epics page one at a time", tool: "search_epics", args: map[string]any{"group": g, "search": s.Name, "state": "opened",
+			"author": s.User, "include_descendant_groups": false, "max": 1}, paged: true},
+		{name: "an epic is read with its child", tool: "get_epic", args: map[string]any{"group": g, "iid": s.Epic},
+			save: map[string]string{"epic_child": "children.items.0.iid"}},
+		{name: "the child epic is read through its parent's listing", tool: "get_epic", args: map[string]any{"group": g, "iid": "{{epic_child}}"}},
+		{name: "an epic is read from an offset", tool: "get_epic", args: map[string]any{"group": g, "iid": s.Epic, "offset": 5}},
+	}
 }
 
 // linksMovesAndTags drives issue moves and links, merge request dependencies,
@@ -1143,6 +1169,9 @@ func confined(st step, s scratch) error {
 				return fmt.Errorf("%s: project %v is not the scratch project", st.tool, v)
 			}
 		case "group":
+			if epicTools[st.tool] && v == s.GroupPath {
+				continue
+			}
 			if v != s.Namespace || st.args["search"] != s.Name {
 				return fmt.Errorf("%s: a group search must be the run's namespace and carry the run's word", st.tool)
 			}
@@ -1169,6 +1198,9 @@ func confined(st step, s scratch) error {
 	}
 	return rule(st, s)
 }
+
+// epicTools read the epics the run seeded in its own subgroup.
+var epicTools = map[string]bool{"search_epics": true, "get_epic": true}
 
 // secondProjectReads may name the run's second project, which only they
 // and move_issue's target reach: it is there for its dotted, nested path.
@@ -1279,6 +1311,17 @@ func init() {
 		"create_tag", "delete_tag"} {
 		rules[tool] = inProject
 	}
+	for tool := range epicTools {
+		rules[tool] = epicRule
+	}
+}
+
+// epicRule: the epics read are the run's subgroup's.
+func epicRule(st step, s scratch) error {
+	if st.args["group"] != s.GroupPath {
+		return fmt.Errorf("%s: the group is the run's subgroup", st.tool)
+	}
+	return nil
 }
 
 // linkRule: both issues are the run's.

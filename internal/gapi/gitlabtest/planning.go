@@ -139,6 +139,8 @@ func (s *Server) servePlanning(w http.ResponseWriter, r *http.Request, p *projec
 		writePage(s, w, r, filterMilestones(rows, q.Get("state"), q.Get("search"), q.Get("title")))
 	case match(seg, "boards"):
 		writePage(s, w, r, s.listBoards(p))
+	case match(seg, "iterations"):
+		s.serveIterations(w, r, p.groupID)
 	case match(seg, "members", "all"):
 		writePage(s, w, r, s.members(p, q.Get("query")))
 	case match(seg, "search"):
@@ -221,6 +223,8 @@ func (s *Server) serveGroupPlanning(w http.ResponseWriter, r *http.Request, user
 		writePage(s, w, r, filterMilestones(rows, q.Get("state"), q.Get("search"), q.Get("title")))
 	case "search":
 		s.search(w, r, user, s.groupProjects(user, g, true), "group")
+	case "iterations":
+		s.serveIterations(w, r, g.id)
 	default:
 		return false
 	}

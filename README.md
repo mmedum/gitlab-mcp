@@ -180,6 +180,9 @@ Non-goals:
 | `create_milestone` | Create a project milestone (`planning` toolset) |
 | `update_milestone` | Change, close or reopen a milestone unchanged since you read it (`planning` toolset) |
 | `delete_milestone` | Delete a project milestone (`planning` toolset, Destructive) |
+| `search_epics` | Find a group's epics (`planning` toolset, Premium) |
+| `get_epic` | Read an epic with its child epics and issues (`planning` toolset, Premium) |
+| `list_iterations` | List a project's or a group's iterations (`planning` toolset, Premium) |
 | `list_environments` | A project's environments and their last deployment (`deployments` toolset) |
 | `list_deployments` | What was deployed where, and by which job (`deployments` toolset) |
 | `list_events` | Recent activity, yours or a project's (`activity` toolset) |

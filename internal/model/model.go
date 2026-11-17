@@ -1044,6 +1044,78 @@ type Milestones struct {
 	Listing    Listing        `json:"listing"`
 }
 
+// EpicRow is one epic in a listing. Epics are a Premium feature.
+type EpicRow struct {
+	IID          int64     `json:"iid"`
+	Reference    string    `json:"reference" jsonschema:"GitLab's reference within the group, such as &12"`
+	GroupID      int64     `json:"group_id"`
+	ParentIID    *int64    `json:"parent_iid" jsonschema:"The parent epic's iid in its own group, which may be a group above; null when it has none"`
+	State        string    `json:"state"`
+	Confidential bool      `json:"confidential"`
+	Labels       []string  `json:"labels"`
+	Author       User      `json:"author"`
+	StartDate    *string   `json:"start_date" jsonschema:"A date, not an instant: 2026-10-01"`
+	DueDate      *string   `json:"due_date" jsonschema:"A date, not an instant: 2026-10-01"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	WebURL       string    `json:"web_url"`
+	// UntrustedTitle is shortened to one line.
+	UntrustedTitle string `json:"untrusted_title"`
+}
+
+// Epics is search_epics' result.
+type Epics struct {
+	Group   string    `json:"group"`
+	Epics   []EpicRow `json:"epics"`
+	Listing Listing   `json:"listing"`
+}
+
+// Epic is get_epic's result.
+type Epic struct {
+	Group string `json:"group"`
+	EpicRow
+	CreatedAt time.Time `json:"created_at"`
+	// UntrustedDescription is the part of the description the budget
+	// allowed, with hidden text removed.
+	UntrustedDescription string `json:"untrusted_description"`
+	DescriptionBudget    Budget `json:"description_budget"`
+	// Children and Issues are null when GitLab refused the read, and when
+	// offset continues the description.
+	Children *EpicChildren `json:"children" jsonschema:"The child epics, the first 20. Null when they could not be read, and on a read with an offset, which does not read them again"`
+	Issues   *LinkedItems  `json:"issues" jsonschema:"The issues in the epic, the first 20. GitLab leaves out any the account cannot read. Null when they could not be read, and on a read with an offset, which does not read them again"`
+}
+
+// EpicChildren is the first of an epic's child epics.
+type EpicChildren struct {
+	Items []EpicRow `json:"items"`
+	More  bool      `json:"more" jsonschema:"True when the epic has more children than are shown"`
+	Total int       `json:"total" jsonschema:"How many child epics GitLab returned"`
+}
+
+// IterationRow is one iteration. Iterations are a Premium feature.
+type IterationRow struct {
+	ID        int64     `json:"id"`
+	IID       int64     `json:"iid"`
+	GroupID   int64     `json:"group_id"`
+	Sequence  int       `json:"sequence" jsonschema:"Its place in its cadence"`
+	State     string    `json:"state" jsonschema:"upcoming, current or closed; unknown for a state GitLab added that this server does not name"`
+	StartDate *string   `json:"start_date" jsonschema:"A date, not an instant: 2026-10-01"`
+	DueDate   *string   `json:"due_date" jsonschema:"A date, not an instant: 2026-10-01"`
+	UpdatedAt time.Time `json:"updated_at"`
+	WebURL    string    `json:"web_url"`
+	// UntrustedTitle is GitLab's title, empty for an iteration a cadence
+	// made without one; it is shortened to one line.
+	UntrustedTitle string `json:"untrusted_title"`
+}
+
+// Iterations is list_iterations' result.
+type Iterations struct {
+	// Project or Group names where they were listed, the other null.
+	Project    *ProjectRef    `json:"project"`
+	Group      *string        `json:"group"`
+	Iterations []IterationRow `json:"iterations"`
+	Listing    Listing        `json:"listing"`
+}
+
 // Boards is list_boards' result.
 type Boards struct {
 	Project ProjectRef `json:"project"`

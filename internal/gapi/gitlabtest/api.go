@@ -52,6 +52,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, rest string) {
 	case s.serveSuggestions(w, r, user, seg):
 	case r.Method == http.MethodPost && match(seg, "todos", "*", "mark_as_done"):
 		s.markTodoDone(w, user, seg[1])
+	case get && len(seg) >= 3 && seg[0] == "groups" && seg[2] == "epics":
+		s.serveEpics(w, r, seg[1], seg[3:])
 	case get && len(seg) == 3 && seg[0] == "groups":
 		s.serveGroup(w, r, user, seg[1], seg[2])
 	case len(seg) >= 2 && seg[0] == "projects":
