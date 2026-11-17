@@ -310,9 +310,9 @@ func drive(sess *mcpstdio.Session, steps []step, s scratch, p *redact.Printer) (
 			if !res.IsError {
 				save(st.save, res.Structured, saved)
 			}
-			if !st.anyOutcome && res.IsError != st.expectError {
+			if problem := judge(st, res.IsError, res.Text); problem != "" {
 				unexpected++
-				p.Say(map[bool]string{true: "!! expected a refusal and got a result", false: "!! unexpected tool error"}[st.expectError])
+				p.Say("!! " + problem)
 			}
 			next := nextPageToken(res.Structured)
 			if !st.paged || res.IsError || next == "" || args["page_token"] != nil {

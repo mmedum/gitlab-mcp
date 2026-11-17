@@ -109,8 +109,10 @@ func cancelAutoMerge() definition {
 }
 
 type suggestionIn struct {
-	ID   int64  `json:"id" jsonschema:"The suggestion's id, as list_discussions gives it"`
-	Text string `json:"text" jsonschema:"What applying it commits, exactly as list_discussions shows it in untrusted_to_content; refused [stale] when it is not what GitLab holds"`
+	ID       int64  `json:"id" jsonschema:"The suggestion's id, as list_discussions gives it"`
+	Text     string `json:"text" jsonschema:"What applying it commits, exactly as list_discussions shows it in untrusted_to_content; refused [stale] when it is not what GitLab holds"`
+	FromLine int    `json:"from_line,omitempty" jsonschema:"The first line it replaces, as list_discussions gives it; required with to_line when it replaces more than one line, and refused [stale] when GitLab's range differs"`
+	ToLine   int    `json:"to_line,omitempty" jsonschema:"The last line it replaces, as list_discussions gives it; given with from_line"`
 }
 
 type applySuggestionsIn struct {
@@ -128,7 +130,8 @@ func applySuggestions() definition {
 				"signed-in account, to the source branch. The default branch and a protected source branch are refused " +
 				"[blocked], and so is a suggestion whose text holds hidden or bidirectional characters; every id must be on " +
 				"this merge request. Each comes with its text as list_discussions shows it, so what is committed is what was " +
-				"read, and a client that asks before the call shows it. Suggestions already applied are reported unchanged. " +
+				"read, and a client that asks before the call shows it; one that replaces more than one line also comes with " +
+				"those lines, from_line and to_line. Suggestions already applied are reported unchanged. " +
 				"GitLab refuses one whose lines changed since, and every one right after a push until it has caught up, so " +
 				"try again shortly then. Never repeated after a lost answer: the result then says what a read found. The " +
 				"result gives the branch's new head." + shipNote + visibleNote},
