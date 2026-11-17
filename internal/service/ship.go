@@ -922,6 +922,10 @@ type SuggestionsApplication struct {
 type SuggestionRead struct {
 	ID   int64
 	Text string
+	// FromLine and ToLine, when given, are the lines it replaces as read,
+	// held against GitLab's: a client's prompt then shows the range.
+	FromLine int
+	ToLine   int
 }
 
 // ids are the suggestions' ids, in the order given.
@@ -940,6 +944,23 @@ func sameSuggestion(read, held string) bool {
 	return norm(read) == norm(held)
 }
 
+// sameRange holds the lines a caller gave against GitLab's. A suggestion
+// that replaces more than one line needs them, so the call, and a
+// client's prompt for it, names what it removes (D-46). The live step
+// "a two-line suggestion is previewed with its lines" checks that
+// list_discussions gives the range GitLab holds.
+func sameRange(id int64, read SuggestionRead, held gitlab.Suggestion) error {
+	switch {
+	case read.FromLine == 0 && held.ToLine > held.FromLine:
+		return gapi.Errf(gapi.ClassInvalid, "suggestion %d replaces lines %d to %d: give from_line and to_line, so the call "+
+			"names the lines it removes; nothing was sent", id, held.FromLine, held.ToLine)
+	case read.FromLine != 0 && (read.FromLine != held.FromLine || read.ToLine != held.ToLine):
+		return gapi.Errf(gapi.ClassStale, "suggestion %d replaces lines %d to %d now, not the %d to %d given; nothing was "+
+			"sent. Read list_discussions again", id, held.FromLine, held.ToLine, read.FromLine, read.ToLine)
+	}
+	return nil
+}
+
 // MaxSuggestions caps the suggestions one call applies.
 const MaxSuggestions = 100
 
@@ -953,9 +974,16 @@ func (in SuggestionsApplication) check() error {
 	}
 	ids := in.ids()
 	for i, id := range ids {
+		sg := in.Suggestions[i]
 		switch {
 		case id <= 0:
 			return gapi.Errf(gapi.ClassInvalid, "a suggestion id is a positive number")
+		case sg.FromLine < 0 || sg.ToLine < 0:
+			return gapi.Errf(gapi.ClassInvalid, "suggestion %d's from_line and to_line are line numbers, at least 1", id)
+		case (sg.FromLine == 0) != (sg.ToLine == 0):
+			return gapi.Errf(gapi.ClassInvalid, "suggestion %d gives only one of from_line and to_line: give both, or neither", id)
+		case sg.ToLine < sg.FromLine:
+			return gapi.Errf(gapi.ClassInvalid, "suggestion %d's to_line %d is before its from_line %d", id, sg.ToLine, sg.FromLine)
 		case slices.Contains(ids[:i], id):
 			// GitLab answers 404 for an id given twice.
 			return gapi.Errf(gapi.ClassInvalid, "suggestion %d is given twice", id)
@@ -1050,6 +1078,9 @@ func (s *Service) ApplySuggestions(ctx context.Context, in SuggestionsApplicatio
 			return model.SuggestionsApply{}, gapi.Errf(gapi.ClassStale, "the text given for suggestion %d is not what GitLab holds "+
 				"for it now; nothing was sent. Read list_discussions again and pass its untrusted_to_content, after checking it "+
 				"is still what should be committed", id)
+		}
+		if err := sameRange(id, in.Suggestions[i], l.sg); err != nil {
+			return model.SuggestionsApply{}, err
 		}
 	}
 	if gapi.IsDryRun(ctx) {

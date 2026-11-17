@@ -446,7 +446,7 @@ code.
 | D-43 | A comment, a draft or a snippet is edited or deleted only by its author | accepted | TestUpdateComment, TestReviewCommentsAreYourOwnDrafts, TestSnippetWritesAreYourOwn, TestDeleteComment |
 | D-44 | `upload_file` reads only from `GITLAB_MCP_UPLOAD_DIRS`, through `os.Root`, after the project is checked | accepted | TestUploadFileReadsOnlyFromTheSettingsDirectories, TestUploadFileIsHeldToTheAllowList, TestUploadFileSendsNothingUntilItMay, TestRefusals, TestALinkThatStaysInsideIsFollowed, TestAnAllowedDirectoryThatIsALinkWorks, TestTheOpenFileIsTheOneChecked, TestUploadDirsRefuseWhatHoldsEverything, TestUploadDirsRefuseHomeInAnotherCase |
 | D-45 | `upload_file` sends only an image, at most 10 MiB, named for its bytes | accepted | TestReadsAnImageAndNamesItByItsType, TestTheSizeCap, TestAnUploadIsNamedForItsBytes, TestRefusals |
-| D-46 | `apply_suggestions` carries each suggestion's text as its witness | accepted | TestApplySuggestionsHoldsTheText, TestSuggestionsWithHiddenCharacters, TestApplySuggestionsRefusedBeforeSending, TestApplySuggestionsWhoseAnswerWasLost |
+| D-46 | `apply_suggestions` carries each suggestion's text as its witness | accepted | TestApplySuggestionsHoldsTheText, TestApplySuggestionsHoldsTheLineRange, TestSuggestionsWithHiddenCharacters, TestApplySuggestionsRefusedBeforeSending, TestApplySuggestionsWhoseAnswerWasLost |
 | D-47 | A merge request pipeline for a fork is refused | accepted | TestRunMergeRequestPipelineRefusals |
 | D-48 | `lint_ci` refuses supplied content that holds an `include:` | accepted | TestSuppliedLintContentMayNotInclude, TestLintSuppliedContent |
 | D-49 | Release asset links point only into the release's own project | accepted | TestCreateReleaseWithAssetLinks |
@@ -1682,7 +1682,10 @@ request's source branch as the account. Each suggestion comes with its
 text as `list_discussions` shows it, and a text that differs from
 GitLab's is refused `[stale]` before anything is sent. The match is
 exact but for line endings and trailing newlines, since indentation is
-code.
+code. A suggestion that replaces more than one line also comes with
+those lines, `from_line` and `to_line`: without them it is refused
+`[invalid]`, and a range other than GitLab's is `[stale]`. One already
+applied sends nothing and needs no range.
 
 The commit is someone else's text, under the person's name. GitLab
 finds a suggestion by its id alone, and an edit to a comment gives its
@@ -1699,11 +1702,17 @@ default or protected source branch is refused (D-33), and so is a fork
 outside the write allow-list. A lost answer is settled by reading each
 suggestion's `applied` and the branch head (D-34).
 
+The text alone would let a client's prompt show one plausible line for
+a suggestion that removes many. A write that removes something names it,
+as a cell or a field is named before it is overwritten, so the range is
+required only where a suggestion replaces more than the line it shows.
+
 Rejected: asking the person before applying; trimming surrounding white
-space, which lets indentation differ.
-Cost: the witness is the text put in, not the lines it replaces, so a
-client's prompt can show one plausible line for a suggestion that
-removes many. `list_discussions` shows the range (#95).
+space, which lets indentation differ; an optional range, which a caller
+steered by content leaves out; requiring the removed text, which costs
+every call a second copy of the code.
+Cost: a caller that applied a multi-line suggestion without its range
+is refused until it passes the lines `list_discussions` gives.
 
 ### D-47 A merge request pipeline for a fork is refused
 
