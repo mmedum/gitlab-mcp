@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -662,13 +664,29 @@ func TestListItemEventsReadsAtOnceAndStopsAtAFailure(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
 	h.gl.AddLabelEvents(gitlabtest.ProjectAlpha, "issue", 1, 1500)
 	labels := fmt.Sprintf("/projects/%d/issues/1/resource_label_events", alphaID)
-	h.gl.Inject(gitlabtest.Fault{Path: labels, Pass: true, Delay: 150 * time.Millisecond, Times: 10})
-	began := time.Now()
+	const delay = 150 * time.Millisecond
+	var mu sync.Mutex
+	var starts []time.Time
+	h.gl.Inject(gitlabtest.Fault{Path: labels, Pass: true, Delay: delay, Times: 10, Before: func() {
+		mu.Lock()
+		defer mu.Unlock()
+		starts = append(starts, time.Now())
+	}})
 	h.ok("list_item_events", map[string]any{"project": gitlabtest.ProjectAlpha, "type": "issue", "iid": 1})
-	// Ten pages one after another take 1.5 s; page 1 and then three
-	// rounds of at most four take 0.6 s.
-	if took := time.Since(began); took > 1100*time.Millisecond {
-		t.Errorf("reading ten pages took %v: they were not read at once", took)
+	// A page holds its reader for at least delay, however loaded the
+	// machine, so the pages starting within one delay were in flight
+	// together: four, the most a kind reads and the client sends at once.
+	slices.SortFunc(starts, time.Time.Compare)
+	widest := 0
+	for i := range starts {
+		n := 0
+		for n < len(starts)-i && starts[i+n].Sub(starts[i]) < delay {
+			n++
+		}
+		widest = max(widest, n)
+	}
+	if len(starts) != 10 || widest != 4 {
+		t.Errorf("%d delayed pages, at most %d starting within %v: want 10, and 4", len(starts), widest, delay)
 	}
 
 	h.gl.ResetRequests()

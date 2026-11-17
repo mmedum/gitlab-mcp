@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -335,17 +337,38 @@ var gitQuiet = []string{"-c", "maintenance.auto=false", "-c", "gc.auto=0"}
 // a fixture file, and turns automatic maintenance off as gitQuiet does,
 // through command-scope pairs every config file yields to
 // (https://git-scm.com/docs/git-config#Documentation/git-config.txt-GITCONFIGCOUNT).
+// It turns Go telemetry off too, for any go command under it.
 func isolateGit(t *testing.T) {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// A go command keeps telemetry under XDG_CONFIG_HOME on Linux and can
+	// still be writing when the temporary directory is removed; mode "off"
+	// stops it (https://go.dev/doc/telemetry#config).
+	t.Setenv("XDG_CONFIG_HOME", repoTree(t, map[string]string{"go/telemetry/mode": "off"}))
 	for i := 0; i+1 < len(gitQuiet); i += 2 {
 		key, value, _ := strings.Cut(gitQuiet[i+1], "=")
 		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", i/2), key)
 		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", i/2), value)
 	}
 	t.Setenv("GIT_CONFIG_COUNT", fmt.Sprint(len(gitQuiet)/2))
+}
+
+// TestIsolateGitTurnsGoTelemetryOff holds that the go command reads the
+// mode file where isolateGit writes it; a moved file would leave telemetry
+// writing into the temporary directory while a test removes it.
+func TestIsolateGitTurnsGoTelemetryOff(t *testing.T) {
+	isolateGit(t)
+	if dir, err := os.UserConfigDir(); err != nil || dir != os.Getenv("XDG_CONFIG_HOME") {
+		t.Skip("the go command does not read its config from XDG_CONFIG_HOME on " + runtime.GOOS)
+	}
+	out, err := exec.Command("go", "telemetry").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go telemetry: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "off" {
+		t.Errorf("go telemetry under isolateGit = %q, want %q", got, "off")
+	}
 }
 
 // docsFixtureFloors keeps the floors out of the rows whose subject is not a

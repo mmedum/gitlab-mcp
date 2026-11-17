@@ -222,3 +222,55 @@ func TestLeaksHistory(t *testing.T) {
 		t.Errorf("the scan did not say it read both commits: %q", out.String())
 	}
 }
+
+// A Co-authored-by trailer naming an address that authors a commit in the
+// history passes, since git already publishes it in that commit's header.
+// Any other address, or the same one outside a trailer, is still a leak.
+func TestLeaksHistoryPassesATrailerNamingAnAuthor(t *testing.T) {
+	ada := "ada@" + tDomain
+	bea := "bea@" + tDomain
+	withMessage := func(message string) string {
+		dir := gitRepo(t, leaksFixtureFiles(2))
+		gitDo(t, dir, "commit", "-q", "--allow-empty", "--author", "Ada <"+ada+">", "-m", "work")
+		gitDo(t, dir, "commit", "-q", "--allow-empty", "-m", message)
+		return dir
+	}
+
+	var out bytes.Buffer
+	if err := leaksScanHistory(&out, withMessage("Squash\n\nCo-authored-by: Ada < "+strings.ToUpper(ada)+" >\r")); err != nil {
+		t.Fatalf("a trailer naming an author failed: %v\n%s", err, out.String())
+	}
+	mustSay(t, out.String(), "history leaks ok: 3 commits")
+	mustSay(t, out.String(), "1 co-author trailers name an author")
+
+	for _, message := range []string{
+		"Squash\n\nCo-authored-by: Bea <" + bea + ">",
+		"Thanks to " + ada,
+		"Squash\n\nCo-authored-by: " + bea + " <" + ada + ">",
+	} {
+		out.Reset()
+		if err := leaksScanHistory(&out, withMessage(message)); err == nil {
+			t.Errorf("leaksScanHistory passed a message %q; want a finding", message)
+		}
+		mustSay(t, out.String(), "message: an address")
+	}
+
+	// An address that authors only a branch HEAD does not reach is not
+	// published by the history being released.
+	dir := gitRepo(t, leaksFixtureFiles(2))
+	gitDo(t, dir, "switch", "-q", "-c", "local")
+	gitDo(t, dir, "commit", "-q", "--allow-empty", "--author", "Bea <"+bea+">", "-m", "work")
+	gitDo(t, dir, "switch", "-q", "main")
+	gitDo(t, dir, "commit", "-q", "--allow-empty", "-m", "Squash\n\nCo-authored-by: Bea <"+bea+">")
+	out.Reset()
+	if err := leaksScanHistory(&out, dir); err == nil {
+		t.Errorf("a trailer naming an author of an unreached branch passed:\n%s", out.String())
+	}
+
+	// A trailer with no address names nobody, so it is not counted.
+	out.Reset()
+	if err := leaksScanHistory(&out, withMessage("Squash\n\nCo-authored-by: Ada < >")); err != nil {
+		t.Fatalf("a trailer with no address failed: %v\n%s", err, out.String())
+	}
+	mustSay(t, out.String(), "; 0 co-author trailers name an author")
+}
