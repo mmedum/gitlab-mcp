@@ -247,13 +247,28 @@ can.
 
 **Fix:** check your role in the project and its rules.
 
+## `[forbidden] GitLab refused … for this account, and the token still works`
+
+**Cause:** GitLab answers 401, not 403, for an action the role does not
+allow, such as a merge. A read afterwards showed the token works, so a
+new one changes nothing.
+
+**Fix:** check your role and the project's merge rules.
+
+## `[auth] GitLab refused … and a read of the account was refused too`
+
+**Cause:** GitLab refused a write with 401, and the account could not be
+read either: the token does not work.
+
+**Fix:** run `gitlab-mcp login`.
+
 ## `[auth] GitLab refused … for this account without calling the token invalid`
 
 **Cause:** GitLab answers 401, not 403, for an action the role does not
-allow, such as a merge. The token is fine, and a new one changes
-nothing.
+allow. On a write the server could not read the account to tell, and on
+a read it does not try.
 
-**Fix:** check your role and the project's merge rules. If every call is
+**Fix:** check your role and the project's rules. If every call is
 refused this way, run `gitlab-mcp login`.
 
 ## `[not_found] … was not found, or you do not have access to it`

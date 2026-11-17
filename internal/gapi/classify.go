@@ -256,7 +256,9 @@ func (a answer) refused() verdict {
 		return v
 	}
 	if a.status == http.StatusUnauthorized {
-		return a.fail(ClassAuth, "GitLab refused %s for this account without calling the token invalid, as it does for an action the account's role does not allow, such as a merge. If every call is refused this way, run `gitlab-mcp login`. GitLab said: %s", a.name, a.detail)
+		v := a.fail(ClassAuth, "GitLab refused %s for this account without calling the token invalid, as it does for an action the account's role does not allow, such as a merge. If every call is refused this way, run `gitlab-mcp login`. GitLab said: %s", a.name, a.detail)
+		v.err.unsettled = &unsettled401{name: a.name, detail: a.detail}
+		return v
 	}
 	if !insufficientScope(a.env, a.h) {
 		return a.fail(ClassForbidden, "GitLab refused %s for this account: %s", a.name, a.detail)
