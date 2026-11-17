@@ -406,7 +406,7 @@ code.
 | D-03 | A token goes only to the instance that issued it | accepted | TestATokenStaysWithTheInstanceThatIssuedIt, TestTokenNeverLeavesTheInstance, TestAnEnvironmentTokenReachesTheTestInstance |
 | D-04 | Stdout carries only MCP JSON-RPC frames | accepted | forbidigo, smoke, TestSessionReportsStrayStdout |
 | D-05 | Logs record the call, never the payload | accepted | TestLogsNeverCarryThePayload, TestTransportErrorsCarryNoPathOrQuery, TestTransportErrorsCarryNoHostName, TestUnclassifiedErrorsCarryNoURL, TestLoggerOnlyAttachedAtDebug, TestSettingsNeverPrintTheHostTheApplicationOrTheToken |
-| D-06 | Nothing in the repository identifies a real instance, account or person | accepted | leaks, secrets, leaks-history, TestLeaksAllowListHasReasons, TestLeaksFind, TestLeaksTree, TestLeaksHistory |
+| D-06 | Nothing in the repository identifies a real instance, account or person | accepted | leaks, secrets, leaks-history, TestLeaksAllowListHasReasons, TestLeaksFind, TestLeaksTree, TestLeaksHistory, TestLeaksHistoryPassesATrailerNamingAnAuthor |
 | D-07 | Fixtures are generated, and the in-memory GitLab models what GitLab was seen to do | accepted | TestGeneratedDataIsSynthetic, TestQuickActions, TestErrorShapes, TestOffsetHeadersAndTheirEdges, TestMovedProject, TestInstancesMintTheirOwnTokens |
 | D-08 | Own wire types over REST, and no code imported from another project | accepted | depguard, api-fields, TestNoTokenFields |
 | D-09 | GraphQL is used only where REST has no route, one literal per operation through the REST client's path | accepted | api-coverage, TestGraphQLOperationsReadsMutateCalls, TestRerequestReviewMapsGraphQLErrors |
@@ -654,8 +654,11 @@ not parse, any GitLab token
 prefix, `gitlab.com/` followed by a namespace outside the fixture set,
 and the OAuth shapes. It decodes base64url blobs, treats a tracked
 binary as a finding and prints findings redacted. `make leaks-history`
-reads every blob, commit message and tag. gitleaks covers credentials
-through `make secrets`, with a rule for every GitLab token prefix.
+reads every blob, commit message and tag. It passes a `Co-authored-by:`
+trailer naming an address that authors a commit HEAD reaches, since git
+publishes that address in the commit's header. gitleaks covers
+credentials through `make secrets`, with a rule for every GitLab token
+prefix.
 
 Rejected: allow-listing by path, or an inline `gitleaks:allow`, either
 of which exempts whatever lands there next.
