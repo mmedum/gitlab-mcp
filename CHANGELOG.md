@@ -15,6 +15,8 @@ lifted verbatim.
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-11-18
+
 ### Added
 
 - `search_epics`, `get_epic` and `list_iterations` read Premium epics and iterations, in the `planning` toolset.
@@ -296,7 +298,8 @@ lifted verbatim.
 - Repository gates run by `make check` and CI on Linux, macOS and Windows.
 - Signed release archives for six platforms with SBOMs, build provenance, a Claude Desktop bundle and an MCP registry entry.
 
-[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.3.0...HEAD
+[Unreleased]: https://github.com/mmedum/gitlab-mcp/compare/v4.4.0...HEAD
+[4.4.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.3.0...v4.4.0
 [4.3.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.2.1...v4.3.0
 [4.2.1]: https://github.com/mmedum/gitlab-mcp/compare/v4.2.0...v4.2.1
 [4.2.0]: https://github.com/mmedum/gitlab-mcp/compare/v4.1.4...v4.2.0
