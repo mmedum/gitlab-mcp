@@ -79,7 +79,7 @@ runs one.
 | `server-json` | the registry entry generator against the vendored registry schema | check |
 | `parity` | `make check` and `ci.yml` run the same set, and every gate runs where its registry entry says | check |
 | `merge-base` | prints the commit a pull request is measured from: the merge-base with the base branch's head, not the SHA the event recorded | CI |
-| `changelog` | a pull request adds a CHANGELOG entry, unless it cuts a release or only bumps required modules other than the MCP SDK | CI |
+| `changelog` | a pull request adds a CHANGELOG entry, unless it cuts a release, only bumps required modules other than the MCP SDK, or says `Changelog: none` | CI |
 | `schema-ack` | a pull request names each changed item of the tool surface in a commit footer | CI |
 | `release-notes` | one version's CHANGELOG section, which is the release note | release |
 | `mcpb-pack` | packs the bundle from what goreleaser built | release |
@@ -275,6 +275,14 @@ changes only contributors see, unless they must act on them.
 
 - **An entry is a bullet at the margin.** The `changelog` gate counts
   nothing else, and nothing in fenced code.
+- **A change nobody using the server can see**, such as a refactor,
+  leaves the CHANGELOG as it is and ends a commit's message with a footer
+  that says why: `Changelog: none, the text is unchanged line for line`.
+  Every commit in the pull request counts, and it lands as one squashed
+  commit, so split a user-visible change into its own pull request. The
+  footer waives nothing when the CHANGELOG changed or go.mod changed in
+  a way the gate counts, so a fix to a released entry goes in its own
+  pull request too.
 - **Sections** are the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
   set and nothing else: Added, Changed, Deprecated, Removed, Fixed and
   Security, in that order.

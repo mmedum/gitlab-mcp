@@ -25,7 +25,7 @@ func repoCommands() map[string]command {
 			doc: "every CHANGELOG version heading has its link reference"},
 		"changelog": {run: changelog, args: "BASE HEAD", minArgs: 2, maxArgs: 2, mode: modePR,
 			reason: "measures a pull request from its merge-base, which only a pull request has",
-			doc:    "a pull request adds a CHANGELOG entry unless it cuts a release"},
+			doc:    "a pull request adds a CHANGELOG entry unless it cuts a release, only bumps required modules other than the MCP SDK, or says Changelog: none"},
 		"merge-base": {run: mergeBase, args: "BASE HEAD", minArgs: 2, maxArgs: 2, mode: modePR,
 			reason: "prints the commit a pull request is measured from; nothing to measure outside one",
 			doc:    "print the merge-base of HEAD and the base branch as it is now"},

@@ -332,3 +332,56 @@ func TestReleaseNotes(t *testing.T) {
 		t.Error("a missing version passed")
 	}
 }
+
+// A change nobody using the server can see passes with a `Changelog: none`
+// footer that says why, in any case, when the CHANGELOG is untouched. A
+// footer with no reason, a word that only starts with "none", or a footer
+// beside an entry under a released heading waives nothing.
+func TestChangelogPRWaiver(t *testing.T) {
+	code := map[string]string{"internal/x/x.go": "package x // renamed\n"}
+	sdkBump := map[string]string{
+		"internal/x/x.go": "package x // renamed\n",
+		"go.mod":          strings.Replace(changelogGoMod, "go-sdk v1.8.0", "go-sdk v1.9.0", 1),
+	}
+	for _, tc := range []struct {
+		name, message string
+		files         map[string]string
+		refused       bool
+		// first, when set, is an earlier commit's message on the topic.
+		first string
+	}{
+		{name: "a footer in an earlier commit", message: "refactor, part two", files: code,
+			first: "refactor\n\nChangelog: none, a rename"},
+		{name: "a footer whose word ends with a period", message: "refactor\n\nChangelog: none. internal rename only", files: code},
+		{name: "a footer whose reason wraps", message: "refactor\n\nChangelog: none, the text is unchanged\n  line for line", files: code},
+		{name: "a footer in the reference form", message: "refactor\n\nChangelog #none, a rename", files: code, refused: true},
+		{name: "a footer line inside prose", message: "refactor\n\nThis says\nChangelog: none, a rename\nin the middle of prose.", files: code, refused: true},
+		{name: "a bump of the MCP SDK with a footer", message: "refactor\n\nChangelog: none, a rename", files: sdkBump, refused: true},
+		{name: "a refactor with a Changelog: none footer", message: "refactor\n\nChangelog: none, the text is unchanged line for line", files: code},
+		{name: "a Changelog: None footer in another case", message: "refactor\n\nChangelog: None, a rename", files: code},
+		{name: "a refactor with no footer", message: "refactor", files: code, refused: true},
+		{name: "a Changelog: none footer with no reason", message: "refactor\n\nChangelog: none", files: code, refused: true},
+		{name: "a Changelog footer whose word only starts with none", message: "change\n\nChangelog: nonetheless user-visible", files: code, refused: true},
+		{name: "a footer beside an entry under a released heading", message: "refactor\n\nChangelog: none, a rename", files: map[string]string{
+			"internal/x/x.go": "package x // renamed\n",
+			"CHANGELOG.md":    strings.Replace(changelogBase, "- First.\n", "- First.\n- Late.\n", 1),
+		}, refused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := gitRepo(t, map[string]string{"CHANGELOG.md": changelogBase, "internal/x/x.go": "package x\n", "go.mod": changelogGoMod})
+			gitDo(t, dir, "checkout", "-q", "-b", "topic")
+			if tc.first != "" {
+				gitCommit(t, dir, tc.first, nil)
+			}
+			gitCommit(t, dir, tc.message, tc.files)
+			var out bytes.Buffer
+			err := changelogCheck(&out, dir, "main", "topic")
+			switch {
+			case tc.refused && err == nil:
+				t.Errorf("changelogCheck passed: %s; want a refusal", out.String())
+			case !tc.refused && err != nil:
+				t.Errorf("changelogCheck = %v; want a pass", err)
+			}
+		})
+	}
+}
