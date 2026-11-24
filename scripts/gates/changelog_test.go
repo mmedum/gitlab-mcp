@@ -332,3 +332,40 @@ func TestReleaseNotes(t *testing.T) {
 		t.Error("a missing version passed")
 	}
 }
+
+// A change nobody using the server can see passes with a `Changelog: none`
+// footer that says why, in any case, when the CHANGELOG is untouched. A
+// footer with no reason, a word that only starts with "none", or a footer
+// beside an entry under a released heading waives nothing.
+func TestChangelogPRWaiver(t *testing.T) {
+	code := map[string]string{"internal/x/x.go": "package x // renamed\n"}
+	for _, tc := range []struct {
+		name, message string
+		files         map[string]string
+		refused       bool
+	}{
+		{"a refactor with a Changelog: none footer", "refactor\n\nChangelog: none, the text is unchanged line for line", code, false},
+		{"a Changelog: None footer in another case", "refactor\n\nChangelog: None, a rename", code, false},
+		{"a refactor with no footer", "refactor", code, true},
+		{"a Changelog: none footer with no reason", "refactor\n\nChangelog: none", code, true},
+		{"a Changelog footer whose word only starts with none", "change\n\nChangelog: nonetheless user-visible", code, true},
+		{"a footer beside an entry under a released heading", "refactor\n\nChangelog: none, a rename", map[string]string{
+			"internal/x/x.go": "package x // renamed\n",
+			"CHANGELOG.md":    strings.Replace(changelogBase, "- First.\n", "- First.\n- Late.\n", 1),
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := gitRepo(t, map[string]string{"CHANGELOG.md": changelogBase, "internal/x/x.go": "package x\n", "go.mod": changelogGoMod})
+			gitDo(t, dir, "checkout", "-q", "-b", "topic")
+			gitCommit(t, dir, tc.message, tc.files)
+			var out bytes.Buffer
+			err := changelogCheck(&out, dir, "main", "topic")
+			switch {
+			case tc.refused && err == nil:
+				t.Errorf("changelogCheck passed: %s; want a refusal", out.String())
+			case !tc.refused && err != nil:
+				t.Errorf("changelogCheck = %v; want a pass", err)
+			}
+		})
+	}
+}

@@ -138,8 +138,10 @@ docs checklist changelog-links transcript live-cover outcomes
 evals-check mcpb release server-json actionlint goreleaser-check parity
 ```
 
-- On a pull request CI also runs `changelog`, and `schema-ack`, which
-  needs a commit footer naming each changed item of the tool surface.
+- On a pull request CI also runs `changelog`, which needs an entry
+  under `[Unreleased]` or a `Changelog: none` footer, and `schema-ack`,
+  which needs a commit footer naming each changed item of the tool
+  surface.
 - New behavior has tests, and the schema diff has been read, resources
   and annotations included.
 - `/simplify`, `/code-review medium` and `/security-review` have run. A
