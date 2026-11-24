@@ -350,8 +350,10 @@ func TestChangelogPRWaiver(t *testing.T) {
 		// first, when set, is an earlier commit's message on the topic.
 		first string
 	}{
-		{name: "a footer in an earlier commit", message: "refactor, part two", files: code,
-			first: "refactor\n\nChangelog: none, a rename"},
+		{name: "a footer only in an earlier commit", message: "refactor, part two", files: code,
+			first: "refactor\n\nChangelog: none, a rename", refused: true},
+		{name: "a footer whose word runs on with an underscore", message: "change\n\nChangelog: none_yet, user-visible fix pending",
+			files: code, refused: true},
 		{name: "a footer whose word ends with a period", message: "refactor\n\nChangelog: none. internal rename only", files: code},
 		{name: "a footer whose reason wraps", message: "refactor\n\nChangelog: none, the text is unchanged\n  line for line", files: code},
 		{name: "a footer in the reference form", message: "refactor\n\nChangelog #none, a rename", files: code, refused: true},
