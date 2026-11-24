@@ -2906,8 +2906,8 @@ section. The CHANGELOG follows Keep a Changelog's sections
 The `changelog` gate makes a pull request add an entry, unless it cuts a
 release, changes `go.mod` only in the modules it requires, the MCP SDK
 excepted, or carries a `Changelog: none, <why>` footer, which keeps a
-refactor's contributor detail out of the release note. `changelog-links` holds every version heading to its link
-reference.
+refactor's contributor detail out of the release note.
+`changelog-links` holds every version heading to its link reference.
 
 A note written once, in the pull request that made the change, is
 reviewed with the change and written while the change is understood. A

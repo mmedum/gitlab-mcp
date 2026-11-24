@@ -218,7 +218,7 @@ merge-base: gates ## Print the commit a pull request is measured from
 	$(GATES) merge-base $(PR_BASE_REF) $(PR_HEAD)
 
 .PHONY: changelog
-changelog: gates ## A pull request adds a CHANGELOG entry, unless it cuts a release or says Changelog: none
+changelog: gates ## A pull request adds a CHANGELOG entry, unless it cuts a release, only bumps required modules other than the MCP SDK, or says Changelog: none
 	$(GATES) changelog $(PR_BASE_REF) $(PR_HEAD)
 
 # A changed tool surface needs a commit footer naming each item it

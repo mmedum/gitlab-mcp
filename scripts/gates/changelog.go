@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gatekit"
 	"github.com/mmedum/gitlab-mcp/v4/scripts/internal/gitx"
@@ -203,9 +204,10 @@ func changelogCheck(out io.Writer, root, base, head string) error {
 	}
 	const hint = "If nothing a user sees changed, leave the CHANGELOG as it is and end a commit's message with " +
 		"`Changelog: none, <why>`"
-	if strings.TrimSpace(diff) == "" {
-		// The waiver is read only here: a CHANGELOG the pull request changed
-		// is judged by its entries, so a footer cannot hide a misplaced one.
+	// The waiver is read only when the CHANGELOG is untouched, so a footer
+	// cannot hide a misplaced entry, and never for a go.mod change the gate
+	// counts, a bump of the MCP SDK included.
+	if strings.TrimSpace(diff) == "" && !slices.Contains(watched, "go.mod") {
 		messages, err := gitx.Messages(root, from, head)
 		if err != nil {
 			return err
@@ -214,6 +216,8 @@ func changelogCheck(out io.Writer, root, base, head string) error {
 			_, _ = fmt.Fprintf(out, "changelog ok: %d shipped file(s) changed, and a commit says no entry is needed: %s\n", len(watched), reason)
 			return nil
 		}
+	}
+	if strings.TrimSpace(diff) == "" {
 		return fmt.Errorf("%d shipped file(s) changed (%s) and %s did not. %s", len(watched),
 			strings.Join(watched[:min(3, len(watched))], ", "), changelogFile, hint)
 	}
@@ -248,20 +252,23 @@ func changelogTouched(files []string) []string {
 }
 
 // changelogWaiver is the reason a commit footer gives for needing no
-// entry: `Changelog: none, <why>`, the token and the word in any case. A
-// footer with no reason after "none" waives nothing.
+// entry: `Changelog: none, <why>`, the token and the word in any case, the
+// word ended by anything but a letter. A footer with no reason, or in the
+// `Changelog #` reference form, waives nothing.
 func changelogWaiver(messages []string) string {
+	notLetter := func(r rune) bool { return !unicode.IsLetter(r) }
 	for _, message := range messages {
 		for _, f := range footers(message) {
-			if !strings.EqualFold(f.token, "Changelog") {
+			if f.ref || !strings.EqualFold(f.token, "Changelog") {
 				continue
 			}
 			text := strings.TrimSpace(f.text)
-			end := strings.IndexAny(text, ",;:-— \n")
-			if end < 0 {
+			end := strings.IndexFunc(text, notLetter)
+			if end < 0 || !strings.EqualFold(text[:end], "none") {
 				continue
 			}
-			if reason := strings.TrimSpace(strings.TrimLeft(text[end:], ",;:-— ")); strings.EqualFold(text[:end], "none") && reason != "" {
+			rest := strings.TrimLeftFunc(text[end:], func(r rune) bool { return notLetter(r) && !unicode.IsDigit(r) })
+			if reason := strings.Join(strings.Fields(rest), " "); reason != "" {
 				return reason
 			}
 		}
